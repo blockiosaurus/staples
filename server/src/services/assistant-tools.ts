@@ -1,5 +1,5 @@
 import type { Request } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { agents, approvals, authUsers, companies, companyMemberships, issueThreadInteractions, issues, type Db } from "@paperclipai/db";
 import { PROPOSED_ACTION_CATEGORIES, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, isAssistantAgent, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
@@ -36,6 +36,20 @@ const GOVERNED_STATUSES = new Set(["done", "cancelled", "blocked", "in_review"])
 /** Closed tasks are never edited or reopened by the Assistant. */
 const CLOSED_STATUSES = new Set(["done", "cancelled"]);
 const BRIEFING_CAP = 20;
+export const ASSISTANT_CHAT_WRITE_REFUSAL = "The Assistant can't post or edit in chats.";
+
+/**
+ * Chats are a person's direct line to an agent; a message there can carry the
+ * person's authority (for example owner-chat instruction edits). The Assistant
+ * acts as the person, so it must never write into any chat, its own included.
+ */
+async function rejectConversationIssues(db: Db, companyId: string, candidates: unknown[]) {
+  const ids = [...new Set(candidates.filter((value): value is string => typeof value === "string" && value.length > 0))];
+  if (!ids.length) return;
+  const rows = await db.select({ id: issues.id, conversationAgentId: issues.conversationAgentId })
+    .from(issues).where(and(eq(issues.companyId, companyId), inArray(issues.id, ids)));
+  if (rows.some((row) => row.conversationAgentId)) throw new McpCapabilityError(ASSISTANT_CHAT_WRITE_REFUSAL);
+}
 
 export type AssistantToolContext = {
   companyId: string;
@@ -43,7 +57,7 @@ export type AssistantToolContext = {
   runId: string;
   userId: string;
   /** The run's task (its Assistant conversation), derived from the run row, never from tool input. */
-  issueId?: string | null;
+  issueId: string;
   membership: { companyId: string; membershipRole: string | null; status: string };
   company: { id: string; name: string; issuePrefix: string; status: string };
   canWrite: boolean;
@@ -67,16 +81,19 @@ export async function assistantToolContext(db: Db, actor: Request["actor"]): Pro
   const { run } = await captureRunIdentity(db, { companyId: actor.companyId, agentId: actor.agentId, runId: actor.runId });
   const snapshot = run.contextSnapshot ?? {};
   const issueId = run.nativeIssueId ?? (typeof snapshot.issueId === "string" ? snapshot.issueId : null);
-  if (issueId) {
-    const [issue] = await db.select({ conversationAgentId: issues.conversationAgentId, conversationUserId: issues.conversationUserId, generation: issues.conversationSessionGeneration })
-      .from(issues).where(and(eq(issues.id, issueId), eq(issues.companyId, actor.companyId)));
-    if (!issue) throw forbidden("Run task is unavailable");
-    if (issue.conversationAgentId && Number(snapshot.conversationSessionGeneration ?? 0) !== issue.generation) {
-      throw forbidden("Conversation session has changed");
-    }
-  }
   const userId = run.responsibleUserId;
   if (!userId) throw forbidden("Assistant tools require a responsible person");
+  // The person's authority is lent only inside their own Assistant conversation.
+  if (!issueId) throw forbidden("Assistant tools are only available in the person's Assistant conversation");
+  const [issue] = await db.select({ conversationAgentId: issues.conversationAgentId, conversationUserId: issues.conversationUserId, generation: issues.conversationSessionGeneration })
+    .from(issues).where(and(eq(issues.id, issueId), eq(issues.companyId, actor.companyId)));
+  if (!issue) throw forbidden("Run task is unavailable");
+  if (issue.conversationAgentId !== actor.agentId || issue.conversationUserId !== userId) {
+    throw forbidden("Assistant tools are only available in the person's Assistant conversation");
+  }
+  if (Number(snapshot.conversationSessionGeneration ?? 0) !== issue.generation) {
+    throw forbidden("Conversation session has changed");
+  }
   const [membership] = await db.select({ companyId: companyMemberships.companyId, membershipRole: companyMemberships.membershipRole, status: companyMemberships.status })
     .from(companyMemberships).where(and(
       eq(companyMemberships.companyId, actor.companyId), eq(companyMemberships.principalType, "user"),
@@ -429,6 +446,9 @@ export function createAssistantTools(db: Db, options: { dispatch: ApiDispatch; o
           }
         }
         const args = c.schema.parse({ ...raw, companyId: context.companyId });
+        if (name === "paperclip_add_comment" || name === "paperclip_update_task" || name === "paperclip_create_task") {
+          await rejectConversationIssues(db, context.companyId, [args.taskId, args.parentId, object(args.changes).parentId]);
+        }
         const result = name === PROPOSE_ACTION_TOOL
           ? await proposeAction(db, context, args)
           : await c.run(assistantPrincipal(context), args, options.dispatch, origin);

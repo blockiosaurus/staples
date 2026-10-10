@@ -18216,6 +18216,8 @@ export function issueRoutes(
       if (!issue) return;
       if (issue.conversationAgentId && req.actor.type === "board") {
         if (!req.actor.userId) throw forbidden("Board user access required");
+        // The Assistant acts as the person but is never the person speaking in a chat.
+        if (req.actor.source === "assistant_run") throw forbidden("The Assistant can't post or edit in chats.");
         if (req.actor.userId !== issue.conversationUserId) throw forbidden("Only the conversation owner can send messages or start a new session");
         if (!req.body.clientRequestId) throw unprocessable("Chat messages require a clientRequestId for safe retries");
         // The person may attach only display-only page context to a chat message.

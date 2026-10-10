@@ -374,8 +374,9 @@ const support = await getEmbeddedPostgresTestSupport();
     await server.db.update(issues).set({ conversationUserId: otherUserId }).where(eq(issues.id, f.issueId));
     const approval = await pendingApproval(f.companyId);
     const result = await call(f, "staples_propose_action", { method: "POST", path: `/api/approvals/${approval.id}/approve`, body: null, summary: "Approve" });
-    expect(result.body.result).toMatchObject({ isError: true });
-    expect(result.body.result.content[0].text).toMatch(/conversation/);
+    // Refused before any tool runs: the run's authority is limited to the person's own Assistant conversation.
+    expect(result.status).toBe(403);
+    expect(JSON.stringify(result.body)).toMatch(/conversation/);
   }, 60_000);
 
   it("only the person's own session can confirm, with the matching hash, and the result is recorded", async () => {

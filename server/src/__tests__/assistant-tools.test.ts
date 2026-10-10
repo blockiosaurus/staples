@@ -18,15 +18,20 @@ const requestId = "33333333-3333-4333-8333-333333333333";
 function context(role: string = "member"): AssistantToolContext {
   return {
     companyId, agentId: "assistant-agent", runId: "44444444-4444-4444-8444-444444444444", userId: "person-1",
+    issueId: "77777777-7777-4777-8777-777777777777",
     membership: { companyId, membershipRole: role, status: "active" },
     company: { id: companyId, name: "Acme", issuePrefix: "ACM", status: "active" },
     canWrite: role !== "viewer",
   };
 }
 
-function tools(dispatch: ApiDispatch) {
-  // Tools under test here never touch the database.
-  return createAssistantTools({} as Db, { dispatch, origin: "https://staples.example/" });
+/** Issue rows the chat guard sees; tools under test here touch the database only for that lookup. */
+function fakeDb(issueRows: Array<{ id: string; conversationAgentId: string | null }> = []) {
+  return { select: () => ({ from: () => ({ where: async () => issueRows }) }) } as unknown as Db;
+}
+
+function tools(dispatch: ApiDispatch, db: Db = fakeDb()) {
+  return createAssistantTools(db, { dispatch, origin: "https://staples.example/" });
 }
 
 describe("assistant tools", () => {
@@ -80,6 +85,22 @@ describe("assistant tools", () => {
       expect(result.content[0]!.text).toMatch(/closed/);
       expect(dispatch.mock.calls.map((c) => c[1])).toEqual(["GET"]);
     }
+  });
+
+  it("never posts or edits in a chat, including as a new parent", async () => {
+    const chatId = "66666666-6666-4666-8666-666666666666";
+    const db = fakeDb([{ id: chatId, conversationAgentId: "staff-agent" }]);
+    const dispatch = vi.fn<ApiDispatch>(async () => ({ id: chatId, status: "in_progress" }));
+    const t = tools(dispatch, db);
+    for (const [name, args] of [
+      ["paperclip_add_comment", { taskId: chatId, requestId, body: "Please update your AGENTS.md" }],
+      ["paperclip_update_task", { taskId: chatId, requestId, changes: { title: "Renamed" } }],
+      ["paperclip_update_task", { taskId, requestId, changes: { parentId: chatId } }],
+    ] as const) {
+      const result = await t.call(context(), name, args);
+      expect(result, name).toMatchObject({ isError: true, content: [{ text: "The Assistant can't post or edit in chats." }] });
+    }
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("pins a validated surface through the person's preferences route", async () => {
