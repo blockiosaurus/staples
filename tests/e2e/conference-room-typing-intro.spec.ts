@@ -11,7 +11,7 @@ import {
  * Completing the onboarding wizard now creates the first assigned task and
  * drops the user straight onto that task's detail page (not the dashboard),
  * so they land in the conversation the agent will start in. The chat intro
- * still has unit coverage in BoardChat tests.
+ * still has unit coverage in the task chat thread tests.
  *
  * PAP-404: onboarding used to intermittently bounce to the company dashboard.
  * The bounce only reproduces when the instance already has ≥1 company (the

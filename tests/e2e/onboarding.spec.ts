@@ -50,13 +50,6 @@ test.describe("Onboarding wizard", () => {
       await route.continue();
     });
 
-    // New-NUX surfaces are flag-gated default-OFF (PAP-136/137/138): turn the
-    // experimental flag on for this throwaway instance before driving them.
-    const flagRes = await page.request.patch("/api/instance/settings/experimental", {
-      data: { enableConferenceRoomChat: true },
-    });
-    expect(flagRes.ok()).toBe(true);
-
     await page.goto("/onboarding");
 
     // The wizard may open on a launcher card or directly on the capsule
@@ -123,11 +116,6 @@ test.describe("Onboarding wizard", () => {
   }) => {
     const pageErrors: string[] = [];
     page.on("pageerror", (err) => pageErrors.push(err.message));
-
-    const flagRes = await page.request.patch("/api/instance/settings/experimental", {
-      data: { enableConferenceRoomChat: true },
-    });
-    expect(flagRes.ok()).toBe(true);
 
     // The login panel's capability gate requires a sandbox environment with a
     // login-capable provider, and this throwaway instance has neither: it
@@ -322,11 +310,6 @@ test.describe("Onboarding wizard", () => {
     // connect step — where the resumed login must already be running.
     const pageErrors: string[] = [];
     page.on("pageerror", (err) => pageErrors.push(err.message));
-
-    const flagRes = await page.request.patch("/api/instance/settings/experimental", {
-      data: { enableConferenceRoomChat: true },
-    });
-    expect(flagRes.ok()).toBe(true);
 
     const FAKE_SANDBOX_ENVIRONMENT_ID = "e2e-fake-sandbox-environment-reload";
     const FAKE_SANDBOX_PROVIDER = "e2e-fake-provider-reload";
@@ -529,11 +512,6 @@ test.describe("Onboarding wizard", () => {
     await mockOnboardingLocalAiConnection(page);
     const pageErrors: string[] = [];
     page.on("pageerror", (err) => pageErrors.push(err.message));
-
-    const flagRes = await page.request.patch("/api/instance/settings/experimental", {
-      data: { enableConferenceRoomChat: true },
-    });
-    expect(flagRes.ok()).toBe(true);
 
     await page.route("**/test-environment", (route) =>
       route.fulfill({

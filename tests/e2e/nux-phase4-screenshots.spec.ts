@@ -12,7 +12,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * and captures screenshots of every surface integrated by NUX Phases 1–3:
  *   - "Build a new company" step 1 (company name)
  *   - Team-lead hire step (capsule wizard, PAP-125)
- *   - Conference Room (BoardChat) shell + composer + activity feed
  *   - Artifacts page
  *
  * The onboarding front door and the "Add agents to your org" growth intake
@@ -43,13 +42,6 @@ async function openWizard(page: import("@playwright/test").Page) {
 
 test.describe("NUX Phase 4 visual QA", () => {
   test("captures every integrated surface", async ({ page }) => {
-    // New-NUX surfaces are flag-gated default-OFF (PAP-136/137/138): turn the
-    // experimental flag on for this throwaway instance before driving them.
-    const flagRes = await page.request.patch("/api/instance/settings/experimental", {
-      data: { enableConferenceRoomChat: true },
-    });
-    expect(flagRes.ok()).toBe(true);
-
     const consoleErrors: string[] = [];
     page.on("console", (msg) => {
       if (msg.type() === "error") consoleErrors.push(msg.text());
@@ -85,22 +77,6 @@ test.describe("NUX Phase 4 visual QA", () => {
     expect(qaCompany, "wizard should have created QA Robotics").toBeTruthy();
     const prefix: string = qaCompany.issuePrefix;
 
-    // ── Section B: Conference Room (BoardChat) ────────────────────────────
-    // Visit the company dashboard first so CompanyContext selects the company
-    // from the route before we land on the board-chat surface.
-    await page.evaluate(() => window.localStorage.clear());
-    await page.goto(`/${prefix}/dashboard`);
-    await page.waitForLoadState("networkidle");
-    await page.goto(`/${prefix}/board-chat`);
-    await expect(page).toHaveURL(new RegExp(`/${prefix}/board-chat`));
-    // Composer renders once a company is selected. (Regression guard for the
-    // Rules-of-Hooks crash that previously blanked this page — see PAP-50.)
-    await expect(
-      page.getByPlaceholder("Ask anything about your organization..."),
-    ).toBeVisible({ timeout: 20_000 });
-    await page.waitForTimeout(2_000); // let welcome bubble + suggestion chips stage in
-    await page.screenshot({ path: shot("06-board-chat.png") });
-
     // ── Section C: Artifacts ──────────────────────────────────────────────
     await page.goto(`/${prefix}/artifacts`);
     await expect(page).toHaveURL(new RegExp(`/${prefix}/artifacts`));
@@ -111,7 +87,6 @@ test.describe("NUX Phase 4 visual QA", () => {
     for (const f of [
       "02-create-name.png",
       "04-hire-team-lead.png",
-      "06-board-chat.png",
       "07-artifacts.png",
     ]) {
       const p = shot(f);
