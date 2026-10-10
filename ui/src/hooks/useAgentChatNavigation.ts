@@ -9,22 +9,20 @@ import { useSidebar } from "@/context/SidebarContext";
 import { queryKeys } from "@/lib/queryKeys";
 import { useNavigate } from "@/lib/router";
 import { agentRouteRef } from "@/lib/utils";
-import { useAgentChatEnabled } from "./useAgentChatEnabled";
 
 export function useAgentChatNavigation() {
   const { selectedCompanyId: companyId } = useCompany();
-  const { enabled, loaded } = useAgentChatEnabled();
   const session = useQuery({ queryKey: queryKeys.auth.session, queryFn: () => authApi.getSession() });
   const userId = session.data?.user?.id ?? session.data?.session?.userId ?? null;
   const agents = useQuery({
     queryKey: queryKeys.agents.list(companyId!), queryFn: () => agentsApi.list(companyId!),
-    enabled: enabled && !!companyId,
+    enabled: !!companyId,
   });
   const chats = useQuery({
     queryKey: queryKeys.agentChats.list(companyId, userId), queryFn: () => agentChatsApi.list(companyId!),
-    enabled: enabled && !!companyId && session.isSuccess,
+    enabled: !!companyId && session.isSuccess,
   });
-  return { companyId, userId, enabled, loaded, agents, chats, session };
+  return { companyId, userId, agents, chats, session };
 }
 
 /** Explicitly adding a chat uses the existing atomic, one-per-agent resolver. */

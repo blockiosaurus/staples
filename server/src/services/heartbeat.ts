@@ -2190,17 +2190,6 @@ export function heartbeatService(
         throw new Error("Agent adapter changed during startup; start a new turn with the updated agent.");
       }
 
-      const dispatchIssueId = readNonEmptyString(parseObject(run.contextSnapshot).issueId);
-      const resumingAdmittedConversationTurn = !!runOptions.nativeLeaseOwner
-        && typeof run.contextSnapshot?.conversationSessionGeneration === "number";
-      if (dispatchIssueId && isConversation(await getIssueExecutionContext(run.companyId, dispatchIssueId))
-        && !resumingAdmittedConversationTurn && !(await instanceSettings.getExperimental()).enableAgentChat) {
-        await setRunStatus(run.id, "cancelled", { finishedAt: new Date(), error: "Agent Chat is disabled", errorCode: "agent_chat_disabled" });
-        await setWakeupStatus(run.wakeupRequestId, "cancelled", { finishedAt: new Date() });
-        await releaseIssueExecutionAndPromote((await getRun(run.id))!, { suppressImmediateRecovery: true });
-        await finalizeAgentStatus(agent.id, "cancelled");
-        return;
-      }
       run = await prepareChatCompletionTurn(db, run);
       const preparedConversation = await prepareConversationTurn(db, run);
       run = { ...run, contextSnapshot: preparedConversation.context };

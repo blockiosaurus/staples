@@ -170,7 +170,7 @@ describe("renderableSurfaces", () => {
   it("before ready, renders only core/pinned/revealed surfaces without an availability rule", () => {
     const states = resolveSurfaces(
       SURFACE_REGISTRY,
-      ctx({ flags: { enableAgentChat: true, enableCases: true, enableDecisions: true } as InstanceExperimentalSettings }),
+      ctx({ signals: signals({ agents: 2 }), flags: { enableCases: true, enableDecisions: true } as InstanceExperimentalSettings }),
       prefs({
         pinned: ["nav.cases", "nav.goals"],
         revealed: { "nav.decisions": "2026-01-01T00:00:00.000Z", "nav.projects": "2026-01-01T00:00:00.000Z" },
@@ -179,6 +179,22 @@ describe("renderableSurfaces", () => {
     const ids = (ready: boolean) => renderableSurfaces(states, ready).map((s) => s.surface.id);
     expect(ids(false)).toEqual(["nav.dashboard", "nav.tasks", "nav.projects", "nav.goals", "nav.agents"]);
     expect(ids(true)).toEqual(expect.arrayContaining(["nav.chat", "nav.cases", "nav.decisions"]));
+  });
+});
+
+describe("nav.chat", () => {
+  it("is a grows surface with no flag gate that reveals at two agents", () => {
+    const chat = byId("nav.chat");
+    expect(chat.tier).toBe("grows");
+    expect(chat.available).toBeUndefined();
+    expect(chat.reason).toBe("Chat appeared because you have more than one agent.");
+    expect(visibleIds(ctx({ signals: signals({ agents: 1 }) }), prefs())).not.toContain("nav.chat");
+    expect(visibleIds(ctx({ signals: signals({ agents: 2 }) }), prefs())).toContain("nav.chat");
+  });
+
+  it("does not depend on the retired enableAgentChat flag", () => {
+    const flags = { enableAgentChat: false } as InstanceExperimentalSettings;
+    expect(visibleIds(ctx({ signals: signals({ agents: 2 }), flags }), prefs())).toContain("nav.chat");
   });
 });
 

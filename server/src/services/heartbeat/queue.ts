@@ -2137,7 +2137,6 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         }
         if (isConversationExecutionWake(conversation, reason ?? readNonEmptyString(enrichedContextSnapshot.wakeReason))) return null;
         if (agent.id !== conversation!.conversationAgentId) return null;
-        if (!(await instanceSettings.getExperimental()).enableAgentChat) return null;
         if (!wakeCommentId && isWaitingConversation(conversation) && !hasInteractionContinuationWakeContext(enrichedContextSnapshot) && reason !== CHAT_COMPLETION_WAKE_REASON) return null;
       }
     }

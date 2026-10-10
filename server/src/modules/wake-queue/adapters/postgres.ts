@@ -1,6 +1,5 @@
 import { isAcknowledgedNativeReassignmentStop, isAcknowledgedNativeStop } from "../../../services/acknowledged-native-stop.js";
 import { isCompletedOnboardingHandoffWake } from "../../../services/chat-completion-delivery.js";
-import { instanceSettingsService } from "../../../services/instance-settings.js";
 import { currentConversationCommentCondition } from "../../../services/agent-conversations.js";
 import { getExecutionBlocker } from "../../../services/execution-blocker.js";
 import { and, asc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
@@ -1184,13 +1183,6 @@ export function createPostgresWakeQueueAdapter(db: Db, deps: WakeQueuePostgresAd
           executionBlocker.cause === "execution_owner_active" && executionBlocker.runId === run.id &&
           runSnapshot.conversationContinuation && ["failed", "timed_out", "interrupted"].includes(run.status));
         if (executionBlocker && !recoveryOnly) {
-          return { outcome: { kind: "released" }, postCommitEffects: [], run: runSnapshot };
-        }
-
-        // Releases still settle while Agent Chat is disabled, but no deferred
-        // turn or recovery successor may be created. Check here in the shared
-        // transaction so cleanup retries and restart sweeps use the same gate.
-        if (issueRow.conversationAgentId && !(await instanceSettingsService(tx).getExperimental()).enableAgentChat) {
           return { outcome: { kind: "released" }, postCommitEffects: [], run: runSnapshot };
         }
 

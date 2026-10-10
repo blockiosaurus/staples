@@ -67,8 +67,8 @@ describe("MobileBottomNav", () => {
     expect(labels(makeSurfacesFixture({ inboxUnread: 3 }))).toEqual(["Home", "New Task", "Tasks", "Agents", "Inbox"]);
   });
 
-  it("adds Chat second when the Chat surface is visible", () => {
-    expect(labels(makeSurfacesFixture({ flags: { enableAgentChat: true } }))).toEqual([
+  it("adds Chat second once there is more than one agent", () => {
+    expect(labels(makeSurfacesFixture({ signals: { agents: 2 } }))).toEqual([
       "Home", "Chat", "New Task", "Tasks", "Agents",
     ]);
   });

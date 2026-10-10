@@ -56,6 +56,9 @@ export const instanceExperimentalSettingsSchema = z.object({
   // adaptive surface registry; this remains accepted so older stored rows and
   // managed configs still load.
   enableGoalsSidebarLink: z.boolean().default(false),
+  // Deprecated compatibility key. Agent Chat is always on; this remains
+  // accepted so older stored rows and managed configs still load.
+  enableAgentChat: z.boolean().default(false),
   // Deprecated compatibility key. Apps is a standard product surface and is
   // always enabled; this remains accepted so older stored rows and managed
   // configs continue to load during upgrades.
@@ -69,7 +72,6 @@ export const instanceExperimentalSettingsSchema = z.object({
   enableMemoryConnectors: z.boolean().default(false),
   enablePipelines: z.boolean().default(false),
   enableCases: z.boolean().default(false),
-  enableAgentChat: z.boolean().default(false),
   enableCombinedInboxTasks: z.boolean().default(false),
   enableClassicTaskInterface: z.boolean().default(false),
   enableIssuePlanDecompositions: z.boolean().default(false),

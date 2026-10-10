@@ -74,11 +74,6 @@ vi.mock("@/components/task-detail/TaskDetailRelationsPanel", () => ({
   ),
 }));
 
-const agentChat = vi.hoisted(() => ({ enabled: true }));
-vi.mock("@/hooks/useAgentChatEnabled", () => ({
-  useAgentChatEnabled: () => ({ enabled: agentChat.enabled, loaded: true }),
-}));
-
 vi.mock("@/components/chat/AgentWorkPanels", () => ({
   AgentTasksPanel: ({ agentId, excludeIssueId }: { agentId: string; excludeIssueId?: string }) => (
     <div>{`Agent tasks ${agentId} excluding ${excludeIssueId}`}</div>
@@ -257,24 +252,6 @@ describe("TaskSidePanel", () => {
       .toEqual(["artifacts"]);
   });
 
-  it("falls back to Artifacts when Agent Chat is off and only the Tasks tab was saved", async () => {
-    agentChat.enabled = false;
-    try {
-      writeTaskSidePanelState("user-1", "company-1", "task-1", {
-        state: { tabs: [taskPanelAgentTasksTab()], activeTabId: "agent-tasks" },
-        launcherOpen: false,
-        userInteracted: true,
-        autoPlanHandled: false,
-        updatedAt: 1,
-      });
-      await render(panel({ issue: issue({ conversationAgentId: "agent-1" }) }));
-      expect(container.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute("data-side-panel-tab-target")).toBe("artifacts");
-      expect(container.textContent).toContain("Artifacts content");
-    } finally {
-      agentChat.enabled = true;
-    }
-  });
-
   it("moves a chat's stored Artifacts-only default onto the agent's tasks", async () => {
     writeTaskSidePanelState("user-1", "company-1", "task-1", {
       state: { tabs: [taskPanelArtifactsTab()], activeTabId: "artifacts" },
@@ -297,18 +274,6 @@ describe("TaskSidePanel", () => {
     expect(container.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute("data-side-panel-tab-target")).toBe("artifacts");
     expect(container.textContent).toContain("Agent artifacts agent-1");
     expect(container.textContent).not.toContain("Artifacts content");
-  });
-
-  it("keeps a chat on the conversation's own Artifacts while Agent Chat is off", async () => {
-    agentChat.enabled = false;
-    try {
-      await render(panel({ issue: issue({ conversationAgentId: "agent-1" }) }));
-      expect(container.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute("data-side-panel-tab-target")).toBe("artifacts");
-      expect(container.textContent).toContain("Artifacts content");
-      expect(container.textContent).not.toContain("Agent tasks");
-    } finally {
-      agentChat.enabled = true;
-    }
   });
 
   it("opens Properties on first visit", async () => {

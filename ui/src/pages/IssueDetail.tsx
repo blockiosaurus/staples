@@ -8036,7 +8036,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                     } : undefined,
                     resumeHref: !activePauseHold.isRoot ? createIssueDetailPath(activePauseHoldRoot?.identifier ?? activePauseHold.rootIssueId) : undefined,
                   } : null}
-                  composerDisabledReason={issue.conversationAgentId && !instanceExperimentalSettings?.enableAgentChat ? "Agent Chat is disabled in Experimental settings." : treeControlStateError ? "Couldn’t check whether this task is paused. Refresh to try again." : null}
+                  composerDisabledReason={treeControlStateError ? "Couldn’t check whether this task is paused. Refresh to try again." : null}
                   composerHint={composerHint}
                   queuedCommentReason={queuedCommentReason}
                   onVote={handleCommentVote}

@@ -12,7 +12,6 @@ import { settleUnrecoverableExecutions } from "../services/execution-recovery-re
 import { executeIssuePostCommitActions, type IssuePostCommitAction, issueService } from "../services/issues.js";
 import { buildLowTrustSourceTrust } from "../services/source-trust.js";
 import { documentService } from "../services/documents.js";
-import { instanceSettingsService } from "../services/instance-settings.js";
 import { chatCompletionDeliveryService, isCompletedOnboardingHandoffWake, prepareChatCompletionTurn, recordChatCompletion, recordChatHandoff } from "../services/chat-completion-delivery.js";
 import { heartbeatService, shouldQueueFollowupForRunningIssueWake } from "../services/heartbeat.js";
 
@@ -22,7 +21,6 @@ const support = await getEmbeddedPostgresTestSupport();
   let temporary: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
   beforeAll(async () => {
     temporary = await startEmbeddedPostgresTestDatabase("chat-completion-"); db = createDb(temporary.connectionString);
-    await instanceSettingsService(db).updateExperimental({ enableAgentChat: true });
   }, 30_000);
   afterAll(async () => { await temporary?.cleanup(); });
   beforeEach(async () => { await db.update(deliveries).set({ status: "exhausted" }); });

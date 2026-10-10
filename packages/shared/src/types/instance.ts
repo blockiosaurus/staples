@@ -68,6 +68,8 @@ export interface InstanceExperimentalSettings {
   enableConferenceRoomChat: boolean;
   /** @deprecated Compatibility key only. Goals navigation is driven by the adaptive surface registry. */
   enableGoalsSidebarLink: boolean;
+  /** @deprecated Compatibility key only. Agent Chat is always on. */
+  enableAgentChat: boolean;
   /** @deprecated Compatibility key only. Apps is always enabled. */
   enableApps: boolean;
   /** Exposes chat connector setup and Board surfaces; existing delivery continues when hidden. */
@@ -84,7 +86,6 @@ export interface InstanceExperimentalSettings {
   enableMemoryConnectors: boolean;
   enablePipelines: boolean;
   enableCases: boolean;
-  enableAgentChat: boolean;
   /** Reorganized left nav, Inbox-as-Tasks-views, and the chat agent rail + task cards. */
   enableCombinedInboxTasks: boolean;
   enableClassicTaskInterface: boolean;

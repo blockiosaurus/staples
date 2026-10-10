@@ -102,8 +102,9 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     matchRoots: ["chats"],
     icon: MessageCircle,
     group: "work",
-    tier: "core",
-    available: (ctx) => ctx.flags?.enableAgentChat === true,
+    tier: "grows",
+    revealWhen: (ctx) => ctx.signals !== null && ctx.signals.agents >= 2,
+    reason: "Chat appeared because you have more than one agent.",
   },
   {
     id: "nav.tasks",
@@ -177,16 +178,6 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     group: "work",
     tier: "advanced",
     available: (ctx) => ctx.flags?.enablePipelines === true,
-  },
-  {
-    id: "nav.workspaces",
-    label: "Workspaces",
-    to: "/workspaces",
-    matchRoots: ["workspaces", "execution-workspaces"],
-    icon: GitBranch,
-    group: "work",
-    tier: "advanced",
-    available: (ctx) => ctx.flags?.enableIsolatedWorkspaces === true && ctx.flags?.enableAgentChat !== true,
   },
   {
     id: "nav.agents",

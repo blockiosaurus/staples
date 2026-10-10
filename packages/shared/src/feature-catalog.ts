@@ -32,6 +32,7 @@ export const RETIRED_FEATURE_KEYS = [
   "enableStreamlinedUi",
   "enableConferenceRoomChat",
   "enableGoalsSidebarLink",
+  "enableAgentChat",
 ] as const;
 
 type RetiredFeatureKey = (typeof RETIRED_FEATURE_KEYS)[number];
@@ -168,14 +169,6 @@ export const INSTANCE_FEATURE_CATALOG: Record<InstanceFeatureKey, FeatureCatalog
     title: "Cases",
     description:
       "Durable work products that tasks create and iterate on. Adds the Cases tab and the agent case API.",
-    tier: "managed",
-    cloudDefault: false,
-    selfHostedDefault: false,
-  },
-  enableAgentChat: {
-    title: "Agent Chat",
-    description:
-      "Persistent task-backed conversations that clarify goals and hand work off to tasks. Chat leads the Work group with an agent rail, and each chat's side panel shows the agent's tasks and artifacts as cards.",
     tier: "managed",
     cloudDefault: false,
     selfHostedDefault: false,

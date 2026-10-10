@@ -250,7 +250,7 @@ describe("Sidebar", () => {
         const labels = (section: Element | undefined) => [...(section?.querySelectorAll("a") ?? [])]
           .map((anchor) => anchor.textContent?.trim());
 
-        expect(labels(workSection)).toEqual(["Tasks", "Projects", "Routines", "Artifacts", "Goals"]);
+        expect(labels(workSection)).toEqual(["Chat", "Tasks", "Projects", "Routines", "Artifacts", "Goals"]);
         expect(labels(orgSection)).toEqual(["Agents", "Skills", "Connectors", "Costs", "Audit"]);
         expect(orgSection?.querySelector('a[href="/activity/costs"]')?.textContent).toContain("Costs");
         expect(orgSection?.querySelector('a[href="/activity"]')?.textContent).toContain("Audit");
@@ -305,17 +305,16 @@ describe("Sidebar", () => {
     });
   });
 
-  it("renders plugin sidebar slots in Work below Workspaces", async () => {
+  it("renders plugin sidebar slots in the Work group", async () => {
     await withSidebar(
       { preferences: { showEverything: true }, flags: { enableIsolatedWorkspaces: true } },
       () => {
+        expect(hrefs()).not.toContain("/workspaces");
         const sidebarSlot = [...container.querySelectorAll("nav [data-plugin-slot-types]")]
           .find((node) => node.getAttribute("data-plugin-slot-types") === "sidebar");
         expect(sidebarSlot?.textContent).toContain("Plugin slot outlet");
         const workText = sidebarSlot?.parentElement?.parentElement?.textContent ?? "";
-        expect(workText).toContain("Work");
-        expect(workText).toContain("Workspaces");
-        expect(workText.indexOf("Workspaces")).toBeLessThan(workText.indexOf("Plugin slot outlet"));
+        expect(workText).toContain("Tasks");
         const primaryNavText = container.querySelector("nav > div:first-child")?.textContent ?? "";
         expect(primaryNavText).not.toContain("Plugin slot outlet");
       },
@@ -353,11 +352,12 @@ describe("Sidebar", () => {
     );
   });
 
-  it("leads the Work group with Chat when Agent Chat is on, and hides Workspaces", async () => {
+  it("leads the Work group with Chat once there is more than one agent, and hides Workspaces", async () => {
     await withSidebar(
       {
         preferences: { showEverything: true },
-        flags: { enableAgentChat: true, enableIsolatedWorkspaces: true },
+        signals: { agents: 2 },
+        flags: { enableIsolatedWorkspaces: true },
       },
       () => {
         const chatLink = container.querySelector('a[href="/chats"]');
@@ -370,7 +370,7 @@ describe("Sidebar", () => {
     );
   });
 
-  it("adds no chat surface while Agent Chat is off", async () => {
+  it("adds no chat surface for a company with fewer than two agents", async () => {
     await withSidebar({}, () => {
       expect(hrefs()).not.toContain("/chats");
     });
@@ -485,7 +485,7 @@ describe("Sidebar", () => {
 
   it("no-flash: flag-gated surfaces wait for ready even when pinned", async () => {
     await withSidebar(
-      { ready: false, preferences: { pinned: ["nav.cases"] }, flags: { enableCases: true, enableAgentChat: true } },
+      { ready: false, preferences: { pinned: ["nav.cases"] }, signals: { agents: 2 }, flags: { enableCases: true } },
       () => {
         expect(hrefs()).not.toContain("/cases");
         expect(hrefs()).not.toContain("/chats");

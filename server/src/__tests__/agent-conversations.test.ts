@@ -101,9 +101,8 @@ const support = await getEmbeddedPostgresTestSupport();
           status: "idle",
           adapterType: "process",
         });
-      await instanceSettingsService(db).updateExperimental({
-        enableAgentChat: true,
-      });
+      // Agent Chat is always on: a stored `enableAgentChat: false` (the default)
+      // must not gate any route or service below.
     }, 90000);
     afterAll(async () => {
       await db?.$client.end({ timeout: 0 });
@@ -225,9 +224,8 @@ const support = await getEmbeddedPostgresTestSupport();
       expect(owned.body.map((chat: { id: string }) => chat.id)).toEqual([resolved[0].body.id]);
       expect((await request(appFor(colleague)).get(listPath)).body).toEqual([]);
       expect((await request(appFor(randomUUID(), false)).get(listPath)).status).toBe(403);
-      await instanceSettingsService(db).updateExperimental({ enableAgentChat: false });
-      expect((await request(app).get(listPath)).status).toBe(404);
-      await instanceSettingsService(db).updateExperimental({ enableAgentChat: true });
+      expect((await instanceSettingsService(db).getExperimental()).enableAgentChat).toBe(false);
+      expect((await request(app).get(listPath)).status).toBe(200);
       expect(
         (
           await request(appFor(colleague)).get(
@@ -287,18 +285,10 @@ const support = await getEmbeddedPostgresTestSupport();
       expect((await db.select().from(issueTreeHolds).where(eq(issueTreeHolds.id, pause.id)))[0].status).toBe("released");
       const local = await request(appFor()).post(path);
       expect(local.body.conversationUserId).toBe("local-board");
-      await instanceSettingsService(db).updateExperimental({
-        enableAgentChat: false,
-      });
-      expect((await request(app).get(path)).status).toBe(404);
-      expect((await request(app).post(`/api/issues/${chatId}/queued-comments/interrupt`)
-        .send(queuedInterrupt)).status).toBe(404);
+      expect((await request(app).get(path)).status).toBe(200);
       expect(
         (await request(app).get(`/api/issues/${resolved[0].body.id}`)).status,
       ).toBe(200);
-      await instanceSettingsService(db).updateExperimental({
-        enableAgentChat: true,
-      });
     });
     it("deduplicates concurrent message retries and preserves recoverable delivery", async () => {
       const issue = await create();
@@ -597,20 +587,6 @@ const support = await getEmbeddedPostgresTestSupport();
           .where(eq(issues.id, issue.id));
         expect(current.conversationSessionGeneration).toBe(2);
         expect(current.conversationBoundaryCommentId).toBe(commands[2].id);
-        await instanceSettingsService(db).updateExperimental({
-          enableAgentChat: false,
-        });
-        expect(
-          await heartbeat.wakeup(agentId, {
-            contextSnapshot: {
-              issueId: issue.id,
-              wakeCommentId: commands[3].id,
-            },
-          }),
-        ).toBeNull();
-        await instanceSettingsService(db).updateExperimental({
-          enableAgentChat: true,
-        });
       } finally {
         runningProcesses.delete(active.id);
       }
@@ -973,22 +949,6 @@ const support = await getEmbeddedPostgresTestSupport();
           agents: [],
         }),
       ).toEqual([]);
-      await instanceSettingsService(db).updateExperimental({
-        enableAgentChat: false,
-      });
-      await expect(
-        issueService(db).addComment(issue.id, "/new", {
-          userId: "local-board",
-        }),
-      ).rejects.toThrow(/disabled/);
-      expect(
-        isWaitingConversation(
-          (await db.select().from(issues).where(eq(issues.id, issue.id)))[0],
-        ),
-      ).toBe(true);
-      await instanceSettingsService(db).updateExperimental({
-        enableAgentChat: true,
-      });
       const child = await issueService(db).create(companyId, { title: "Execute work", status: "done" });
       await db.update(issues).set({ parentId: issue.id }).where(eq(issues.id, child.id));
       expect(

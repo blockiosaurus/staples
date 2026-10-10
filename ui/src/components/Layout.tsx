@@ -28,7 +28,6 @@ import { DevRestartBanner } from "./DevRestartBanner";
 import { StandaloneBrowserControls } from "./StandaloneBrowserControls";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { AgentConversationsSidebar } from "./AgentConversationsSidebar";
-import { useAgentChatEnabled } from "../hooks/useAgentChatEnabled";
 import { SurfaceTracker } from "../staples/surfaces/SurfaceTracker";
 import { SidebarShell } from "./SidebarShell";
 import { SecondarySidebar } from "./SecondarySidebar";
@@ -123,8 +122,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   const isCompanySettingsRoute = shellRoute.builtInContextualSurface === "settings";
   const companyPathSegments = shellRoute.companySegments;
   const isTaskDetailRoute = shellRoute.isTaskDetail;
-  const { enabled: agentChatEnabled } = useAgentChatEnabled();
-  const isAgentChatRoute = agentChatEnabled && companyPathSegments[0]?.toLowerCase() === "chats";
+  const isAgentChatRoute = companyPathSegments[0]?.toLowerCase() === "chats";
   // Chat keeps its header beside the agent sidebar, including before an agent is selected.
   const useStreamlinedTaskDetailShell = isTaskDetailRoute || isAgentChatRoute;
   const isToolsRoute = companyPathSegments[0]?.toLowerCase() === "tools";

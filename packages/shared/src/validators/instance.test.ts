@@ -42,6 +42,15 @@ describe("instance experimental settings validators", () => {
     expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableConferenceRoomChat");
   });
 
+  it("still accepts the retired agent chat key but not in the catalog", () => {
+    expect(instanceExperimentalSettingsSchema.safeParse({ enableAgentChat: true }).success).toBe(true);
+    expect(instanceExperimentalSettingsSchema.parse({}).enableAgentChat).toBe(false);
+    expect(patchInstanceExperimentalSettingsSchema.parse({ enableAgentChat: true })).toEqual({
+      enableAgentChat: true,
+    });
+    expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableAgentChat");
+  });
+
   it("still accepts the retired goals sidebar link key but not in the catalog", () => {
     expect(instanceExperimentalSettingsSchema.safeParse({ enableGoalsSidebarLink: true }).success).toBe(true);
     expect(instanceExperimentalSettingsSchema.parse({}).enableGoalsSidebarLink).toBe(false);
