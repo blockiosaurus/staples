@@ -205,7 +205,8 @@ export const runnerApiReference: Record<string, { section: string; description?:
                   "id": "responsibility",
                   "prompt": "What should the new agent be responsible for?",
                   "required": true,
-                  "answerMode": "text"
+                  "answerMode": "text",
+                  "initialText": "Research: find and summarize information for the team."
                 }
               ]
             }
@@ -236,7 +237,8 @@ export const runnerApiReference: Record<string, { section: string; description?:
                     {
                       "id": "research",
                       "label": "Research",
-                      "description": "Find and summarize information."
+                      "description": "Find and summarize information.",
+                      "recommended": true
                     },
                     {
                       "id": "writing",

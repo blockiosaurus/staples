@@ -926,7 +926,7 @@ Choose the input control from the answer you need: use a **text field** for a na
 
 Omit `addresseeUserId` for ordinary questions.
 Agent Chat uses its conversation owner automatically. On ordinary tasks, explicitly set `addresseeUserId` only when a particular person must answer, using their exact Paperclip user ID, including any prefix. The server validates that the named user can respond in the company before saving the interaction. A chat question cannot name a different user.
-Agent-directed questions instead set `addresseeAgentId` and omit `resolverPolicy`. Do not infer permissions from a title or reporting line. Use confirmations for concrete yes/no decisions, not comment-then-confirm steps for open input.
+Agent-directed questions instead set `addresseeAgentId` and omit `resolverPolicy`. Do not infer permissions from a title or reporting line. Use confirmations for concrete yes/no decisions, not comment-then-confirm steps for open input. Every question you ask a person must include your recommended answer (mark one option `recommended: true`; for free-text questions put your recommendation in `initialText`).
 
 **Text answer (copy this complete payload)**
 
@@ -948,7 +948,7 @@ POST /api/issues/{issueId}/interactions
         "id": "responsibility",
         "prompt": "What should the new agent be responsible for?",
         "required": true,
-        "answerMode": "text"
+        "answerMode": "text", "initialText": "Research: find and summarize information for the team."
       }]
     }
   }
@@ -978,7 +978,7 @@ POST /api/issues/{issueId}/interactions
         "required": true,
         "customAnswer": { "enabled": true },
         "options": [
-          { "id": "research", "label": "Research", "description": "Find and summarize information." },
+          { "id": "research", "label": "Research", "description": "Find and summarize information.", "recommended": true },
           { "id": "writing", "label": "Writing", "description": "Draft and edit content." }
         ]
       }]
