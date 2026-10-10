@@ -1039,6 +1039,17 @@ export const issueCommentMetadataSectionSchema = z
   })
   .strict();
 
+export const assistantPageContextSchema = z.object({
+  route: z.string().max(500),
+  title: z.string().max(200).optional(),
+  entity: z.object({
+    type: z.enum(["issue", "agent", "project", "goal", "routine", "approval", "skill", "artifact", "other"]),
+    id: z.string().max(200),
+    label: z.string().max(200).optional(),
+  }).optional(),
+}).strict();
+
+
 export const issueCommentMetadataSchema = z
   .object({
     version: z.literal(1),
@@ -1059,9 +1070,16 @@ export const issueCommentMetadataSchema = z
       reason: z.string().trim().min(1).max(160),
       assigneeAgentId: z.string().guid().nullable(),
     }).strict().optional(),
-    sections: z.array(issueCommentMetadataSectionSchema).min(1).max(20),
+    // Display-only page context the person sent with an Assistant chat message. Untrusted.
+    pageContext: assistantPageContextSchema.optional(),
+    // System notices carry 1-20 sections; chat messages carry only pageContext (sections stay empty).
+    sections: z.array(issueCommentMetadataSectionSchema).max(20).default([]),
   })
-  .strict();
+  .strict()
+  .refine((metadata) => metadata.sections.length > 0 || metadata.pageContext !== undefined, {
+    message: "metadata requires at least one section",
+    path: ["sections"],
+  });
 
 export type IssueCommentMetadata = z.infer<typeof issueCommentMetadataSchema>;
 

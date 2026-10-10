@@ -18091,6 +18091,14 @@ export function issueRoutes(
         if (!req.actor.userId) throw forbidden("Board user access required");
         if (req.actor.userId !== issue.conversationUserId) throw forbidden("Only the conversation owner can send messages or start a new session");
         if (!req.body.clientRequestId) throw unprocessable("Chat messages require a clientRequestId for safe retries");
+        // The person may attach only display-only page context to a chat message.
+        const chatMetadata = req.body.metadata ?? null;
+        if (chatMetadata) {
+          const onlyPageContext = Object.keys(chatMetadata).every((key) => key === "version" || key === "pageContext" || key === "sections")
+            && !(chatMetadata.sections?.length)
+            && chatMetadata.pageContext != null;
+          if (!onlyPageContext) throw badRequest("Chat messages may carry only pageContext metadata");
+        }
         if (!(await assertAgentIssueCommentAllowed(req, res, issue))) return;
         if (req.body.body.trim() !== "/new" && !(await assertBoardCommentNotPaused(req, res, issue))) return;
         const actor = getActorInfo(req);
@@ -18106,6 +18114,7 @@ export function issueRoutes(
           ));
           const saved = await svc.addComment(issue.id, req.body.body, { userId }, {
             clientRequestId: req.body.clientRequestId, authorType: "user", attachmentIds: req.body.attachmentIds,
+            ...(chatMetadata ? { metadata: chatMetadata } : {}),
           }, tx);
           if (!existing) await logActivity(tx as unknown as Db, {
             companyId: issue.companyId, actorType: actor.actorType, actorId: actor.actorId,

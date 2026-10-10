@@ -1,3 +1,4 @@
+import type { AssistantPageContext } from "@paperclipai/shared";
 import type { SetIssueTitle } from "@paperclipai/shared";
 import type { ExecutionReconciliation } from "@paperclipai/shared";
 import type {
@@ -525,10 +526,14 @@ export const issuesApi = {
     interrupt?: boolean,
     attachmentIds?: string[],
     clientRequestId?: string,
+    options?: { metadata?: { pageContext?: AssistantPageContext } },
   ) =>
     confirmedCommentResponse(
       api.post<IssueComment>(`/issues/${id}/comments`, {
         body,
+        ...(options?.metadata?.pageContext
+          ? { metadata: { version: 1, pageContext: options.metadata.pageContext } }
+          : {}),
         ...(clientRequestId ? { clientRequestId } : {}),
         ...(reopen === undefined ? {} : { reopen }),
         ...(interrupt === undefined ? {} : { interrupt }),

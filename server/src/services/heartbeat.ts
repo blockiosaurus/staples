@@ -2830,6 +2830,7 @@ export function heartbeatService(
                 {
                   id: comment.id,
                   body: comment.body,
+                  pageContext: comment.pageContext,
                   attachments: Array.isArray(comment.attachments)
                     ? comment.attachments.flatMap((attachment) => {
                         const descriptor = parseObject(attachment);

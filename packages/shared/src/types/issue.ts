@@ -1155,7 +1155,20 @@ export interface IssueCommentMetadata {
     reason: string;
     assigneeAgentId: string | null;
   };
+  /** Display-only page context sent with an Assistant chat message. Untrusted; never an authorization input. */
+  pageContext?: AssistantPageContext;
+  /** System-notice rows; empty on chat messages that carry only pageContext. */
   sections: IssueCommentMetadataSection[];
+}
+
+export interface AssistantPageContext {
+  route: string;
+  title?: string;
+  entity?: {
+    type: "issue" | "agent" | "project" | "goal" | "routine" | "approval" | "skill" | "artifact" | "other";
+    id: string;
+    label?: string;
+  };
 }
 
 export interface IssueCommentPresentation {

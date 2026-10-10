@@ -1,4 +1,5 @@
 import { spekoToolsForSession } from "../voice/speko-agent-tools.js";
+import { readPageContext } from "../assistant-page-context.js";
 import { githubConfiguredInstructionSources } from "../chat-github-review-policy.js";
 import { CONFIGURED_ENVIRONMENT_KEYS } from "../../vendor/paperclip-runner/index.js";
 import { ASSIGNED_MCP_SERVER_NAME } from "../mcp-tool-names.js";
@@ -2376,6 +2377,8 @@ export async function buildPaperclipWakePayload(input: {
       bodyTruncated,
       presentation: deletedAt ? null : (safeRow.presentation ?? null),
       metadata: deletedAt ? null : (safeRow.metadata ?? null),
+      // Untrusted display data from the person's browser; only their own messages carry it.
+      pageContext: !deletedAt && !row.authorAgentId && row.authorUserId ? readPageContext(safeRow.metadata) : null,
       deletedAt: deletedAt ? deletedAt.toISOString() : null,
       deletedByType: deletedAt ? (row.deletedByType ?? null) : null,
       deletedByAgentId: deletedAt ? (row.deletedByAgentId ?? null) : null,

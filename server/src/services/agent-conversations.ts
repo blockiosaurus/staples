@@ -3,6 +3,7 @@ import {
   publishActivity,
   type ActivityPublication,
 } from "./activity-log.js";
+import { withPageContextLine } from "./assistant-page-context.js";
 import type { NativeStatusDecision } from "./native-runtime/status-arbiter.js";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import {
@@ -461,7 +462,9 @@ export async function conversationReplay(
     .map((row) =>
       JSON.stringify({
         author: row.authorAgentId ? "agent" : "user",
-        body: sanitizeQuarantinedCommentForHigherTrust(row).body.slice(0, 8000),
+        body: row.authorAgentId
+          ? sanitizeQuarantinedCommentForHigherTrust(row).body.slice(0, 8000)
+          : withPageContextLine(sanitizeQuarantinedCommentForHigherTrust(row).body.slice(0, 8000), row.metadata),
       }),
     )
     .join("\n");

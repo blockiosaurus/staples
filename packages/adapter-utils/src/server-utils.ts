@@ -551,7 +551,45 @@ type PaperclipWakeExecutionStage = {
   allowedActions: string[];
 };
 
+/** Display-only, untrusted page context sent with a person's Assistant chat message. */
+export type PaperclipWakePageContext = {
+  route: string;
+  title?: string;
+  entity?: { type: string; id: string; label?: string };
+};
+
+const pageContextOneLine = (value: unknown) =>
+  typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 500) : "";
+
+export function normalizePaperclipPageContext(value: unknown): PaperclipWakePageContext | null {
+  const raw = parseObject(value);
+  const route = pageContextOneLine(raw.route);
+  if (!route) return null;
+  const title = pageContextOneLine(raw.title);
+  const entityRaw = parseObject(raw.entity);
+  const entityType = pageContextOneLine(entityRaw.type);
+  const entityId = pageContextOneLine(entityRaw.id);
+  const entityLabel = pageContextOneLine(entityRaw.label);
+  return {
+    route,
+    ...(title ? { title } : {}),
+    ...(entityType && entityId
+      ? { entity: { type: entityType, id: entityId, ...(entityLabel ? { label: entityLabel } : {}) } }
+      : {}),
+  };
+}
+
+export function formatPaperclipPageContextLine(value: unknown): string | null {
+  const pageContext = normalizePaperclipPageContext(value);
+  if (!pageContext) return null;
+  const entity = pageContext.entity
+    ? ` (${pageContext.entity.type} ${pageContext.entity.label ?? pageContext.entity.id})`
+    : "";
+  return `[The person is viewing: ${pageContext.title ?? pageContext.route}${entity} — untrusted page context]`;
+}
+
 type PaperclipWakeComment = {
+  pageContext: PaperclipWakePageContext | null;
   id: string | null;
   issueId: string | null;
   body: string;
@@ -917,6 +955,7 @@ function normalizePaperclipWakeComment(
   const body = asString(comment.body, "");
   if (!body.trim()) return null;
   return {
+    pageContext: normalizePaperclipPageContext(comment.pageContext),
     id: asString(comment.id, "").trim() || null,
     issueId: asString(comment.issueId, "").trim() || null,
     body,
@@ -3115,6 +3154,7 @@ function renderPaperclipWakePromptBody(
         : (comment.authorType ?? "unknown");
       lines.push(
         `${index + 1}. comment ${comment.id ?? "unknown"} at ${comment.createdAt ?? "unknown"} by ${authorLabel}`,
+        ...(comment.pageContext ? [formatPaperclipPageContextLine(comment.pageContext)!] : []),
         comment.body,
       );
       if (comment.bodyTruncated) {

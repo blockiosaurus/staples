@@ -283,12 +283,49 @@ const support = await getEmbeddedPostgresTestSupport();
       expect(addedEvents).toHaveLength(1);
 
       expect((await db.select().from(issueTreeHolds).where(eq(issueTreeHolds.id, pause.id)))[0].status).toBe("released");
+      const pageContext = { route: "/issues/PAP-12", title: "Fix login", entity: { type: "issue", id: "abc", label: "PAP-12" } };
+      const withContext = await request(app).post(`/api/issues/${chatId}/comments`)
+        .send({ body: "What is this?", clientRequestId: randomUUID(), metadata: { version: 1, pageContext } });
+      expect(withContext.status).toBe(201);
+      const [storedWithContext] = await db.select().from(issueComments).where(eq(issueComments.id, withContext.body.id));
+      expect((storedWithContext.metadata as { pageContext?: unknown }).pageContext).toEqual(pageContext);
+      for (const metadata of [
+        { version: 1, pageContext, sourceChannel: "imessage-photon" },
+        { version: 1, pageContext, authorizationReason: "because" },
+        { version: 1, pageContext, sections: [{ rows: [{ type: "text", text: "x" }] }] },
+        { version: 1, sections: [{ rows: [{ type: "text", text: "x" }] }] },
+        { version: 1 },
+      ]) {
+        const rejected = await request(app).post(`/api/issues/${chatId}/comments`)
+          .send({ body: "Nope", clientRequestId: randomUUID(), metadata });
+        expect(rejected.status).toBe(400);
+      }
+      expect((await db.select().from(issueComments).where(eq(issueComments.issueId, chatId))).filter((row) => row.body === "Nope")).toHaveLength(0);
       const local = await request(appFor()).post(path);
       expect(local.body.conversationUserId).toBe("local-board");
       expect((await request(app).get(path)).status).toBe(200);
       expect(
         (await request(app).get(`/api/issues/${resolved[0].body.id}`)).status,
       ).toBe(200);
+    });
+    it("renders untrusted page context before a user message in wake payloads and replay", async () => {
+      const issue = await create();
+      const pageContext = { route: "/agents/a1", title: "Agent Atlas", entity: { type: "agent" as const, id: "a1", label: "Atlas" } };
+      const first = await issueService(db).addComment(issue.id, "Why is this slow?", { userId: "local-board" },
+        { authorType: "user", metadata: { version: 1, pageContext, sections: [] } });
+      const second = await issueService(db).addComment(issue.id, "And now?", { userId: "local-board" });
+      const line = "[The person is viewing: Agent Atlas (agent Atlas) — untrusted page context]";
+      const payload = await buildPaperclipWakePayload({
+        db, companyId,
+        contextSnapshot: { issueId: issue.id, conversationMode: true, wakeCommentId: first.id, wakeCommentIds: [first.id] },
+        issueSummary: { ...issue },
+      });
+      expect(payload?.comments?.[0]?.pageContext).toEqual(pageContext);
+      expect(renderPaperclipWakePrompt(payload, {})).toContain(`${line}\nWhy is this slow?`);
+      expect(await conversationReplay(db, companyId, issue.id, second.id)).toContain(
+        JSON.stringify({ author: "user", body: `${line}\nWhy is this slow?` }),
+      );
+      expect(await conversationReplay(db, companyId, issue.id, second.id)).not.toContain("And now?");
     });
     it("deduplicates concurrent message retries and preserves recoverable delivery", async () => {
       const issue = await create();

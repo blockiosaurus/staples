@@ -1,3 +1,4 @@
+import { formatPaperclipPageContextLine } from "@paperclipai/adapter-utils/server-utils";
 import { AGENT_CHAT_DIRECTIVE } from "../agent-conversations.js";
 import { publicChatTaskUrl } from "../chat-task-url.js";
 import { slackChatAgentGuidance } from "../connectors/slack/agent-guidance.js";
@@ -28,6 +29,7 @@ export function buildPaperclipTaskMarkdown(input: {
   wakeComments?: Array<{
     id: string;
     body: string;
+    pageContext?: unknown;
     attachments?: Array<{
       id: string;
       filename: string;
@@ -79,6 +81,10 @@ export function buildPaperclipTaskMarkdown(input: {
     );
     const fence = "`".repeat(longestBacktickRun + 1);
     return [fence + "text", value, fence].join("\n");
+  };
+  const pageContextLines = (comment: { pageContext?: unknown }) => {
+    const line = formatPaperclipPageContextLine(comment.pageContext);
+    return line ? [line] : [];
   };
   const issue = input.issue;
   const ancestors = (input.ancestors ?? []).slice(0, 6);
@@ -314,7 +320,7 @@ export function buildPaperclipTaskMarkdown(input: {
       "",
       "Latest wake comment:",
       ...(renderWakeCommentBodies
-        ? [fenceTaskText(effectiveWakeComments[0]!.body)]
+        ? [...pageContextLines(effectiveWakeComments[0]!), fenceTaskText(effectiveWakeComments[0]!.body)]
         : []),
     );
     appendWakeAttachments(effectiveWakeComments[0]!);
@@ -330,7 +336,7 @@ export function buildPaperclipTaskMarkdown(input: {
       lines.push(
         "",
         `Wake comment ${index + 1} (${quoteTaskScalar(comment.id)}):`,
-        ...(renderWakeCommentBodies ? [fenceTaskText(comment.body)] : []),
+        ...(renderWakeCommentBodies ? [...pageContextLines(comment), fenceTaskText(comment.body)] : []),
       );
       appendWakeAttachments(comment);
     }
