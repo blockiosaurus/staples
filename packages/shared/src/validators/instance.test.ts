@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { INSTANCE_FEATURE_CATALOG } from "../feature-catalog.js";
 import {
   instanceExperimentalSettingsSchema,
   patchInstanceExperimentalSettingsSchema,
@@ -18,11 +19,18 @@ describe("instance experimental settings validators", () => {
       .toEqual({ enableChatConnectors: false });
     expect(patchInstanceExperimentalSettingsSchema.safeParse({ enableChatConnectors: "true" }).success).toBe(false);
   });
-  it("defaults the streamlined UI on and accepts an explicit patch", () => {
+  it("still accepts the retired streamlined keys", () => {
+    expect(instanceExperimentalSettingsSchema.safeParse({ enableStreamlinedUi: false }).success).toBe(true);
+    expect(instanceExperimentalSettingsSchema.safeParse({ enableStreamlinedLeftNavigation: false }).success).toBe(true);
     expect(instanceExperimentalSettingsSchema.parse({}).enableStreamlinedUi).toBe(true);
-    expect(
-      patchInstanceExperimentalSettingsSchema.parse({ enableStreamlinedUi: false }),
-    ).toEqual({ enableStreamlinedUi: false });
+    expect(patchInstanceExperimentalSettingsSchema.parse({ enableStreamlinedUi: false })).toEqual({
+      enableStreamlinedUi: false,
+    });
+  });
+
+  it("does not expose the retired streamlined keys in the feature catalog", () => {
+    expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableStreamlinedUi");
+    expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableStreamlinedLeftNavigation");
   });
 
   it("defaults the server info debug view off", () => {

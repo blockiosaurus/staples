@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   FEATURE_TIERS,
+  RETIRED_FEATURE_KEYS,
   INSTANCE_FEATURE_CATALOG,
   INSTANCE_FEATURE_KEYS,
   buildFeatureCatalogArtifact,
@@ -26,6 +27,7 @@ function schemaBooleanFlagKeys(): string[] {
       return current instanceof z.ZodBoolean;
     })
     .map(([key]) => key)
+    .filter((key) => !(RETIRED_FEATURE_KEYS as readonly string[]).includes(key))
     .sort();
 }
 

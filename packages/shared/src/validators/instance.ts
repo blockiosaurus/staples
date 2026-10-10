@@ -45,6 +45,8 @@ export const instanceExperimentalSettingsSchema = z.object({
   enableManagedSandboxOnly: z.boolean().default(false),
   enableIsolatedWorkspaces: z.boolean().default(false),
   enableIsolatedWorkspacesByDefault: z.boolean().default(false),
+  // Deprecated compatibility keys. The streamlined shell is the only shell;
+  // these remain accepted so older stored rows and managed configs continue to load.
   enableStreamlinedLeftNavigation: z.boolean().default(true),
   enableStreamlinedUi: z.boolean().default(true),
   // Deprecated compatibility key. Apps is a standard product surface and is

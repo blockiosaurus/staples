@@ -2706,6 +2706,7 @@ export {
   FEATURE_TIERS,
   INSTANCE_FEATURE_CATALOG,
   INSTANCE_FEATURE_KEYS,
+  RETIRED_FEATURE_KEYS,
   buildFeatureCatalogArtifact,
   featureCatalogArtifactSchema,
   renderFeatureCatalogArtifact,

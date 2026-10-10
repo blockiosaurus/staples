@@ -60,12 +60,9 @@ export interface InstanceExperimentalSettings {
    * overrides a project that stores its own policy.
    */
   enableIsolatedWorkspacesByDefault: boolean;
+  /** @deprecated Compatibility key only. The streamlined navigation is always used. */
   enableStreamlinedLeftNavigation: boolean;
-  /**
-   * Use the streamlined shell, navigation, and contextual-sidebar experience.
-   * Missing legacy values default on; the retired left-navigation preference
-   * remains separate so an old opt-out cannot disable the broader UI.
-   */
+  /** @deprecated Compatibility key only. The streamlined shell is the only shell. */
   enableStreamlinedUi: boolean;
   /** @deprecated Compatibility key only. Apps is always enabled. */
   enableApps: boolean;
