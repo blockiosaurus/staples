@@ -11,8 +11,8 @@ import { useSurfaces } from "./useSurfaces";
 const ROW = "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-(length:--text-compact) font-medium text-foreground/80";
 const ACTION = "shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50";
 
-type SurfaceAction = "hide" | "unhide";
-const counterpart: Record<SurfaceAction, SurfaceAction> = { hide: "unhide", unhide: "hide" };
+type SurfaceAction = "hide" | "unhide" | "pin" | "unpin";
+const counterpart: Record<SurfaceAction, SurfaceAction> = { hide: "unhide", unhide: "hide", pin: "unpin", unpin: "pin" };
 const actionSelector = (action: SurfaceAction, id: string) => `[data-surface-action="${action}:${id}"]`;
 
 /** Sidebar "More" row: reach hidden surfaces, hide/unhide, and "Show everything". */
@@ -24,7 +24,7 @@ export function SidebarMoreMenu() {
   const rail = collapsed && !peeking;
   const contentRef = useRef<HTMLDivElement>(null);
   const headingId = useId();
-  // After Hide/Unhide the clicked row moves lists; keep keyboard focus on the
+  // After Hide/Unhide/Pin/Unpin the clicked row moves lists; keep keyboard focus on the
   // same surface's counterpart control (or the menu itself) instead of losing it.
   const [pendingFocus, setPendingFocus] = useState<{ id: string; from: SurfaceAction } | null>(null);
   useEffect(() => {
@@ -48,7 +48,12 @@ export function SidebarMoreMenu() {
 
   const applyAction = (action: SurfaceAction, id: string) => {
     if (preferencesFailed) return;
-    update(action === "hide" ? { hide: [id] } : { unhide: [id] });
+    update(
+      action === "hide" ? { hide: [id] }
+        : action === "unhide" ? { unhide: [id] }
+        : action === "pin" ? { pin: [id] }
+        : { unpin: [id] },
+    );
     setPendingFocus({ id, from: action });
   };
 
@@ -97,40 +102,55 @@ export function SidebarMoreMenu() {
             <section aria-labelledby={`${headingId}-open`} className="mb-1">
               <h3 id={`${headingId}-open`} className="px-2 py-1 text-xs font-medium text-muted-foreground">Open</h3>
               {openable.map(({ surface }) => (
-                <button
-                  key={surface.id}
-                  type="button"
-                  className={cn(ROW, "text-left transition-colors hover:bg-accent")}
-                  onClick={() => {
-                    navigate(surface.to);
-                    setOpen(false);
-                  }}
-                >
-                  <surface.icon className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{surface.label}</span>
-                </button>
+                <div key={surface.id} className="flex w-full items-center">
+                  <button
+                    type="button"
+                    className={cn(ROW, "min-w-0 flex-1 text-left transition-colors hover:bg-accent")}
+                    onClick={() => {
+                      navigate(surface.to);
+                      setOpen(false);
+                    }}
+                  >
+                    <surface.icon className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{surface.label}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={ACTION}
+                    aria-label={`Pin ${surface.label}`}
+                    data-surface-action={`pin:${surface.id}`}
+                    disabled={preferencesFailed}
+                    onClick={() => applyAction("pin", surface.id)}
+                  >
+                    Pin
+                  </button>
+                </div>
               ))}
             </section>
           ) : null}
           {removable.length > 0 || personHidden.length > 0 ? (
             <section aria-labelledby={`${headingId}-sidebar`} className="mb-1">
               <h3 id={`${headingId}-sidebar`} className="px-2 py-1 text-xs font-medium text-muted-foreground">In your sidebar</h3>
-              {removable.map(({ surface }) => (
-                <div key={surface.id} className={ROW}>
-                  <surface.icon className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">{surface.label}</span>
-                  <button
-                    type="button"
-                    className={ACTION}
-                    aria-label={`Hide ${surface.label}`}
-                    data-surface-action={`hide:${surface.id}`}
-                    disabled={preferencesFailed}
-                    onClick={() => applyAction("hide", surface.id)}
-                  >
-                    Hide
-                  </button>
-                </div>
-              ))}
+              {removable.map(({ surface, source }) => {
+                const action = source === "pinned" ? "unpin" : "hide";
+                const label = source === "pinned" ? "Unpin" : "Hide";
+                return (
+                  <div key={surface.id} className={ROW}>
+                    <surface.icon className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">{surface.label}</span>
+                    <button
+                      type="button"
+                      className={ACTION}
+                      aria-label={`${label} ${surface.label}`}
+                      data-surface-action={`${action}:${surface.id}`}
+                      disabled={preferencesFailed}
+                      onClick={() => applyAction(action, surface.id)}
+                    >
+                      {label}
+                    </button>
+                  </div>
+                );
+              })}
               {personHidden.map(({ surface }) => (
                 <div key={surface.id} className={cn(ROW, "text-muted-foreground")}>
                   <surface.icon className="h-4 w-4 shrink-0" />

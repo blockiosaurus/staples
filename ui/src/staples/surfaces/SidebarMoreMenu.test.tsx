@@ -87,6 +87,56 @@ describe("SidebarMoreMenu", () => {
     expect(update).toHaveBeenCalledWith({ unhide: ["nav.projects"] });
   });
 
+  it("pins an Open surface without navigating", () => {
+    render();
+    const openBefore = container.querySelector("[data-open]")?.getAttribute("data-open");
+    const pin = container.querySelector('button[aria-label="Pin Routines"]') as HTMLButtonElement;
+    expect(pin).not.toBeNull();
+    act(() => pin.click());
+    expect(update).toHaveBeenCalledWith({ pin: ["nav.routines"] });
+    expect(navigate).not.toHaveBeenCalled();
+    // setOpen(false) is only called on navigate; the popover state must be untouched.
+    expect(container.querySelector("[data-open]")?.getAttribute("data-open")).toBe(openBefore);
+  });
+
+  it("shows Unpin instead of Hide for pinned surfaces", () => {
+    fixture = makeSurfacesFixture({ signals: { projects: 2 }, preferences: { pinned: ["nav.routines"] } });
+    render();
+    expect(container.querySelector('button[aria-label="Hide Routines"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Hide Projects"]')).not.toBeNull();
+    const unpin = container.querySelector('button[aria-label="Unpin Routines"]') as HTMLButtonElement;
+    expect(unpin).not.toBeNull();
+    act(() => unpin.click());
+    expect(update).toHaveBeenCalledWith({ unpin: ["nav.routines"] });
+  });
+
+  it("moves focus to Unpin after pinning", () => {
+    render();
+    update.mockImplementation(() => {
+      fixture = makeSurfacesFixture({ signals: { projects: 2 }, preferences: { pinned: ["nav.routines"] } });
+    });
+    const pin = container.querySelector('button[aria-label="Pin Routines"]') as HTMLButtonElement;
+    pin.focus();
+    act(() => pin.click());
+    render();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Unpin Routines");
+  });
+
+  it("disables Pin and Unpin while preferences failed to load", () => {
+    fixture = makeSurfacesFixture({
+      signals: { projects: 2 },
+      preferences: { pinned: ["nav.goals"] },
+      preferencesFailed: true,
+    });
+    render();
+    const pin = container.querySelector('button[aria-label="Pin Routines"]') as HTMLButtonElement;
+    const unpin = container.querySelector('button[aria-label="Unpin Goals"]') as HTMLButtonElement;
+    expect(pin.disabled).toBe(true);
+    expect(unpin.disabled).toBe(true);
+    act(() => pin.click());
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("toggles Show everything", () => {
     render();
     const sw = container.querySelector('[role="switch"]') as HTMLButtonElement;
