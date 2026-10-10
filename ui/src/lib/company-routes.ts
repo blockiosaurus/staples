@@ -25,12 +25,17 @@ const BOARD_ROUTE_ROOTS = new Set([
   "decisions",
   "inbox",
   "board-chat",
-  "artifacts",
   "u",
   "design-guide",
   "search",
   "settings",
   "timeline",
+  "assistant",
+  "cases",
+  "status",
+  "pipelines",
+  "review-queue",
+  "learnings",
 ]);
 
 const GLOBAL_ROUTE_ROOTS = new Set(["auth", "invite", "board-claim", "cli-auth", "mcp-connect", "dot-connect", "assistant-connections", "docs", "instance"]);

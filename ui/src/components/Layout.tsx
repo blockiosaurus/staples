@@ -61,6 +61,8 @@ import {
 } from "../lib/shell-navigation";
 import { cn } from "../lib/utils";
 import { NotFoundPage } from "../pages/NotFound";
+import { UnprefixedBoardRedirect } from "./UnprefixedBoardRedirect";
+import { isBoardPathWithoutPrefix } from "@/lib/company-routes";
 import { PluginSlotMount, resolveRouteSidebarSlot, usePluginSlots } from "../plugins/slots";
 
 function getCompanyRouteSegment(pathname: string, companyPrefix: string | undefined): string | null {
@@ -728,10 +730,14 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
               )}
             >
               {hasUnknownCompanyPrefix ? (
-                <NotFoundPage
-                  scope="invalid_company_prefix"
-                  requestedPrefix={companyPrefix ?? selectedCompany?.issuePrefix}
-                />
+                isBoardPathWithoutPrefix(location.pathname) ? (
+                  <UnprefixedBoardRedirect />
+                ) : (
+                  <NotFoundPage
+                    scope="invalid_company_prefix"
+                    requestedPrefix={companyPrefix ?? selectedCompany?.issuePrefix}
+                  />
+                )
               ) : (
                 <RouteErrorBoundary>
                   <Outlet />

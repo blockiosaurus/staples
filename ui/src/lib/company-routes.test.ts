@@ -12,6 +12,13 @@ describe("company routes", () => {
     expect(extractCompanyPrefixFromPath(path)).toBeNull();
     expect(applyCompanyPrefix(path, "DOT")).toBe(path);
   });
+  it("treats every top-level board section as an unprefixed board path", () => {
+    for (const root of ["dashboard", "assistant", "cases", "status", "pipelines", "review-queue", "learnings"]) {
+      expect(isBoardPathWithoutPrefix(`/${root}`)).toBe(true);
+      expect(extractCompanyPrefixFromPath(`/${root}/x`)).toBeNull();
+    }
+  });
+
   it("treats the task-list alias as an unprefixed board route", () => {
     expect(isBoardPathWithoutPrefix("/tasks")).toBe(true);
     expect(extractCompanyPrefixFromPath("/tasks")).toBeNull();

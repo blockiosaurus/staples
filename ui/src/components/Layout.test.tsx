@@ -42,6 +42,7 @@ let currentPathname = "/PAP/dashboard";
 
 vi.mock("@/lib/router", () => ({
   Outlet: () => <div>Outlet content</div>,
+  Navigate: ({ to }: { to: string }) => <div data-testid="navigate" data-to={to} />,
   useLocation: () => ({
     pathname: currentPathname,
     search: "",
@@ -363,6 +364,36 @@ describe("Layout", () => {
     expect(container.textContent).not.toContain("Authenticated private");
     expect(container.textContent).not.toContain(
       "Sign-in is required and this instance is intended for private-network access.",
+    );
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("redirects an unprefixed board path to the selected company instead of showing not found", async () => {
+    currentPathname = "/dashboard";
+    mockCompanyState.companies = [{ id: "company-2", issuePrefix: "TST", name: "Test Co" }];
+    mockCompanyState.selectedCompany = { id: "company-2", issuePrefix: "TST", name: "Test Co" };
+    mockCompanyState.selectedCompanyId = "company-2";
+    const root = createRoot(container);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Layout />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    expect(container.textContent).not.toContain("Organization not found");
+    expect(container.querySelector("[data-testid='navigate']")?.getAttribute("data-to")).toBe(
+      "/TST/dashboard",
     );
 
     await act(async () => {
