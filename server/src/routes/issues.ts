@@ -246,6 +246,7 @@ import {
   assertCompanyAccess,
   getAccessibleResource,
   getActorInfo,
+  isDelegatedBoardSource,
 } from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
@@ -9969,7 +9970,7 @@ export function issueRoutes(
                 agentId: actor.agentId ?? null,
                 userId: actor.actorType === "user" ? actor.actorId : null,
               },
-              allowBoardOverride: req.actor.type === "board" && req.actor.source !== "mcp_oauth",
+              allowBoardOverride: req.actor.type === "board" && !isDelegatedBoardSource(req.actor.source),
               commentBody: resolutionNote ?? null,
             });
             Object.assign(updateFields, transition.patch);
@@ -13543,7 +13544,7 @@ export function issueRoutes(
       if (req.body.visibility !== undefined && !(req.actor.type === "agent" && req.body.visibility === "private")
         && !(await resolveManagedIssueForPrivacy(req, res, existing))) return;
       // MCP task changes cannot stop a run or implicitly decide a pending review.
-      const mcpParticipationChange = req.actor.source === "mcp_oauth" &&
+      const mcpParticipationChange = isDelegatedBoardSource(req.actor.source) &&
         ["status", "assigneeAgentId", "assigneeUserId", "blockedByIssueIds", "parentId", "projectId"].some(key => req.body[key] !== undefined);
       if (mcpParticipationChange) await assertMcpTaskParticipation(db, existing);
 
@@ -13689,7 +13690,7 @@ export function issueRoutes(
         });
       }
       const shouldCancelActiveRunForCancelledStatus =
-        req.actor.source !== "mcp_oauth" && existing.status !== "cancelled" && updateFields.status === "cancelled";
+        !isDelegatedBoardSource(req.actor.source) && existing.status !== "cancelled" && updateFields.status === "cancelled";
       if (resumeRequested === true && !commentBody) {
         res.status(400).json({ error: "Follow-up intent requires a comment" });
         return;
@@ -13988,7 +13989,7 @@ export function issueRoutes(
           agentId: actor.agentId ?? null,
           userId: actor.actorType === "user" ? actor.actorId : null,
         },
-        allowBoardOverride: req.actor.type === "board" && req.actor.source !== "mcp_oauth",
+        allowBoardOverride: req.actor.type === "board" && !isDelegatedBoardSource(req.actor.source),
         commentBody,
         reviewRequest: reviewRequest === undefined ? undefined : reviewRequest,
         monitorExplicitlyUpdated:
@@ -14231,7 +14232,7 @@ export function issueRoutes(
       // Only this request may finish a mutation that intentionally stops its
       // own run (for example handing work to a signoff reviewer).
       const issueMutationStopId = randomUUID();
-      if (req.actor.source !== "mcp_oauth" && assigneeWillChange && existing.assigneeAgentId) {
+      if (!isDelegatedBoardSource(req.actor.source) && assigneeWillChange && existing.assigneeAgentId) {
         await stopRunnerGoalForOwnershipChange({
           companyId: existing.companyId,
           issueId: existing.id,
@@ -14267,7 +14268,7 @@ export function issueRoutes(
         updateFields.status !== existing.status &&
         isClosedIssueStatus(updateFields.status);
       if (
-        req.actor.source !== "mcp_oauth" && !assigneeWillChange &&
+        !isDelegatedBoardSource(req.actor.source) && !assigneeWillChange &&
         terminalizingIssue &&
         existing.assigneeAgentId
       ) {

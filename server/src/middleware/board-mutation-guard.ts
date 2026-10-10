@@ -92,6 +92,8 @@ export function boardMutationGuard(): RequestHandler {
       req.actor.source === "local_implicit"
       || req.actor.source === "board_key"
       || req.actor.source === "mcp_oauth"
+      // Synthesized in-process for an Assistant run; never set from a request.
+      || req.actor.source === "assistant_run"
       || req.actor.source === "cloud_tenant"
       || req.actor.source === "cloud_control"
     ) {

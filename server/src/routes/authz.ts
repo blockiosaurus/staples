@@ -23,6 +23,16 @@ function throwOrShadowResponsibleUserCompanyAccessDeny(
   throw new HttpError(403, message, { code });
 }
 
+/**
+ * Board actors that act for a person through a delegated, non-browser channel:
+ * a public MCP connection (`mcp_oauth`) or a person-scoped Assistant run
+ * (`assistant_run`). They never get board overrides, instance-admin elevation,
+ * or implicit run cancellation that an interactive board session would.
+ */
+export function isDelegatedBoardSource(source: Request["actor"]["source"]) {
+  return source === "mcp_oauth" || source === "assistant_run";
+}
+
 export function assertAuthenticated(req: Request) {
   if (req.actor.type === "none") {
     throw unauthorized();
@@ -226,20 +236,29 @@ export function getActorInfo(req: Request): (
     };
   }
 
+  // An Assistant run acts for its person through a delegated channel; for
+  // secret/environment policy it is treated exactly like an MCP connection.
   const actorSource =
-    req.actor.source === "local_implicit" ||
-      req.actor.source === "board_key" ||
-      req.actor.source === "cloud_tenant" ||
-      req.actor.source === "mcp_oauth"
-      ? req.actor.source
-      : "session";
+    req.actor.source === "assistant_run"
+      ? "mcp_oauth"
+      : req.actor.source === "local_implicit" ||
+          req.actor.source === "board_key" ||
+          req.actor.source === "cloud_tenant" ||
+          req.actor.source === "mcp_oauth"
+        ? req.actor.source
+        : "session";
 
   return {
     actorType: "user" as const,
     actorId: req.actor.userId ?? "board",
     sessionId: req.actor.sessionId ?? null,
     agentId: null,
-    runId: req.actor.runId ?? null,
+    // Activity rows written for an Assistant run record the person as actor
+    // plus the run that acted for them. The run id is server-synthesized,
+    // never taken from a request header.
+    runId: req.actor.source === "assistant_run"
+      ? (req.actor.assistantRunId ?? null)
+      : (req.actor.runId ?? null),
     agentApiKeyId: null,
     actorSource,
   };

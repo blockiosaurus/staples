@@ -71,6 +71,7 @@ export type AuthorizationActor =
       | "agent_key"
       | "agent_jwt"
       | "mcp_oauth"
+      | "assistant_run"
       | "cloud_tenant"
       | "cloud_control"
       | "none";
@@ -1865,7 +1866,7 @@ export function authorizationService(db: Db | DbTransaction) {
       // instance_admin row left behind by deployments that ran the
       // pre-hardening cloud_tenant path still elevates nothing.
       if (
-        !input.actor.ignoreInstanceAdmin && input.actor.source !== "mcp_oauth" &&
+        !input.actor.ignoreInstanceAdmin && input.actor.source !== "mcp_oauth" && input.actor.source !== "assistant_run" &&
         (input.actor.isInstanceAdmin ||
           (input.actor.source !== "cloud_tenant" && await isInstanceAdmin(input.actor.userId)))
       ) {
