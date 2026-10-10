@@ -47,13 +47,35 @@ describe("LiveUpdatesProvider issue invalidation", () => {
     client.clear();
   });
 
-  it("refreshes company signals on activity", () => {
+  it("routes company signals refresh on activity through the throttle", () => {
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries");
+    const refreshSignals = vi.fn();
     __liveUpdatesTestUtils.invalidateActivityQueries(client, "company-1", {
       entityType: "issue", entityId: "issue-1", action: "issue.updated", actorType: "system",
-    }, { userId: "user-1", agentId: null });
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.signals("company-1") });
+    }, { userId: "user-1", agentId: null }, { refreshSignals });
+    expect(refreshSignals).toHaveBeenCalledWith("company-1");
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.signals("company-1") });
+    client.clear();
+  });
+
+  it("does not refresh company signals on agent status changes", () => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const refreshSignals = vi.fn();
+    __liveUpdatesTestUtils.handleLiveEvent(
+      client,
+      "company-1",
+      "/PAP/dashboard",
+      { type: "agent.status", companyId: "company-1", payload: { agentId: "agent-1", status: "running" } } as never,
+      () => null,
+      { cooldownHits: new Map(), suppressUntil: 0, observedRunOutcomes: new Set() },
+      { userId: "user-1", agentId: null },
+      refreshSignals,
+    );
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.agents.list("company-1") });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.signals("company-1") });
+    expect(refreshSignals).not.toHaveBeenCalled();
     client.clear();
   });
 
@@ -1679,5 +1701,45 @@ describe("activity toast attribution", () => {
     const toast = build(new QueryClient(), "company", { ...payload, actorType: "system", actorName: undefined }, { userId: "user-1", agentId: null });
     expect(toast?.title).toBe("System created Task task-1");
     expect(toast?.actor).toBeUndefined();
+  });
+});
+
+describe("signals refresh throttle", () => {
+  it("refreshes immediately, coalesces bursts into one trailing refresh per 10s window, per company", () => {
+    vi.useFakeTimers();
+    try {
+      const client = new QueryClient();
+      const invalidate = vi.spyOn(client, "invalidateQueries");
+      const signalCalls = (companyId: string) =>
+        invalidate.mock.calls.filter(([arg]) => JSON.stringify(arg) === JSON.stringify({ queryKey: queryKeys.signals(companyId) })).length;
+      const throttle = __liveUpdatesTestUtils.createSignalsRefreshThrottle(client);
+
+      throttle.request("company-1");
+      expect(signalCalls("company-1")).toBe(1); // leading
+      for (let i = 0; i < 20; i += 1) throttle.request("company-1");
+      throttle.request("company-2");
+      expect(signalCalls("company-1")).toBe(1);
+      expect(signalCalls("company-2")).toBe(1); // independent key
+
+      vi.advanceTimersByTime(9_999);
+      expect(signalCalls("company-1")).toBe(1);
+      vi.advanceTimersByTime(1);
+      expect(signalCalls("company-1")).toBe(2); // one trailing refresh for the burst
+      expect(signalCalls("company-2")).toBe(1); // no trailing without a second request
+
+      vi.advanceTimersByTime(10_000);
+      expect(signalCalls("company-1")).toBe(2); // quiet window: nothing more
+      vi.advanceTimersByTime(10_000);
+      throttle.request("company-1");
+      expect(signalCalls("company-1")).toBe(3); // leading again after the window closes
+
+      throttle.request("company-1");
+      throttle.dispose();
+      vi.advanceTimersByTime(20_000);
+      expect(signalCalls("company-1")).toBe(3); // disposed: pending trailing dropped
+      client.clear();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

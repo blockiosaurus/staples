@@ -1268,16 +1268,67 @@ function invalidateHeartbeatProgressQueries(
   }
 }
 
+const SIGNALS_REFRESH_WINDOW_MS = 10_000;
+
+/**
+ * Per-company leading + trailing throttle for the company signals query. Signals
+ * are coarse counts that drive navigation growth, so a busy company's activity
+ * stream must not refetch them on every event: the first request refreshes now,
+ * any further requests inside the window collapse into one refresh at its end.
+ */
+function createSignalsRefreshThrottle(
+  queryClient: Pick<QueryClient, "invalidateQueries">,
+  windowMs = SIGNALS_REFRESH_WINDOW_MS,
+) {
+  const windows = new Map<string, { timer: ReturnType<typeof setTimeout>; pending: boolean }>();
+  const refresh = (companyId: string) => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.signals(companyId) });
+  };
+  const openWindow = (companyId: string) => {
+    const entry = {
+      pending: false,
+      timer: setTimeout(() => {
+        windows.delete(companyId);
+        if (entry.pending) {
+          refresh(companyId);
+          openWindow(companyId);
+        }
+      }, windowMs),
+    };
+    windows.set(companyId, entry);
+  };
+  return {
+    request(companyId: string) {
+      const entry = windows.get(companyId);
+      if (entry) {
+        entry.pending = true;
+        return;
+      }
+      refresh(companyId);
+      openWindow(companyId);
+    },
+    dispose() {
+      for (const entry of windows.values()) clearTimeout(entry.timer);
+      windows.clear();
+    },
+  };
+}
+
 function invalidateActivityQueries(
   queryClient: ReturnType<typeof useQueryClient>,
   companyId: string,
   payload: Record<string, unknown>,
   currentActor: { userId: string | null; agentId: string | null },
-  options?: { pathname?: string; isForegrounded?: boolean },
+  options?: {
+    pathname?: string;
+    isForegrounded?: boolean;
+    /** Throttled signals refresh; when absent, signals are left alone. */
+    refreshSignals?: (companyId: string) => void;
+  },
 ) {
   queryClient.invalidateQueries({ queryKey: queryKeys.activity(companyId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(companyId) });
-  queryClient.invalidateQueries({ queryKey: queryKeys.signals(companyId) });
+  options?.refreshSignals?.(companyId);
   queryClient.invalidateQueries({
     queryKey: queryKeys.sidebarBadges(companyId),
   });
@@ -1683,6 +1734,7 @@ function handleLiveEvent(
   pushToast: (toast: ToastInput) => string | null,
   gate: ToastGate,
   currentActor: { userId: string | null; agentId: string | null },
+  refreshSignals?: (companyId: string) => void,
 ) {
   if (event.companyId !== expectedCompanyId) return;
 
@@ -1755,9 +1807,6 @@ function handleLiveEvent(
       queryKey: queryKeys.dashboard(expectedCompanyId),
     });
     queryClient.invalidateQueries({
-      queryKey: queryKeys.signals(expectedCompanyId),
-    });
-    queryClient.invalidateQueries({
       queryKey: queryKeys.org(expectedCompanyId),
     });
     const agentId = readString(payload.agentId);
@@ -1790,7 +1839,7 @@ function handleLiveEvent(
       expectedCompanyId,
       payload,
       currentActor,
-      { pathname },
+      { pathname, refreshSignals },
     );
     if (
       shouldDeferVisibleIssueCommentActivity(queryClient, pathname, payload)
@@ -1862,6 +1911,8 @@ function closeSocketQuietly(
 
 export const __liveUpdatesTestUtils = {
   buildActivityToast,
+  createSignalsRefreshThrottle,
+  handleLiveEvent,
   applyRunLifecycleToCompanyLiveRuns,
   buildAgentStatusToast,
   buildRunStatusToast,
@@ -1940,6 +1991,8 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     [queryClient, invalidationBatcher],
   );
   useEffect(() => () => invalidationBatcher.dispose(), [invalidationBatcher]);
+  const signalsThrottle = useMemo(() => createSignalsRefreshThrottle(queryClient), [queryClient]);
+  useEffect(() => () => signalsThrottle.dispose(), [signalsThrottle]);
 
   useEffect(() => {
     pathnameRef.current = location.pathname;
@@ -2052,6 +2105,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
               userId: currentActorRef.current.userId,
               agentId: currentActorRef.current.agentId,
             },
+            signalsThrottle.request,
           );
           // Fan the raw event out to component subscribers after cache
           // handling so any reader sees fresh query data.
@@ -2098,6 +2152,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     invalidationBatcher,
     queryClient,
     coalescingClient,
+    signalsThrottle,
     liveCompanyId,
     pushToast,
     canConnectSocket,

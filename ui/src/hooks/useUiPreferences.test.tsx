@@ -116,6 +116,27 @@ describe("useUiPreferences", () => {
     expect(observed.preferences.pinned).toEqual(["nav.issues"]);
   });
 
+  it("ignores a GET that resolves after a newer PATCH ack", async () => {
+    let resolveGet!: (v: unknown) => void;
+    mocks.get.mockReturnValueOnce(new Promise((r) => { resolveGet = r; }));
+    mocks.patch.mockResolvedValueOnce(resolved({ hidden: ["nav.projects"] }, "2026-03-02T00:00:00.000Z"));
+    let refetch!: Promise<unknown>;
+    await act(async () => {
+      refetch = client.refetchQueries();
+    });
+    await act(async () => observed.update({ hide: ["nav.projects"] }));
+    await flush();
+    expect(observed.preferences.hidden).toEqual(["nav.projects"]);
+    expect(observed.preferences.updatedAt).toBe("2026-03-02T00:00:00.000Z");
+    await act(async () => {
+      resolveGet(resolved({}, "2026-03-01T00:00:00.000Z"));
+      await refetch;
+    });
+    await flush();
+    expect(observed.preferences.hidden).toEqual(["nav.projects"]);
+    expect(observed.preferences.updatedAt).toBe("2026-03-02T00:00:00.000Z");
+  });
+
   it("sends one request for two same-tick identical reveals", async () => {
     mocks.patch.mockResolvedValue(resolved({}, "t1"));
     await act(async () => {

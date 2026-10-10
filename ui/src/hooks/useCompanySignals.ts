@@ -12,6 +12,8 @@ export function useCompanySignals(companyId: string | null | undefined): {
     queryKey: queryKeys.signals(companyId ?? "__none__"),
     queryFn: () => companySignalsApi.get(companyId!),
     enabled: Boolean(companyId),
+    // Live activity refreshes signals through a throttle; avoid extra refetches on mount/focus.
+    staleTime: 30_000,
   });
   return {
     signals: query.data ?? null,
