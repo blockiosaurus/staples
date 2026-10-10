@@ -1580,6 +1580,56 @@ export const requestConfirmationSecretProposalPayloadSchema = z.object({
   expiresAt: z.string().datetime({ offset: true }),
 });
 
+export const PROPOSED_ACTION_METHODS = ["POST", "PATCH", "PUT", "DELETE"] as const;
+export const PROPOSED_ACTION_CATEGORIES = [
+  "approval",
+  "agent_lifecycle",
+  "budget",
+  "secret",
+  "connection",
+  "outbound",
+  "delete",
+  "other_governed",
+] as const;
+/** Serialized JSON body limit for a proposed action. */
+export const PROPOSED_ACTION_BODY_MAX_BYTES = 20 * 1024;
+
+const proposedActionPathSchema = z
+  .string()
+  .min(5)
+  .max(1000)
+  .refine((value) => value.startsWith("/api/"), "path must start with /api/");
+
+/** Server-owned: an exact governed API call executed by the person's browser after Confirm. */
+export const requestConfirmationProposedActionPayloadSchema = z.object({
+  version: z.literal(1),
+  method: z.enum(PROPOSED_ACTION_METHODS),
+  path: proposedActionPathSchema,
+  body: z
+    .unknown()
+    .refine((value) => {
+      try {
+        const serialized = JSON.stringify(value);
+        return (
+          serialized !== undefined &&
+          new TextEncoder().encode(serialized).length <= PROPOSED_ACTION_BODY_MAX_BYTES
+        );
+      } catch {
+        return false;
+      }
+    }, `body must be JSON no larger than ${PROPOSED_ACTION_BODY_MAX_BYTES} bytes`),
+  summary: z.string().trim().min(1).max(500),
+  category: z.enum(PROPOSED_ACTION_CATEGORIES),
+  hash: z.string().regex(/^[a-f0-9]{64}$/, "hash must be a sha256 hex digest"),
+  staleCheck: z
+    .object({
+      path: proposedActionPathSchema,
+      field: z.literal("updatedAt"),
+      expected: z.string().trim().min(1).max(100),
+    })
+    .optional(),
+});
+
 export const requestConfirmationPayloadSchema = z.object({
   version: z.literal(1),
   prompt: z.string().trim().min(1).max(1000),
@@ -1600,6 +1650,7 @@ export const requestConfirmationPayloadSchema = z.object({
   target: requestConfirmationTargetSchema.nullable().optional(),
   toolAction: requestConfirmationToolActionPayloadSchema.optional(),
   secretProposal: requestConfirmationSecretProposalPayloadSchema.optional(),
+  proposedAction: requestConfirmationProposedActionPayloadSchema.optional(),
 });
 
 export const requestCheckboxConfirmationOptionSchema = z.object({
@@ -1745,6 +1796,12 @@ export const requestConfirmationSecretProposalResultSchema = z.object({
   updatedAt: z.string().datetime({ offset: true }),
 });
 
+export const requestConfirmationProposedActionResultSchema = z.object({
+  status: z.enum(["executed", "failed", "stale"]),
+  httpStatus: z.number().int().min(0).max(999).optional(),
+  message: z.string().trim().max(1000).optional(),
+});
+
 export const requestConfirmationResultSchema = z.object({
   version: z.literal(1),
   outcome: z.enum([
@@ -1765,6 +1822,7 @@ export const requestConfirmationResultSchema = z.object({
   resumeFailure: requestConfirmationResumeFailureSchema.nullable().optional(),
   toolAction: requestConfirmationToolActionResultSchema.optional(),
   secretProposal: requestConfirmationSecretProposalResultSchema.optional(),
+  proposedAction: requestConfirmationProposedActionResultSchema.optional(),
 });
 
 export const requestCheckboxConfirmationResultSchema =
@@ -2083,6 +2141,10 @@ export type CreateIssueThreadInteractionInput = z.input<
 export const acceptIssueThreadInteractionSchema = z
   .object({
     rememberAction: z.boolean().optional(),
+    /** Required (and only allowed) when accepting a proposed-action confirmation. */
+    proposedActionResult: requestConfirmationProposedActionResultSchema
+      .extend({ hash: z.string().regex(/^[a-f0-9]{64}$/) })
+      .optional(),
     selectedClientKeys: z
       .array(z.string().trim().min(1).max(120))
       .min(1)

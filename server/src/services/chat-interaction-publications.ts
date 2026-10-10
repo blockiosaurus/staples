@@ -178,6 +178,7 @@ export function nativeTelegramConfirmation(
     interaction.payload.toolAction !== undefined ||
     interaction.payload.secretProposal !== undefined ||
     interaction.payload.connectionAuthorization !== undefined ||
+    interaction.payload.proposedAction !== undefined ||
     interaction.payload.target?.type === "issue_document"
   ) {
     return null;

@@ -63,6 +63,7 @@ import type {
   IssueThreadInteractionResolverPolicyProvenance,
   RequestCheckboxConfirmationInteraction,
   RequestConfirmationInteraction,
+  RequestConfirmationPayload,
   RequestConfirmationTarget,
   RequestItemVerdictsInteraction,
   RequestItemVerdictsResult,
@@ -99,7 +100,7 @@ import {
   withdrawIssueThreadInteractionSchema,
 } from "@paperclipai/shared";
 import { z } from "zod";
-import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { authorizationService } from "./authorization.js";
 import { isCloudManagedInstance } from "./cloud-instance.js";
@@ -297,7 +298,8 @@ export function getMergeConfirmationPullRequestReferences(
   if (
     !payload ||
     payload.toolAction !== undefined ||
-    payload.secretProposal !== undefined
+    payload.secretProposal !== undefined ||
+    payload.proposedAction !== undefined
   )
     return [];
 
@@ -411,6 +413,7 @@ export function resolveInteractionPolicy(args: {
   governance: InteractionResolverGovernance;
   hasToolAction: boolean;
   hasSecretProposal?: boolean;
+  hasProposedAction?: boolean;
 }) {
   const kindGovernance = args.governance[args.kind];
   const requestedPolicyInput =
@@ -425,7 +428,7 @@ export function resolveInteractionPolicy(args: {
   let effectiveResolverPolicy = requestedResolverPolicy;
   let effectiveResolverPolicySource: IssueThreadInteractionEffectiveResolverPolicySource =
     "requested";
-  if (args.hasToolAction || args.hasSecretProposal) {
+  if (args.hasToolAction || args.hasSecretProposal || args.hasProposedAction) {
     effectiveResolverPolicy = "human_only";
     effectiveResolverPolicySource = "governed_action";
   } else if (kindGovernance?.cap) {
@@ -479,7 +482,9 @@ function assertInteractionResolutionAllowed(
       (("toolAction" in current.payload &&
         current.payload.toolAction !== undefined) ||
         ("secretProposal" in current.payload &&
-          current.payload.secretProposal !== undefined)),
+          current.payload.secretProposal !== undefined) ||
+        ("proposedAction" in current.payload &&
+          current.payload.proposedAction !== undefined)),
   });
 }
 
@@ -841,6 +846,8 @@ function shouldReturnAcceptedConfirmationToCreatorAgent(args: {
 function shouldSupersedeInteractionOnUserComment(interaction: UserCommentSupersedableInteraction) {
   if (interaction.kind === "connection_intent") return false;
   if (interaction.kind === "request_confirmation" && interaction.payload.toolAction) return false;
+  // A proposed action stays until the person confirms or cancels it.
+  if (interaction.kind === "request_confirmation" && interaction.payload.proposedAction) return false;
   return interaction.payload.supersedeOnUserComment === true;
 }
 
@@ -2019,8 +2026,10 @@ export function issueThreadInteractionService(
       && (interaction.kind === "request_checkbox_confirmation"
         || (interaction.kind === "request_confirmation"
           // Tool reviews resolve through their own route while the originating
-          // run may be waiting for the user's decision.
-          && !interaction.payload.toolAction)),
+          // run may be waiting for the user's decision. Proposed actions are
+          // executed by the person's browser and carry no workspace changes.
+          && !interaction.payload.toolAction
+          && !interaction.payload.proposedAction)),
     );
     if (guarded.length === 0) return interactions;
     const workspace = issueWorkspace ?? await db
@@ -2229,6 +2238,20 @@ export function issueThreadInteractionService(
       );
 
       const interaction = hydrateInteraction(lockedCurrent);
+      // Re-check the proposal hash under the row lock: the browser reports the
+      // outcome of exactly the stored call, never of some other proposal.
+      const storedProposedAction =
+        interaction.kind === "request_confirmation"
+          ? interaction.payload.proposedAction
+          : undefined;
+      const proposedActionResult = args.input.proposedActionResult;
+      if (storedProposedAction) {
+        if (!proposedActionResult || proposedActionResult.hash !== storedProposedAction.hash) {
+          throw badRequest("proposedActionResult.hash does not match the proposed action");
+        }
+      } else if (proposedActionResult) {
+        throw badRequest("proposedActionResult is only accepted for proposed-action confirmations");
+      }
       const selectedOptionIds =
         interaction.kind === "request_checkbox_confirmation"
           ? resolveSelectedCheckboxConfirmationOptions({
@@ -2245,6 +2268,19 @@ export function issueThreadInteractionService(
             version: 1,
             outcome: "accepted",
             ...(selectedOptionIds ? { selectedOptionIds } : {}),
+            ...(storedProposedAction && proposedActionResult
+              ? {
+                  proposedAction: {
+                    status: proposedActionResult.status,
+                    ...(proposedActionResult.httpStatus !== undefined
+                      ? { httpStatus: proposedActionResult.httpStatus }
+                      : {}),
+                    ...(proposedActionResult.message
+                      ? { message: proposedActionResult.message }
+                      : {}),
+                  },
+                }
+              : {}),
           },
           resolvedByAgentId: args.actor.agentId ?? null,
           resolvedByRunId: args.actor.runId ?? null,
@@ -3420,6 +3456,9 @@ export function issueThreadInteractionService(
         hasSecretProposal:
           data.kind === "request_confirmation" &&
           data.payload.secretProposal !== undefined,
+        hasProposedAction:
+          data.kind === "request_confirmation" &&
+          data.payload.proposedAction !== undefined,
       });
       const normalizedData = {
         ...data,
@@ -3452,6 +3491,14 @@ export function issueThreadInteractionService(
         ) {
           throw unprocessable(
             "Secret-proposal confirmations cannot be addressed to agents",
+          );
+        }
+        if (
+          normalizedData.kind === "request_confirmation" &&
+          normalizedData.payload.proposedAction !== undefined
+        ) {
+          throw unprocessable(
+            "Proposed-action confirmations cannot be addressed to agents",
           );
         }
         const addressee = await db
@@ -3727,7 +3774,8 @@ export function issueThreadInteractionService(
             options.supersedePendingSiblingInteractions !== false &&
             ((data.kind === "request_confirmation" &&
               data.payload.toolAction === undefined &&
-              data.payload.secretProposal === undefined) ||
+              data.payload.secretProposal === undefined &&
+              data.payload.proposedAction === undefined) ||
               (data.kind === "ask_user_questions" && (!issueRow.conversationAgentId || !issueRow.conversationUserId)));
           if (!actor.agentId || !canSupersedeSiblingCards) {
             await enqueueIssueInteractionChatPublications(
@@ -3866,11 +3914,16 @@ export function issueThreadInteractionService(
             actor,
           );
         case "request_confirmation": {
-          await assertIssueWorkspaceFinalizedForAccept({
-            db,
-            issue,
-            sourceRunId: current.sourceRunId,
-          });
+          // The browser has already executed a proposed action by the time
+          // it is accepted; never refuse to record that outcome on a
+          // workspace gate unrelated to it.
+          if (!(current.payload as RequestConfirmationPayload).proposedAction) {
+            await assertIssueWorkspaceFinalizedForAccept({
+              db,
+              issue,
+              sourceRunId: current.sourceRunId,
+            });
+          }
           const accepted = await acceptRequestConfirmation({
             issue,
             current,

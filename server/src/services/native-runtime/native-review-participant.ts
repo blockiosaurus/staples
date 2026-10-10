@@ -21,6 +21,7 @@ type ReviewPayload = {
   target?: { type?: string; key?: string; revisionId?: string } | null;
   toolAction?: unknown;
   secretProposal?: unknown;
+  proposedAction?: unknown;
 };
 type InteractionFacts = Pick<typeof issueThreadInteractions.$inferSelect,
   "id" | "companyId" | "issueId" | "kind" | "status" | "sourceRunId" | "addresseeAgentId" |
@@ -94,7 +95,7 @@ export function validateNativeReviewAssignmentFacts(input: NativeReviewAssignmen
   if (interaction.sourceRunId !== decision.runId || interaction.sourceRunId !== sourceRun.id) return false;
   if (interaction.addresseeAgentId !== input.agentId) return false;
   if (interaction.addresseeUserId) return false;
-  if (interaction.payload?.toolAction || interaction.payload?.secretProposal) return false;
+  if (interaction.payload?.toolAction || interaction.payload?.secretProposal || interaction.payload?.proposedAction) return false;
   if (!isNativeCompletionReview(interaction, decision.id)) return false;
 
   if (input.actingRun) {

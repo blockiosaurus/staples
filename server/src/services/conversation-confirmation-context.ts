@@ -21,7 +21,7 @@ export async function getConversationConfirmationContext(input: {
     eq(issueThreadInteractions.status, "pending"),
     inArray(issueThreadInteractions.kind, ["request_confirmation", "request_checkbox_confirmation"]),
     // Dedicated approval payloads are not conversational confirmations.
-    sql`not (${issueThreadInteractions.payload} ?| array['toolAction', 'secretProposal', 'connectionAuthorization'])`,
+    sql`not (${issueThreadInteractions.payload} ?| array['toolAction', 'secretProposal', 'connectionAuthorization', 'proposedAction'])`,
     boundary ? gt(issueThreadInteractions.createdAt, boundary.createdAt) : undefined,
   )).orderBy(asc(issueThreadInteractions.createdAt), asc(issueThreadInteractions.id)).limit(limit + 1);
   return {

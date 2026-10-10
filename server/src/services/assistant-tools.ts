@@ -2,11 +2,14 @@ import type { Request } from "express";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { agents, companies, companyMemberships, issueThreadInteractions, issues, type Db } from "@paperclipai/db";
-import { askUserQuestionsAnswerSchema, isAssistantAgent, surfaceIdSchema } from "@paperclipai/shared";
+import { PROPOSED_ACTION_CATEGORIES, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, isAssistantAgent, surfaceIdSchema } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { publicMcpCapabilities } from "./public-mcp/capabilities.js";
+import { ProposedActionError, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
+import { issueThreadInteractionService } from "./issue-thread-interactions.js";
+import { logActivity } from "./activity-log.js";
 import { McpApiError, McpCapabilityError, object, pick, rows, taskFields, pathId, type ApiDispatch, type Capability } from "./public-mcp/contracts.js";
 import type { McpPrincipal } from "./public-mcp/oauth.js";
 
@@ -21,6 +24,7 @@ export const ASSISTANT_READ_TOOL_NAMES = [
 /** Low-risk writes. Governed actions (finish, block, delete, configure, approvals) are not exposed. */
 export const ASSISTANT_WRITE_TOOL_NAMES = [
   "paperclip_create_task", "paperclip_add_comment", "paperclip_update_task", "staples_answer_question", "staples_pin_surface",
+  "staples_propose_action",
 ] as const;
 
 /** `paperclip_update_task` may only touch these fields. */
@@ -38,6 +42,8 @@ export type AssistantToolContext = {
   agentId: string;
   runId: string;
   userId: string;
+  /** The run's task (its Assistant conversation), derived from the run row, never from tool input. */
+  issueId?: string | null;
   membership: { companyId: string; membershipRole: string | null; status: string };
   company: { id: string; name: string; issuePrefix: string; status: string };
   canWrite: boolean;
@@ -81,7 +87,7 @@ export async function assistantToolContext(db: Db, actor: Request["actor"]): Pro
     .from(companies).where(eq(companies.id, actor.companyId));
   if (!company || company.status === "archived") throw forbidden("Company is unavailable");
   return {
-    companyId: actor.companyId, agentId: actor.agentId, runId: run.id, userId, membership, company,
+    companyId: actor.companyId, agentId: actor.agentId, runId: run.id, userId, issueId, membership, company,
     canWrite: membership.membershipRole !== "viewer",
   };
 }
@@ -228,6 +234,25 @@ function assistantCapabilities(db: Db): Capability[] {
       },
     },
     {
+      name: PROPOSE_ACTION_TOOL, write: true,
+      description: [
+        "Propose one exact governed API call for this person to confirm. Nothing runs until they click Confirm on the card in this conversation; their browser then performs the call with their own session and you are woken with the result.",
+        "Only governed actions are allowed: approval approve/reject/request-revision, agent hire/create/pause/resume/terminate, budget policy and budget updates, secret create/update/delete (never include secret values), connection and grant changes, and DELETE under this company or one of its tasks.",
+        "The path must start with /api/ and refer to this company. category is derived from the path. Optionally pass staleCheck { path, field: \"updatedAt\", expected } with a GET path whose updatedAt must be unchanged when the person confirms.",
+      ].join(" "),
+      schema: z.object({
+        ...companyField,
+        method: z.enum(PROPOSED_ACTION_METHODS),
+        path: z.string().min(5).max(1000).describe("Exact API path including the leading /api/, e.g. /api/approvals/<id>/approve."),
+        body: z.unknown().optional().describe("JSON request body, or null. At most 20KB serialized."),
+        summary: z.string().trim().min(1).max(500).describe("One sentence shown on the Confirm card, in plain language."),
+        category: z.enum(PROPOSED_ACTION_CATEGORIES).optional().describe("Ignored: the server derives the category from the path."),
+        staleCheck: z.object({ path: z.string().min(5).max(1000), field: z.literal("updatedAt"), expected: z.string().trim().min(1).max(100) }).strict().optional(),
+      }).strict(),
+      // Dispatched in createAssistantTools: it needs the run's conversation, not just the principal.
+      run: async () => { throw new McpCapabilityError("Tool is unavailable to the Assistant."); },
+    },
+    {
       name: "staples_pin_surface", write: true,
       description: "Pin a navigation surface for this person so it stays visible in their sidebar.",
       schema: z.object({ ...companyField, surfaceId: surfaceIdSchema }).strict(),
@@ -236,6 +261,68 @@ function assistantCapabilities(db: Db): Capability[] {
       }),
     },
   ];
+}
+
+const PROPOSE_ACTION_TOOL = "staples_propose_action";
+
+/**
+ * Create a governed Confirm card on the run's own Assistant conversation,
+ * addressed to the run's person. The interaction is created directly through
+ * the service because proposedAction is server-owned and refused on the
+ * public create route.
+ */
+async function proposeAction(db: Db, context: AssistantToolContext, args: Record<string, unknown>) {
+  if (!context.issueId) throw new McpCapabilityError("Proposed actions can only be made from this person's Assistant conversation.");
+  const [issue] = await db.select({
+    id: issues.id, companyId: issues.companyId, status: issues.status,
+    conversationAgentId: issues.conversationAgentId, conversationUserId: issues.conversationUserId,
+  }).from(issues).where(and(eq(issues.id, context.issueId), eq(issues.companyId, context.companyId)));
+  if (!issue || issue.conversationAgentId !== context.agentId || issue.conversationUserId !== context.userId) {
+    throw new McpCapabilityError("Proposed actions can only be made from this person's Assistant conversation.");
+  }
+  const method = String(args.method);
+  const path = String(args.path);
+  const body = args.body === undefined ? null : args.body;
+  const summary = String(args.summary).trim();
+  const staleCheck = args.staleCheck as { path: string; field: "updatedAt"; expected: string } | undefined;
+  let category: Awaited<ReturnType<typeof validateGovernedAction>>["category"];
+  let hash: string;
+  try {
+    ({ category } = await validateGovernedAction(db, { method, path, body, staleCheckPath: staleCheck?.path ?? null }, context.companyId));
+    hash = proposedActionHash({ method, path, body });
+  } catch (error) {
+    if (error instanceof ProposedActionError) throw new McpCapabilityError(error.message);
+    throw error;
+  }
+  const proposedAction = {
+    version: 1 as const, method: method as (typeof PROPOSED_ACTION_METHODS)[number], path, body, summary, category, hash,
+    ...(staleCheck ? { staleCheck: { path: staleCheck.path, field: "updatedAt" as const, expected: staleCheck.expected } } : {}),
+  };
+  const interaction = await issueThreadInteractionService(db).create(issue, {
+    kind: "request_confirmation",
+    // The Assistant is the conversation's assignee; wake it on Confirm and on Cancel.
+    continuationPolicy: "wake_assignee",
+    addresseeUserId: context.userId,
+    sourceRunId: context.runId,
+    idempotencyKey: `assistant-proposed-action:${context.runId}:${hash}`,
+    title: summary.slice(0, 240),
+    payload: {
+      version: 1, prompt: summary, acceptLabel: "Confirm", rejectLabel: "Cancel",
+      detailsMarkdown: proposedActionDetailsMarkdown({ method, path, body }),
+      supersedeOnUserComment: false,
+      proposedAction,
+    },
+  }, { agentId: context.agentId, runId: context.runId });
+  await logActivity(db, {
+    companyId: context.companyId, actorType: "agent", actorId: context.agentId, agentId: context.agentId, runId: context.runId,
+    action: "issue.thread_interaction_created", entityType: "issue", entityId: issue.id,
+    details: { interactionId: interaction.id, interactionKind: interaction.kind, proposedAction: { method, path, category, hash }, addresseeUserId: context.userId },
+  });
+  return {
+    interaction: { id: interaction.id, issueId: interaction.issueId, status: interaction.status },
+    proposedAction: { method, path, category, hash },
+    next: "The person will see a Confirm card. Do not claim the action happened; you will be woken with the result.",
+  };
 }
 
 function exposedSchema(schema: Capability["schema"]) {
@@ -287,7 +374,9 @@ export function createAssistantTools(db: Db, options: { dispatch: ApiDispatch; o
           }
         }
         const args = c.schema.parse({ ...raw, companyId: context.companyId });
-        const result = await c.run(assistantPrincipal(context), args, options.dispatch, origin);
+        const result = name === PROPOSE_ACTION_TOOL
+          ? await proposeAction(db, context, args)
+          : await c.run(assistantPrincipal(context), args, options.dispatch, origin);
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
       } catch (error) {
         return { isError: true, content: [{ type: "text", text: safeMessage(error) }] };

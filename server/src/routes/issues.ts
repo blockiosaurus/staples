@@ -2456,6 +2456,45 @@ function readSecretProposalContinuationContext(interaction: {
   };
 }
 
+/**
+ * Wake context for an Assistant proposed action: what was proposed and what
+ * the person's browser reported. The Assistant never executed the call itself.
+ */
+function readProposedActionContinuationContext(interaction: {
+  status: string;
+  payload?: unknown;
+  result?: unknown;
+}) {
+  const proposal = readObject(readObject(interaction.payload).proposedAction);
+  const method = readNonEmptyString(proposal.method);
+  const path = readNonEmptyString(proposal.path);
+  if (!method || !path) return null;
+  const summary = readNonEmptyString(proposal.summary);
+  if (interaction.status === "rejected") {
+    const reason = readNonEmptyString(readObject(interaction.result).reason);
+    return {
+      method, path, ...(summary ? { summary } : {}),
+      decision: "cancelled", executionStatus: "cancelled",
+      ...(reason ? { declineReason: reason } : {}),
+      instructions: "the person cancelled this proposed action; it was not executed. Do not propose it again unless they ask.",
+    };
+  }
+  if (interaction.status !== "accepted") return null;
+  const execution = readObject(readObject(interaction.result).proposedAction);
+  const executionStatus = readNonEmptyString(execution.status) ?? "unknown";
+  const httpStatus = typeof execution.httpStatus === "number" ? execution.httpStatus : null;
+  const message = readNonEmptyString(execution.message);
+  return {
+    method, path, ...(summary ? { summary } : {}),
+    decision: "confirmed", executionStatus,
+    ...(httpStatus !== null ? { httpStatus } : {}),
+    ...(message ? { message } : {}),
+    instructions: executionStatus === "executed"
+      ? "the person confirmed and their browser executed this call; verify the outcome before telling them it is done."
+      : "the person confirmed but the call did not succeed; explain the failure and suggest a next step. Do not retry automatically.",
+  };
+}
+
 const REQUEST_ITEM_VERDICTS_WAKE_COALESCE_WINDOW_MS = 2_000;
 
 function buildRequestItemVerdictsWakeIdempotencyKey(args: {
@@ -2574,6 +2613,9 @@ async function queueResolvedInteractionContinuationWakeup(input: {
   const secretProposal = readSecretProposalContinuationContext(
     input.interaction,
   );
+  const proposedAction = readProposedActionContinuationContext(
+    input.interaction,
+  );
   const newlyResolvedItemIds =
     input.newlyResolvedItemIds?.filter((value) => value.length > 0) ?? [];
   const itemVerdicts =
@@ -2649,6 +2691,7 @@ async function queueResolvedInteractionContinuationWakeup(input: {
         ...(checkboxSelection ? { checkboxSelection } : {}),
         ...(toolAction ? { toolAction } : {}),
         ...(secretProposal ? { secretProposal } : {}),
+        ...(proposedAction ? { proposedAction } : {}),
         ...(itemVerdicts ? { itemVerdicts, newlyResolvedItemIds } : {}),
         ...(rejectionAgentMessage
           ? { paperclipAgentMessage: rejectionAgentMessage }
@@ -2675,6 +2718,7 @@ async function queueResolvedInteractionContinuationWakeup(input: {
         ...(checkboxSelection ? { checkboxSelection } : {}),
         ...(toolAction ? { toolAction } : {}),
         ...(secretProposal ? { secretProposal } : {}),
+        ...(proposedAction ? { proposedAction } : {}),
         ...(itemVerdicts ? { itemVerdicts, newlyResolvedItemIds } : {}),
         ...(rejectionAgentMessage
           ? { paperclipAgentMessage: rejectionAgentMessage }
@@ -4617,7 +4661,9 @@ export function issueRoutes(
             (("toolAction" in interaction.payload &&
               interaction.payload.toolAction !== undefined) ||
               ("secretProposal" in interaction.payload &&
-                interaction.payload.secretProposal !== undefined))
+                interaction.payload.secretProposal !== undefined) ||
+              ("proposedAction" in interaction.payload &&
+                interaction.payload.proposedAction !== undefined))
           ),
       );
       if (!designatedReviewConfirmation) {
@@ -6026,6 +6072,7 @@ export function issueRoutes(
         ? (interaction.payload as {
             toolAction?: unknown;
             secretProposal?: unknown;
+            proposedAction?: unknown;
           })
         : null;
     const actor = getActorInfo(req);
@@ -6044,7 +6091,8 @@ export function issueRoutes(
         governedAction:
           interaction.kind === "request_confirmation" &&
           (payload?.toolAction !== undefined ||
-            payload?.secretProposal !== undefined),
+            payload?.secretProposal !== undefined ||
+            payload?.proposedAction !== undefined),
       });
     if (!decision.allowed) {
       return denyIssueThreadInteractionResolution(res, {
@@ -16681,6 +16729,14 @@ export function issueRoutes(
           "payload.secretProposal is server-owned metadata and cannot be supplied when creating an interaction",
         );
       }
+      if (
+        req.body.kind === "request_confirmation" &&
+        req.body.payload?.proposedAction !== undefined
+      ) {
+        throw unprocessable(
+          "payload.proposedAction is server-owned metadata and cannot be supplied when creating an interaction",
+        );
+      }
 
       // Plan-document confirmation targets are validated authoritatively inside
       // issueThreadInteractionService.create, which re-reads the plan document's
@@ -16850,6 +16906,41 @@ export function issueRoutes(
             )
           : true;
       if (!suggestedTaskEffectsAuthorized) return;
+
+      const storedProposedAction =
+        current.kind === "request_confirmation"
+          ? current.payload.proposedAction
+          : undefined;
+      if (storedProposedAction) {
+        // Only the addressed person, in their own interactive session, may
+        // confirm. Delegated channels (the Assistant run itself, MCP OAuth),
+        // API keys and agents never confirm a proposal on the person's behalf.
+        if (
+          req.actor.type !== "board" ||
+          (req.actor.source !== "session" &&
+            req.actor.source !== "local_implicit") ||
+          !req.actor.userId ||
+          req.actor.userId !== current.addresseeUserId
+        ) {
+          throw forbidden(
+            "Only the addressed person can confirm a proposed action from their own session",
+          );
+        }
+        if (!req.body.proposedActionResult) {
+          throw badRequest(
+            "proposedActionResult is required to accept a proposed action",
+          );
+        }
+        if (req.body.proposedActionResult.hash !== storedProposedAction.hash) {
+          throw badRequest(
+            "proposedActionResult.hash does not match the proposed action",
+          );
+        }
+      } else if (req.body.proposedActionResult) {
+        throw badRequest(
+          "proposedActionResult is only accepted for proposed-action confirmations",
+        );
+      }
 
       const actor = getActorInfo(req);
       if (

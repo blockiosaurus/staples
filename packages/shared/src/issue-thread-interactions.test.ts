@@ -654,3 +654,50 @@ describe("issue thread interaction schemas", () => {
     })).toThrow("verdict item ids must be unique");
   });
 });
+
+describe("proposed action confirmation schemas", () => {
+  const hash = "a".repeat(64);
+  const proposedAction = {
+    version: 1,
+    method: "POST",
+    path: "/api/approvals/11111111-1111-4111-8111-111111111111/approve",
+    body: { decisionNote: "ok" },
+    summary: "Approve the hire request",
+    category: "approval",
+    hash,
+  };
+  const payload = { version: 1, prompt: "Approve the hire request?", proposedAction };
+
+  it("accepts a well-formed proposed action payload and result", () => {
+    const parsed = requestConfirmationPayloadSchema.parse({
+      ...payload,
+      proposedAction: { ...proposedAction, staleCheck: { path: "/api/approvals/11111111-1111-4111-8111-111111111111", field: "updatedAt", expected: "2026-10-10T00:00:00.000Z" } },
+    });
+    expect(parsed.proposedAction).toMatchObject({ method: "POST", category: "approval", hash });
+    expect(requestConfirmationResultSchema.parse({ version: 1, outcome: "accepted", proposedAction: { status: "executed", httpStatus: 200 } }).proposedAction)
+      .toEqual({ status: "executed", httpStatus: 200 });
+  });
+
+  it("rejects bad methods, non-/api paths, missing bodies, oversized bodies and bad hashes", () => {
+    for (const bad of [
+      { method: "GET" },
+      { path: "/issues/1" },
+      { path: "https://evil.example/api/x" },
+      { body: undefined },
+      { body: { blob: "x".repeat(21 * 1024) } },
+      { hash: "nothex" },
+      { category: "anything" },
+      { summary: "" },
+    ]) {
+      expect(requestConfirmationPayloadSchema.safeParse({ ...payload, proposedAction: { ...proposedAction, ...bad } }).success, JSON.stringify(bad).slice(0, 80)).toBe(false);
+    }
+    expect(requestConfirmationPayloadSchema.safeParse({ ...payload, proposedAction: { ...proposedAction, body: null, method: "DELETE" } }).success).toBe(true);
+  });
+
+  it("accepts a proposedActionResult with the echoed hash on accept", () => {
+    expect(acceptIssueThreadInteractionSchema.parse({ proposedActionResult: { status: "failed", httpStatus: 403, message: "Forbidden", hash } }).proposedActionResult)
+      .toEqual({ status: "failed", httpStatus: 403, message: "Forbidden", hash });
+    expect(acceptIssueThreadInteractionSchema.safeParse({ proposedActionResult: { status: "executed" } }).success).toBe(false);
+    expect(acceptIssueThreadInteractionSchema.safeParse({ proposedActionResult: { status: "done", hash } }).success).toBe(false);
+  });
+});

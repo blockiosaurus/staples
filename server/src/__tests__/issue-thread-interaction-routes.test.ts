@@ -1544,6 +1544,124 @@ describe("issue thread interaction routes", () => {
     });
   });
 
+  describe("proposed-action confirmations", () => {
+    const PROPOSED_HASH = "b".repeat(64);
+    const proposedAction = {
+      version: 1,
+      method: "POST",
+      path: "/api/approvals/11111111-1111-4111-8111-111111111111/approve",
+      body: { decisionNote: "ok" },
+      summary: "Approve the hire",
+      category: "approval",
+      hash: PROPOSED_HASH,
+    };
+    const personActor = (overrides: Record<string, unknown> = {}) => ({
+      type: "board",
+      userId: "person-1",
+      companyIds: ["company-1"],
+      memberships: [{ companyId: "company-1", membershipRole: "member", status: "active" }],
+      source: "session",
+      isInstanceAdmin: false,
+      ...overrides,
+    });
+    const pendingProposal = (overrides: Record<string, unknown> = {}) => ({
+      id: "interaction-proposed",
+      companyId: "company-1",
+      issueId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      kind: "request_confirmation",
+      status: "pending",
+      continuationPolicy: "wake_assignee",
+      requestedResolverPolicy: "human_only",
+      effectiveResolverPolicy: "human_only",
+      createdByAgentId: ASSIGNEE_AGENT_ID,
+      addresseeUserId: "person-1",
+      addresseeAgentId: null,
+      sourceRunId: RUN_1,
+      payload: { version: 1, prompt: "Approve the hire", proposedAction },
+      result: null,
+      ...overrides,
+    });
+    const acceptUrl = "/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/interactions/interaction-proposed/accept";
+
+    beforeEach(() => {
+      mockInteractionService.getForIssue.mockResolvedValue(pendingProposal());
+    });
+
+    it("rejects client-supplied proposedAction metadata on interaction creation", async () => {
+      const app = await createApp();
+      const res = await request(app)
+        .post("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/interactions")
+        .send({ kind: "request_confirmation", payload: { version: 1, prompt: "Run it?", proposedAction } });
+      expect(res.status).toBe(422);
+      expect(res.body.error).toContain("payload.proposedAction is server-owned metadata");
+      expect(mockInteractionService.create).not.toHaveBeenCalled();
+    });
+
+    it("requires a proposedActionResult whose hash matches the stored proposal", async () => {
+      const app = await createApp(personActor());
+      const missing = await request(app).post(acceptUrl).send({});
+      expect(missing.status).toBe(400);
+      expect(missing.body.error).toMatch(/proposedActionResult/);
+      const wrong = await request(app).post(acceptUrl)
+        .send({ proposedActionResult: { status: "executed", httpStatus: 200, hash: "c".repeat(64) } });
+      expect(wrong.status).toBe(400);
+      expect(wrong.body.error).toMatch(/hash/);
+      expect(mockInteractionService.acceptInteraction).not.toHaveBeenCalled();
+    });
+
+    it("refuses delegated sources, agents and anyone but the addressee", async () => {
+      const body = { proposedActionResult: { status: "executed", httpStatus: 200, hash: PROPOSED_HASH } };
+      for (const actor of [
+        personActor({ source: "assistant_run", assistantRunId: RUN_1 }),
+        personActor({ source: "mcp_oauth" }),
+        personActor({ source: "board_key" }),
+        personActor({ userId: "someone-else" }),
+      ]) {
+        const res = await request(await createApp(actor)).post(acceptUrl).send(body);
+        expect(res.status, JSON.stringify(actor)).toBe(403);
+      }
+      const agent = await request(await createApp({ type: "agent", agentId: ASSIGNEE_AGENT_ID, companyId: "company-1", runId: RUN_1, source: "agent_jwt" }))
+        .post(acceptUrl).send(body);
+      expect([403, 409, 422]).toContain(agent.status);
+      expect(mockInteractionService.acceptInteraction).not.toHaveBeenCalled();
+    });
+
+    it("rejects proposedActionResult on an ordinary confirmation", async () => {
+      mockInteractionService.getForIssue.mockResolvedValue(pendingProposal({ payload: { version: 1, prompt: "Proceed?" } }));
+      const res = await request(await createApp(personActor())).post(acceptUrl)
+        .send({ proposedActionResult: { status: "executed", hash: PROPOSED_HASH } });
+      expect(res.status).toBe(400);
+      expect(mockInteractionService.acceptInteraction).not.toHaveBeenCalled();
+    });
+
+    it("records the browser's result and wakes the Assistant to continue", async () => {
+      const accepted = pendingProposal({
+        status: "accepted",
+        result: { version: 1, outcome: "accepted", proposedAction: { status: "executed", httpStatus: 200, message: "Approved" } },
+      });
+      mockInteractionService.acceptInteraction.mockResolvedValueOnce({ interaction: accepted, createdIssues: [] });
+      const proposedActionResult = { status: "executed", httpStatus: 200, message: "Approved", hash: PROPOSED_HASH };
+      const res = await request(await createApp(personActor())).post(acceptUrl).send({ proposedActionResult });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(mockInteractionService.acceptInteraction).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }),
+        "interaction-proposed",
+        expect.objectContaining({ proposedActionResult }),
+        expect.objectContaining({ userId: "person-1", agentId: null }),
+      );
+      expect(res.body.result.proposedAction).toEqual({ status: "executed", httpStatus: 200, message: "Approved" });
+      expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+        ASSIGNEE_AGENT_ID,
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            interactionId: "interaction-proposed",
+            proposedAction: expect.objectContaining({ method: "POST", path: proposedAction.path, executionStatus: "executed", httpStatus: 200 }),
+          }),
+        }),
+      );
+    });
+  });
+
   it("forwards plan-document confirmations to the interaction service for revision validation", async () => {
     const app = await createApp();
 

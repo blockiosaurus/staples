@@ -1379,6 +1379,40 @@ export interface RequestConfirmationToolActionPayload {
   expiresAt: string;
 }
 
+export type ProposedActionMethod = "POST" | "PATCH" | "PUT" | "DELETE";
+export type ProposedActionCategory =
+  | "approval"
+  | "agent_lifecycle"
+  | "budget"
+  | "secret"
+  | "connection"
+  | "outbound"
+  | "delete"
+  | "other_governed";
+
+/**
+ * Server-owned: an exact governed API call the Assistant proposes. The person's
+ * browser executes it with their own session only after they click Confirm.
+ * `hash` is sha256 (hex) of the canonical JSON of `{ method, path, body }`.
+ */
+export interface RequestConfirmationProposedActionPayload {
+  version: 1;
+  method: ProposedActionMethod;
+  /** Includes the leading `/api/`. */
+  path: string;
+  body: unknown | null;
+  summary: string;
+  category: ProposedActionCategory;
+  hash: string;
+  staleCheck?: { path: string; field: "updatedAt"; expected: string };
+}
+
+export interface RequestConfirmationProposedActionResult {
+  status: "executed" | "failed" | "stale";
+  httpStatus?: number;
+  message?: string;
+}
+
 export interface RequestConfirmationSecretProposalPayload {
   version: 1;
   proposalId: string;
@@ -1487,6 +1521,7 @@ export interface RequestConfirmationPayload {
   toolAction?: RequestConfirmationToolActionPayload;
   secretProposal?: RequestConfirmationSecretProposalPayload;
   connectionAuthorization?: RequestConfirmationConnectionAuthorizationPayload;
+  proposedAction?: RequestConfirmationProposedActionPayload;
 }
 
 export interface RequestCheckboxConfirmationOption {
@@ -1565,6 +1600,7 @@ export interface RequestConfirmationResult {
   } | null;
   toolAction?: RequestConfirmationToolActionResult;
   secretProposal?: RequestConfirmationSecretProposalResult;
+  proposedAction?: RequestConfirmationProposedActionResult;
 }
 
 export interface RequestCheckboxConfirmationResult extends RequestConfirmationResult {
