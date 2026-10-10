@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, lazy, Suspense } from "react";
 import { Link, useNavigate, useLocation } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { agentsApi, type OrgNode } from "../api/agents";
+import { excludeAssistantAgents } from "../lib/assistant-agent";
 import { builtInAgentsApi, type BuiltInAgentState } from "../api/builtInAgents";
 import { environmentsApi } from "../api/environments";
 import { heartbeatsApi } from "../api/heartbeats";
@@ -233,6 +234,7 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
     queryKey: queryKeys.agents.list(selectedCompanyId!),
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
+    select: excludeAssistantAgents,
   });
 
   const { data: orgTree } = useQuery({

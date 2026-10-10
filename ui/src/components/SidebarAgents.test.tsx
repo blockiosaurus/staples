@@ -520,6 +520,22 @@ describe("SidebarAgents", () => {
     expect(browseLink?.getAttribute("href")).toBe("/agents/all");
   });
 
+  it("omits the built-in Assistant from the sidebar agent list", async () => {
+    mockAgentsApi.list.mockResolvedValue([
+      makeAgent({ id: "agent-a", name: "Alpha", urlKey: "alpha" }),
+      makeAgent({
+        id: "assistant-1",
+        name: "Assistant",
+        urlKey: "assistant",
+        metadata: { paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } },
+      }),
+    ]);
+
+    await renderSidebarAgents();
+
+    expect(agentLinkLabels(container)).toEqual(["Alpha"]);
+  });
+
   it("sorts alphabetically and persists the selected mode per company and user", async () => {
     mockAgentsApi.list.mockResolvedValue([
       makeAgent({ id: "agent-c", name: "Charlie", urlKey: "charlie" }),

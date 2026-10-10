@@ -388,6 +388,36 @@ describe("Agents", () => {
     }
   });
 
+  it("omits the built-in Assistant from the agents list", async () => {
+    mockAgentsApi.list.mockResolvedValue([
+      makeAgent({ name: "Alpha", status: "active" }),
+      makeAgent({
+        id: "assistant-1",
+        name: "Assistant",
+        status: "idle",
+        metadata: { paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } },
+      }),
+    ]);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <Agents />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+    const listToggle = container.querySelector<HTMLButtonElement>('button[aria-label="List view"]');
+    await act(async () => { listToggle?.click(); });
+    await flushReact();
+
+    expect(findAgentRow(container, "Alpha")).not.toBeNull();
+    expect(findAgentRow(container, "Assistant")).toBeNull();
+  });
+
   it("shows the configured model beside the adapter on the all agents page", async () => {
     root = createRoot(container);
     await act(async () => {

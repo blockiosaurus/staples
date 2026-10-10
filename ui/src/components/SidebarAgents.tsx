@@ -20,6 +20,7 @@ import { useDialogActions } from "../context/DialogContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useToastActions } from "../context/ToastContext";
 import { agentsApi } from "../api/agents";
+import { excludeAssistantAgents } from "../lib/assistant-agent";
 import { builtInAgentsApi, type BuiltInAgentStatus } from "../api/builtInAgents";
 import { BuiltInLifecycleChip } from "./BuiltInAgentBadges";
 import { authApi } from "../api/auth";
@@ -312,6 +313,7 @@ export function SidebarAgents() {
     queryKey: queryKeys.agents.list(selectedCompanyId!),
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
+    select: excludeAssistantAgents,
   });
   const { data: experimentalSettings } = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
