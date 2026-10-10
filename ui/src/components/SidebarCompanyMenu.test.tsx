@@ -167,7 +167,7 @@ describe("SidebarCompanyMenu", () => {
     vi.clearAllMocks();
   });
 
-  function renderMenu(options: { cloud?: boolean; health?: unknown} = {}) {
+  function renderMenu(options: { cloud?: boolean; health?: unknown } = {}) {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });

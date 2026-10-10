@@ -7851,12 +7851,8 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
               className={
                 taskChatShellEnabled
                   ? isMobile
-                    ? taskChatShellEnabled
-                      ? undefined
-                      : "-mx-4"
-                    : taskChatShellEnabled
-                      ? "flex min-h-0 flex-col"
-                      : "-mx-4 -mt-4 md:-mx-6 md:-mt-6 flex min-h-0 flex-col"
+                    ? undefined
+                    : "flex min-h-0 flex-col"
                   : undefined
               }
             >

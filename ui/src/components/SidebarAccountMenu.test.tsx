@@ -155,7 +155,6 @@ describe("SidebarAccountMenu", () => {
   });
 
   describe("staging commit", () => {
-    const AccountMenu = SidebarAccountMenu;
     const commit = "8751e2de4626ff5e7355fe28b30509991cfff920";
 
     it.each([
@@ -174,7 +173,7 @@ describe("SidebarAccountMenu", () => {
       await act(async () => {
         root.render(
           <QueryClientProvider client={queryClient}>
-            <TooltipProvider><AccountMenu open /></TooltipProvider>
+            <TooltipProvider><SidebarAccountMenu open /></TooltipProvider>
           </QueryClientProvider>,
         );
       });
@@ -207,7 +206,7 @@ describe("SidebarAccountMenu", () => {
         await act(() => {
           root.render(
             <QueryClientProvider client={queryClient}>
-              <TooltipProvider><AccountMenu open={open} /></TooltipProvider>
+              <TooltipProvider><SidebarAccountMenu open={open} /></TooltipProvider>
             </QueryClientProvider>,
           );
         });
@@ -238,7 +237,7 @@ describe("SidebarAccountMenu", () => {
       await act(() => {
         root.render(
           <QueryClientProvider client={queryClient}>
-            <TooltipProvider><AccountMenu open /></TooltipProvider>
+            <TooltipProvider><SidebarAccountMenu open /></TooltipProvider>
           </QueryClientProvider>,
         );
       });
@@ -261,7 +260,7 @@ describe("SidebarAccountMenu", () => {
       await act(() => {
         root.render(
           <QueryClientProvider client={queryClient}>
-            <TooltipProvider><AccountMenu open /></TooltipProvider>
+            <TooltipProvider><SidebarAccountMenu open /></TooltipProvider>
           </QueryClientProvider>,
         );
       });
@@ -428,7 +427,6 @@ describe("SidebarAccountMenu", () => {
   });
 
   it("hides cloud feedback and signs out through the harness", async () => {
-    const AccountMenu = SidebarAccountMenu;
     const root = createRoot(container);
     const onOpenChange = vi.fn();
     const queryClient = new QueryClient({
@@ -450,7 +448,7 @@ describe("SidebarAccountMenu", () => {
       root.render(
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
-            <AccountMenu
+            <SidebarAccountMenu
               deploymentMode="authenticated"
               open
               onOpenChange={onOpenChange}
@@ -496,7 +494,6 @@ describe("SidebarAccountMenu", () => {
   });
 
   it("offers no cloud invite shortcut to members below stack admin", async () => {
-    const AccountMenu = SidebarAccountMenu;
     const root = createRoot(container);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -520,7 +517,7 @@ describe("SidebarAccountMenu", () => {
       root.render(
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
-            <AccountMenu deploymentMode="authenticated" open />
+            <SidebarAccountMenu deploymentMode="authenticated" open />
           </TooltipProvider>
         </QueryClientProvider>,
       );
@@ -539,7 +536,6 @@ describe("SidebarAccountMenu", () => {
   });
 
   it("never falls back to in-app invites when cloud stack metadata is missing", async () => {
-    const AccountMenu = SidebarAccountMenu;
     const root = createRoot(container);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -563,7 +559,7 @@ describe("SidebarAccountMenu", () => {
       root.render(
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
-            <AccountMenu deploymentMode="authenticated" open />
+            <SidebarAccountMenu deploymentMode="authenticated" open />
           </TooltipProvider>
         </QueryClientProvider>,
       );
@@ -581,7 +577,6 @@ describe("SidebarAccountMenu", () => {
   });
 
   it("hides the invite shortcut when the operator hides invites", async () => {
-    const AccountMenu = SidebarAccountMenu;
     const root = createRoot(container);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -596,7 +591,7 @@ describe("SidebarAccountMenu", () => {
       root.render(
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
-            <AccountMenu deploymentMode="authenticated" open />
+            <SidebarAccountMenu deploymentMode="authenticated" open />
           </TooltipProvider>
         </QueryClientProvider>,
       );
@@ -616,7 +611,6 @@ describe("SidebarAccountMenu", () => {
   });
 
   it("offers no self-hosted invite shortcut to members without the invite grant", async () => {
-    const AccountMenu = SidebarAccountMenu;
     const root = createRoot(container);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -632,7 +626,7 @@ describe("SidebarAccountMenu", () => {
       root.render(
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
-            <AccountMenu deploymentMode="authenticated" open />
+            <SidebarAccountMenu deploymentMode="authenticated" open />
           </TooltipProvider>
         </QueryClientProvider>,
       );

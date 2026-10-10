@@ -23,7 +23,6 @@ vi.mock("../components/transcript/RunTranscriptView", () => ({
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); log.mockReset(); events.mockClear(); });
 
 it("retains legacy history and reads only the next offset on visibility recovery", async () => {
-  const Viewer = LogViewer;
   const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   const row = (seq: number, chunk: string) => JSON.stringify({ seq, ts: `2026-09-10T12:00:0${seq}Z`, stream: "stdout", chunk }) + "\n";
   const first = row(1, "retained history");
@@ -34,7 +33,7 @@ it("retains legacy history and reads only the next offset on visibility recovery
   document.body.append(container);
   const root = createRoot(container);
   try {
-    await act(async () => root.render(<Viewer run={run} adapterType="codex_local" />));
+    await act(async () => root.render(<LogViewer run={run} adapterType="codex_local" />));
     expect(container.textContent).toContain("retained history");
     await act(async () => {
       visibility.mockReturnValue("hidden");
@@ -53,7 +52,7 @@ it("retains legacy history and reads only the next offset on visibility recovery
     await act(async () => complete({ content: second, nextOffset: first.length + second.length }));
     expect(container.textContent).toContain("retained history new output");
     log.mockResolvedValueOnce({ content: first, nextOffset: first.length });
-    await act(async () => root.render(<Viewer run={{ ...run, id: "run-2" }} adapterType="codex_local" />));
+    await act(async () => root.render(<LogViewer run={{ ...run, id: "run-2" }} adapterType="codex_local" />));
     expect(log).toHaveBeenLastCalledWith("run-2", 0, expect.any(Number));
     expect(container.textContent).not.toContain("new output");
   } finally {
@@ -63,7 +62,6 @@ it("retains legacy history and reads only the next offset on visibility recovery
 });
 
 it("polls logs when WebSocket construction fails and recovers on retry", async () => {
-  const Viewer = LogViewer;
   vi.useFakeTimers();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   vi.stubGlobal("WebSocket", undefined);
@@ -72,7 +70,7 @@ it("polls logs when WebSocket construction fails and recovers on retry", async (
   const root = createRoot(document.createElement("div"));
   const sockets: Array<{ onopen: (() => void) | null; close: () => void }> = [];
   try {
-    await act(async () => root.render(<Viewer run={run} adapterType="codex_local" />));
+    await act(async () => root.render(<LogViewer run={run} adapterType="codex_local" />));
     const initialReads = log.mock.calls.length;
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(log.mock.calls.length).toBeGreaterThan(initialReads);

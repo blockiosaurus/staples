@@ -9,9 +9,11 @@
 import type { ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { instanceSettingsApi } from "./api/instanceSettings";
 
 // jsdom's CSS parser rejects the custom-property marker rule stitches inserts
 // (`--sxs{--sxs:N}`), pulled into <App>'s eager import graph transitively via
@@ -233,6 +235,31 @@ describe("App Activity routing (PAP-16302)", () => {
   it("redirects a bare legacy section through to the prefixed Audit hub", async () => {
     const root = renderAppAt(container, "/runs?runStatus=succeeded");
     await waitForRoute(container, "AUDIT_RUNS@/PAP/activity/runs?runStatus=succeeded");
+    flushSync(() => root.unmount());
+  });
+
+  it("does not mount board routes before the experimental settings load", async () => {
+    let resolveSettings: (value: Awaited<ReturnType<typeof instanceSettingsApi.getExperimental>>) => void = () => {};
+    vi.spyOn(instanceSettingsApi, "getExperimental").mockReturnValue(
+      new Promise((resolve) => {
+        resolveSettings = resolve;
+      }),
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const root = createRoot(container);
+    flushSync(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/PAP/activity"]}>
+            <App />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    expect(container.textContent).not.toContain("ACTIVITY_PAGE");
+
+    resolveSettings({} as Awaited<ReturnType<typeof instanceSettingsApi.getExperimental>>);
+    await waitForRoute(container, "ACTIVITY_PAGE@/PAP/activity");
     flushSync(() => root.unmount());
   });
 });

@@ -102,11 +102,10 @@ describe("AppsSidebar", () => {
   });
 
   it("shows chat navigation in place of browse and review", async () => {
-    const Sidebar = AppsSidebar;
     route.pathname = "/SLA/apps/chat/endpoint-a/conversations";
     const root = createRoot(container);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    await act(async () => root.render(<QueryClientProvider client={queryClient}><Sidebar /></QueryClientProvider>));
+    await act(async () => root.render(<QueryClientProvider client={queryClient}><AppsSidebar /></QueryClientProvider>));
     await flushReact();
     expect(container.textContent).not.toMatch(/Browse|Review/);
     for (const tab of ["settings", "access", "conversations", "activity"]) {

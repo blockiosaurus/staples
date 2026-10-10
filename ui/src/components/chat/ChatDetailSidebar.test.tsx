@@ -24,13 +24,11 @@ vi.mock("@/lib/router", () => ({
 
 describe("chat detail sidebar with collapsed global navigation", () => {
   it("keeps labels visible in the collapsed layout", () => {
-    const Provider = SidebarNavExpandedProvider;
-    const NavItem = SidebarNavItem;
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
     const container = document.createElement("div");
     const root = createRoot(container);
     try {
-      flushSync(() => root.render(<QueryClientProvider client={queryClient}><TooltipProvider><Provider><ChatDetailSidebar endpointId="endpoint-a" NavItem={NavItem} /></Provider></TooltipProvider></QueryClientProvider>));
+      flushSync(() => root.render(<QueryClientProvider client={queryClient}><TooltipProvider><SidebarNavExpandedProvider><ChatDetailSidebar endpointId="endpoint-a" NavItem={SidebarNavItem} /></SidebarNavExpandedProvider></TooltipProvider></QueryClientProvider>));
       for (const label of ["Settings", "Access", "Conversations", "Activity"]) {
         const span = Array.from(container.querySelectorAll("span")).find((node) => node.textContent === label);
         expect(span?.classList.contains("truncate")).toBe(true);

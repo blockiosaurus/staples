@@ -358,7 +358,6 @@ describe("Agents", () => {
   });
 
   it("omits the action bar from streamlined agent list rows", async () => {
-    const AgentList = Agents;
     mockAgentsApi.list.mockResolvedValue([
       makeAgent({ name: "Alpha", status: "active" }),
       makeAgent({ id: "agent-paused", name: "Paused agent", status: "paused" }),
@@ -368,7 +367,7 @@ describe("Agents", () => {
       root!.render(
         <QueryClientProvider client={queryClient}>
           <ToastProvider>
-            <AgentList />
+            <Agents />
           </ToastProvider>
         </QueryClientProvider>,
       );
@@ -1003,13 +1002,12 @@ describe("Agents", () => {
   });
 
   it("omits star and leave/join actions from streamlined agent index list and org views", async () => {
-    const AgentList = Agents;
     root = createRoot(container);
     await act(async () => {
       root!.render(
         <QueryClientProvider client={queryClient}>
           <ToastProvider>
-            <AgentList />
+            <Agents />
           </ToastProvider>
         </QueryClientProvider>,
       );

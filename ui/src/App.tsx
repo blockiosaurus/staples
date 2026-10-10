@@ -685,7 +685,7 @@ function AuditCompatibilityRedirect({
 }
 
 export function App() {
-  const { enabled: combinedInboxTasksEnabled } = useCombinedInboxTasksEnabled();
+  const { enabled: combinedInboxTasksEnabled, loaded: experimentalSettingsLoaded } = useCombinedInboxTasksEnabled();
 
   return (
     <>
@@ -699,7 +699,7 @@ export function App() {
         <Route path="assistant-connections" element={<AssistantConnectionsPage />} />
         <Route path="cli-auth/:id" element={<CliAuthPage />} />
         <Route path="invite/:token" element={<InviteLandingPage />} />
-        <Route element={<CloudAccessGate allowMembershipRequest />}>
+        <Route element={experimentalSettingsLoaded ? <CloudAccessGate allowMembershipRequest /> : <PaperclipLoading />}>
           {/* The identity APIs enforce the chat rollout flag. Nonmembers cannot
               read experimental settings, but a private invitation may request membership. */}
           <Route path="chat-identity/confirm" element={<ChatIdentityConfirm />} />
@@ -709,7 +709,7 @@ export function App() {
         <Route path="ux-lab/responsible-user-denial" element={<ResponsibleUserDenialUxLab />} />
         <Route path="ux-lab/cross-issue-collaboration" element={<CrossIssueCollaborationUxLab />} />
 
-        <Route element={<CloudAccessGate />}>
+        <Route element={experimentalSettingsLoaded ? <CloudAccessGate /> : <PaperclipLoading />}>
           <Route index element={<CompanyRootRedirect />} />
           <Route path="onboarding" element={<OnboardingRoutePage />} />
           <Route path="instance" element={<LegacySettingsRedirect />} />
