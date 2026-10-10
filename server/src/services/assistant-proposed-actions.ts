@@ -31,9 +31,64 @@ export type GovernedRoutePattern = {
   binding: CompanyBinding;
   /** Human label for docs and errors. */
   route: string;
-  /** Secrets: a proposal never carries a secret value; the person enters values in Secrets settings. */
+  /** Secrets: a proposal never carries a secret value; the person enters values in Secrets settings. Checked at every depth. */
   forbidBodyKeys?: readonly string[];
+  /** Route-specific body rules; throws ProposedActionError. */
+  validateBody?: (body: unknown) => void;
 };
+
+/** Upper bound for any budget amount the Assistant may propose, in cents. */
+export const PROPOSED_BUDGET_MAX_CENTS = 10_000_000;
+
+/** Every key path in a JSON value (objects and arrays, at any depth). */
+function findKeysDeep(value: unknown, keys: ReadonlySet<string>, found = new Set<string>()): Set<string> {
+  if (Array.isArray(value)) for (const item of value) findKeysDeep(item, keys, found);
+  else if (value && typeof value === "object") {
+    for (const [key, child] of Object.entries(value)) {
+      if (keys.has(key)) found.add(key);
+      findKeysDeep(child, keys, found);
+    }
+  }
+  return found;
+}
+
+function bodyRecord(body: unknown): Record<string, unknown> {
+  return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+}
+
+function assertBudgetAmounts(body: unknown, keys: readonly string[]) {
+  const record = bodyRecord(body);
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
+    const value = record[key];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > PROPOSED_BUDGET_MAX_CENTS) {
+      throw new ProposedActionError(`${key} must be a whole number of cents between 0 and ${PROPOSED_BUDGET_MAX_CENTS}.`);
+    }
+  }
+}
+
+/** Adapters that run arbitrary commands or call arbitrary URLs. */
+const COMMAND_ADAPTER_TYPES = new Set(["process", "http"]);
+/** Agent fields the person must set themselves in the agent settings, never via a proposal. */
+const AGENT_FORBIDDEN_FIELDS = ["applyStoredClaudeLogin", "permissions", "instructionsBundle"] as const;
+/** Adapter config keys that execute commands or inject environment. */
+const AGENT_FORBIDDEN_DEEP_KEYS = new Set(["command", "env"]);
+
+function assertSafeAgentCreate(body: unknown) {
+  const record = bodyRecord(body);
+  if (typeof record.adapterType === "string" && COMMAND_ADAPTER_TYPES.has(record.adapterType)) {
+    throw new ProposedActionError(`The Assistant cannot propose agents with the ${record.adapterType} adapter; the person sets that up in agent settings.`);
+  }
+  const fields = AGENT_FORBIDDEN_FIELDS.filter((key) => Object.prototype.hasOwnProperty.call(record, key));
+  if (fields.length) {
+    throw new ProposedActionError(`The Assistant cannot propose ${fields.join(", ")} for an agent; the person sets that up in agent settings.`);
+  }
+  const deep = [...findKeysDeep(body, AGENT_FORBIDDEN_DEEP_KEYS)];
+  if (deep.length) {
+    throw new ProposedActionError(`The Assistant cannot propose adapter ${deep.join(", ")} settings; the person sets that up in agent settings.`);
+  }
+  assertBudgetAmounts(body, ["budgetMonthlyCents"]);
+}
 
 const UUID = "([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})";
 const SEGMENT = "[A-Za-z0-9._~-]+";
@@ -48,15 +103,15 @@ export const GOVERNED_ROUTE_PATTERNS: readonly GovernedRoutePattern[] = [
   { method: "POST", pattern: re(`/api/approvals/${UUID}/reject`), category: "approval", binding: entity("approval"), route: "POST /api/approvals/:id/reject" },
   { method: "POST", pattern: re(`/api/approvals/${UUID}/request-revision`), category: "approval", binding: entity("approval"), route: "POST /api/approvals/:id/request-revision" },
   // agents.ts
-  { method: "POST", pattern: re(`/api/companies/${UUID}/agent-hires`), category: "agent_lifecycle", binding: company(), route: "POST /api/companies/:companyId/agent-hires" },
-  { method: "POST", pattern: re(`/api/companies/${UUID}/agents`), category: "agent_lifecycle", binding: company(), route: "POST /api/companies/:companyId/agents" },
+  { method: "POST", pattern: re(`/api/companies/${UUID}/agent-hires`), category: "agent_lifecycle", binding: company(), route: "POST /api/companies/:companyId/agent-hires", validateBody: assertSafeAgentCreate },
+  { method: "POST", pattern: re(`/api/companies/${UUID}/agents`), category: "agent_lifecycle", binding: company(), route: "POST /api/companies/:companyId/agents", validateBody: assertSafeAgentCreate },
   { method: "POST", pattern: re(`/api/agents/${UUID}/pause`), category: "agent_lifecycle", binding: entity("agent"), route: "POST /api/agents/:id/pause" },
   { method: "POST", pattern: re(`/api/agents/${UUID}/resume`), category: "agent_lifecycle", binding: entity("agent"), route: "POST /api/agents/:id/resume" },
   { method: "POST", pattern: re(`/api/agents/${UUID}/terminate`), category: "agent_lifecycle", binding: entity("agent"), route: "POST /api/agents/:id/terminate" },
   // costs.ts
-  { method: "POST", pattern: re(`/api/companies/${UUID}/budgets/policies`), category: "budget", binding: company(), route: "POST /api/companies/:companyId/budgets/policies" },
-  { method: "PATCH", pattern: re(`/api/companies/${UUID}/budgets`), category: "budget", binding: company(), route: "PATCH /api/companies/:companyId/budgets" },
-  { method: "PATCH", pattern: re(`/api/agents/${UUID}/budgets`), category: "budget", binding: entity("agent"), route: "PATCH /api/agents/:agentId/budgets" },
+  { method: "POST", pattern: re(`/api/companies/${UUID}/budgets/policies`), category: "budget", binding: company(), route: "POST /api/companies/:companyId/budgets/policies", validateBody: (body) => assertBudgetAmounts(body, ["amount", "reservationCents"]) },
+  { method: "PATCH", pattern: re(`/api/companies/${UUID}/budgets`), category: "budget", binding: company(), route: "PATCH /api/companies/:companyId/budgets", validateBody: (body) => assertBudgetAmounts(body, ["budgetMonthlyCents"]) },
+  { method: "PATCH", pattern: re(`/api/agents/${UUID}/budgets`), category: "budget", binding: entity("agent"), route: "PATCH /api/agents/:agentId/budgets", validateBody: (body) => assertBudgetAmounts(body, ["budgetMonthlyCents"]) },
   // secrets.ts
   { method: "POST", pattern: re(`/api/companies/${UUID}/secrets`), category: "secret", binding: company(), route: "POST /api/companies/:companyId/secrets", forbidBodyKeys: ["value"] },
   { method: "PATCH", pattern: re(`/api/secrets/${UUID}`), category: "secret", binding: entity("secret"), route: "PATCH /api/secrets/:id", forbidBodyKeys: ["value"] },
@@ -146,12 +201,13 @@ export async function validateGovernedAction(
   if (Buffer.byteLength(serialized, "utf8") > PROPOSED_ACTION_BODY_MAX_BYTES) {
     throw new ProposedActionError(`body is larger than ${PROPOSED_ACTION_BODY_MAX_BYTES} bytes.`);
   }
-  if (route.forbidBodyKeys && input.body && typeof input.body === "object" && !Array.isArray(input.body)) {
-    const present = route.forbidBodyKeys.filter((key) => Object.prototype.hasOwnProperty.call(input.body, key));
+  if (route.forbidBodyKeys) {
+    const present = [...findKeysDeep(input.body, new Set(route.forbidBodyKeys))];
     if (present.length) {
       throw new ProposedActionError(`The Assistant never handles secret values (${present.join(", ")}). Propose the change without it; the person enters values in Secrets settings.`);
     }
   }
+  route.validateBody?.(input.body);
   await assertBindingCompany(db, route.binding, route.match, companyId, "path");
   if (input.staleCheckPath) {
     assertPlainApiPath(input.staleCheckPath, "staleCheck.path");

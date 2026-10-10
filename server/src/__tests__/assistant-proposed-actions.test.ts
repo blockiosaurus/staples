@@ -8,7 +8,10 @@ import { issueRoutes } from "../routes/issues.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { builtInAgentService } from "../services/built-in-agents.js";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
-import { canonicalJson, matchGovernedRoute, proposedActionHash, ProposedActionError } from "../services/assistant-proposed-actions.js";
+import { canonicalJson, matchGovernedRoute, proposedActionHash, ProposedActionError, validateGovernedAction } from "../services/assistant-proposed-actions.js";
+import { issueThreadInteractionService } from "../services/issue-thread-interactions.js";
+import { buildHostServices } from "../services/plugin-host-services.js";
+import type { Db } from "@paperclipai/db";
 import { startRunnerApiTestServer } from "./helpers/runner-api-server.js";
 import { getEmbeddedPostgresTestSupport } from "./helpers/embedded-postgres.js";
 
@@ -26,6 +29,46 @@ describe("proposed action canonical hashing", () => {
     expect(proposedActionHash({ ...base, body: { a: 1, b: 2 } })).toBe(expected);
     expect(proposedActionHash({ ...base, method: "PATCH" })).not.toBe(expected);
     expect(proposedActionHash({ ...base, body: null })).toBe(proposedActionHash({ ...base, body: undefined }));
+  });
+});
+
+describe("governed body restrictions", () => {
+  const companyId = "22222222-2222-4222-8222-222222222222";
+  // Company-bound paths never touch the database.
+  const check = (method: string, path: string, body: unknown) => validateGovernedAction({} as Db, { method, path, body }, companyId);
+
+  it.each([
+    [{ name: "Ops", adapterType: "process", adapterConfig: {} }, /adapter/],
+    [{ name: "Ops", adapterType: "http", adapterConfig: {} }, /adapter/],
+    [{ name: "Ops", adapterType: "claude_local", adapterConfig: { nested: { command: "rm -rf /" } } }, /command/],
+    [{ name: "Ops", adapterType: "claude_local", adapterConfig: { env: { FOO: "1" } } }, /env/],
+    [{ name: "Ops", adapterType: "claude_local", applyStoredClaudeLogin: true }, /applyStoredClaudeLogin/],
+    [{ name: "Ops", adapterType: "claude_local", permissions: { canCreateAgents: true } }, /permissions/],
+    [{ name: "Ops", adapterType: "claude_local", instructionsBundle: { files: [] } }, /instructionsBundle/],
+    [{ name: "Ops", adapterType: "claude_local", budgetMonthlyCents: 10_000_001 }, /budgetMonthlyCents/],
+  ])("refuses risky agent create/hire bodies (%j)", async (body, message) => {
+    for (const path of [`/api/companies/${companyId}/agents`, `/api/companies/${companyId}/agent-hires`]) {
+      await expect(check("POST", path, body)).rejects.toThrow(message);
+    }
+  });
+
+  it("allows an ordinary agent hire", async () => {
+    await expect(check("POST", `/api/companies/${companyId}/agent-hires`, { name: "Writer", adapterType: "claude_local", adapterConfig: { model: "sonnet" }, budgetMonthlyCents: 5000 }))
+      .resolves.toMatchObject({ category: "agent_lifecycle" });
+  });
+
+  it.each([-1, 1.5, 10_000_001, "100", null])("refuses budget amount %j", async (amount) => {
+    await expect(check("POST", `/api/companies/${companyId}/budgets/policies`, { scopeType: "company", scopeId: companyId, amount })).rejects.toThrow(/amount/);
+    await expect(check("PATCH", `/api/companies/${companyId}/budgets`, { budgetMonthlyCents: amount })).rejects.toThrow(/budgetMonthlyCents/);
+  });
+
+  it("allows sane budget amounts", async () => {
+    await expect(check("POST", `/api/companies/${companyId}/budgets/policies`, { scopeType: "company", scopeId: companyId, amount: 0 })).resolves.toBeTruthy();
+    await expect(check("PATCH", `/api/companies/${companyId}/budgets`, { budgetMonthlyCents: 10_000_000 })).resolves.toBeTruthy();
+  });
+
+  it("refuses secret values at any depth", async () => {
+    await expect(check("POST", `/api/companies/${companyId}/secrets`, { name: "API", providerMetadata: { inner: [{ value: "sk-live" }] } })).rejects.toThrow(/secret values/);
   });
 });
 
@@ -205,10 +248,106 @@ const support = await getEmbeddedPostgresTestSupport();
     let [row] = await server.db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, interactionId));
     expect(row!.status).toBe("pending");
 
+    // Accept requires a prior claim by the same person.
+    expect((await request(personApp(f, "session")).post(acceptUrl).send({ proposedActionResult })).status).toBe(409);
+    const claimUrl = `/api/issues/${f.issueId}/interactions/${interactionId}/claim-proposed-action`;
+    for (const source of ["assistant_run", "mcp_oauth"] as const) {
+      expect((await request(personApp(f, source)).post(claimUrl).send({ hash })).status).toBe(403);
+    }
+    const claimed = await request(personApp(f, "session")).post(claimUrl).send({ hash });
+    expect(claimed.status, JSON.stringify(claimed.body)).toBe(200);
+    // A second claim (another tab) is refused while the first is fresh.
+    expect((await request(personApp(f, "session")).post(claimUrl).send({ hash })).status).toBe(409);
+
     const accepted = await request(personApp(f, "session")).post(acceptUrl).send({ proposedActionResult });
     expect(accepted.status, JSON.stringify(accepted.body)).toBe(200);
     [row] = await server.db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, interactionId));
     expect(row).toMatchObject({ status: "accepted", resolvedByUserId: f.responsibleUserId });
     expect(row!.result).toMatchObject({ outcome: "accepted", proposedAction: { status: "executed", httpStatus: 200, message: "Rejected" } });
+  }, 60_000);
+
+  async function proposeApproval(f: Fixture) {
+    const approval = await pendingApproval(f.companyId);
+    const proposed = await call(f, "staples_propose_action", { method: "POST", path: `/api/approvals/${approval.id}/approve`, body: null, summary: "Approve" });
+    expect(proposed.body.result.isError, JSON.stringify(proposed.body)).toBeUndefined();
+    return { interactionId: proposed.body.result.structuredContent.interaction.id as string, hash: proposed.body.result.structuredContent.proposedAction.hash as string };
+  }
+
+  it("claims only for the addressee's own session, with the stored hash", async () => {
+    const f = await assistantFixture();
+    const { interactionId, hash } = await proposeApproval(f);
+    const claimUrl = `/api/issues/${f.issueId}/interactions/${interactionId}/claim-proposed-action`;
+    // Someone else in the company, even in their own session.
+    const otherUserId = `other-${randomUUID()}`;
+    await server.db.insert(authUsers).values({ id: otherUserId, name: "Other", email: `${otherUserId}@fixture.invalid`, emailVerified: true, createdAt: new Date(), updatedAt: new Date() });
+    await server.db.insert(companyMemberships).values({ companyId: f.companyId, principalType: "user", principalId: otherUserId, status: "active", membershipRole: "owner" });
+    expect((await request(personApp(f, "session", otherUserId)).post(claimUrl).send({ hash })).status).toBe(403);
+    expect((await request(personApp(f, "session")).post(claimUrl).send({ hash: "0".repeat(64) })).status).toBe(400);
+    expect((await request(personApp(f, "session")).post(claimUrl).send({ hash })).status).toBe(200);
+  }, 60_000);
+
+  it("refuses to claim a stored proposal that is not allowlisted or whose hash does not match its call", async () => {
+    const f = await assistantFixture();
+    const { interactionId } = await proposeApproval(f);
+    const [row] = await server.db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, interactionId));
+    const payload = row!.payload as Record<string, any>;
+    const claimUrl = `/api/issues/${f.issueId}/interactions/${interactionId}/claim-proposed-action`;
+
+    // A forged non-allowlisted call with a self-consistent hash.
+    const forgedCall = { method: "POST", path: `/api/issues/${f.issueId}/comments`, body: { body: "hi" } };
+    const forgedHash = proposedActionHash(forgedCall);
+    await server.db.update(issueThreadInteractions).set({ payload: { ...payload, proposedAction: { ...payload.proposedAction, ...forgedCall, hash: forgedHash } } as never })
+      .where(eq(issueThreadInteractions.id, interactionId));
+    expect((await request(personApp(f, "session")).post(claimUrl).send({ hash: forgedHash })).status).toBe(422);
+
+    // A stored hash that does not describe the stored call.
+    await server.db.update(issueThreadInteractions).set({ payload: { ...payload, proposedAction: { ...payload.proposedAction, body: { decisionNote: "swapped" } } } as never })
+      .where(eq(issueThreadInteractions.id, interactionId));
+    expect((await request(personApp(f, "session")).post(claimUrl).send({ hash: payload.proposedAction.hash })).status).toBe(422);
+  }, 60_000);
+
+  it("lets the same person re-claim a stale claim after five minutes", async () => {
+    const f = await assistantFixture();
+    const { interactionId, hash } = await proposeApproval(f);
+    const claimUrl = `/api/issues/${f.issueId}/interactions/${interactionId}/claim-proposed-action`;
+    expect((await request(personApp(f, "session")).post(claimUrl).send({ hash })).status).toBe(200);
+    expect((await request(personApp(f, "session")).post(claimUrl).send({ hash })).status).toBe(409);
+    const [row] = await server.db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, interactionId));
+    const payload = row!.payload as Record<string, any>;
+    await server.db.update(issueThreadInteractions).set({ payload: { ...payload, proposedActionClaim: { ...payload.proposedActionClaim, claimedAt: new Date(Date.now() - 6 * 60_000).toISOString() } } as never })
+      .where(eq(issueThreadInteractions.id, interactionId));
+    expect((await request(personApp(f, "session")).post(claimUrl).send({ hash })).status).toBe(200);
+  }, 60_000);
+
+  it("only the Assistant tool may create proposedAction interactions (service and plugin paths refuse)", async () => {
+    const f = await assistantFixture();
+    const [issue] = await server.db.select().from(issues).where(eq(issues.id, f.issueId));
+    const forged = {
+      kind: "request_confirmation" as const,
+      addresseeUserId: f.responsibleUserId,
+      payload: { version: 1 as const, prompt: "Delete it", proposedAction: { version: 1 as const, method: "DELETE" as const, path: `/api/issues/${f.issueId}`, body: null, summary: "Delete", category: "delete" as const, hash: proposedActionHash({ method: "DELETE", path: `/api/issues/${f.issueId}`, body: null }) } },
+    };
+    await expect(issueThreadInteractionService(server.db).create(issue!, forged, { agentId: f.staffAgentId })).rejects.toThrow(/proposedAction is server-owned/);
+    const eventBus = { forPlugin: () => ({ emit: () => undefined, subscribe: () => undefined }) } as never;
+    const plugin = buildHostServices(server.db, "plugin-record-id", "test-plugin", eventBus);
+    await expect(plugin.issues.createInteraction({ companyId: f.companyId, issueId: f.issueId, interaction: forged as never, authorAgentId: f.staffAgentId }))
+      .rejects.toThrow(/proposedAction is server-owned/);
+    const created = await server.db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.issueId, f.issueId));
+    expect(created).toHaveLength(0);
+  }, 60_000);
+
+  it("wakes the Assistant: a conversation's assignee is always its conversation agent", async () => {
+    const f = await assistantFixture();
+    // The continuation wake targets issue.assigneeAgentId. The schema pins it
+    // to conversationAgentId (the Assistant); the tool also refuses otherwise.
+    await expect(server.db.update(issues).set({ assigneeAgentId: f.staffAgentId }).where(eq(issues.id, f.issueId)))
+      .rejects.toMatchObject({ cause: expect.objectContaining({ constraint_name: "issues_conversation_identity_check" }) });
+    const { interactionId, hash } = await proposeApproval(f);
+    const claimUrl = `/api/issues/${f.issueId}/interactions/${interactionId}/claim-proposed-action`;
+    expect((await request(personApp(f, "session")).post(claimUrl).send({ hash })).status).toBe(200);
+    const [row] = await server.db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, interactionId));
+    const [issue] = await server.db.select().from(issues).where(eq(issues.id, f.issueId));
+    expect(row!.continuationPolicy).toBe("wake_assignee");
+    expect(issue!.assigneeAgentId).toBe(f.agentId);
   }, 60_000);
 });

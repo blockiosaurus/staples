@@ -274,11 +274,15 @@ const PROPOSE_ACTION_TOOL = "staples_propose_action";
 async function proposeAction(db: Db, context: AssistantToolContext, args: Record<string, unknown>) {
   if (!context.issueId) throw new McpCapabilityError("Proposed actions can only be made from this person's Assistant conversation.");
   const [issue] = await db.select({
-    id: issues.id, companyId: issues.companyId, status: issues.status,
+    id: issues.id, companyId: issues.companyId, status: issues.status, assigneeAgentId: issues.assigneeAgentId,
     conversationAgentId: issues.conversationAgentId, conversationUserId: issues.conversationUserId,
   }).from(issues).where(and(eq(issues.id, context.issueId), eq(issues.companyId, context.companyId)));
   if (!issue || issue.conversationAgentId !== context.agentId || issue.conversationUserId !== context.userId) {
     throw new McpCapabilityError("Proposed actions can only be made from this person's Assistant conversation.");
+  }
+  // The continuation wake goes to the issue's assignee; it must be the Assistant.
+  if (issue.assigneeAgentId !== context.agentId) {
+    throw new McpCapabilityError("This conversation is not assigned to the Assistant, so it could not be told the outcome. Ask the person to reassign it first.");
   }
   const method = String(args.method);
   const path = String(args.path);
@@ -312,7 +316,7 @@ async function proposeAction(db: Db, context: AssistantToolContext, args: Record
       supersedeOnUserComment: false,
       proposedAction,
     },
-  }, { agentId: context.agentId, runId: context.runId });
+  }, { agentId: context.agentId, runId: context.runId }, { allowProposedAction: true });
   await logActivity(db, {
     companyId: context.companyId, actorType: "agent", actorId: context.agentId, agentId: context.agentId, runId: context.runId,
     action: "issue.thread_interaction_created", entityType: "issue", entityId: issue.id,

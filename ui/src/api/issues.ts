@@ -502,6 +502,12 @@ export const issuesApi = {
       `/issues/${id}/interactions/${interactionId}/accept`,
       data ?? {},
     ),
+  /** Reserve an Assistant proposed action before the browser executes it; the server re-validates it. */
+  claimProposedAction: (id: string, interactionId: string, hash: string) =>
+    api.post<IssueThreadInteraction>(
+      `/issues/${id}/interactions/${interactionId}/claim-proposed-action`,
+      { hash },
+    ),
   rejectInteraction: (id: string, interactionId: string, reason?: string) =>
     api.post<IssueThreadInteraction>(
       `/issues/${id}/interactions/${interactionId}/reject`,

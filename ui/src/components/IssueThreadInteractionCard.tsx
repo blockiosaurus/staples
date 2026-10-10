@@ -49,6 +49,7 @@ import { ConnectionIntentInteractionBody } from "@/features/connections/Connecti
 import { QuestionForm } from "./task-chat/QuestionForm";
 import {
   executeProposedAction,
+  issuesApi,
   readProposedActionStaleValue,
   type ProposedActionAcceptResult,
 } from "../api/issues";
@@ -1833,10 +1834,14 @@ const PROPOSED_ACTION_CATEGORY_LABELS: Record<string, string> = {
  */
 function ProposedActionCard({
   interaction,
+  currentUserId,
+  addresseeLabel,
   onAcceptInteraction,
   onRejectInteraction,
 }: {
   interaction: RequestConfirmationInteraction;
+  currentUserId?: string | null;
+  addresseeLabel?: string | null;
   onAcceptInteraction?: IssueThreadInteractionCardProps["onAcceptInteraction"];
   onRejectInteraction?: (interaction: RequestConfirmationInteraction, reason?: string) => Promise<void> | void;
 }) {
@@ -1845,9 +1850,10 @@ function ProposedActionCard({
   const [staleWarning, setStaleWarning] = useState(false);
   const [localResult, setLocalResult] = useState<Omit<ProposedActionAcceptResult, "hash"> | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [bodyOpen, setBodyOpen] = useState(false);
   const resolutionErrorMessage = useResolutionErrorMessage();
   const isPending = interaction.status === "pending";
+  // Only the addressed person may run it (the server enforces this too).
+  const isAddressee = Boolean(currentUserId) && currentUserId === interaction.addresseeUserId;
   const recorded = interaction.result?.proposedAction ?? null;
   const outcome = recorded ?? (isPending ? localResult : null);
   const destructive = action.method === "DELETE" || action.category === "delete";
@@ -1865,6 +1871,14 @@ function ProposedActionCard({
           setStaleWarning(true);
           return;
         }
+      }
+      // The server re-validates the stored call and reserves it for this
+      // person before anything runs; a refused claim means nothing executes.
+      try {
+        await issuesApi.claimProposedAction(interaction.issueId, interaction.id, action.hash);
+      } catch (error) {
+        setActionError(resolutionErrorMessage(error));
+        return;
       }
       const result = await executeProposedAction(action);
       setLocalResult(result);
@@ -1906,22 +1920,19 @@ function ProposedActionCard({
         </span>
         <span data-testid="interaction-status-badge" className={cn("text-xs", failed ? "text-destructive" : "text-muted-foreground")}>{statusLabel}</span>
       </div>
-      <p className="mt-2 text-sm font-medium text-foreground">{action.summary}</p>
-      <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
-        <span className="font-semibold text-foreground">{action.method}</span> {action.path}
-      </p>
-      {prettyBody ? (
-        <Collapsible open={bodyOpen} onOpenChange={setBodyOpen}>
-          <CollapsibleTrigger asChild>
-            <button type="button" className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <ChevronRight className={cn("h-3 w-3", bodyOpen && "rotate-90")} />Request body
-            </button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-mono text-xs text-foreground">{prettyBody}</pre>
-          </CollapsibleContent>
-        </Collapsible>
-      ) : null}
+      {/* The exact request comes first, at full prominence: it is what runs. */}
+      <div data-testid="proposed-action-request" className="mt-3 space-y-2">
+        <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">Request</p>
+        <p className="break-all font-mono text-sm text-foreground">
+          <span className="font-semibold">{action.method}</span> {action.path}
+        </p>
+        {prettyBody ? (
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-mono text-xs text-foreground">{prettyBody}</pre>
+        ) : (
+          <p className="text-xs text-muted-foreground">No request body.</p>
+        )}
+      </div>
+      <p className="mt-3 text-sm text-foreground"><span className="text-muted-foreground">Assistant's summary: </span>{action.summary}</p>
       {outcome ? (
         <p className={cn("mt-2 flex items-center gap-1.5 text-sm", failed ? "text-destructive" : "text-muted-foreground")} aria-live="polite">
           {failed ? <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />}
@@ -1937,7 +1948,10 @@ function ProposedActionCard({
           <TriangleAlert className="h-3.5 w-3.5 shrink-0" />Changed since the Assistant proposed this. Review it, then confirm again to run it anyway.
         </p>
       ) : null}
-      {isPending && !localResult ? (
+      {isPending && !localResult && !isAddressee ? (
+        <p className="mt-3 text-sm text-muted-foreground">Waiting for {addresseeLabel || "the addressed person"} to confirm</p>
+      ) : null}
+      {isPending && !localResult && isAddressee ? (
         <div className="mt-3 flex justify-end gap-2">
           <Button size="sm" variant="ghost" disabled={!onRejectInteraction || working !== null} onClick={() => void cancel()}>
             {working === "cancel" ? "Cancelling…" : (interaction.payload.rejectLabel || "Cancel")}
@@ -3886,6 +3900,8 @@ export function IssueThreadInteractionCard({
       <InteractionAudienceContext.Provider value={audience}>
         <ProposedActionCard
           interaction={interaction}
+          currentUserId={currentUserId}
+          addresseeLabel={addresseeLabel}
           onAcceptInteraction={onAcceptInteraction}
           onRejectInteraction={onRejectInteraction}
         />

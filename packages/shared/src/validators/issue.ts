@@ -2184,6 +2184,12 @@ export const acceptIssueThreadInteractionSchema = z
       seenOptionIds.add(optionId);
     }
   });
+/** Body for reserving a proposed action before the browser executes it. */
+export const claimProposedActionSchema = z.object({
+  hash: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+export type ClaimProposedAction = z.infer<typeof claimProposedActionSchema>;
+
 export type AcceptIssueThreadInteraction = z.infer<
   typeof acceptIssueThreadInteractionSchema
 >;

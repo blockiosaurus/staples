@@ -101,6 +101,7 @@ import {
 } from "@paperclipai/shared";
 import { z } from "zod";
 import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { ProposedActionError, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { authorizationService } from "./authorization.js";
 import { isCloudManagedInstance } from "./cloud-instance.js";
@@ -170,7 +171,26 @@ async function assertInteractionRunWriteAllowed(tx: Db, issue: { id: string; com
 type CreateInteractionOptions = {
   /** Keep independently owned pending cards actionable. Internal runtime bridges use this. */
   supersedePendingSiblingInteractions?: boolean;
+  /**
+   * Only the Assistant's staples_propose_action tool sets this, after it has
+   * validated the call against the governed allowlist. Every other caller
+   * (public route, native runner, plugins) is refused a proposedAction.
+   */
+  allowProposedAction?: boolean;
 };
+
+/** A claim older than this may be taken over by the same person (e.g. a closed tab). */
+export const PROPOSED_ACTION_CLAIM_TTL_MS = 5 * 60_000;
+
+type ProposedActionClaim = { userId: string; claimedAt: string };
+
+function readProposedActionClaim(payload: unknown): ProposedActionClaim | null {
+  if (!payload || typeof payload !== "object") return null;
+  const claim = (payload as { proposedActionClaim?: unknown }).proposedActionClaim;
+  if (!claim || typeof claim !== "object") return null;
+  const { userId, claimedAt } = claim as Record<string, unknown>;
+  return typeof userId === "string" && typeof claimedAt === "string" ? { userId, claimedAt } : null;
+}
 
 type InteractionWakeup = (
   agentId: string,
@@ -2249,6 +2269,10 @@ export function issueThreadInteractionService(
         if (!proposedActionResult || proposedActionResult.hash !== storedProposedAction.hash) {
           throw badRequest("proposedActionResult.hash does not match the proposed action");
         }
+        const claim = readProposedActionClaim(lockedCurrent.payload);
+        if (!claim || !args.actor.userId || claim.userId !== args.actor.userId) {
+          throw conflict("Claim this proposed action before recording its result");
+        }
       } else if (proposedActionResult) {
         throw badRequest("proposedActionResult is only accepted for proposed-action confirmations");
       }
@@ -3257,6 +3281,78 @@ export function issueThreadInteractionService(
       return hydrateInteraction(updated);
     },
 
+    /**
+     * Reserve a proposed action for execution by the addressed person's
+     * browser. Runs before the browser performs the call: it re-validates the
+     * stored call against the governed allowlist and company binding, checks
+     * the stored hash describes the stored call and matches the caller's
+     * echo, and records a claim so a second tab cannot run it again.
+     */
+    claimProposedAction: async (
+      issue: { id: string; companyId: string },
+      interactionId: string,
+      input: { userId: string; hash: string },
+    ) => {
+      const updated = await db.transaction(async (tx) => {
+        // Same lock order as accept: issue -> interaction.
+        const [lockedIssue] = await tx.select({ id: issues.id, status: issues.status }).from(issues)
+          .where(and(eq(issues.id, issue.id), eq(issues.companyId, issue.companyId))).for("update");
+        if (!lockedIssue) throw notFound("Issue not found");
+        const [current] = await tx.select().from(issueThreadInteractions)
+          .where(eq(issueThreadInteractions.id, interactionId)).for("update");
+        if (!current || current.companyId !== issue.companyId || current.issueId !== issue.id) {
+          throw interactionNotFoundError();
+        }
+        const payload = (current.payload ?? {}) as unknown as Record<string, unknown>;
+        const proposal = payload.proposedAction as
+          | { method?: unknown; path?: unknown; body?: unknown; hash?: unknown; staleCheck?: { path?: unknown } }
+          | undefined;
+        if (current.kind !== "request_confirmation" || !proposal || typeof proposal !== "object") {
+          throw unprocessable("Only proposed actions can be claimed");
+        }
+        if (current.status !== "pending") {
+          throw issueThreadInteractionResolutionError(409, "interaction_already_resolved", "Interaction has already been resolved");
+        }
+        if (isTerminalIssueStatus(lockedIssue.status)) throw conflict("Cannot run a proposed action on a closed issue");
+        if (!current.addresseeUserId || current.addresseeUserId !== input.userId) {
+          throw forbidden("Only the addressed person can confirm this proposed action");
+        }
+        if (typeof proposal.hash !== "string" || input.hash !== proposal.hash) {
+          throw badRequest("hash does not match the proposed action");
+        }
+        const method = String(proposal.method);
+        const path = String(proposal.path);
+        const body = proposal.body === undefined ? null : proposal.body;
+        try {
+          if (proposedActionHash({ method, path, body }) !== proposal.hash) {
+            throw new ProposedActionError("The stored proposal does not match its hash.");
+          }
+          await validateGovernedAction(tx as unknown as Db, {
+            method, path, body,
+            staleCheckPath: typeof proposal.staleCheck?.path === "string" ? proposal.staleCheck.path : null,
+          }, issue.companyId);
+        } catch (error) {
+          if (error instanceof ProposedActionError) throw unprocessable(`This proposed action cannot run: ${error.message}`);
+          throw error;
+        }
+        const existing = readProposedActionClaim(current.payload);
+        const now = new Date();
+        if (existing) {
+          const age = now.getTime() - Date.parse(existing.claimedAt);
+          if (existing.userId !== input.userId || !(age >= PROPOSED_ACTION_CLAIM_TTL_MS)) {
+            throw conflict("This proposed action is already running");
+          }
+        }
+        const [row] = await tx.update(issueThreadInteractions).set({
+          payload: { ...payload, proposedActionClaim: { userId: input.userId, claimedAt: now.toISOString() } } as never,
+          updatedAt: now,
+        }).where(and(eq(issueThreadInteractions.id, current.id), eq(issueThreadInteractions.status, "pending"))).returning();
+        if (!row) throw conflict("This proposed action is already running");
+        return row;
+      });
+      return hydrateInteraction(updated);
+    },
+
     cancelPendingForDeletedAddressee: async (
       companyId: string,
       addresseeAgentId: string,
@@ -3417,6 +3513,15 @@ export function issueThreadInteractionService(
       const data = normalizeCreateInteractionInput(
         createIssueThreadInteractionSchema.parse(input),
       );
+      if (
+        data.kind === "request_confirmation" &&
+        data.payload.proposedAction !== undefined &&
+        options.allowProposedAction !== true
+      ) {
+        throw unprocessable(
+          "payload.proposedAction is server-owned metadata and cannot be supplied when creating an interaction",
+        );
+      }
       // Chat ownership is server-owned and immutable. Ordinary human questions
       // must not depend on a model copying an opaque user identity correctly.
       let defaultAddresseeUserId: string | null = null;

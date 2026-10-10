@@ -499,6 +499,7 @@ export {
   requestItemVerdictsResultSchema,
   createIssueThreadInteractionSchema,
   acceptIssueThreadInteractionSchema,
+  claimProposedActionSchema,
   resolveConfirmationFromCommentSchema,
   type ResolveConfirmationFromComment,
   rejectIssueThreadInteractionSchema,

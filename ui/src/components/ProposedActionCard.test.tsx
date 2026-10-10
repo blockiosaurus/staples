@@ -23,6 +23,8 @@ vi.mock("@/lib/router", () => ({
 const APPROVAL_ID = "11111111-1111-4111-8111-111111111111";
 const HASH = "a".repeat(64);
 const ACTION_PATH = `/api/approvals/${APPROVAL_ID}/approve`;
+const CLAIM_PATH = `/api/issues/${pendingRequestConfirmationInteraction.issueId}/interactions/interaction-proposed-action/claim-proposed-action`;
+const claimed = () => json(200, { id: "interaction-proposed-action", status: "pending" });
 
 function proposal(overrides: Partial<RequestConfirmationInteraction> = {}, staleCheck = false): RequestConfirmationInteraction {
   return {
@@ -104,27 +106,35 @@ afterEach(async () => {
 });
 
 describe("ProposedActionCard", () => {
-  it("shows the summary, category, exact call and a collapsible body", async () => {
+  it("shows the exact request, body expanded, ahead of the summary", async () => {
     const host = await render({ onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
     expect(host.querySelector('[data-testid="proposed-action-card"]')).toBeTruthy();
     expect(host.textContent).toContain("Approve hiring the Writer agent");
     expect(host.textContent).toContain("Approval");
-    expect(host.textContent).toContain("POST");
-    expect(host.textContent).toContain(ACTION_PATH);
-    expect(host.textContent).not.toContain('"decisionNote"');
-    await click(Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.includes("Request body")));
-    expect(host.textContent).toContain('"decisionNote": "Looks good"');
+    const requestBlock = host.querySelector('[data-testid="proposed-action-request"]')!;
+    expect(requestBlock.textContent).toContain("Request");
+    expect(requestBlock.textContent).toContain("POST");
+    expect(requestBlock.textContent).toContain(ACTION_PATH);
+    // The body is visible without any click, in a scrollable block.
+    const body = requestBlock.querySelector("pre")!;
+    expect(body.textContent).toContain('"decisionNote": "Looks good"');
+    expect(body.className).toContain("overflow-auto");
+    // The request comes before the Assistant's summary.
+    const text = host.textContent!;
+    expect(text.indexOf(ACTION_PATH)).toBeLessThan(text.indexOf("Approve hiring the Writer agent"));
     expect(button(host, "Confirm")).toBeTruthy();
     expect(button(host, "Cancel")).toBeTruthy();
   });
 
-  it("executes the exact call with the person's session, then reports executed", async () => {
-    fetchMock.mockResolvedValueOnce(json(200, { id: APPROVAL_ID, status: "approved" }));
+  it("claims, then executes the exact call with the person's session, then reports executed", async () => {
+    fetchMock.mockResolvedValueOnce(claimed()).mockResolvedValueOnce(json(200, { id: APPROVAL_ID, status: "approved" }));
     const accept = vi.fn(async () => undefined);
     const host = await render({ onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
     await click(button(host, "Confirm"));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]![0]).toBe(CLAIM_PATH);
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({ method: "POST", body: JSON.stringify({ hash: HASH }) });
+    const [url, init] = fetchMock.mock.calls[1]!;
     expect(url).toBe(ACTION_PATH);
     expect(init).toMatchObject({ method: "POST", credentials: "include", body: JSON.stringify({ decisionNote: "Looks good" }) });
     expect(accept).toHaveBeenCalledExactlyOnceWith(
@@ -133,8 +143,26 @@ describe("ProposedActionCard", () => {
     );
   });
 
+  it("does not execute when the server refuses the claim", async () => {
+    fetchMock.mockResolvedValueOnce(json(409, { error: "This proposed action is already running" }));
+    const accept = vi.fn(async () => undefined);
+    const host = await render({ onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
+    await click(button(host, "Confirm"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toBe(CLAIM_PATH);
+    expect(accept).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("already running");
+  });
+
+  it("only the addressee can confirm; others see who it is waiting for", async () => {
+    const host = await render({ currentUserId: "someone-else", userLabelMap: new Map([["person-1", "Pat"]]), onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+    expect(button(host, "Confirm")).toBeUndefined();
+    expect(button(host, "Cancel")).toBeUndefined();
+    expect(host.textContent).toContain("Waiting for Pat to confirm");
+  });
+
   it("reports a failed call with its status and message", async () => {
-    fetchMock.mockResolvedValueOnce(json(403, { error: "Only owners can approve hires" }));
+    fetchMock.mockResolvedValueOnce(claimed()).mockResolvedValueOnce(json(403, { error: "Only owners can approve hires" }));
     const accept = vi.fn(async () => undefined);
     const host = await render({ onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
     await click(button(host, "Confirm"));
@@ -155,27 +183,27 @@ describe("ProposedActionCard", () => {
     expect(host.textContent).toContain("Changed since the Assistant proposed this");
     expect(accept).not.toHaveBeenCalled();
 
-    fetchMock.mockResolvedValueOnce(json(200, { ok: true }));
+    fetchMock.mockResolvedValueOnce(claimed()).mockResolvedValueOnce(json(200, { ok: true }));
     await click(button(host, "Confirm anyway"));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[1]![0]).toBe(ACTION_PATH);
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([`/api/approvals/${APPROVAL_ID}`, CLAIM_PATH, ACTION_PATH]);
     expect(accept).toHaveBeenCalledWith(expect.anything(), undefined, undefined, undefined, expect.objectContaining({ status: "executed", hash: HASH }));
   });
 
   it("goes straight through when the stale check still matches", async () => {
     fetchMock
       .mockResolvedValueOnce(json(200, { id: APPROVAL_ID, updatedAt: "2026-10-10T10:00:00.000Z" }))
+      .mockResolvedValueOnce(claimed())
       .mockResolvedValueOnce(json(200, {}));
     const accept = vi.fn(async () => undefined);
     const host = await render({ interaction: proposal({}, true), onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
     await click(button(host, "Confirm"));
-    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([`/api/approvals/${APPROVAL_ID}`, ACTION_PATH]);
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([`/api/approvals/${APPROVAL_ID}`, CLAIM_PATH, ACTION_PATH]);
     expect(accept).toHaveBeenCalledTimes(1);
   });
 
   it("disables both buttons while the call runs", async () => {
     let finish!: (response: Response) => void;
-    fetchMock.mockReturnValueOnce(new Promise<Response>((resolve) => { finish = resolve; }));
+    fetchMock.mockResolvedValueOnce(claimed()).mockReturnValueOnce(new Promise<Response>((resolve) => { finish = resolve; }));
     const host = await render({ onAcceptInteraction: vi.fn(async () => undefined), onRejectInteraction: vi.fn() });
     await click(button(host, "Confirm"));
     expect(button(host, "Running…")?.disabled).toBe(true);
@@ -212,7 +240,7 @@ describe("ProposedActionCard", () => {
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
             <ThemeProvider>
-              <TaskChatInteractionCard item={{ id: interaction.id, kind: "interaction", interaction }} onAcceptInteraction={vi.fn()} onRejectInteraction={vi.fn()} />
+              <TaskChatInteractionCard item={{ id: interaction.id, kind: "interaction", interaction }} currentUserId="person-1" onAcceptInteraction={vi.fn()} onRejectInteraction={vi.fn()} />
             </ThemeProvider>
           </TooltipProvider>
         </QueryClientProvider>,

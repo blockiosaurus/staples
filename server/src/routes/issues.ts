@@ -73,6 +73,7 @@ import {
 import {
   addIssueCommentSchema,
   acceptIssueThreadInteractionSchema,
+  claimProposedActionSchema,
   resolveConfirmationFromCommentSchema,
   attachmentArtifactWorkProductMetadataSchema,
   cancelIssueThreadInteractionSchema,
@@ -16868,6 +16869,37 @@ export function issueRoutes(
   );
 
   router.post(
+    "/issues/:id/interactions/:interactionId/claim-proposed-action",
+    validate(claimProposedActionSchema),
+    async (req, res) => {
+      const issue = await getAccessibleResource(req, res, svc.getById(req.params.id as string), "Issue not found");
+      if (!issue) return;
+      // Only the addressed person in their own interactive session; never an
+      // agent, the Assistant run itself, MCP OAuth or an API key.
+      if (
+        req.actor.type !== "board" ||
+        (req.actor.source !== "session" && req.actor.source !== "local_implicit") ||
+        !req.actor.userId
+      ) {
+        throw forbidden("Only the addressed person can confirm a proposed action from their own session");
+      }
+      assertCompanyAccess(req, issue.companyId);
+      const interactionSvc = issueThreadInteractionService(db);
+      const claimed = await interactionSvc.claimProposedAction(issue, req.params.interactionId as string, {
+        userId: req.actor.userId,
+        hash: req.body.hash,
+      });
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        companyId: issue.companyId, actorType: actor.actorType, actorId: actor.actorId, agentId: actor.agentId, runId: actor.runId,
+        action: "issue.thread_interaction_proposed_action_claimed", entityType: "issue", entityId: issue.id,
+        details: { interactionId: claimed.id },
+      });
+      res.json(claimed);
+    },
+  );
+
+  router.post(
     "/issues/:id/interactions/:interactionId/accept",
     validate(acceptIssueThreadInteractionSchema),
     async (req, res) => {
@@ -16936,6 +16968,8 @@ export function issueRoutes(
             "proposedActionResult.hash does not match the proposed action",
           );
         }
+        // The service requires a prior claim by this person under the row
+        // lock (the claim lives on the raw row, not the hydrated payload).
       } else if (req.body.proposedActionResult) {
         throw badRequest(
           "proposedActionResult is only accepted for proposed-action confirmations",
