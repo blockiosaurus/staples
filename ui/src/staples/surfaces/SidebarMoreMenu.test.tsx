@@ -100,6 +100,82 @@ describe("SidebarMoreMenu", () => {
     expect(container.innerHTML).toBe("");
   });
 
+  it("renders nothing until surfaces are ready", () => {
+    fixture = makeSurfacesFixture({ signals: { projects: 2 }, ready: false });
+    render();
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("disables hide, unhide and Show everything while preferences failed to load", () => {
+    fixture = makeSurfacesFixture({
+      signals: { projects: 2, routines: 1 },
+      preferences: { hidden: ["nav.routines"] },
+      preferencesFailed: true,
+    });
+    render();
+    const hide = container.querySelector('button[aria-label="Hide Projects"]') as HTMLButtonElement;
+    const unhide = container.querySelector('button[aria-label="Unhide Routines"]') as HTMLButtonElement;
+    const sw = container.querySelector('[role="switch"]') as HTMLButtonElement;
+    expect(hide.disabled).toBe(true);
+    expect(unhide.disabled).toBe(true);
+    expect(sw.disabled).toBe(true);
+    act(() => hide.click());
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("moves focus to Unhide after hiding", () => {
+    render();
+    update.mockImplementation(() => {
+      fixture = makeSurfacesFixture({ signals: { projects: 2 }, preferences: { hidden: ["nav.projects"] } });
+    });
+    const hide = container.querySelector('button[aria-label="Hide Projects"]') as HTMLButtonElement;
+    hide.focus();
+    act(() => hide.click());
+    render();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Unhide Projects");
+  });
+
+  it("moves focus to Hide after unhiding", () => {
+    fixture = makeSurfacesFixture({ signals: { projects: 2 }, preferences: { hidden: ["nav.projects"] } });
+    render();
+    update.mockImplementation(() => {
+      fixture = makeSurfacesFixture({ signals: { projects: 2 } });
+    });
+    const unhide = container.querySelector('button[aria-label="Unhide Projects"]') as HTMLButtonElement;
+    act(() => unhide.click());
+    render();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Hide Projects");
+  });
+
+  it("falls back to the menu content when the counterpart control is absent", () => {
+    fixture = makeSurfacesFixture({ signals: { projects: 2 }, preferences: { hidden: ["nav.goals"] } });
+    render();
+    update.mockImplementation(() => {
+      fixture = makeSurfacesFixture({ signals: { projects: 2 } });
+    });
+    const unhide = container.querySelector('button[aria-label="Unhide Goals"]') as HTMLButtonElement;
+    act(() => unhide.click());
+    render();
+    expect(document.activeElement?.getAttribute("data-more-menu-content")).toBe("");
+  });
+
+  it("labels each section by its visible heading", () => {
+    fixture = makeSurfacesFixture({ signals: { projects: 2 }, preferences: { hidden: ["nav.goals"] } });
+    render();
+    const sections = Array.from(container.querySelectorAll("section"));
+    expect(sections.length).toBe(2);
+    for (const section of sections) {
+      expect(section.getAttribute("aria-label")).toBeNull();
+      const heading = document.getElementById(section.getAttribute("aria-labelledby") ?? "");
+      expect(heading).not.toBeNull();
+      expect(section.contains(heading)).toBe(true);
+    }
+    expect(sections.map((section) => document.getElementById(section.getAttribute("aria-labelledby")!)?.textContent)).toEqual([
+      "Open",
+      "In your sidebar",
+    ]);
+  });
+
   it("shows a tooltip label in rail mode", () => {
     rail = true;
     render();

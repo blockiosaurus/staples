@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Ellipsis } from "lucide-react";
 import { useNavigate } from "@/lib/router";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -9,15 +9,50 @@ import { cn, SIDEBAR_RAIL_HIDDEN_LABEL } from "../../lib/utils";
 import { useSurfaces } from "./useSurfaces";
 
 const ROW = "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-(length:--text-compact) font-medium text-foreground/80";
-const ACTION = "shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground";
+const ACTION = "shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50";
+
+type SurfaceAction = "hide" | "unhide";
+const counterpart: Record<SurfaceAction, SurfaceAction> = { hide: "unhide", unhide: "hide" };
+const actionSelector = (action: SurfaceAction, id: string) => `[data-surface-action="${action}:${id}"]`;
 
 /** Sidebar "More" row: reach hidden surfaces, hide/unhide, and "Show everything". */
 export function SidebarMoreMenu() {
-  const { states, visible, hiddenAvailable, preferences, update } = useSurfaces();
+  const { states, visible, hiddenAvailable, preferences, preferencesFailed, ready, update } = useSurfaces();
   const { collapsed, peeking } = useSidebar();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const rail = collapsed && !peeking;
+  const contentRef = useRef<HTMLDivElement>(null);
+  const headingId = useId();
+  // After Hide/Unhide the clicked row moves lists; keep keyboard focus on the
+  // same surface's counterpart control (or the menu itself) instead of losing it.
+  const [pendingFocus, setPendingFocus] = useState<{ id: string; from: SurfaceAction } | null>(null);
+  useEffect(() => {
+    if (!pendingFocus) return;
+    const content = contentRef.current;
+    if (!content) {
+      setPendingFocus(null);
+      return;
+    }
+    const target = content.querySelector<HTMLElement>(actionSelector(counterpart[pendingFocus.from], pendingFocus.id));
+    if (target) {
+      target.focus();
+      setPendingFocus(null);
+      return;
+    }
+    // The optimistic update has not rendered yet: wait for the next render.
+    if (content.querySelector(actionSelector(pendingFocus.from, pendingFocus.id))) return;
+    content.focus();
+    setPendingFocus(null);
+  }, [pendingFocus, states]);
+
+  const applyAction = (action: SurfaceAction, id: string) => {
+    if (preferencesFailed) return;
+    update(action === "hide" ? { hide: [id] } : { unhide: [id] });
+    setPendingFocus({ id, from: action });
+  };
+
+  if (!ready) return null;
 
   const openable = hiddenAvailable.filter((state) => state.source !== "hidden");
   const personHidden = states.filter((state) => state.available && state.source === "hidden");
@@ -57,65 +92,72 @@ export function SidebarMoreMenu() {
         <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       )}
       <PopoverContent side="right" align="end" className="w-64 p-2">
-        {openable.length > 0 ? (
-          <section aria-label="Open" className="mb-1">
-            <h3 className="px-2 py-1 text-xs font-medium text-muted-foreground">Open</h3>
-            {openable.map(({ surface }) => (
-              <button
-                key={surface.id}
-                type="button"
-                className={cn(ROW, "text-left transition-colors hover:bg-accent")}
-                onClick={() => {
-                  navigate(surface.to);
-                  setOpen(false);
-                }}
-              >
-                <surface.icon className="h-4 w-4 shrink-0" />
-                <span className="truncate">{surface.label}</span>
-              </button>
-            ))}
-          </section>
-        ) : null}
-        {removable.length > 0 || personHidden.length > 0 ? (
-          <section aria-label="In your sidebar" className="mb-1">
-            <h3 className="px-2 py-1 text-xs font-medium text-muted-foreground">In your sidebar</h3>
-            {removable.map(({ surface }) => (
-              <div key={surface.id} className={ROW}>
-                <surface.icon className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 flex-1 truncate">{surface.label}</span>
+        <div ref={contentRef} tabIndex={-1} data-more-menu-content="" className="outline-none">
+          {openable.length > 0 ? (
+            <section aria-labelledby={`${headingId}-open`} className="mb-1">
+              <h3 id={`${headingId}-open`} className="px-2 py-1 text-xs font-medium text-muted-foreground">Open</h3>
+              {openable.map(({ surface }) => (
                 <button
+                  key={surface.id}
                   type="button"
-                  className={ACTION}
-                  aria-label={`Hide ${surface.label}`}
-                  onClick={() => update({ hide: [surface.id] })}
+                  className={cn(ROW, "text-left transition-colors hover:bg-accent")}
+                  onClick={() => {
+                    navigate(surface.to);
+                    setOpen(false);
+                  }}
                 >
-                  Hide
+                  <surface.icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{surface.label}</span>
                 </button>
-              </div>
-            ))}
-            {personHidden.map(({ surface }) => (
-              <div key={surface.id} className={cn(ROW, "text-muted-foreground")}>
-                <surface.icon className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 flex-1 truncate">{surface.label}</span>
-                <button
-                  type="button"
-                  className={ACTION}
-                  aria-label={`Unhide ${surface.label}`}
-                  onClick={() => update({ unhide: [surface.id] })}
-                >
-                  Unhide
-                </button>
-              </div>
-            ))}
-          </section>
-        ) : null}
-        <div className={cn(ROW, "border-t border-border pt-2")}>
-          <span className="flex-1">Show everything</span>
-          <ToggleSwitch
-            aria-label="Show everything"
-            checked={preferences.showEverything}
-            onCheckedChange={(value) => update({ showEverything: value })}
-          />
+              ))}
+            </section>
+          ) : null}
+          {removable.length > 0 || personHidden.length > 0 ? (
+            <section aria-labelledby={`${headingId}-sidebar`} className="mb-1">
+              <h3 id={`${headingId}-sidebar`} className="px-2 py-1 text-xs font-medium text-muted-foreground">In your sidebar</h3>
+              {removable.map(({ surface }) => (
+                <div key={surface.id} className={ROW}>
+                  <surface.icon className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{surface.label}</span>
+                  <button
+                    type="button"
+                    className={ACTION}
+                    aria-label={`Hide ${surface.label}`}
+                    data-surface-action={`hide:${surface.id}`}
+                    disabled={preferencesFailed}
+                    onClick={() => applyAction("hide", surface.id)}
+                  >
+                    Hide
+                  </button>
+                </div>
+              ))}
+              {personHidden.map(({ surface }) => (
+                <div key={surface.id} className={cn(ROW, "text-muted-foreground")}>
+                  <surface.icon className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{surface.label}</span>
+                  <button
+                    type="button"
+                    className={ACTION}
+                    aria-label={`Unhide ${surface.label}`}
+                    data-surface-action={`unhide:${surface.id}`}
+                    disabled={preferencesFailed}
+                    onClick={() => applyAction("unhide", surface.id)}
+                  >
+                    Unhide
+                  </button>
+                </div>
+              ))}
+            </section>
+          ) : null}
+          <div className={cn(ROW, "border-t border-border pt-2")}>
+            <span className="flex-1">Show everything</span>
+            <ToggleSwitch
+              aria-label="Show everything"
+              checked={preferences.showEverything}
+              disabled={preferencesFailed}
+              onCheckedChange={(value) => update({ showEverything: value })}
+            />
+          </div>
         </div>
       </PopoverContent>
     </Popover>

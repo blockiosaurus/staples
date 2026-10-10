@@ -257,7 +257,7 @@ describe("CommandPalette", () => {
     });
   });
 
-  it("lists Routines under Pages even when it is hidden, with a muted hidden suffix", async () => {
+  it("lists Routines under Pages when it is not in the sidebar yet, with a muted suffix", async () => {
     surfacesState.current = makeSurfacesFixture({ signals: { routines: 0 } });
     expect(surfacesState.current.visible.map((s) => s.surface.id)).not.toContain("nav.routines");
     const { root } = renderWithQueryClient(<CommandPalette />, container);
@@ -268,8 +268,9 @@ describe("CommandPalette", () => {
 
     const routinesItem = [...container.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Routines"));
     expect(routinesItem).toBeDefined();
-    expect(routinesItem!.textContent).toContain("hidden");
-    expect(routinesItem!.querySelector("span.text-muted-foreground")?.textContent).toContain("hidden");
+    expect(routinesItem!.textContent).toContain("not in sidebar");
+    expect(routinesItem!.textContent).not.toContain("hidden");
+    expect(routinesItem!.querySelector("span.text-muted-foreground")?.textContent).toBe(" · not in sidebar");
     const dashboardItem = [...container.querySelectorAll("button")].find((b) => b.textContent === "Dashboard");
     expect(dashboardItem).toBeDefined();
 
@@ -277,6 +278,67 @@ describe("CommandPalette", () => {
       routinesItem!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(navigateState.navigate).toHaveBeenCalledWith("/routines");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("marks only person-hidden surfaces as hidden", async () => {
+    surfacesState.current = makeSurfacesFixture({ signals: { projects: 3 }, preferences: { hidden: ["nav.projects"] } });
+    const { root } = renderWithQueryClient(<CommandPalette />, container);
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+
+    const item = (label: string) => [...container.querySelectorAll("button")].find((b) => b.textContent?.startsWith(label));
+    expect(item("Projects")?.querySelector("span.text-muted-foreground")?.textContent).toBe(" · hidden");
+    expect(item("Goals")?.querySelector("span.text-muted-foreground")?.textContent).toBe(" · not in sidebar");
+    expect(item("Tasks")?.querySelector("span.text-muted-foreground")).toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("offers My work when Combined Inbox + Task List is on", async () => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableCombinedInboxTasks: true });
+    surfacesState.current = makeSurfacesFixture({ flags: { enableCombinedInboxTasks: true } });
+    const { root } = renderWithQueryClient(<CommandPalette />, container, (queryClient) => {
+      queryClient.setQueryData(queryKeys.instance.experimentalSettings, { enableCombinedInboxTasks: true });
+    });
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+
+    let myWork: HTMLButtonElement | undefined;
+    await waitForAssertion(() => {
+      myWork = [...container.querySelectorAll("button")].find((b) => b.textContent === "My work");
+      expect(myWork).toBeDefined();
+    });
+    act(() => {
+      myWork!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(navigateState.navigate).toHaveBeenCalledWith("/issues?view=mine");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("omits My work while Combined Inbox + Task List is off", async () => {
+    const { root } = renderWithQueryClient(<CommandPalette />, container);
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+    await waitForAssertion(() => {
+      expect(mockInstanceSettingsApi.getExperimental).toHaveBeenCalled();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent === "My work")).toBe(false);
 
     act(() => {
       root.unmount();

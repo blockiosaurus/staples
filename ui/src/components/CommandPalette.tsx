@@ -1,6 +1,6 @@
 import { AgentIdentity } from "@/components/AgentIdentity";
 import { useSurfaces } from "../staples/surfaces/useSurfaces";
-import { useState, useEffect, useMemo } from "react";
+import { Fragment, useState, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { useCompany } from "../context/CompanyContext";
@@ -27,6 +27,7 @@ import {
   Hexagon,
   SquarePen,
   FileCode2,
+  Inbox,
   Plus,
   Search,
 } from "lucide-react";
@@ -102,6 +103,7 @@ export function CommandPalette() {
   const { states: surfaceStates } = useSurfaces();
   const availableSurfaces = surfaceStates.filter((state) => state.available);
   const fileViewerEnabled = experimentalSettings?.enableExperimentalFileViewer === true;
+  const combinedInboxTasksEnabled = experimentalSettings?.enableCombinedInboxTasks === true;
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -352,14 +354,23 @@ export function CommandPalette() {
         <CommandSeparator />
 
         <CommandGroup heading="Pages">
-          {availableSurfaces.map(({ surface, visible }) => {
+          {availableSurfaces.map(({ surface, visible, source }) => {
             const Icon = surface.icon;
+            const suffix = visible ? null : source === "hidden" ? " · hidden" : " · not in sidebar";
             return (
-              <CommandItem key={surface.id} onSelect={() => go(surface.to)}>
-                <Icon className="mr-2 h-4 w-4" />
-                {surface.label}
-                {visible ? null : <span className="ml-1 text-muted-foreground"> · hidden</span>}
-              </CommandItem>
+              <Fragment key={surface.id}>
+                <CommandItem onSelect={() => go(surface.to)}>
+                  <Icon className="mr-2 h-4 w-4" />
+                  {surface.label}
+                  {suffix ? <span className="ml-1 text-muted-foreground">{suffix}</span> : null}
+                </CommandItem>
+                {surface.id === "nav.dashboard" && combinedInboxTasksEnabled ? (
+                  <CommandItem onSelect={() => go("/issues?view=mine")}>
+                    <Inbox className="mr-2 h-4 w-4" />
+                    My work
+                  </CommandItem>
+                ) : null}
+              </Fragment>
             );
           })}
         </CommandGroup>

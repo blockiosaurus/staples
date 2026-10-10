@@ -268,7 +268,10 @@ describe("Sidebar", () => {
       const link = container.querySelector('a[href="/routines"]');
       expect(link).not.toBeNull();
       expect(link?.textContent).toContain("new");
-      expect(link?.getAttribute("title")).toBe("Routines appeared because you created a recurring job.");
+      expect(link?.getAttribute("title")).toBeNull();
+      const describedBy = link?.getAttribute("aria-describedby");
+      expect(describedBy).toBeTruthy();
+      expect(document.getElementById(describedBy!)?.textContent).toBe("Routines appeared because you created a recurring job.");
       // Core surfaces never carry the badge.
       expect(container.querySelector('a[href="/issues"]')?.textContent).not.toContain("new");
     });
@@ -284,7 +287,7 @@ describe("Sidebar", () => {
         const link = container.querySelector('a[href="/routines"]');
         expect(link).not.toBeNull();
         expect(link?.textContent).not.toContain("new");
-        expect(link?.getAttribute("title")).toBeNull();
+        expect(link?.getAttribute("aria-describedby")).toBeNull();
       },
     );
   });
@@ -401,6 +404,49 @@ describe("Sidebar", () => {
     );
   });
 
+  it("shows Pipelines only when its flag is on and it was revealed, visited or everything is shown", async () => {
+    await withSidebar({ preferences: { showEverything: true }, flags: { enablePipelines: false } }, () => {
+      expect(hrefs()).not.toContain("/pipelines");
+    });
+    await withSidebar({ flags: { enablePipelines: true } }, () => {
+      expect(hrefs()).not.toContain("/pipelines");
+    });
+    await withSidebar({ preferences: { showEverything: true }, flags: { enablePipelines: true } }, () => {
+      expect(hrefs()).toContain("/pipelines");
+    });
+    await withSidebar(
+      {
+        preferences: {
+          revealed: { "nav.pipelines": "2026-01-01T00:00:00.000Z" },
+          seen: { "nav.pipelines": "2026-01-01T00:00:00.000Z" },
+        },
+        flags: { enablePipelines: true },
+      },
+      () => {
+        expect(hrefs()).toContain("/pipelines");
+      },
+    );
+  });
+
+  it("links Connectors to /apps", async () => {
+    await withSidebar({ signals: { connections: 1 } }, () => {
+      const connectors = [...container.querySelectorAll("nav a")].find((a) => a.textContent?.includes("Connectors"));
+      expect(connectors?.getAttribute("href")).toBe("/apps");
+    });
+  });
+
+  it("labels Status with a beta badge", async () => {
+    await withSidebar(
+      { preferences: { pinned: ["nav.status"] }, flags: { enableStatusCards: true } },
+      () => {
+        const status = container.querySelector('a[href="/status"]');
+        const badges = [...(status?.querySelectorAll("span") ?? [])].map((span) => span.textContent?.trim());
+        expect(badges).toContain("beta");
+        expect(status?.textContent).not.toContain("new");
+      },
+    );
+  });
+
   it("shows the beta badge on Cases", async () => {
     await withSidebar(
       { preferences: { pinned: ["nav.cases"] }, flags: { enableCases: true } },
@@ -433,6 +479,17 @@ describe("Sidebar", () => {
         // Growth-only surfaces wait for ready so nothing renders then disappears.
         expect(hrefs()).not.toContain("/artifacts");
         expect(hrefs()).not.toContain("/projects");
+      },
+    );
+  });
+
+  it("no-flash: flag-gated surfaces wait for ready even when pinned", async () => {
+    await withSidebar(
+      { ready: false, preferences: { pinned: ["nav.cases"] }, flags: { enableCases: true, enableAgentChat: true } },
+      () => {
+        expect(hrefs()).not.toContain("/cases");
+        expect(hrefs()).not.toContain("/chats");
+        expect(hrefs()).toContain("/issues");
       },
     );
   });
