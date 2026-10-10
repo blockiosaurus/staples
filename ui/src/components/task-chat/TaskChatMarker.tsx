@@ -1,7 +1,6 @@
 import { useId, useState } from "react";
 import { cn } from "@/lib/utils";
 import { ChevronDown, CircleDot, OctagonX, Square, Flag, KeyRound } from "lucide-react";
-import { useStreamlinedTaskChatPresentation } from "./presentation-mode";
 import type { TaskChatMarkerItem } from "./task-chat-model";
 import { Button } from "@/components/ui/button";
 import { Link } from "@/lib/router";
@@ -29,7 +28,6 @@ export function TaskChatMarker({
 }) {
   const [open, setOpen] = useState(false);
   const detailsId = useId();
-  const streamlined = useStreamlinedTaskChatPresentation();
   const Icon = item.tone === "neutral" ? Square : VARIANT_ICON[item.variant];
   const interrupted = item.variant === "interrupted" && item.tone !== "neutral";
   const relative = item.createdAtIso ? timeAgo(item.createdAtIso) : undefined;
@@ -154,8 +152,8 @@ export function TaskChatMarker({
   return (
     <div
       className="tc-enter-marker flex items-center gap-2 py-1 text-xs text-muted-foreground"
-      role={streamlined ? "separator" : undefined}
-      aria-label={streamlined ? item.label : undefined}
+      role="separator"
+      aria-label={item.label}
     >
       <span
         className={cn(

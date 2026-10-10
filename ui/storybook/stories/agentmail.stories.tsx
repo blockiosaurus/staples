@@ -27,7 +27,6 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { IssueStatusBadge } from "@/components/StatusBadge";
 import { TaskChatBubble } from "@/components/task-chat/TaskChatBubble";
 import { TaskChatComposer } from "@/components/task-chat/TaskChatComposer";
-import { TaskChatPresentationProvider } from "@/components/task-chat/presentation-mode";
 
 // Scripted product exploration. Uses the real task bubbles and composer, never a provider API.
 type Scenario = "outbound" | "inbound";
@@ -242,7 +241,6 @@ function EmailTaskExperience({
     );
   }
   return (
-    <TaskChatPresentationProvider mode="streamlined">
       <div className="min-h-screen bg-background text-foreground">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/30 px-6 py-3">
           <div className="space-y-1">
@@ -541,7 +539,6 @@ function EmailTaskExperience({
           </DialogContent>
         </Dialog>
       </div>
-    </TaskChatPresentationProvider>
   );
 }
 const meta = {

@@ -10,7 +10,6 @@ import { useEmailComment } from "@/components/EmailMessageCard";
 import type { IssueAttachment } from "@paperclipai/shared";
 import { IssueGalleryContext } from "@/context/IssueGalleryContext";
 import { cn } from "@/lib/utils";
-import { useStreamlinedTaskChatPresentation } from "./presentation-mode";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import {
   ImageGalleryModal,
@@ -143,7 +142,6 @@ function TaskChatBubbleContent({
   onTryAgainNoLiveExecutionPath,
   tryAgainNoLiveExecutionPathPending,
 }: TaskChatBubbleProps) {
-  const streamlined = useStreamlinedTaskChatPresentation();
   const openText = useContext(TextAttachmentContext);
   // Task attachments share the page gallery; standalone images retain the bubble viewer.
   const openIssueGallery = useContext(IssueGalleryContext);
@@ -401,25 +399,14 @@ function TaskChatBubbleContent({
           {attachedTurn}
         </div>
       ) : actions ? (
-        streamlined ? (
-          <div className="flex w-full items-center justify-between gap-2 px-1">
-            {item.timestamp ? (
-              <span className="text-(length:--text-micro) text-muted-foreground">
-                {item.timestamp}
-              </span>
-            ) : null}
-            {actions}
-          </div>
-        ) : (
-          <div className="flex items-center gap-1">
-            {actions}
-            {item.timestamp ? (
-              <span className="px-1 text-(length:--text-micro) text-muted-foreground">
-                {item.timestamp}
-              </span>
-            ) : null}
-          </div>
-        )
+        <div className="flex w-full items-center justify-between gap-2 px-1">
+          {item.timestamp ? (
+            <span className="text-(length:--text-micro) text-muted-foreground">
+              {item.timestamp}
+            </span>
+          ) : null}
+          {actions}
+        </div>
       ) : item.timestamp || sentFromIMessage ? (
         // Timestamps are always visible (round 9) — no longer hover-revealed.
         <span className="px-1 text-(length:--text-micro) text-muted-foreground">

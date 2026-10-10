@@ -9,7 +9,6 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import { useComposerStop } from "@/hooks/useComposerStop";
-import { useStreamlinedTaskChatPresentation } from "./presentation-mode";
 import {
   DRAFT_DEBOUNCE_MS,
   clearDraft,
@@ -412,7 +411,6 @@ export function TaskChatComposer({
   onRunnerGoalCommand,
   onRunnerGoalReassign,
 }: TaskChatComposerProps) {
-  const streamlined = useStreamlinedTaskChatPresentation();
   const stopControl = useComposerStop(onStop, stopPending);
   const [localBody, setBody] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
   const body = creation ? creation.value : localBody;
@@ -1263,9 +1261,7 @@ export function TaskChatComposer({
       ) : null}
       <div
         className={cn(
-        streamlined
-          ? "paperclip-task-chat-composer rounded-(--radius-task-composer) border border-border bg-card p-(--sz-18px) shadow-(--shadow-task-composer) dark:border-0 dark:bg-muted dark:shadow-none"
-          : "paperclip-task-chat-composer rounded-xl bg-card p-(--sz-18px)",
+        "paperclip-task-chat-composer rounded-(--radius-task-composer) border border-border bg-card p-(--sz-18px) shadow-(--shadow-task-composer) dark:border-0 dark:bg-muted dark:shadow-none",
         mobile && "p-3",
       )}
         onKeyDownCapture={(e) => {
@@ -1613,9 +1609,7 @@ export function TaskChatComposer({
               aria-busy={submitting}
               className={cn(
                 "flex size-8 min-h-8 min-w-8 shrink-0 aspect-square items-center justify-center rounded-full transition-transform hover:scale-105 disabled:scale-100",
-                streamlined
-                  ? "bg-foreground text-background disabled:bg-foreground disabled:text-background disabled:opacity-100"
-                  : "bg-primary text-primary-foreground disabled:bg-muted disabled:text-muted-foreground",
+                "bg-foreground text-background disabled:bg-foreground disabled:text-background disabled:opacity-100",
               )}
               data-testid={
                 showStop ? "task-chat-composer-stop" : "task-chat-composer-send"

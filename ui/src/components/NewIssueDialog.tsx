@@ -38,7 +38,6 @@ import { cn } from "../lib/utils";
 import type { MentionOption } from "./MarkdownEditor";
 import { TaskChatComposer } from "./task-chat/TaskChatComposer";
 import { ComposerWorktreePicker } from "./task-chat/ComposerWorktreePicker";
-import { TaskChatPresentationProvider } from "./task-chat/presentation-mode";
 import { mergeComposerRunSettings, type ComposerRunSettings } from "./task-chat/composer-run-settings";
 import { useSidebar } from "../context/SidebarContext";
 import { InlineBanner } from "./InlineBanner";
@@ -1143,7 +1142,6 @@ export function NewIssueDialog() {
           onDragLeave={handleFileDragLeave}
           onDrop={handleFileDrop}
         >
-          <TaskChatPresentationProvider mode="streamlined">
             <TaskChatComposer
               workMode={workMode}
               onWorkModeChange={setWorkMode}
@@ -1452,7 +1450,6 @@ export function NewIssueDialog() {
                 ),
               }}
             />
-          </TaskChatPresentationProvider>
         </div>
       </DialogContent>
     </Dialog>

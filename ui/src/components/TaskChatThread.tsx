@@ -130,7 +130,6 @@ import { heartbeatsApi, type RuntimeRequestResolution } from "@/api/heartbeats";
 import { issuesApi } from "@/api/issues";
 import { queryKeys } from "@/lib/queryKeys";
 import { useQueryClient } from "@tanstack/react-query";
-import { TaskChatPresentationProvider } from "@/components/task-chat/presentation-mode";
 
 const EMPTY_BROWSERS: TaskBrowser[] = [];
 
@@ -2949,7 +2948,6 @@ export function TaskChatThread(props: TaskChatThreadProps) {
           contentKey={isMobile ? autoFollowContentKey : 0}
           enabled={isMobile && historyRevealed}
         />
-        <TaskChatPresentationProvider mode="streamlined">
           <div
             className={cn(
               "flex flex-col",
@@ -3260,7 +3258,6 @@ export function TaskChatThread(props: TaskChatThreadProps) {
               </TaskChatComposerDock>
             ) : null}
           </div>
-        </TaskChatPresentationProvider>
       </TaskChatScrollReady.Provider>
     </TaskChatExpansionState.Provider>
   );

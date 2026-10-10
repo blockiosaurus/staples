@@ -4,7 +4,6 @@ import { TaskChatSkillCreatedCard } from "./TaskChatSkillCreatedCard";
 import { useMemo, type ReactNode } from "react";
 import type { IssueAttachment } from "@paperclipai/shared";
 import { cn } from "@/lib/utils";
-import { useStreamlinedTaskChatPresentation } from "./presentation-mode";
 import type {
   TaskChatInteractionItem,
   TaskChatItem,
@@ -316,7 +315,6 @@ export function TaskChatThreadView({
   onOpenSkill,
   onOpenBrowser,
 }: TaskChatThreadViewProps) {
-  const streamlined = useStreamlinedTaskChatPresentation();
   const retryableMarkerId =
     onRetryFailedRun || onTryAgainNoLiveExecutionPath
       ? [...items]
@@ -331,94 +329,53 @@ export function TaskChatThreadView({
       : undefined;
   // Streaming tail and header updates must not rebuild settled markdown/tool trees.
   const history = useMemo(() => {
-    const renderedItems = streamlined
-      ? items
-          .map((item) => ({
-            item,
-            content: renderItem(
-              item,
-              onApprovalDecision,
-              renderInteraction,
-              renderBrief,
-              renderMessageActions,
-              renderQueuedAction,
-              onRuntimeRequestDecision,
-              "classic",
-              onTryAgainNoLiveExecutionPath,
-              tryAgainNoLiveExecutionPathPending,
-              retryableMarkerId,
-              onRetryFailedRun,
-              retryFailedRunId,
-              attachments,
-              onOpenSkill,
-              onOpenBrowser,
-            ),
-          }))
-          .filter((entry) => entry.content !== null)
-      : [];
+    const renderedItems = items
+      .map((item) => ({
+        item,
+        content: renderItem(
+          item,
+          onApprovalDecision,
+          renderInteraction,
+          renderBrief,
+          renderMessageActions,
+          renderQueuedAction,
+          onRuntimeRequestDecision,
+          "classic",
+          onTryAgainNoLiveExecutionPath,
+          tryAgainNoLiveExecutionPathPending,
+          retryableMarkerId,
+          onRetryFailedRun,
+          retryFailedRunId,
+          attachments,
+          onOpenSkill,
+          onOpenBrowser,
+        ),
+      }))
+      .filter((entry) => entry.content !== null);
     return (
       <>
-        {streamlined
-          ? renderedItems.map(({ item, content }, index) => (
-              <div
-                key={
-                  item.kind === "message" ? (item.renderKey ?? item.id) : item.id
-                }
-                data-thread-anchor={
-                  item.kind === "message" ? (item.renderKey ?? item.id) : item.id
-                }
-                id={item.kind === "message" ? `comment-${item.id}` : undefined}
-                className={taskChatItemSpacingClass(
-                  item,
-                  renderedItems[index - 1]?.item ?? null,
-                )}
-                data-thread-item-kind={
-                  item.kind === "message" ? item.author : item.kind
-                }
-              >
-                {content}
-              </div>
-            ))
-          : items.map((item, index) => (
-              <div
-                key={
-                  item.kind === "message" ? (item.renderKey ?? item.id) : item.id
-                }
-                data-thread-anchor={
-                  item.kind === "message" ? (item.renderKey ?? item.id) : item.id
-                }
-                id={item.kind === "message" ? `comment-${item.id}` : undefined}
-                className={cn(
-                  index > 0 &&
-                    item.kind === "interaction" &&
-                    item.interaction.status !== "pending" &&
-                    "-mt-3",
-                )}
-              >
-                {renderItem(
-                  item,
-                  onApprovalDecision,
-                  renderInteraction,
-                  renderBrief,
-                  renderMessageActions,
-                  renderQueuedAction,
-                  onRuntimeRequestDecision,
-                  "classic",
-                  onTryAgainNoLiveExecutionPath,
-                  tryAgainNoLiveExecutionPathPending,
-                  retryableMarkerId,
-                  onRetryFailedRun,
-                  retryFailedRunId,
-                  attachments,
-                  onOpenSkill,
-                  onOpenBrowser,
-                )}
-              </div>
-            ))}
+        {renderedItems.map(({ item, content }, index) => (
+          <div
+            key={item.kind === "message" ? (item.renderKey ?? item.id) : item.id}
+            data-thread-anchor={
+              item.kind === "message" ? (item.renderKey ?? item.id) : item.id
+            }
+            id={item.kind === "message" ? `comment-${item.id}` : undefined}
+            className={taskChatItemSpacingClass(
+              item,
+              renderedItems[index - 1]?.item ?? null,
+            )}
+            data-thread-item-kind={
+              item.kind === "message" ? item.author : item.kind
+            }
+          >
+            {content}
+          </div>
+        ))}
       </>
     );
   }, [
-    items, streamlined, onApprovalDecision, onRuntimeRequestDecision,
+    items, onApprovalDecision, onRuntimeRequestDecision,
     renderInteraction, renderBrief, renderMessageActions, renderQueuedAction,
     onTryAgainNoLiveExecutionPath, tryAgainNoLiveExecutionPathPending,
     retryableMarkerId, onRetryFailedRun, retryFailedRunId, attachments, onOpenSkill, onOpenBrowser,
@@ -427,20 +384,20 @@ export function TaskChatThreadView({
     <div
       className={cn(
         "paperclip-mobile-thread mx-auto flex w-full max-w-(--tc-shell-max-w) flex-col px-1 py-3 md:px-4 md:py-4",
-        streamlined ? "md:px-0" : "gap-5",
+        "md:px-0",
         className,
       )}
     >
       {header ? (
         <div
-          className={cn("flex flex-col gap-6", streamlined ? "pb-4" : "pb-2")}
+          className={"flex flex-col gap-6 pb-4"}
           data-testid="task-chat-thread-header"
         >
           {header}
         </div>
       ) : null}
       {history}
-      {tail ? streamlined ? <div className="mt-4">{tail}</div> : tail : null}
+      {tail ? <div className="mt-4">{tail}</div> : null}
     </div>
   );
 
