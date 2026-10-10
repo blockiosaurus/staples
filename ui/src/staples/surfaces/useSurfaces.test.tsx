@@ -1,0 +1,115 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_UI_PREFERENCES } from "@paperclipai/shared";
+import { useSurfaces } from "./useSurfaces";
+import { SurfaceTracker } from "./SurfaceTracker";
+
+const mocks = vi.hoisted(() => ({
+  getExperimental: vi.fn(),
+  signals: vi.fn(),
+  prefs: vi.fn(),
+  update: vi.fn(),
+  pathname: { value: "/PAP/issues" },
+}));
+vi.mock("../../api/instanceSettings", () => ({ instanceSettingsApi: { getExperimental: mocks.getExperimental } }));
+vi.mock("../../hooks/useCompanySignals", () => ({ useCompanySignals: () => mocks.signals() }));
+vi.mock("../../hooks/useUiPreferences", () => ({ useUiPreferences: () => mocks.prefs() }));
+vi.mock("../../hooks/useInboxBadge", () => ({ useInboxBadge: () => ({ inbox: 0 }) }));
+vi.mock("../../context/CompanyContext", () => ({
+  useCompany: () => ({ selectedCompanyId: "company-1", selectedCompany: { id: "company-1", issuePrefix: "PAP" } }),
+}));
+vi.mock("@/lib/router", () => ({ useLocation: () => ({ pathname: mocks.pathname.value }) }));
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+describe("useSurfaces / SurfaceTracker", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let client: QueryClient;
+  let observed: ReturnType<typeof useSurfaces>;
+
+  function Probe() {
+    observed = useSurfaces();
+    return <SurfaceTracker />;
+  }
+  const tree = () => (
+    <QueryClientProvider client={client}>
+      <Probe />
+    </QueryClientProvider>
+  );
+  const flush = async () => {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  };
+  const setPrefs = (over: Record<string, unknown> = {}, loaded = true, failed = false) =>
+    mocks.prefs.mockReturnValue({ preferences: { ...DEFAULT_UI_PREFERENCES, ...over }, loaded, failed, update: mocks.update });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.pathname.value = "/PAP/issues";
+    mocks.getExperimental.mockResolvedValue({});
+    mocks.signals.mockReturnValue({ signals: null, loaded: true, failed: false });
+    setPrefs();
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    client.clear();
+  });
+
+  const mount = async () => {
+    await act(async () => root.render(tree()));
+    await flush();
+    await flush();
+  };
+
+  it("is not ready until flags and preferences load", async () => {
+    setPrefs({}, false);
+    await act(async () => root.render(tree()));
+    expect(observed.ready).toBe(false);
+    setPrefs({}, true);
+    await mount();
+    expect(observed.ready).toBe(true);
+  });
+
+  it("treats failed preferences as settled", async () => {
+    setPrefs({}, false, true);
+    await mount();
+    expect(observed.ready).toBe(true);
+  });
+
+  it("persists a growth-fired reveal exactly once across re-renders", async () => {
+    mocks.signals.mockReturnValue({
+      signals: { companyId: "company-1", agents: 0, tasks: 0, openTasks: 0, projects: 2, goals: 0, routines: 0, artifacts: 0, extraSkills: 0, connections: 0, connectionRequests: 0, approvalsEver: 0, questionsEver: 0, budgetSet: false, monthSpendCents: 0 },
+      loaded: true,
+      failed: false,
+    });
+    await mount();
+    const revealCalls = () => mocks.update.mock.calls.filter(([p]) => p.reveal);
+    const first = revealCalls().length;
+    expect(first).toBe(1);
+    expect(revealCalls()[0]![0]).toEqual({ reveal: ["nav.projects"] });
+    await mount();
+    await mount();
+    expect(revealCalls().length).toBe(1);
+  });
+
+  it("records a visit to a non-core surface", async () => {
+    mocks.pathname.value = "/PAP/routines";
+    await mount();
+    expect(mocks.update).toHaveBeenCalledWith({ see: ["nav.routines"] });
+  });
+
+  it("does nothing for a core surface", async () => {
+    mocks.pathname.value = "/PAP/issues";
+    await mount();
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+});

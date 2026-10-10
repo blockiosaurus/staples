@@ -29,6 +29,7 @@ import { StandaloneBrowserControls } from "./StandaloneBrowserControls";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { AgentConversationsSidebar } from "./AgentConversationsSidebar";
 import { useAgentChatEnabled } from "../hooks/useAgentChatEnabled";
+import { SurfaceTracker } from "../staples/surfaces/SurfaceTracker";
 import { SidebarShell } from "./SidebarShell";
 import { SecondarySidebar } from "./SecondarySidebar";
 import { ContextualSidebarFrame } from "./ContextualSidebarFrame";
@@ -558,6 +559,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
 
   return (
     <ChatSetupSidebarProvider>
+      <SurfaceTracker />
       <div
       className={cn(
         "bg-background text-foreground pt-(--sz-safe-top)",
