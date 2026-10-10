@@ -1,4 +1,4 @@
-import { getAgentWorkEligibility, isAgentInvokable } from "@paperclipai/shared";
+import { getAgentWorkEligibility, isAgentInvokable, isAssistantAgent } from "@paperclipai/shared";
 import { buildIssueGraphLivenessIncidentKey } from "./origins.js";
 
 export type IssueLivenessSeverity = "warning" | "critical";
@@ -47,6 +47,7 @@ export interface IssueLivenessAgentInput {
   title?: string | null;
   status: string;
   reportsTo?: string | null;
+  metadata?: unknown;
 }
 
 export interface IssueLivenessExecutionPathInput {
@@ -336,6 +337,8 @@ function addOwnerCandidate(
   if (!agentId || seen.has(agentId)) return;
   const agent = agentsById.get(agentId);
   if (!agent || agent.companyId !== companyId || !isInvokableAgent(agent, agentsById)) return;
+  // The Assistant only answers its own chats; it never owns recovery work.
+  if (isAssistantAgent(agent)) return;
   seen.add(agentId);
   candidates.push({ agentId, reason, sourceIssueId });
 }

@@ -57,6 +57,30 @@ describeEmbeddedPostgres("dashboard service", () => {
     await tempDb?.cleanup();
   });
 
+  it("leaves the built-in Assistant out of dashboard agent counts", async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    const base = { companyId, role: "general", adapterType: "claude_local", adapterConfig: {}, runtimeConfig: {}, permissions: {} };
+    await db.insert(agents).values([
+      { ...base, id: randomUUID(), name: "Staff", status: "paused" },
+      {
+        ...base,
+        id: randomUUID(),
+        name: "Assistant",
+        status: "idle",
+        metadata: { paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } },
+      },
+    ]);
+
+    const summary = await dashboardService(db).summary(companyId);
+    expect(summary.agents).toEqual({ active: 0, running: 0, paused: 1, error: 0 });
+  });
+
   it("selects distinct task cards before limiting and keeps taskless runs separate", async () => {
     const companyId = randomUUID();
     const otherCompanyId = randomUUID();

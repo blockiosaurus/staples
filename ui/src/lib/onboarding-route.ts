@@ -1,3 +1,5 @@
+import { excludeAssistantAgents } from "./assistant-agent";
+
 type OnboardingRouteCompany = {
   id: string;
   issuePrefix: string;
@@ -145,6 +147,15 @@ export function resolveRouteOnboardingOptions(params: {
  * list reopens "Create your first agent" for a company that just got one,
  * and the customer walks the agent and model steps a second time.
  */
+/**
+ * Agents that count as "the company has an agent" for onboarding. The built-in
+ * Assistant is provisioned for every company and is not a hire, so a company
+ * whose only agent is the Assistant still gets onboarding.
+ */
+export function onboardingAgentCount(agents: Array<{ metadata?: unknown }> | null | undefined): number {
+  return agents ? excludeAssistantAgents(agents).length : 0;
+}
+
 export function shouldRouteAgentlessCompanyToOnboarding(params: {
   pathname: string;
   agentsLoaded: boolean;

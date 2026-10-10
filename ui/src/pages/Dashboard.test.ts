@@ -12,7 +12,19 @@ function agent(overrides: Partial<Agent>): Agent {
   } as unknown as Agent;
 }
 
+const ASSISTANT_METADATA = { paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } };
+
 describe("derivePausedAgentBanner", () => {
+  it("ignores the built-in Assistant when deciding whether all agents are paused", () => {
+    expect(derivePausedAgentBanner([
+      agent({ id: "a", status: "paused", pauseReason: "manual" }),
+      agent({ id: "assistant", status: "idle", metadata: ASSISTANT_METADATA }),
+    ])).toEqual({ kind: "all-paused" });
+    expect(derivePausedAgentBanner([
+      agent({ id: "assistant", status: "idle", metadata: ASSISTANT_METADATA }),
+    ])).toBeNull();
+  });
+
   it("returns null with no agents loaded or an empty company", () => {
     expect(derivePausedAgentBanner(undefined)).toBeNull();
     expect(derivePausedAgentBanner([])).toBeNull();

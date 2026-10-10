@@ -257,6 +257,34 @@ describe("CommandPalette", () => {
     });
   });
 
+  it("omits the built-in Assistant from the Agents group", async () => {
+    mockAgentsApi.list.mockResolvedValue([
+      { id: "agent-a", name: "Alpha", role: "engineer", urlKey: "alpha", status: "idle", metadata: null },
+      {
+        id: "assistant-1",
+        name: "Assistant",
+        role: "general",
+        urlKey: "assistant",
+        status: "idle",
+        metadata: { paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } },
+      },
+    ]);
+    const { root } = renderWithQueryClient(<CommandPalette />, container);
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+
+    // Let the agents query resolve and render.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Alpha"))).toBe(true);
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Assistant"))).toBe(false);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("lists Routines under Pages when it is not in the sidebar yet, with a muted suffix", async () => {
     surfacesState.current = makeSurfacesFixture({ signals: { routines: 0 } });
     expect(surfacesState.current.visible.map((s) => s.surface.id)).not.toContain("nav.routines");

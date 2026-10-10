@@ -2,6 +2,7 @@ import { AgentIdentity } from "../components/AgentIdentity";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "@/lib/router";
 import {
+  onboardingAgentCount,
   onboardingStepForCompany,
   shouldRouteAgentlessCompanyToOnboarding,
 } from "../lib/onboarding-route";
@@ -13,6 +14,7 @@ import { activityApi } from "../api/activity";
 import { accessApi } from "../api/access";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
+import { excludeAssistantAgents } from "../lib/assistant-agent";
 import { projectsApi } from "../api/projects";
 import { buildCompanyUserProfileMap } from "../lib/company-members";
 import { useCompany } from "../context/CompanyContext";
@@ -58,7 +60,9 @@ export type PausedAgentBanner =
  * whose agents are ALL paused gets a generic explanation, because from the
  * outside it is indistinguishable from a broken company.
  */
-export function derivePausedAgentBanner(agents: Agent[] | undefined): PausedAgentBanner {
+export function derivePausedAgentBanner(allAgents: Agent[] | undefined): PausedAgentBanner {
+  // The built-in Assistant is not staff: it never blocks "all agents paused".
+  const agents = allAgents ? excludeAssistantAgents(allAgents) : undefined;
   if (!agents || agents.length === 0) return null;
   const importedPaused = agents.filter(
     (agent) => agent.status === "paused" && agent.pauseReason === "import",
@@ -136,7 +140,7 @@ export function Dashboard() {
     pathname: location.pathname,
     agentsLoaded: agents !== undefined,
     agentsRefreshing,
-    agentCount: agents?.length ?? 0,
+    agentCount: onboardingAgentCount(agents),
   });
   // Auto-open once per company. Every input to the effect sits behind a query,
   // so a refetch re-runs it, and the customer can also navigate away and come
@@ -315,7 +319,7 @@ export function Dashboard() {
   // Same rule as the auto-offer above: a list still being refreshed may be the
   // empty one cached before the first hire, and the banner's "Create one here"
   // opens the same agent step the offer does.
-  const hasNoAgents = agents !== undefined && !agentsRefreshing && agents.length === 0;
+  const hasNoAgents = agents !== undefined && !agentsRefreshing && onboardingAgentCount(agents) === 0;
   const pausedBanner = derivePausedAgentBanner(agents);
   const pausedImportedCount =
     pausedBanner?.kind === "imported" ? pausedBanner.pausedImportedAgentIds.length : 0;

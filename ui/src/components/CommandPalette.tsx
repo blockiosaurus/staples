@@ -9,6 +9,7 @@ import { useSidebar } from "../context/SidebarContext";
 import { issuesApi } from "../api/issues";
 import { authApi } from "../api/auth";
 import { agentsApi } from "../api/agents";
+import { excludeAssistantAgents } from "../lib/assistant-agent";
 import { projectsApi } from "../api/projects";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { queryKeys } from "../lib/queryKeys";
@@ -126,6 +127,8 @@ export function CommandPalette() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId && open,
   });
+  // The Agents group lists staff only; `agents` still backs name lookups.
+  const staffAgents = useMemo(() => excludeAssistantAgents(agents), [agents]);
 
   const { data: allProjects = [] } = useQuery({
     queryKey: queryKeys.projects.list(selectedCompanyId!),
@@ -404,11 +407,11 @@ export function CommandPalette() {
           </>
         )}
 
-        {agents.length > 0 && (
+        {staffAgents.length > 0 && (
           <>
             <CommandSeparator />
             <CommandGroup heading="Agents">
-              {agents.slice(0, 10).map((agent) => (
+              {staffAgents.slice(0, 10).map((agent) => (
                 <CommandItem key={agent.id} onSelect={() => go(agentUrl(agent))}>
                   <Bot className="mr-2 h-4 w-4" />
                   {agent.name}

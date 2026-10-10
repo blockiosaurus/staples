@@ -1,3 +1,6 @@
+import { sql, type AnyColumn } from "drizzle-orm";
+import { ASSISTANT_BUILT_IN_AGENT_KEY } from "@paperclipai/shared";
+
 export const BUILT_IN_AGENT_METADATA_KEY = "paperclipBuiltInAgent";
 
 export interface BuiltInAgentMarker {
@@ -42,4 +45,13 @@ export function builtInAgentMarkersEqual(left: BuiltInAgentMarker | null, right:
   if (!left && !right) return true;
   if (!left || !right) return false;
   return left.key === right.key && JSON.stringify(left.featureKeys) === JSON.stringify(right.featureKeys);
+}
+
+/**
+ * SQL predicate excluding the built-in Assistant from agent rows. The
+ * Assistant is a per-person chat surface, not staff, so it stays out of agent
+ * counts (dashboard, company stats) and owner selection.
+ */
+export function notAssistantAgentSql(metadataColumn: AnyColumn) {
+  return sql`coalesce(${metadataColumn} -> ${BUILT_IN_AGENT_METADATA_KEY} ->> 'key', '') <> ${ASSISTANT_BUILT_IN_AGENT_KEY}`;
 }

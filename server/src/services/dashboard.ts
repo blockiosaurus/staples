@@ -5,6 +5,7 @@ import { notFound } from "../errors.js";
 import { budgetService } from "./budgets.js";
 import { executionIssueCondition } from "./issue-visibility.js";
 import { retryIdempotentDatabaseOperation } from "../database-retry.js";
+import { notAssistantAgentSql } from "../lib/built-in-agent-metadata.js";
 
 const DASHBOARD_RUN_ACTIVITY_DAYS = 14;
 
@@ -41,7 +42,7 @@ export function dashboardService(db: Db) {
       const agentRows = await retryIdempotentDatabaseOperation(() => db
         .select({ status: agents.status, count: sql<number>`count(*)` })
         .from(agents)
-        .where(eq(agents.companyId, companyId))
+        .where(and(eq(agents.companyId, companyId), notAssistantAgentSql(agents.metadata)))
         .groupBy(agents.status));
 
       const taskRows = await retryIdempotentDatabaseOperation(() => db

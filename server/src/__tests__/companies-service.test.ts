@@ -38,6 +38,7 @@ import { companyService } from "../services/companies.js";
 import { deriveIssuePrefixBase } from "../services/issue-prefix.js";
 import { readBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
 import { builtInAgentService, reconcileBuiltInAgentsOnStartup } from "../services/built-in-agents.js";
+import * as builtInAgentModule from "../services/built-in-agents.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -928,6 +929,53 @@ describeEmbeddedPostgres("companyService", () => {
     expect(archiveActivity[0]).toMatchObject({
       details: { agentsPaused: 1, runsCancelled: 1 },
     });
+  });
+
+  it("excludes the built-in Assistant from company agent stats", async () => {
+    const created = await companyService(db).create({ name: "Stats Company" });
+    await insertAgents({
+      companyId: created.id,
+      name: "Staff",
+      role: "engineer",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    const allRows = await db.select().from(agents).where(eq(agents.companyId, created.id));
+    expect(allRows).toHaveLength(2);
+
+    const stats = await companyService(db).stats();
+    expect(stats[created.id]?.agentCount).toBe(1);
+  });
+
+  it("still returns the created company when built-in provisioning fails", async () => {
+    const spy = vi.spyOn(builtInAgentModule, "builtInAgentService").mockImplementation(() => ({
+      autoProvisionBundledAgents: async () => {
+        throw new Error("provisioning exploded");
+      },
+    }) as unknown as ReturnType<typeof builtInAgentModule.builtInAgentService>);
+    try {
+      const created = await companyService(db).create({ name: "Resilient Company" });
+      expect(created.name).toBe("Resilient Company");
+      const [row] = await db.select().from(companies).where(eq(companies.id, created.id));
+      expect(row).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+
+    // Startup reconcile repairs the missing Assistant later.
+    await reconcileBuiltInAgentsOnStartup(db);
+    const rows = await db.select().from(agents);
+    expect(rows.filter((row) => readBuiltInAgentMarker(row.metadata)?.key === "assistant")).toHaveLength(1);
+  });
+
+  it("does not add an Assistant to archived companies during startup reconcile", async () => {
+    await db.insert(companies).values({ name: "Archived Co", issuePrefix: "ARCV", status: "archived" });
+    await reconcileBuiltInAgentsOnStartup(db);
+    const rows = await db.select().from(agents);
+    expect(rows.filter((row) => readBuiltInAgentMarker(row.metadata)?.key === "assistant")).toHaveLength(0);
   });
 
   it("getById returns null (not a query error) for non-UUID refs", async () => {

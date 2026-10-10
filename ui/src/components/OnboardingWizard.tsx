@@ -2175,8 +2175,11 @@ function OnboardingWizardInner({
       // Review, the way a run that remembers its hire does.
       const existingAgents = await agentsApi.list(createdCompanyId).catch(() => null);
       if (!isCurrent()) return;
+      // Built-in agents (the Assistant, for one) are never the hire being
+      // resumed, even when the customer names their agent the same.
       const existing = existingAgents?.find(
         (agent) =>
+          !(agent.metadata && typeof agent.metadata === "object" && "paperclipBuiltInAgent" in agent.metadata) &&
           agent.name.trim().toLowerCase() === hireName.toLowerCase() &&
           agent.adapterType === adapterType,
       );

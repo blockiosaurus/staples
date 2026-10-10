@@ -7,6 +7,7 @@ import {
   resolveRouteOnboardingOptions,
   shouldRedirectCompanylessRouteToOnboarding,
   shouldRouteAgentlessCompanyToOnboarding,
+  onboardingAgentCount,
   ONBOARDING_AGENT_STEP,
   ONBOARDING_MISSION_STEP,
 } from "./onboarding-route";
@@ -360,5 +361,19 @@ describe("onboardingStepForCompany", () => {
     // that the mission step is unreachable from here rather than merely
     // unlikely.
     expect(onboardingStepForCompany()).not.toBe(ONBOARDING_MISSION_STEP);
+  });
+});
+
+describe("onboardingAgentCount", () => {
+  it("does not count the built-in Assistant as a hired agent", () => {
+    const assistant = { metadata: { paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } } };
+    expect(onboardingAgentCount(undefined)).toBe(0);
+    expect(onboardingAgentCount([assistant])).toBe(0);
+    expect(onboardingAgentCount([assistant, { metadata: null }])).toBe(1);
+    expect(shouldRouteAgentlessCompanyToOnboarding({
+      pathname: "/pap/dashboard",
+      agentsLoaded: true,
+      agentCount: onboardingAgentCount([assistant]),
+    })).toBe(true);
   });
 });

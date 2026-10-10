@@ -30,6 +30,8 @@ import { environmentService } from "./environments.js";
 import { heartbeatService } from "./heartbeat.js";
 import { logActivity, type ActivityPublication } from "./activity-log.js";
 import { builtInAgentService } from "./built-in-agents.js";
+import { notAssistantAgentSql } from "../lib/built-in-agent-metadata.js";
+import { logger } from "../middleware/logger.js";
 
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -291,7 +293,14 @@ export function companyService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
     create: async (data: typeof companies.$inferInsert) => {
       const created = await createCompanyWithUniquePrefix(data);
       await environmentsSvc.ensureLocalEnvironment(created.id);
-      await builtInAgents.autoProvisionBundledAgents(created.id);
+      // The company row is already committed. Built-in provisioning (the
+      // Assistant) is best-effort here: GET /assistant and startup reconcile
+      // repair it, so a failure must not turn a created company into a 500.
+      try {
+        await builtInAgents.autoProvisionBundledAgents(created.id);
+      } catch (err) {
+        logger.warn({ err, companyId: created.id }, "built-in agent provisioning failed after company create; will retry later");
+      }
       const row = await getCompanyQuery(db)
         .where(eq(companies.id, created.id))
         .then((rows) => rows[0] ?? null);
@@ -517,6 +526,7 @@ export function companyService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         db
           .select({ companyId: agents.companyId, count: count() })
           .from(agents)
+          .where(notAssistantAgentSql(agents.metadata))
           .groupBy(agents.companyId),
         db
           .select({ companyId: issues.companyId, count: count() })

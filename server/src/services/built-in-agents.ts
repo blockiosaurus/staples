@@ -931,16 +931,40 @@ export function builtInAgentService(db: Db) {
     if (input.adapterType || input.adapterConfig) return input;
     if (definition.inheritCompanyAdapterType) {
       const rows = await db
-        .select({ adapterType: agents.adapterType, metadata: agents.metadata, createdAt: agents.createdAt })
+        .select({
+          adapterType: agents.adapterType,
+          adapterConfig: agents.adapterConfig,
+          metadata: agents.metadata,
+          createdAt: agents.createdAt,
+        })
         .from(agents)
         .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
+      // Only inherit from a working (fully configured) agent, and carry over
+      // just its model: never secrets or env. Otherwise use the default.
       const candidate = rows
-        .filter((row) => !readBuiltInAgentMarker(row.metadata) && definition.allowedAdapterTypes?.includes(row.adapterType))
+        .filter((row) =>
+          !readBuiltInAgentMarker(row.metadata)
+          && definition.allowedAdapterTypes?.includes(row.adapterType)
+          && hasCompleteAdapterConfig(row.adapterType, row.adapterConfig))
         .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())[0];
+      if (candidate) {
+        const rawModel = isPlainRecord(candidate.adapterConfig) ? candidate.adapterConfig.model : undefined;
+        let model = typeof rawModel === "string" ? rawModel.trim() : "";
+        if (model) {
+          // Drop a model the adapter does not list rather than failing provisioning.
+          const known = await listAdapterModels(candidate.adapterType).catch(() => []);
+          if (known.length > 0 && !known.some((entry) => entry.id === model)) model = "";
+        }
+        return {
+          ...input,
+          adapterType: candidate.adapterType,
+          adapterConfig: model ? { model } : {},
+        };
+      }
       return {
         ...input,
-        adapterType: candidate?.adapterType ?? defaultAdapterType(definition),
-        adapterConfig: candidate ? {} : definition.defaultAdapterConfig ? { ...definition.defaultAdapterConfig } : {},
+        adapterType: defaultAdapterType(definition),
+        adapterConfig: definition.defaultAdapterConfig ? { ...definition.defaultAdapterConfig } : {},
       };
     }
     if (definition.defaultAdapterType || definition.defaultAdapterConfig) {
@@ -1721,6 +1745,7 @@ export function builtInAgentService(db: Db) {
     const company = await db
       .select({
         id: companies.id,
+        status: companies.status,
         requireBoardApprovalForNewAgents: companies.requireBoardApprovalForNewAgents,
       })
       .from(companies)
@@ -2167,7 +2192,10 @@ export function builtInAgentService(db: Db) {
     // restore automatic creation for that definition.
     for (const definition of DEFINITIONS.filter((entry) => entry.bundle)) {
       const existing = await findSingleAgent(companyId, definition);
-      const shouldProvision = existing !== null || AUTO_PROVISION_ON_COMPANY_CREATE_KEYS.has(definition.key);
+      // Auto-creation only targets active companies: startup reconcile must not
+      // add an Assistant to archived ones. Existing rows keep reconciling.
+      const shouldProvision = existing !== null
+        || (AUTO_PROVISION_ON_COMPANY_CREATE_KEYS.has(definition.key) && company.status === "active");
       if (!shouldProvision) continue;
       if (company.requireBoardApprovalForNewAgents && !definition.bypassHireApproval) {
         const result = await provision(companyId, definition.key);

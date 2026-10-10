@@ -320,25 +320,42 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect(await db.select().from(approvals).where(eq(approvals.companyId, companyId))).toHaveLength(0);
   });
 
-  it("copies the company's existing local adapter type onto the Assistant", async () => {
+  it("copies a fully configured company agent's adapter type and model onto the Assistant", async () => {
     const companyId = await seedCompany({ requireApproval: false });
     await createAgentLifecycle(db).requestHire(companyId, {
       name: "CEO",
       role: "ceo",
       status: "idle",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "gpt-5.4", apiKey: "do-not-copy" },
       runtimeConfig: {},
       permissions: {},
     });
 
     const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
     expect(ensured.adapterType).toBe("codex_local");
+    expect(ensured.adapterConfig).not.toHaveProperty("apiKey");
     // Re-ensuring an existing Assistant never rewrites its adapter.
     const again = await createBuiltInAgentService(db).ensureAssistant(companyId);
     expect(again.id).toBe(ensured.id);
     expect(again.adapterType).toBe("codex_local");
     expect(await assistantRows(companyId)).toHaveLength(1);
+  });
+
+  it("falls back to claude_local when no company agent has a complete adapter config", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    await createAgentLifecycle(db).requestHire(companyId, {
+      name: "Builder",
+      role: "engineer",
+      status: "idle",
+      adapterType: "opencode_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(ensured.adapterType).toBe("claude_local");
   });
 
   it("rejects assigning regular issues to the Assistant but allows its conversation issue", async () => {
