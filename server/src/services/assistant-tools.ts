@@ -237,7 +237,7 @@ function assistantCapabilities(db: Db): Capability[] {
       name: PROPOSE_ACTION_TOOL, write: true,
       description: [
         "Propose one exact governed API call for this person to confirm. Nothing runs until they click Confirm on the card in this conversation; their browser then performs the call with their own session and you are woken with the result.",
-        "Only governed actions are allowed: approval approve/reject/request-revision, agent hire/create/pause/resume/terminate, budget policy and budget updates, secret create/update/delete (never include secret values), connection and grant changes, and DELETE under this company or one of its tasks.",
+        "Only governed actions are allowed: approval approve/reject/request-revision, agent hire/create/pause/resume/terminate, budget policy and budget updates, secret create/update/delete (never include secret values), revoking a connection, grant or delegation (DELETE with body null), and DELETE under this company or one of its tasks. Creating or changing connections is not proposable: point the person to the Connectors page to set them up.",
         "The path must start with /api/ and refer to this company. category is derived from the path. Optionally pass staleCheck { path, field: \"updatedAt\", expected } with a GET path whose updatedAt must be unchanged when the person confirms.",
       ].join(" "),
       schema: z.object({

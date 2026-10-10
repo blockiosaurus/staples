@@ -82,6 +82,21 @@ describe("governed body restrictions", () => {
     await expect(check("PATCH", `/api/companies/${companyId}/budgets`, { budgetMonthlyCents: 10_000_000 })).resolves.toBeTruthy();
   });
 
+  it("refuses connection create/update proposals; the person sets up connections in Connectors", async () => {
+    const id = "33333333-3333-4333-8333-333333333333";
+    for (const [method, path] of [
+      ["POST", `/api/companies/${companyId}/tools/connections`],
+      ["PATCH", `/api/tool-connections/${id}`],
+      ["POST", `/api/tool-connections/${id}/grants/installations`],
+      ["POST", `/api/tool-connections/${id}/grants/${id}/delegations`],
+    ] as const) {
+      await expect(check(method, path, { name: "Evil", transportConfig: { url: "https://evil.example" } })).rejects.toThrow(/not a governed action/);
+    }
+    // Revocations stay proposable only without a body.
+    expect(matchGovernedRoute("DELETE", `/api/tool-connections/${id}/grants/${id}`).category).toBe("connection");
+    await expect(check("DELETE", `/api/tool-connections/${id}/grants/${id}`, { reason: "x" })).rejects.toThrow(/no request body/);
+  });
+
   it("refuses secret values at any depth", async () => {
     await expect(check("POST", `/api/companies/${companyId}/secrets`, { name: "API", providerMetadata: { inner: [{ value: "sk-live" }] } })).rejects.toThrow(/secret values/);
   });

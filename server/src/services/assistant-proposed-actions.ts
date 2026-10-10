@@ -68,6 +68,10 @@ function assertBudgetAmounts(body: unknown, keys: readonly string[]) {
   }
 }
 
+function assertNoBody(body: unknown) {
+  if (body !== null && body !== undefined) throw new ProposedActionError("This action takes no request body; propose it with body null.");
+}
+
 /**
  * Agent create/hire bodies are an allowlist: identity, reporting line, budget
  * and a local CLI adapter type. Adapter config, runtime/workspace settings,
@@ -133,14 +137,11 @@ export const GOVERNED_ROUTE_PATTERNS: readonly GovernedRoutePattern[] = [
   { method: "POST", pattern: re(`/api/companies/${UUID}/secrets`), category: "secret", binding: company(), route: "POST /api/companies/:companyId/secrets", forbidBodyKeys: ["value"] },
   { method: "PATCH", pattern: re(`/api/secrets/${UUID}`), category: "secret", binding: entity("secret"), route: "PATCH /api/secrets/:id", forbidBodyKeys: ["value"] },
   { method: "DELETE", pattern: re(`/api/secrets/${UUID}`), category: "secret", binding: entity("secret"), route: "DELETE /api/secrets/:id" },
-  // tool-access.ts (connections and their grants)
-  { method: "POST", pattern: re(`/api/companies/${UUID}/tools/connections`), category: "connection", binding: company(), route: "POST /api/companies/:companyId/tools/connections" },
-  { method: "PATCH", pattern: re(`/api/tool-connections/${UUID}`), category: "connection", binding: entity("tool_connection"), route: "PATCH /api/tool-connections/:connectionId" },
-  { method: "DELETE", pattern: re(`/api/tool-connections/${UUID}`), category: "connection", binding: entity("tool_connection"), route: "DELETE /api/tool-connections/:connectionId" },
-  { method: "POST", pattern: re(`/api/tool-connections/${UUID}/grants/installations`), category: "connection", binding: entity("tool_connection"), route: "POST /api/tool-connections/:connectionId/grants/installations" },
-  { method: "DELETE", pattern: re(`/api/tool-connections/${UUID}/grants/${UUID}`), category: "connection", binding: entity("tool_connection"), route: "DELETE /api/tool-connections/:connectionId/grants/:grantId" },
-  { method: "POST", pattern: re(`/api/tool-connections/${UUID}/grants/${UUID}/delegations`), category: "connection", binding: entity("tool_connection"), route: "POST /api/tool-connections/:connectionId/grants/:grantId/delegations" },
-  { method: "DELETE", pattern: re(`/api/tool-connections/${UUID}/grants/${UUID}/delegations/${UUID}`), category: "connection", binding: entity("tool_connection"), route: "DELETE /api/tool-connections/:connectionId/grants/:grantId/delegations/:delegationId" },
+  // tool-access.ts: revocations only, and only without a body. Creating or
+  // changing connections and grants happens in the Connectors UI.
+  { method: "DELETE", pattern: re(`/api/tool-connections/${UUID}`), category: "connection", binding: entity("tool_connection"), route: "DELETE /api/tool-connections/:connectionId", validateBody: assertNoBody },
+  { method: "DELETE", pattern: re(`/api/tool-connections/${UUID}/grants/${UUID}`), category: "connection", binding: entity("tool_connection"), route: "DELETE /api/tool-connections/:connectionId/grants/:grantId", validateBody: assertNoBody },
+  { method: "DELETE", pattern: re(`/api/tool-connections/${UUID}/grants/${UUID}/delegations/${UUID}`), category: "connection", binding: entity("tool_connection"), route: "DELETE /api/tool-connections/:connectionId/grants/:grantId/delegations/:delegationId", validateBody: assertNoBody },
   // Generic deletes scoped to this company or one of its issues.
   { method: "DELETE", pattern: re(`/api/companies/${UUID}(?:/${SEGMENT})+`), category: "delete", binding: company(), route: "DELETE /api/companies/:companyId/..." },
   { method: "DELETE", pattern: re(`/api/issues/${UUID}(?:/${SEGMENT})*`), category: "delete", binding: entity("issue"), route: "DELETE /api/issues/:id[/...]" },
