@@ -76,4 +76,82 @@ describe("useUiPreferences", () => {
     await flush();
     expect(mocks.patch).not.toHaveBeenCalled();
   });
+
+  const resolved = (patch: Partial<typeof DEFAULT_UI_PREFERENCES>, stamp: string) => ({
+    ...DEFAULT_UI_PREFERENCES,
+    revealed: { "nav.projects": "2026-01-01T00:00:00.000Z" },
+    ...patch,
+    updatedAt: stamp,
+  });
+
+  it("keeps a newer optimistic patch when an earlier response arrives late", async () => {
+    let resolveFirst!: (v: unknown) => void;
+    let resolveSecond!: (v: unknown) => void;
+    mocks.patch
+      .mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }))
+      .mockReturnValueOnce(new Promise((r) => { resolveSecond = r; }));
+    await act(async () => observed.update({ pin: ["nav.goals"] }));
+    await act(async () => observed.update({ pin: ["nav.issues"] }));
+    await flush();
+    expect(observed.preferences.pinned).toEqual(["nav.goals", "nav.issues"]);
+    await act(async () => resolveFirst(resolved({ pinned: ["nav.goals"] }, "t1")));
+    await flush();
+    expect(observed.preferences.pinned).toEqual(["nav.goals", "nav.issues"]);
+    await act(async () => resolveSecond(resolved({ pinned: ["nav.goals", "nav.issues"] }, "t2")));
+    await flush();
+    expect(observed.preferences.pinned).toEqual(["nav.goals", "nav.issues"]);
+    expect(observed.preferences.updatedAt).toBe("t2");
+  });
+
+  it("keeps the second change when the first overlapping request fails", async () => {
+    let rejectFirst!: (e: unknown) => void;
+    mocks.patch
+      .mockReturnValueOnce(new Promise((_, r) => { rejectFirst = r; }))
+      .mockResolvedValueOnce(resolved({ pinned: ["nav.issues"] }, "t2"));
+    await act(async () => observed.update({ pin: ["nav.goals"] }));
+    await act(async () => observed.update({ pin: ["nav.issues"] }));
+    await act(async () => rejectFirst(new Error("boom")));
+    await flush();
+    await flush();
+    expect(observed.preferences.pinned).toEqual(["nav.issues"]);
+  });
+
+  it("sends one request for two same-tick identical reveals", async () => {
+    mocks.patch.mockResolvedValue(resolved({}, "t1"));
+    await act(async () => {
+      observed.update({ reveal: ["nav.goals"] });
+      observed.update({ reveal: ["nav.goals"] });
+    });
+    await flush();
+    expect(mocks.patch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useUiPreferences before load", () => {
+  it("queues updates until server data arrives", async () => {
+    let resolveGet!: (v: unknown) => void;
+    mocks.getSession.mockResolvedValue({ user: { id: "user-1" } });
+    mocks.get.mockReturnValue(new Promise((r) => { resolveGet = r; }));
+    mocks.patch.mockResolvedValue({ ...DEFAULT_UI_PREFERENCES, pinned: ["nav.goals"], updatedAt: "t1" });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let seen!: ReturnType<typeof useUiPreferences>;
+    function P() { seen = useUiPreferences("company-9"); return null; }
+    const el = document.createElement("div");
+    const r = createRoot(el);
+    const tick = async () => act(async () => { await new Promise((x) => setTimeout(x, 0)); });
+    await act(async () => r.render(<QueryClientProvider client={client}><P /></QueryClientProvider>));
+    for (let i = 0; i < 5; i += 1) await tick();
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+    await act(async () => seen.update({ pin: ["nav.goals"] }));
+    await tick();
+    expect(mocks.patch).not.toHaveBeenCalled();
+    expect(seen.loaded).toBe(false);
+    await act(async () => resolveGet({ ...DEFAULT_UI_PREFERENCES, updatedAt: "t0" }));
+    for (let i = 0; i < 5; i += 1) await tick();
+    expect(seen.loaded).toBe(true);
+    expect(mocks.patch).toHaveBeenCalledTimes(1);
+    expect(seen.preferences.pinned).toEqual(["nav.goals"]);
+    await act(async () => r.unmount());
+    client.clear();
+  });
 });
