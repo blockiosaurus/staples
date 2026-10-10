@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const surfaceIdSchema = z.string().regex(/^[a-z0-9][a-z0-9.-]{0,79}$/);
-const surfaceIdList = z.array(surfaceIdSchema).max(50);
+const surfaceIdList = z.array(surfaceIdSchema).max(20);
 
 export const patchUiPreferencesSchema = z
   .object({

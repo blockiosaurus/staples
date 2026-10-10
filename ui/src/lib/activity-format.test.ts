@@ -15,6 +15,10 @@ describe("activity formatting", () => {
     expect(formatActivityVerb("issue.updated", { status: "in_review" })).toBe("changed status to in review on");
   });
 
+  it("uses a readable verb for personal navigation preference changes", () => {
+    expect(formatActivityVerb("ui_preferences.updated", { hide: ["nav.projects"] })).toBe("updated sidebar navigation for");
+  });
+
   it("uses readable verbs for task read-state changes", () => {
     expect(formatActivityVerb("issue.read_marked")).toBe("read");
     expect(formatActivityVerb("issue.read_unmarked")).toBe("marked unread");

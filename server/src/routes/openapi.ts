@@ -5916,8 +5916,8 @@ registry.registerPath({
   path: "/api/companies/{companyId}/signals",
   tags: ["dashboard"],
   summary: "Get company usage signals",
-  request: { params: z.object({ companyId: z.string() }) },
-  responses: { 200: r.ok(), 401: r.unauthorized },
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
 });
 
 registry.registerPath({
@@ -6552,7 +6552,7 @@ for (const method of ["get", "patch"] as const) {
       params: z.object({ companyId: z.string() }),
       ...(method === "patch" ? { body: jsonBody(patchUiPreferencesSchema) } : {}),
     },
-    responses: { 200: r.ok(), ...(method === "patch" ? { 400: r.badRequest } : {}), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+    responses: { 200: r.ok(), ...(method === "patch" ? { 400: r.badRequest, 422: r.unprocessable } : {}), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
   });
 }
 

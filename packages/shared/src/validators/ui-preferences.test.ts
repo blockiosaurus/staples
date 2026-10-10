@@ -16,3 +16,15 @@ describe("patchUiPreferencesSchema", () => {
     expect(surfaceIdSchema.safeParse("nav.projects").success).toBe(true);
   });
 });
+
+describe("patchUiPreferencesSchema list limits", () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `nav.s${i}`);
+  it("accepts up to 20 ids per list", () => {
+    expect(patchUiPreferencesSchema.safeParse({ hide: ids(20) }).success).toBe(true);
+  });
+  it("rejects more than 20 ids per list", () => {
+    for (const key of ["pin", "unpin", "hide", "unhide", "reveal", "see"]) {
+      expect(patchUiPreferencesSchema.safeParse({ [key]: ids(21) }).success).toBe(false);
+    }
+  });
+});

@@ -1,11 +1,20 @@
 import { Router } from "express";
 import { companies, type Db } from "@paperclipai/db";
 import { eq } from "drizzle-orm";
-import { patchUiPreferencesSchema } from "@paperclipai/shared";
+import { patchUiPreferencesSchema, type PatchUiPreferences } from "@paperclipai/shared";
 import { forbidden, notFound } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { logActivity, uiPreferencesService } from "../services/index.js";
 import { assertBoard, getActorInfo, hasCompanyAccess } from "./authz.js";
+
+/** Ops that reflect a deliberate person choice; reveal/see are automatic and never logged. */
+const INTENT_OPS = ["pin", "unpin", "hide", "unhide", "showEverything"] as const;
+
+function intentOps(patch: PatchUiPreferences): Partial<PatchUiPreferences> {
+  const out: Record<string, unknown> = {};
+  for (const key of INTENT_OPS) if (patch[key] !== undefined) out[key] = patch[key];
+  return out as Partial<PatchUiPreferences>;
+}
 
 export function uiPreferencesRoutes(db: Db) {
   const router = Router();
@@ -33,7 +42,14 @@ export function uiPreferencesRoutes(db: Db) {
 
   router.patch("/companies/:companyId/ui-preferences/me", validate(patchUiPreferencesSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
-    const result = await svc.patch(companyId, req.actor.userId!, req.body);
+    const body = req.body as PatchUiPreferences;
+    const { preferences, changed } = await svc.patch(companyId, req.actor.userId!, body);
+    const details = intentOps(body);
+    // Only deliberate, effective changes reach the company activity feed.
+    if (!changed || Object.keys(details).length === 0) {
+      res.json(preferences);
+      return;
+    }
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId,
@@ -45,9 +61,9 @@ export function uiPreferencesRoutes(db: Db) {
       action: "ui_preferences.updated",
       entityType: "company",
       entityId: companyId,
-      details: req.body,
+      details,
     });
-    res.json(result);
+    res.json(preferences);
   });
 
   return router;

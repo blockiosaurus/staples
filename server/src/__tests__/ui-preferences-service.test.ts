@@ -5,6 +5,7 @@ import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
+import { MAX_SURFACE_ENTRIES } from "@paperclipai/shared";
 import { uiPreferencesService } from "../services/ui-preferences.ts";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
@@ -50,7 +51,8 @@ describeEmbeddedPostgres("ui preferences service", () => {
     const companyId = await seedCompany("UIB");
     const svc = uiPreferencesService(db);
     await svc.patch(companyId, "user-1", { pin: ["agents"] });
-    const result = await svc.patch(companyId, "user-1", { hide: ["costs"], see: ["inbox"], showEverything: true });
+    const { preferences: result, changed } = await svc.patch(companyId, "user-1", { hide: ["costs"], see: ["inbox"], showEverything: true });
+    expect(changed).toBe(true);
     expect(result.pinned).toEqual(["agents"]);
     expect(result.hidden).toEqual(["costs"]);
     expect(Object.keys(result.seen)).toEqual(["inbox"]);
@@ -73,5 +75,25 @@ describeEmbeddedPostgres("ui preferences service", () => {
     await uiPreferencesService(db).patch(companyId, "user-1", { pin: ["agents"] });
     await db.delete(companies);
     expect(await db.select().from(companyUserUiPreferences)).toHaveLength(0);
+  });
+
+  it("reports unchanged for a no-op patch and keeps updatedAt", async () => {
+    const companyId = await seedCompany("UIE");
+    const svc = uiPreferencesService(db);
+    const first = await svc.patch(companyId, "user-1", { hide: ["nav.projects"] });
+    expect(first.changed).toBe(true);
+    const again = await svc.patch(companyId, "user-1", { hide: ["nav.projects"] });
+    expect(again.changed).toBe(false);
+    expect(again.preferences).toEqual(first.preferences);
+  });
+
+  it("rejects a patch that would exceed the entry cap with 422", async () => {
+    const companyId = await seedCompany("UIF");
+    const svc = uiPreferencesService(db);
+    const ids = Array.from({ length: MAX_SURFACE_ENTRIES }, (_, i) => `nav.s${i}`);
+    for (let i = 0; i < ids.length; i += 20) await svc.patch(companyId, "user-1", { hide: ids.slice(i, i + 20) });
+    expect((await svc.get(companyId, "user-1")).hidden).toHaveLength(MAX_SURFACE_ENTRIES);
+    await expect(svc.patch(companyId, "user-1", { hide: ["nav.overflow"] })).rejects.toMatchObject({ status: 422 });
+    expect((await svc.get(companyId, "user-1")).hidden).toHaveLength(MAX_SURFACE_ENTRIES);
   });
 });

@@ -56,7 +56,7 @@ describe("ui preferences routes", () => {
     vi.clearAllMocks();
     mockFindCompany.mockResolvedValue({ id: "company-1" });
     mockUiPreferencesService.get.mockResolvedValue(PREFS);
-    mockUiPreferencesService.patch.mockResolvedValue(PREFS);
+    mockUiPreferencesService.patch.mockResolvedValue({ preferences: PREFS, changed: true });
   });
 
   it("returns preferences for a company member", async () => {
@@ -72,6 +72,7 @@ describe("ui preferences routes", () => {
     const body = { pin: ["agents"], showEverything: true };
     const res = await request(app).patch("/api/companies/company-1/ui-preferences/me").send(body);
     expect(res.status).toBe(200);
+    expect(res.body).toEqual(PREFS);
     expect(mockUiPreferencesService.patch).toHaveBeenCalledWith("company-1", "user-1", body);
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
@@ -83,6 +84,58 @@ describe("ui preferences routes", () => {
         details: body,
       }),
     );
+  });
+
+  it("writes no activity for reveal/see-only patches", async () => {
+    const app = await createApp(memberActor());
+    const res = await request(app)
+      .patch("/api/companies/company-1/ui-preferences/me")
+      .send({ reveal: ["nav.projects"], see: ["nav.routines"] });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(PREFS);
+    expect(mockUiPreferencesService.patch).toHaveBeenCalledTimes(1);
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("writes no activity for a hide that changes nothing", async () => {
+    mockUiPreferencesService.patch.mockResolvedValue({ preferences: PREFS, changed: false });
+    const app = await createApp(memberActor());
+    const res = await request(app).patch("/api/companies/company-1/ui-preferences/me").send({ hide: ["nav.projects"] });
+    expect(res.status).toBe(200);
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("logs only the person-intent ops of a real change", async () => {
+    const app = await createApp(memberActor());
+    const res = await request(app)
+      .patch("/api/companies/company-1/ui-preferences/me")
+      .send({ hide: ["nav.projects"], see: ["nav.routines"] });
+    expect(res.status).toBe(200);
+    expect(mockLogActivity).toHaveBeenCalledTimes(1);
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "ui_preferences.updated", details: { hide: ["nav.projects"] } }),
+    );
+  });
+
+  it("returns 422 when the service reports the entry cap", async () => {
+    const { unprocessable } = await import("../errors.js");
+    mockUiPreferencesService.patch.mockRejectedValue(unprocessable("Too many hidden navigation entries (129); the limit is 128."));
+    const app = await createApp(memberActor());
+    const res = await request(app).patch("/api/companies/company-1/ui-preferences/me").send({ hide: ["nav.projects"] });
+    expect(res.status).toBe(422);
+    expect(JSON.stringify(res.body)).toContain("limit is 128");
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("rejects a member whose membership is not active", async () => {
+    const app = await createApp({
+      ...memberActor(),
+      memberships: [{ companyId: "company-1", membershipRole: "operator", status: "suspended" }],
+    });
+    const res = await request(app).get("/api/companies/company-1/ui-preferences/me");
+    expect(res.status).toBe(403);
+    expect(mockUiPreferencesService.get).not.toHaveBeenCalled();
   });
 
   it("rejects an empty patch", async () => {

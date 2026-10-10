@@ -3,9 +3,11 @@ import { companyUserUiPreferences, type Db } from "@paperclipai/db";
 import {
   applyUiPreferencesPatch,
   DEFAULT_UI_PREFERENCES,
+  uiPreferencesLimitError,
   type PatchUiPreferences,
   type UiPreferences,
 } from "@paperclipai/shared";
+import { unprocessable } from "../errors.js";
 
 type Row = typeof companyUserUiPreferences.$inferSelect;
 
@@ -21,6 +23,12 @@ function toPreferences(row: Row | undefined | null): UiPreferences {
   };
 }
 
+function sameIgnoringUpdatedAt(a: UiPreferences, b: UiPreferences): boolean {
+  const sortedEntries = (record: Record<string, string>) => Object.entries(record).sort(([x], [y]) => x.localeCompare(y));
+  return JSON.stringify([a.pinned, a.hidden, sortedEntries(a.revealed), sortedEntries(a.seen), a.showEverything])
+    === JSON.stringify([b.pinned, b.hidden, sortedEntries(b.revealed), sortedEntries(b.seen), b.showEverything]);
+}
+
 const rowWhere = (companyId: string, userId: string) =>
   and(eq(companyUserUiPreferences.companyId, companyId), eq(companyUserUiPreferences.userId, userId));
 
@@ -31,7 +39,16 @@ export function uiPreferencesService(db: Db) {
       return toPreferences(row);
     },
 
-    async patch(companyId: string, userId: string, patch: PatchUiPreferences): Promise<UiPreferences> {
+    /**
+     * Applies a patch. `changed` is false when the merged result equals the stored
+     * value (ignoring updatedAt); in that case nothing is written. Throws 422 when
+     * the merged result would exceed MAX_SURFACE_ENTRIES in any collection.
+     */
+    async patch(
+      companyId: string,
+      userId: string,
+      patch: PatchUiPreferences,
+    ): Promise<{ preferences: UiPreferences; changed: boolean }> {
       return db.transaction(async (tx) => {
         await tx.insert(companyUserUiPreferences).values({ companyId, userId }).onConflictDoNothing();
         const [row] = await tx
@@ -40,7 +57,11 @@ export function uiPreferencesService(db: Db) {
           .where(rowWhere(companyId, userId))
           .for("update");
         const now = new Date();
-        const next = applyUiPreferencesPatch(toPreferences(row), patch, now.toISOString());
+        const current = toPreferences(row);
+        const next = applyUiPreferencesPatch(current, patch, now.toISOString());
+        if (sameIgnoringUpdatedAt(current, next)) return { preferences: current, changed: false };
+        const limitError = uiPreferencesLimitError(next);
+        if (limitError) throw unprocessable(limitError);
         const [updated] = await tx
           .update(companyUserUiPreferences)
           .set({
@@ -53,7 +74,7 @@ export function uiPreferencesService(db: Db) {
           })
           .where(rowWhere(companyId, userId))
           .returning();
-        return toPreferences(updated);
+        return { preferences: toPreferences(updated), changed: true };
       });
     },
   };

@@ -1,7 +1,9 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
+import { isUuidLike } from "@paperclipai/shared";
+import { badRequest } from "../errors.js";
 import { companySignalsService } from "../services/company-signals.js";
-import { assertCompanyAccess } from "./authz.js";
+import { assertBoard, assertCompanyAccess } from "./authz.js";
 
 export function companySignalsRoutes(db: Db) {
   const router = Router();
@@ -9,6 +11,8 @@ export function companySignalsRoutes(db: Db) {
 
   router.get("/companies/:companyId/signals", async (req, res) => {
     const companyId = req.params.companyId as string;
+    assertBoard(req);
+    if (!isUuidLike(companyId)) throw badRequest("Invalid company id");
     assertCompanyAccess(req, companyId);
     res.json(await svc.get(companyId));
   });

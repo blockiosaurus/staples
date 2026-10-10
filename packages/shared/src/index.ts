@@ -1753,6 +1753,8 @@ export {
 export {
   applyUiPreferencesPatch,
   DEFAULT_UI_PREFERENCES,
+  MAX_SURFACE_ENTRIES,
+  uiPreferencesLimitError,
 } from "./ui-preferences.js";
 export {
   resourceMembershipStateSchema,

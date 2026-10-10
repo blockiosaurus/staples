@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyUiPreferencesPatch, DEFAULT_UI_PREFERENCES } from "./ui-preferences.js";
+import { applyUiPreferencesPatch, DEFAULT_UI_PREFERENCES, MAX_SURFACE_ENTRIES, uiPreferencesLimitError } from "./ui-preferences.js";
 import type { UiPreferences, PatchUiPreferences } from "./index.js";
 
 describe("applyUiPreferencesPatch", () => {
@@ -145,5 +145,29 @@ describe("applyUiPreferencesPatch", () => {
       showEverything: false,
       updatedAt: null,
     });
+  });
+});
+
+describe("uiPreferencesLimitError", () => {
+  const ids = (n: number, prefix = "nav.s") => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
+  const asMap = (list: string[]) => Object.fromEntries(list.map((id) => [id, "2024-01-01T00:00:00Z"]));
+
+  it("exports a cap of 128 entries", () => {
+    expect(MAX_SURFACE_ENTRIES).toBe(128);
+  });
+
+  it("accepts preferences at the cap", () => {
+    const at = ids(MAX_SURFACE_ENTRIES);
+    expect(
+      uiPreferencesLimitError({ ...DEFAULT_UI_PREFERENCES, pinned: at, hidden: at, revealed: asMap(at), seen: asMap(at) }),
+    ).toBeNull();
+  });
+
+  it.each(["pinned", "hidden", "revealed", "seen"] as const)("rejects %s over the cap", (key) => {
+    const over = ids(MAX_SURFACE_ENTRIES + 1);
+    const value = key === "pinned" || key === "hidden" ? over : asMap(over);
+    const message = uiPreferencesLimitError({ ...DEFAULT_UI_PREFERENCES, [key]: value });
+    expect(message).toContain(key);
+    expect(message).toContain(String(MAX_SURFACE_ENTRIES));
   });
 });
