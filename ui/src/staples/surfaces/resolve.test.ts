@@ -54,8 +54,20 @@ function visibleIds(c: SurfaceContext, p: UiPreferences) {
 }
 
 describe("resolveSurface", () => {
+  it("places the core Assistant surface right after Dashboard in the top group", () => {
+    const ids = SURFACE_REGISTRY.map((surface) => surface.id);
+    expect(ids.indexOf("nav.assistant")).toBe(ids.indexOf("nav.dashboard") + 1);
+    expect(byId("nav.assistant")).toMatchObject({
+      label: "Assistant",
+      to: "/assistant",
+      matchRoots: ["assistant"],
+      group: "top",
+      tier: "core",
+    });
+  });
+
   it("shows only dashboard, tasks, agents for a fresh company", () => {
-    expect(visibleIds(ctx(), prefs())).toEqual(["nav.dashboard", "nav.tasks", "nav.agents"]);
+    expect(visibleIds(ctx(), prefs())).toEqual(["nav.dashboard", "nav.assistant", "nav.tasks", "nav.agents"]);
   });
 
   it("reveals projects when growth fires", () => {
@@ -111,6 +123,7 @@ describe("resolveSurface", () => {
     const states = resolveSurfaces(SURFACE_REGISTRY, ctx({ signals: null, inboxUnread: 3 }), prefs());
     expect(states.filter((s) => s.visible).map((s) => s.surface.id)).toEqual([
       "nav.dashboard",
+      "nav.assistant",
       "nav.tasks",
       "nav.agents",
     ]);
@@ -177,7 +190,7 @@ describe("renderableSurfaces", () => {
       }),
     );
     const ids = (ready: boolean) => renderableSurfaces(states, ready).map((s) => s.surface.id);
-    expect(ids(false)).toEqual(["nav.dashboard", "nav.tasks", "nav.projects", "nav.goals", "nav.agents"]);
+    expect(ids(false)).toEqual(["nav.dashboard", "nav.assistant", "nav.tasks", "nav.projects", "nav.goals", "nav.agents"]);
     expect(ids(true)).toEqual(expect.arrayContaining(["nav.chat", "nav.cases", "nav.decisions"]));
   });
 });

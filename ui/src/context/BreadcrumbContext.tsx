@@ -119,6 +119,30 @@ export function BreadcrumbProvider({ children, companyName }: BreadcrumbProvider
   );
 }
 
+const noop = () => {};
+const ISOLATED_BREADCRUMB_VALUE: BreadcrumbContextValue = {
+  breadcrumbs: [],
+  setBreadcrumbs: noop,
+  breadcrumbToolbar: null,
+  setBreadcrumbToolbar: noop,
+  breadcrumbPanelControl: null,
+  setBreadcrumbPanelControl: noop,
+  mobileToolbar: null,
+  setMobileToolbar: noop,
+};
+
+/**
+ * Swallows breadcrumb writes from a surface embedded inside another page (the
+ * Assistant dock) so it cannot replace the host page's title or toolbar.
+ */
+export function IsolatedBreadcrumbProvider({ children }: { children: ReactNode }) {
+  return <BreadcrumbContext.Provider value={ISOLATED_BREADCRUMB_VALUE}>{children}</BreadcrumbContext.Provider>;
+}
+
+export function useOptionalBreadcrumbs() {
+  return useContext(BreadcrumbContext);
+}
+
 export function useBreadcrumbs() {
   const ctx = useContext(BreadcrumbContext);
   if (!ctx) {

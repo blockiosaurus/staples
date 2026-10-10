@@ -98,6 +98,29 @@ export function PanelProvider({ children }: { children: ReactNode }) {
   );
 }
 
+const noop = () => {};
+const ISOLATED_PANEL_VALUE: PanelContextValue = {
+  panelContent: null,
+  panelContentMode: "padded",
+  panelVisible: false,
+  openPanel: noop,
+  closePanel: noop,
+  setPanelVisible: noop,
+  togglePanelVisible: noop,
+  panelMaximizeRequested: false,
+  requestPanelMaximize: noop,
+  clearPanelMaximizeRequest: noop,
+};
+
+/**
+ * An inert panel host for surfaces embedded inside another page (the
+ * Assistant dock): they can call openPanel/closePanel without taking over the
+ * page's single properties panel.
+ */
+export function IsolatedPanelProvider({ children }: { children: ReactNode }) {
+  return <PanelContext.Provider value={ISOLATED_PANEL_VALUE}>{children}</PanelContext.Provider>;
+}
+
 export function usePanel() {
   const ctx = useContext(PanelContext);
   if (!ctx) {

@@ -215,9 +215,9 @@ describe("Sidebar", () => {
     });
   });
 
-  it("fresh company shows Dashboard, Tasks and Agents only", async () => {
+  it("fresh company shows Dashboard, Assistant, Tasks and Agents only", async () => {
     await withSidebar({}, () => {
-      expect(navLabels()).toEqual(["Search", "Dashboard", "Tasks", "Agents"]);
+      expect(navLabels()).toEqual(["Search", "Dashboard", "Assistant", "Tasks", "Agents"]);
       expect(container.textContent).toContain("New Task");
       expect(container.querySelector('[data-testid="sidebar-starred-projects"]')).toBeNull();
       expect(container.querySelector('[data-testid="sidebar-recent-tasks"]')).not.toBeNull();

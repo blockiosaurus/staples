@@ -12,15 +12,18 @@ function TestHarness({
   onNewIssue,
   onSearch,
   onGoToInbox,
+  onToggleAssistant,
 }: {
   onNewIssue: () => void;
   onSearch?: () => void;
   onGoToInbox?: () => void;
+  onToggleAssistant?: () => void;
 }) {
   useKeyboardShortcuts({
     onNewIssue,
     onSearch,
     onGoToInbox,
+    onToggleAssistant,
   });
 
   return <div>keyboard shortcuts test</div>;
@@ -226,4 +229,55 @@ describe("useKeyboardShortcuts", () => {
     });
   });
 
+
+  describe("Cmd/Ctrl+J Assistant toggle", () => {
+    function renderWithToggle() {
+      const root = createRoot(container);
+      const onToggleAssistant = vi.fn();
+      act(() => {
+        root.render(<TestHarness onNewIssue={vi.fn()} onToggleAssistant={onToggleAssistant} />);
+      });
+      return { root, onToggleAssistant };
+    }
+
+    for (const modifier of ["metaKey", "ctrlKey"] as const) {
+      it(`toggles with ${modifier} from a focused textarea and prevents the default`, () => {
+        const { root, onToggleAssistant } = renderWithToggle();
+        const textarea = document.createElement("textarea");
+        document.body.appendChild(textarea);
+        textarea.focus();
+        const event = new KeyboardEvent("keydown", { key: "j", [modifier]: true, bubbles: true, cancelable: true });
+        textarea.dispatchEvent(event);
+        expect(onToggleAssistant).toHaveBeenCalledTimes(1);
+        expect(event.defaultPrevented).toBe(true);
+        textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "J", [modifier]: true, bubbles: true, cancelable: true }));
+        expect(onToggleAssistant).toHaveBeenCalledTimes(2);
+        textarea.remove();
+        act(() => root.unmount());
+      });
+    }
+
+    it("ignores bare j and other modifier combinations", () => {
+      const { root, onToggleAssistant } = renderWithToggle();
+      for (const init of [{}, { altKey: true, metaKey: true }, { shiftKey: true, ctrlKey: true }]) {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", ...init, bubbles: true, cancelable: true }));
+      }
+      expect(onToggleAssistant).not.toHaveBeenCalled();
+      act(() => root.unmount());
+    });
+
+    it("does nothing while a blocking modal dialog is open", () => {
+      const { root, onToggleAssistant } = renderWithToggle();
+      const dialog = document.createElement("div");
+      dialog.setAttribute("role", "dialog");
+      dialog.setAttribute("aria-modal", "true");
+      document.body.appendChild(dialog);
+      const event = new KeyboardEvent("keydown", { key: "j", metaKey: true, bubbles: true, cancelable: true });
+      document.dispatchEvent(event);
+      expect(onToggleAssistant).not.toHaveBeenCalled();
+      expect(event.defaultPrevented).toBe(false);
+      dialog.remove();
+      act(() => root.unmount());
+    });
+  });
 });

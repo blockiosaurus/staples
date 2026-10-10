@@ -57,6 +57,7 @@ const sections: ShortcutSection[] = [
       { keys: ["["], label: "Toggle sidebar" },
       { keys: ["]"], label: "Toggle panel" },
       { keys: ["?"], label: "Show keyboard shortcuts" },
+      { keys: ["⌘/Ctrl", "J"], label: "Toggle the Assistant", combo: true },
     ],
   },
 ];
@@ -105,7 +106,7 @@ export function KeyboardShortcutsCheatsheetContent() {
       </div>
       <div className="border-t border-border px-5 py-3">
         <p className="text-xs text-muted-foreground">
-          Press <KeyCap>Esc</KeyCap> to close &middot; Shortcuts are disabled in text fields
+          Press <KeyCap>Esc</KeyCap> to close &middot; Shortcuts other than the Assistant toggle are disabled in text fields
         </p>
       </div>
     </>

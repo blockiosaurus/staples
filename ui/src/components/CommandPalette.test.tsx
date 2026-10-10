@@ -110,7 +110,7 @@ vi.mock("./Identity", () => ({
 vi.mock("@/components/ui/command", () => ({
   CommandDialog: ({ open, children }: { open: boolean; children: ReactNode }) => (open ? <div>{children}</div> : null),
   CommandEmpty: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  CommandGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CommandGroup: ({ children, heading }: { children: ReactNode; heading?: string }) => <div data-group={heading}>{children}</div>,
   CommandInput: ({
     value,
     onValueChange,
@@ -278,7 +278,12 @@ describe("CommandPalette", () => {
     // Let the agents query resolve and render.
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
     expect([...container.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Alpha"))).toBe(true);
-    expect([...container.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Assistant"))).toBe(false);
+    const agentsGroup = container.querySelector('[data-group="Agents"]');
+    expect(agentsGroup).not.toBeNull();
+    expect([...agentsGroup!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Assistant"))).toBe(false);
+    // The Assistant is reached as a page (nav.assistant), not as a staff agent.
+    const pagesGroup = container.querySelector('[data-group="Pages"]');
+    expect([...pagesGroup!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Assistant"))).toBe(true);
 
     act(() => {
       root.unmount();

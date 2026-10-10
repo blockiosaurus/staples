@@ -13,6 +13,8 @@ interface ShortcutHandlers {
   onTogglePanel?: () => void;
   onShowShortcuts?: () => void;
   onGoToInbox?: () => void;
+  /** Cmd/Ctrl+J: works from text inputs too, but not over a modal dialog. */
+  onToggleAssistant?: () => void;
 }
 
 export function useKeyboardShortcuts({
@@ -22,6 +24,7 @@ export function useKeyboardShortcuts({
   onTogglePanel,
   onShowShortcuts,
   onGoToInbox,
+  onToggleAssistant,
 }: ShortcutHandlers) {
   useEffect(() => {
     // g → i chord state. IssueDetail runs its own capture-phase handler with
@@ -51,6 +54,17 @@ export function useKeyboardShortcuts({
     function handleKeyDown(e: KeyboardEvent) {
       if (e.defaultPrevented) {
         disarmGoChord();
+        return;
+      }
+
+      // Cmd/Ctrl+J → toggle the Assistant dock. Checked before the text-input
+      // guard so it works from the composer; preventDefault stops Chrome's
+      // Ctrl+J downloads page.
+      if (onToggleAssistant && isAssistantToggleShortcut(e)) {
+        if (hasBlockingShortcutDialog()) return;
+        disarmGoChord();
+        e.preventDefault();
+        onToggleAssistant();
         return;
       }
 
@@ -145,5 +159,9 @@ export function useKeyboardShortcuts({
       document.removeEventListener("focusin", handleFocusIn, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [onNewIssue, onSearch, onToggleSidebar, onTogglePanel, onShowShortcuts, onGoToInbox]);
+  }, [onNewIssue, onSearch, onToggleSidebar, onTogglePanel, onShowShortcuts, onGoToInbox, onToggleAssistant]);
+}
+
+export function isAssistantToggleShortcut(e: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">) {
+  return (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "j";
 }

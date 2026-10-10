@@ -33,4 +33,16 @@ describe("KeyboardShortcutsCheatsheet", () => {
       root.unmount();
     });
   });
+
+  it("lists the Cmd/Ctrl+J Assistant toggle", () => {
+    const root = createRoot(container);
+    flushSync(() => {
+      root.render(<KeyboardShortcutsCheatsheetContent />);
+    });
+    expect(container.textContent).toContain("Toggle the Assistant");
+    expect(container.textContent).toContain("⌘/Ctrl+J");
+    flushSync(() => {
+      root.unmount();
+    });
+  });
 });

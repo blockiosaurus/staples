@@ -352,6 +352,7 @@ import {
   type AskUserQuestionsInteraction,
   type ActivityEvent,
   type Agent,
+  type AssistantPageContext,
   type FeedbackVote,
   type Issue,
   type IssueRecoveryAction,
@@ -2973,9 +2974,23 @@ function IssueDetailActivityTab({
 export function IssueDetail({ tasksTab }: { tasksTab?: TaskSidePanelProps["tasksTab"] }) { return <TaskDetailSurface tasksTab={tasksTab} />; }
 
 /** One controller and surface for both task URLs and agent conversations. */
-export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskSidePanelProps["tasksTab"]; conversation?: {
+export interface TaskDetailConversation {
   agent: Agent; issue: Issue | null; ensureIssue: () => Promise<Issue>;
-} }) {
+  /**
+   * Metadata attached to each chat message sent from this surface (the
+   * Assistant's page context). Called once per send; other chats omit it.
+   */
+  commentMetadata?: () => { pageContext?: AssistantPageContext } | undefined;
+  /**
+   * Rendered inside another page (the Assistant dock): skip page-level
+   * keyboard shortcuts, document click routing and scroll resets that belong
+   * to the host page.
+   */
+  embedded?: boolean;
+}
+
+export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskSidePanelProps["tasksTab"]; conversation?: TaskDetailConversation }) {
+  const embedded = conversation?.embedded === true;
   const { issueId: routeIssueId, companyPrefix } = useParams<{ issueId: string; companyPrefix: string }>();
   const issueId = conversation ? conversation.issue?.id : routeIssueId;
   const [draftWorkMode, setDraftWorkMode] = useState<IssueWorkMode>("standard");
@@ -4629,7 +4644,12 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       body: string; reopen?: boolean; interrupt?: boolean; attachmentIds?: string[]; clientRequestId?: string;
     }) => {
       if (issue?.conversationAgentId) clearLegacyChatMessageRequests(`${issue.companyId}:${currentUserId}:${issue.conversationAgentId}`);
-      return issuesApi.addComment(await resolveWritableIssueId(), body, reopen, interrupt, attachmentIds, clientRequestId ?? crypto.randomUUID());
+      const pageContext = conversation?.commentMetadata?.()?.pageContext;
+      const args = [await resolveWritableIssueId(), body, reopen, interrupt, attachmentIds, clientRequestId ?? crypto.randomUUID()] as const;
+      // Only Assistant surfaces pass commentMetadata; every other send keeps the plain call.
+      return pageContext
+        ? issuesApi.addComment(...args, { metadata: { pageContext } })
+        : issuesApi.addComment(...args);
     },
     onMutate: async ({ body, reopen, interrupt }) => {
       // Start cache cancellation immediately but do not put it in front of the
@@ -5583,6 +5603,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     const previousIssueId = lastScrollIssueIdRef.current;
     lastScrollIssueIdRef.current = issueId;
     if (
+      embedded ||
       !shouldScrollIssueDetailToTopOnNavigation({
         previousIssueId,
         nextIssueId: issueId,
@@ -5593,7 +5614,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     const main = document.getElementById("main-content");
     if (main) main.scrollTop = 0;
-  }, [issueId, navigationType]);
+  }, [embedded, issueId, navigationType]);
 
   // Resolve external UUID links and wrong-prefix task links from the loaded
   // task's company, not the organization that happened to be selected first.
@@ -5839,7 +5860,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   const canQuickArchiveFromInbox = !issue?.hiddenAt;
 
   useEffect(() => {
-    if (!issue?.id || !canQuickArchiveFromInbox) return;
+    if (embedded || !issue?.id || !canQuickArchiveFromInbox) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       const action = resolveInboxQuickArchiveKeyAction({
         armed: canQuickArchiveFromInbox,
@@ -5864,7 +5885,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [archiveFromInbox, canQuickArchiveFromInbox, issue?.id]);
+  }, [archiveFromInbox, canQuickArchiveFromInbox, issue?.id, embedded]);
 
   useEffect(() => {
     const clearArmTimeout = () => {
@@ -5944,6 +5965,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       }
     };
 
+    if (embedded) return;
     document.addEventListener("pointerdown", handlePointerDown, true);
     document.addEventListener("focusin", handleFocusIn, true);
     document.addEventListener("keydown", handleKeyDown, true);
@@ -5954,6 +5976,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       document.removeEventListener("keydown", handleKeyDown, true);
     };
   }, [
+    embedded,
     fileViewerEnabled,
     navigate,
     sourceBreadcrumb.href,
@@ -6086,10 +6109,12 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       }
     };
 
+    if (embedded) return;
     document.addEventListener("click", handleDocumentClick, true);
     return () =>
       document.removeEventListener("click", handleDocumentClick, true);
   }, [
+    embedded,
     issue?.id,
     issue?.identifier,
     issueId,
@@ -6150,7 +6175,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   }, [detailTab, pendingCommentComposerFocusKey]);
 
   useEffect(() => {
-    if (!fileViewerEnabled) return;
+    if (embedded || !fileViewerEnabled) return;
     const handleOpenFileViewer = () => {
       setFileViewerPromptOpen(true);
     };
@@ -6164,7 +6189,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         handleOpenFileViewer as EventListener,
       );
     };
-  }, [fileViewerEnabled]);
+  }, [embedded, fileViewerEnabled]);
 
   const promotedOutputAttachmentIds = useMemo(
     () => getPromotedOutputAttachmentIds(workProducts),

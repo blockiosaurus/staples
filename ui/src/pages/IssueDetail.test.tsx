@@ -1570,6 +1570,45 @@ describe("IssueDetail", () => {
     expect(ensureIssue).toHaveBeenCalledTimes(1);
   });
 
+  it("attaches Assistant page context from commentMetadata to chat messages, and only when present", async () => {
+    mockIssuesApi.addComment.mockClear();
+    const agent = createAgent();
+    const canonical = createIssue({ conversationAgentId: agent.id, conversationUserId: "user-1", conversationState: "waiting", status: "in_review" });
+    const ensureIssue = vi.fn().mockResolvedValue(canonical);
+    const pageContext = { route: "/issues/PAP-12", entity: { type: "issue" as const, id: "PAP-12", label: "Fix login" } };
+    const commentMetadata = vi.fn()
+      .mockReturnValueOnce({ pageContext })
+      .mockReturnValueOnce(undefined);
+    mockIssuesApi.addComment.mockResolvedValue(createIssueComment({ body: "What is this?" }));
+    await act(async () => {
+      root.render(<QueryClientProvider client={queryClient}><TaskDetailSurface conversation={{ agent, issue: null, ensureIssue, commentMetadata }} /></QueryClientProvider>);
+    });
+    await flushReact();
+    const props = mockIssueChatThreadRender.mock.calls.at(-1)?.[0] as { onAdd: (body: string) => Promise<void> };
+    await act(async () => { await props.onAdd("What is this?"); });
+    expect(mockIssuesApi.addComment).toHaveBeenLastCalledWith(
+      canonical.id, "What is this?", undefined, undefined, undefined, expect.any(String), { metadata: { pageContext } },
+    );
+    await act(async () => { await props.onAdd("And now?"); });
+    expect(mockIssuesApi.addComment).toHaveBeenLastCalledWith(canonical.id, "And now?", undefined, undefined, undefined, expect.any(String));
+    expect(commentMetadata).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([false, true])("page go-key shortcuts run only when the conversation is not embedded (embedded=%s)", async (embedded) => {
+    const agent = createAgent();
+    const canonical = createIssue({ conversationAgentId: agent.id, conversationUserId: "user-1", conversationState: "waiting", status: "in_review" });
+    await act(async () => {
+      root.render(<QueryClientProvider client={queryClient}><TaskDetailSurface conversation={{ agent, issue: null, ensureIssue: vi.fn().mockResolvedValue(canonical), embedded }} /></QueryClientProvider>);
+    });
+    await flushReact();
+    mockNavigate.mockClear();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "g", bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "i", bubbles: true }));
+    await flushReact();
+    if (embedded) expect(mockNavigate).not.toHaveBeenCalled();
+    else expect(mockNavigate).toHaveBeenCalled();
+  });
+
   it("retries the chosen initial chat mode after creation succeeded but mode persistence failed", async () => {
     mockIssuesApi.addComment.mockClear();
     mockIssuesApi.update.mockClear();

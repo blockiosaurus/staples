@@ -5,7 +5,7 @@ import {
   CircleCheck,
   SquarePen,
   Users,
-  MessageCircle,
+  Sparkles,
   Inbox,
 } from "lucide-react";
 import { useCompany } from "../context/CompanyContext";
@@ -46,19 +46,20 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
   const inboxBadge = useInboxBadge(selectedCompanyId);
   const { states, ready } = useSurfaces();
   const shownIds = new Set(renderableSurfaces(states, ready).map((state) => state.surface.id));
-  const showChat = shownIds.has("nav.chat");
+  const showAssistant = shownIds.has("nav.assistant");
   const showInbox = shownIds.has("nav.inbox");
   const { enabled: combinedInboxTasksEnabled } = useCombinedInboxTasksEnabled();
 
-  // Fixed shape — Home · Chat · New Task · Tasks · Agents · Inbox — where Chat
-  // and Inbox appear only when their surfaces are visible. With Combined Inbox +
+  // Fixed shape — Home · Assistant · New Task · Tasks · Agents · Inbox — where
+  // Assistant (in the slot Chat used to hold; Chat stays reachable from the
+  // sidebar) and Inbox appear only when their surfaces are visible. With Combined Inbox +
   // Task List the Inbox surface is unavailable and its unread badge rides on
   // Tasks. The grid tracks the live count, so the bar stays evenly divided.
   const items = useMemo<MobileNavItem[]>(
     () => [
       { type: "link", to: "/dashboard", label: "Home", icon: House },
-      ...(showChat
-        ? [{ type: "link", to: "/chats", label: "Chat", icon: MessageCircle } as MobileNavItem]
+      ...(showAssistant
+        ? [{ type: "link", to: "/assistant", label: "Assistant", icon: Sparkles } as MobileNavItem]
         : []),
       { type: "action", label: "New Task", icon: SquarePen, onClick: () => openNewIssue() },
       {
@@ -73,7 +74,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
         ? [{ type: "link", to: "/inbox", label: "Inbox", icon: Inbox, badge: inboxBadge.inbox } as MobileNavItem]
         : []),
     ],
-    [openNewIssue, inboxBadge.inbox, showChat, showInbox, combinedInboxTasksEnabled],
+    [openNewIssue, inboxBadge.inbox, showAssistant, showInbox, combinedInboxTasksEnabled],
   );
 
   return (

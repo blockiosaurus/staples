@@ -58,18 +58,24 @@ describe("MobileBottomNav", () => {
     container.remove();
   });
 
-  it("fresh company shows Home, New Task, Tasks and Agents", () => {
-    expect(labels(makeSurfacesFixture())).toEqual(["Home", "New Task", "Tasks", "Agents"]);
+  it("fresh company shows Home, Assistant, New Task, Tasks and Agents", () => {
+    expect(labels(makeSurfacesFixture())).toEqual(["Home", "Assistant", "New Task", "Tasks", "Agents"]);
   });
 
   it("adds Inbox when the Inbox surface is visible", () => {
     inboxBadge.inbox = 3;
-    expect(labels(makeSurfacesFixture({ inboxUnread: 3 }))).toEqual(["Home", "New Task", "Tasks", "Agents", "Inbox"]);
+    expect(labels(makeSurfacesFixture({ inboxUnread: 3 }))).toEqual(["Home", "Assistant", "New Task", "Tasks", "Agents", "Inbox"]);
   });
 
-  it("adds Chat second once there is more than one agent", () => {
+  it("keeps Assistant in Chat's slot once there is more than one agent", () => {
     expect(labels(makeSurfacesFixture({ signals: { agents: 2 } }))).toEqual([
-      "Home", "Chat", "New Task", "Tasks", "Agents",
+      "Home", "Assistant", "New Task", "Tasks", "Agents",
+    ]);
+  });
+
+  it("drops Assistant when the person hid it", () => {
+    expect(labels(makeSurfacesFixture({ preferences: { hidden: ["nav.assistant"] } }))).toEqual([
+      "Home", "New Task", "Tasks", "Agents",
     ]);
   });
 
@@ -77,7 +83,7 @@ describe("MobileBottomNav", () => {
     inboxBadge.inbox = 5;
     combined.enabled = true;
     expect(labels(makeSurfacesFixture({ inboxUnread: 5, flags: { enableCombinedInboxTasks: true } }))).toEqual([
-      "Home", "New Task", "Tasks", "Agents",
+      "Home", "Assistant", "New Task", "Tasks", "Agents",
     ]);
     expect(lastText).toContain("5");
   });

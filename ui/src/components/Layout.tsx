@@ -29,6 +29,8 @@ import { StandaloneBrowserControls } from "./StandaloneBrowserControls";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { AgentConversationsSidebar } from "./AgentConversationsSidebar";
 import { SurfaceTracker } from "../staples/surfaces/SurfaceTracker";
+import { AssistantProvider, useAssistantShell } from "../staples/assistant/AssistantProvider";
+import { AssistantDock } from "../staples/assistant/AssistantDock";
 import { SidebarShell } from "./SidebarShell";
 import { SecondarySidebar } from "./SecondarySidebar";
 import { ContextualSidebarFrame } from "./ContextualSidebarFrame";
@@ -83,6 +85,14 @@ const RESERVED_APP_SUBPATHS = new Set([
 ]);
 
 export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
+  return (
+    <AssistantProvider>
+      <LayoutShell sidebarSections={sidebarSections} />
+    </AssistantProvider>
+  );
+}
+
+function LayoutShell({ sidebarSections }: { sidebarSections?: ReactNode }) {
   const {
     sidebarOpen,
     setSidebarOpen,
@@ -123,8 +133,10 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   const companyPathSegments = shellRoute.companySegments;
   const isTaskDetailRoute = shellRoute.isTaskDetail;
   const isAgentChatRoute = companyPathSegments[0]?.toLowerCase() === "chats";
+  const isAssistantRoute = companyPathSegments[0]?.toLowerCase() === "assistant";
   // Chat keeps its header beside the agent sidebar, including before an agent is selected.
-  const useStreamlinedTaskDetailShell = isTaskDetailRoute || isAgentChatRoute;
+  // The full-page Assistant is the same conversation surface, so it gets the same shell.
+  const useStreamlinedTaskDetailShell = isTaskDetailRoute || isAgentChatRoute || isAssistantRoute;
   const isToolsRoute = companyPathSegments[0]?.toLowerCase() === "tools";
   const isAppsRoute = companyPathSegments[0]?.toLowerCase() === "apps";
   const appDetailConnectionId =
@@ -434,7 +446,9 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
 
   useCompanyPageMemory();
 
+  const assistantShell = useAssistantShell();
   useKeyboardShortcuts({
+    onToggleAssistant: assistantShell?.toggleDock,
     onNewIssue: () => openNewIssue(),
     onSearch: openSearch,
     onToggleSidebar: toggleSidebar,
@@ -697,7 +711,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
                 // changes (e.g. switching skill-detail tabs) don't widen/shift
                 // when the vertical scrollbar appears or disappears (PAP-10907).
                 isMobile
-                  ? isTaskDetailRoute
+                  ? isTaskDetailRoute || isAssistantRoute
                     ? "overflow-visible pb-(--tc-composer-visible-nav-offset)"
                     : "overflow-visible pb-(--sz-calc-14)"
                   : "overflow-auto [scrollbar-gutter:stable]",
@@ -720,6 +734,9 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
               </main>
             </div>
             <PropertiesPanel taskDetailLayout={!isMobile && useStreamlinedTaskDetailShell} />
+            {/* Its own host, not the single-slot PanelContext: the dock sits
+                beside whatever the page put in the properties panel. */}
+            <AssistantDock />
           </div>
         </div>
       </div>

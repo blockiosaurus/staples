@@ -36,6 +36,7 @@ import { Search } from "./pages/Search";
 import { IssueDetail } from "./pages/IssueDetail";
 import { AgentChats } from "./pages/AgentChats";
 import { AgentChat } from "./pages/AgentChat";
+import { AssistantPage } from "./staples/assistant/AssistantPage";
 import { Routines } from "./pages/Routines";
 import { Learnings, PipelineItemDetail, PipelineItemLegacyRedirect, Pipelines, ReviewQueue } from "./pages/Pipelines";
 import { PipelineSettings } from "./pages/PipelineSettings";
@@ -298,6 +299,7 @@ function boardRoutes(combinedInboxTasksEnabled: boolean) {
       )}
       <Route path="chats" element={<AgentChats />} />
       <Route path="chats/:agentRef" element={<AgentChat />} />
+      <Route path="assistant" element={<AssistantPage />} />
       <Route path="issues/:issueId" element={<IssueDetail />} />
       <Route path="routines" element={<Routines />} />
       <Route
@@ -722,6 +724,7 @@ export function App() {
           <Route path="costs" element={<UnprefixedBoardRedirect />} />
           <Route path="budgets" element={<UnprefixedBoardRedirect />} />
           <Route path="decisions" element={<UnprefixedBoardRedirect />} />
+          <Route path="assistant" element={<UnprefixedBoardRedirect />} />
           <Route path="u/:userSlug" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/studio" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/studio/new" element={<UnprefixedBoardRedirect />} />
