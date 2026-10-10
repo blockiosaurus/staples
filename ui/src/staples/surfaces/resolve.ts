@@ -35,19 +35,33 @@ export function resolveSurfaces(surfaces: readonly SurfaceDefinition[], ctx: Sur
 }
 
 export function surfaceForPath(surfaces: readonly SurfaceDefinition[], pathWithoutPrefix: string): SurfaceDefinition | null {
-  const root = pathWithoutPrefix.split("/").filter(Boolean)[0]?.toLowerCase();
+  const segments = pathWithoutPrefix.split("/").filter(Boolean).map((segment) => segment.toLowerCase());
+  const root = segments[0];
   if (!root) return null;
+  // Longest segment-aligned matchPaths prefix wins, ahead of single-root matching.
+  let best: { surface: SurfaceDefinition; length: number } | null = null;
+  for (const surface of surfaces) {
+    for (const path of surface.matchPaths ?? []) {
+      const parts = path.split("/").filter(Boolean);
+      if (parts.length > segments.length || (best && parts.length <= best.length)) continue;
+      if (parts.every((part, index) => part === segments[index])) best = { surface, length: parts.length };
+    }
+  }
+  if (best) return best.surface;
   return surfaces.find((surface) => surface.matchRoots.includes(root)) ?? null;
 }
 
 /**
  * Surfaces safe to render now. Until everything has settled (`ready`), only
  * core, pinned and already-revealed surfaces show so nothing flashes in and out.
+ * Surfaces gated by an `available` rule also wait: flags may not have loaded yet.
  */
 export function renderableSurfaces(states: readonly SurfaceState[], ready: boolean): SurfaceState[] {
   return states.filter(
     (state) =>
       state.visible &&
-      (ready || state.source === "core" || state.source === "pinned" || state.source === "revealed"),
+      (ready ||
+        (!state.surface.available &&
+          (state.source === "core" || state.source === "pinned" || state.source === "revealed"))),
   );
 }

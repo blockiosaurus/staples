@@ -87,6 +87,28 @@ describe("useSurfaces / SurfaceTracker", () => {
     expect(observed.ready).toBe(true);
   });
 
+  it("keeps last-good signals when a later refetch fails", async () => {
+    mocks.signals.mockReturnValue({
+      signals: { companyId: "company-1", agents: 0, tasks: 0, openTasks: 0, projects: 2, goals: 0, routines: 0, artifacts: 0, extraSkills: 0, connections: 0, connectionRequests: 0, approvalsEver: 0, questionsEver: 0, budgetSet: false, monthSpendCents: 0 },
+      loaded: true,
+      failed: true,
+    });
+    await mount();
+    expect(observed.visible.map((s) => s.surface.id)).toContain("nav.projects");
+  });
+
+  it("treats failed signals with no data as unknown", async () => {
+    mocks.signals.mockReturnValue({ signals: null, loaded: false, failed: true });
+    await mount();
+    expect(observed.visible.map((s) => s.surface.id)).toEqual(["nav.dashboard", "nav.tasks", "nav.agents"]);
+  });
+
+  it("exposes preference load failures", async () => {
+    setPrefs({}, false, true);
+    await mount();
+    expect(observed.preferencesFailed).toBe(true);
+  });
+
   it("persists a growth-fired reveal exactly once across re-renders", async () => {
     mocks.signals.mockReturnValue({
       signals: { companyId: "company-1", agents: 0, tasks: 0, openTasks: 0, projects: 2, goals: 0, routines: 0, artifacts: 0, extraSkills: 0, connections: 0, connectionRequests: 0, approvalsEver: 0, questionsEver: 0, budgetSet: false, monthSpendCents: 0 },

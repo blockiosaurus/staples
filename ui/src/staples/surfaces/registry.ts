@@ -33,8 +33,16 @@ export interface SurfaceDefinition {
   id: string;
   label: string;
   to: string;
-  /** First path segment(s) after the company prefix that count as visiting this surface. */
+  /**
+   * First path segment(s) after the company prefix that count as visiting this surface.
+   * Every root must be a reserved board route root (BOARD_ROUTE_ROOTS).
+   */
   matchRoots: string[];
+  /**
+   * Multi-segment paths relative to the company prefix (no leading slash) that count as
+   * visiting this surface. Longest match wins and these are checked before `matchRoots`.
+   */
+  matchPaths?: string[];
   icon: LucideIcon;
   group: SurfaceGroup;
   tier: SurfaceTier;
@@ -69,7 +77,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     id: "nav.decisions",
     label: "Decisions",
     to: "/decisions",
-    matchRoots: ["decisions"],
+    matchRoots: ["decisions", "approvals"],
     icon: ListChecks,
     group: "top",
     tier: "grows",
@@ -216,6 +224,9 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     label: "Costs",
     to: "/activity/costs",
     matchRoots: [],
+    // `/runs` and `/budgets` are compatibility redirects into `/activity/...`, so the
+    // tracker only ever sees the canonical paths below.
+    matchPaths: ["activity/costs", "activity/budgets", "costs", "audit/costs", "audit/budgets"],
     icon: DollarSign,
     group: "org",
     tier: "grows",
@@ -226,7 +237,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     id: "nav.audit",
     label: "Audit",
     to: "/activity",
-    matchRoots: ["activity", "audit", "runs", "costs", "budgets"],
+    matchRoots: ["activity", "audit"],
     icon: History,
     group: "org",
     tier: "advanced",

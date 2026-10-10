@@ -7,6 +7,7 @@ export interface SurfacesFixture {
   visible: SurfaceState[];
   hiddenAvailable: SurfaceState[];
   preferences: UiPreferences;
+  preferencesFailed: boolean;
   ready: boolean;
   update: () => void;
 }
@@ -17,6 +18,7 @@ export function makeSurfacesFixture(options: {
   flags?: Partial<InstanceExperimentalSettings> | null;
   inboxUnread?: number;
   preferences?: Partial<UiPreferences>;
+  preferencesFailed?: boolean;
   ready?: boolean;
 } = {}): SurfacesFixture {
   const preferences: UiPreferences = { ...DEFAULT_UI_PREFERENCES, ...options.preferences };
@@ -55,6 +57,7 @@ export function makeSurfacesFixture(options: {
     visible: states.filter((s) => s.visible),
     hiddenAvailable: states.filter((s) => s.available && !s.visible),
     preferences,
+    preferencesFailed: options.preferencesFailed ?? false,
     ready: options.ready ?? true,
     update: () => {},
   };

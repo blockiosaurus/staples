@@ -15,6 +15,8 @@ export function useSurfaces(): {
   visible: SurfaceState[];
   hiddenAvailable: SurfaceState[];
   preferences: UiPreferences;
+  /** The preferences request failed; edits cannot be trusted to persist. */
+  preferencesFailed: boolean;
   ready: boolean;
   update: (patch: PatchUiPreferences) => void;
 } {
@@ -29,7 +31,8 @@ export function useSurfaces(): {
   const flags = flagsQuery.data ?? null;
   const flagsSettled = flagsQuery.isSuccess || flagsQuery.isError;
   const ready = flagsSettled && (prefsLoaded || prefsFailed);
-  const effectiveSignals = signalsFailed ? null : signals;
+  // A failed refetch keeps the last good signals; only "never loaded" counts as unknown.
+  const effectiveSignals = signalsFailed && !signals ? null : signals;
 
   const states = useMemo(
     () => resolveSurfaces(SURFACE_REGISTRY, { signals: effectiveSignals, flags, inboxUnread }, preferences),
@@ -37,5 +40,5 @@ export function useSurfaces(): {
   );
   const visible = useMemo(() => states.filter((s) => s.visible), [states]);
   const hiddenAvailable = useMemo(() => states.filter((s) => s.available && !s.visible), [states]);
-  return { states, visible, hiddenAvailable, preferences, ready, update };
+  return { states, visible, hiddenAvailable, preferences, preferencesFailed: prefsFailed, ready, update };
 }

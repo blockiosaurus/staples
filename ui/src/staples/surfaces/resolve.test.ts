@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  BOARD_ROUTE_ROOTS,
   DEFAULT_UI_PREFERENCES,
   surfaceIdSchema,
   type CompanySignals,
@@ -8,7 +9,7 @@ import {
 } from "@paperclipai/shared";
 import { SURFACE_REGISTRY } from "./registry";
 import type { SurfaceContext } from "./registry";
-import { resolveSurface, resolveSurfaces, surfaceForPath } from "./resolve";
+import { renderableSurfaces, resolveSurface, resolveSurfaces, surfaceForPath } from "./resolve";
 
 function signals(overrides: Partial<CompanySignals> = {}): CompanySignals {
   return {
@@ -131,17 +132,76 @@ describe("resolveSurface", () => {
 describe("surfaceForPath", () => {
   it("maps paths to surfaces", () => {
     expect(surfaceForPath(SURFACE_REGISTRY, "/issues/PAP-1")?.id).toBe("nav.tasks");
-    expect(surfaceForPath(SURFACE_REGISTRY, "/activity/costs")?.id).toBe("nav.audit");
     expect(surfaceForPath(SURFACE_REGISTRY, "/unknown")).toBeNull();
+  });
+
+  it("maps cost paths to Costs, not Audit", () => {
+    expect(surfaceForPath(SURFACE_REGISTRY, "/activity/costs")?.id).toBe("nav.costs");
+    expect(surfaceForPath(SURFACE_REGISTRY, "/activity/costs/")?.id).toBe("nav.costs");
+    expect(surfaceForPath(SURFACE_REGISTRY, "/activity/budgets")?.id).toBe("nav.costs");
+    expect(surfaceForPath(SURFACE_REGISTRY, "/costs")?.id).toBe("nav.costs");
+    expect(surfaceForPath(SURFACE_REGISTRY, "/audit/costs")?.id).toBe("nav.costs");
+  });
+
+  it("keeps other activity paths on Audit", () => {
+    expect(surfaceForPath(SURFACE_REGISTRY, "/activity")?.id).toBe("nav.audit");
+    expect(surfaceForPath(SURFACE_REGISTRY, "/activity/runs")?.id).toBe("nav.audit");
+    expect(surfaceForPath(SURFACE_REGISTRY, "/activity/timeline")?.id).toBe("nav.audit");
+    expect(surfaceForPath(SURFACE_REGISTRY, "/activity/costsx")?.id).toBe("nav.audit");
+    expect(surfaceForPath(SURFACE_REGISTRY, "/audit")?.id).toBe("nav.audit");
+  });
+
+  it("maps approvals to Decisions", () => {
+    expect(surfaceForPath(SURFACE_REGISTRY, "/approvals/pending")?.id).toBe("nav.decisions");
+  });
+
+  it("prefers the longest matching path", () => {
+    const base = byId("nav.audit");
+    const surfaces = [
+      { ...base, id: "a", matchRoots: [], matchPaths: ["x"] },
+      { ...base, id: "b", matchRoots: [], matchPaths: ["x/y"] },
+    ];
+    expect(surfaceForPath(surfaces, "/x/y/z")?.id).toBe("b");
+    expect(surfaceForPath(surfaces, "/x/z")?.id).toBe("a");
+  });
+});
+
+describe("renderableSurfaces", () => {
+  it("before ready, renders only core/pinned/revealed surfaces without an availability rule", () => {
+    const states = resolveSurfaces(
+      SURFACE_REGISTRY,
+      ctx({ flags: { enableAgentChat: true, enableCases: true, enableDecisions: true } as InstanceExperimentalSettings }),
+      prefs({
+        pinned: ["nav.cases", "nav.goals"],
+        revealed: { "nav.decisions": "2026-01-01T00:00:00.000Z", "nav.projects": "2026-01-01T00:00:00.000Z" },
+      }),
+    );
+    const ids = (ready: boolean) => renderableSurfaces(states, ready).map((s) => s.surface.id);
+    expect(ids(false)).toEqual(["nav.dashboard", "nav.tasks", "nav.projects", "nav.goals", "nav.agents"]);
+    expect(ids(true)).toEqual(expect.arrayContaining(["nav.chat", "nav.cases", "nav.decisions"]));
   });
 });
 
 describe("SURFACE_REGISTRY", () => {
-  it("has valid unique ids and an empty-root costs entry", () => {
+  it("has valid unique ids and a path-only costs entry", () => {
     const ids = SURFACE_REGISTRY.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const id of ids) expect(surfaceIdSchema.safeParse(id).success).toBe(true);
     expect(byId("nav.costs").matchRoots).toEqual([]);
+    expect(byId("nav.costs").matchPaths).toContain("activity/costs");
+    expect(byId("nav.audit").matchRoots).not.toContain("costs");
+  });
+
+  it("only matches reserved board route roots", () => {
+    const roots = new Set<string>(BOARD_ROUTE_ROOTS);
+    for (const surface of SURFACE_REGISTRY) {
+      for (const root of surface.matchRoots) expect(roots.has(root), `${surface.id} root ${root}`).toBe(true);
+      for (const path of surface.matchPaths ?? []) {
+        expect(path.startsWith("/"), `${surface.id} path ${path}`).toBe(false);
+        const first = path.split("/")[0]!;
+        expect(roots.has(first), `${surface.id} path ${path}`).toBe(true);
+      }
+    }
   });
 
   it("all revealWhen rules except inbox are false when signals are null", () => {
