@@ -48,6 +48,7 @@ import {
 } from "../services/built-in-agents.ts";
 import { readBuiltInAgentMarker, withBuiltInAgentMarker } from "../lib/built-in-agent-metadata.ts";
 import { issueThreadInteractionService } from "../services/issue-thread-interactions.ts";
+import { issueService } from "../services/issues.ts";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -206,7 +207,22 @@ describeEmbeddedPostgres("built-in agents", () => {
 
   it("validates the static registry and rejects invalid definitions", () => {
     const definitions = listBuiltInAgentDefinitions();
-    expect(definitions.map((definition) => definition.key).sort()).toEqual(["briefs", "learning", "reflection-coach", "summarizer"]);
+    expect(definitions.map((definition) => definition.key).sort()).toEqual([
+      "assistant", "briefs", "learning", "reflection-coach", "summarizer",
+    ]);
+    expect(definitions.find((definition) => definition.key === "assistant")).toMatchObject({
+      displayName: "Assistant",
+      defaultRole: "general",
+      defaultTitle: "Assistant",
+      defaultAdapterType: "claude_local",
+      allowedAdapterTypes: [
+        "claude_local", "codex_local", "cursor", "gemini_local", "grok_local", "kimi_local", "opencode_local", "pi_local",
+      ],
+      defaultStatus: "idle",
+      defaultManager: null,
+      defaultBudgetMonthlyCents: 0,
+      bundle: { instructions: { entryFile: "AGENTS.md" } },
+    });
     const summarizer = definitions.find((definition) => definition.key === "summarizer");
     expect(summarizer).toMatchObject({
       defaultAdapterType: "claude_local",
@@ -253,6 +269,120 @@ describeEmbeddedPostgres("built-in agents", () => {
         defaultAdapterType: "claude_local",
       },
     ])).toThrow("defaultAdapterType must be allowed");
+  });
+
+  async function assistantRows(companyId: string) {
+    const rows = await db.select().from(agents).where(eq(agents.companyId, companyId));
+    return rows.filter((row) => row.status !== "terminated" && readBuiltInAgentMarker(row.metadata)?.key === "assistant");
+  }
+
+  it("auto-provisions exactly one Assistant without a hire approval even when board approval is required", async () => {
+    const companyId = await seedCompany({ requireApproval: true });
+    const service = createBuiltInAgentService(db);
+
+    await service.autoProvisionBundledAgents(companyId);
+    await service.autoProvisionBundledAgents(companyId);
+    await reconcileBuiltInAgentsOnStartup(db);
+
+    const rows = await assistantRows(companyId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      name: "Assistant",
+      role: "general",
+      title: "Assistant",
+      status: "idle",
+      adapterType: "claude_local",
+      reportsTo: null,
+      budgetMonthlyCents: 0,
+    });
+    const approvalRows = await db.select().from(approvals).where(eq(approvals.companyId, companyId));
+    expect(approvalRows).toHaveLength(0);
+    // Only the Assistant is auto-provisioned; other bundles stay opt-in.
+    const builtInKeys = (await db.select().from(agents).where(eq(agents.companyId, companyId)))
+      .map((row) => readBuiltInAgentMarker(row.metadata)?.key)
+      .filter(Boolean);
+    expect(builtInKeys).toEqual(["assistant"]);
+
+    const state = await builtInAgentService(db).get(companyId, "assistant");
+    expect(state.resources.map((resource) => [resource.resourceKind, resource.stockStatus])).toEqual([
+      ["instructions", "stock_current"],
+    ]);
+    expect(await db.select().from(routines).where(eq(routines.companyId, companyId))).toHaveLength(0);
+    // The Assistant never appears in the org chart.
+    expect(await agentService(db).orgForCompany(companyId)).toEqual([]);
+  });
+
+  it("provisions the Assistant directly through provision() even when board approval is required", async () => {
+    const companyId = await seedCompany({ requireApproval: true });
+    const result = await createBuiltInAgentService(db).provision(companyId, "assistant");
+    expect(result.approval).toBeNull();
+    expect(result.state.agent?.status).toBe("idle");
+    expect(await db.select().from(approvals).where(eq(approvals.companyId, companyId))).toHaveLength(0);
+  });
+
+  it("copies the company's existing local adapter type onto the Assistant", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    await createAgentLifecycle(db).requestHire(companyId, {
+      name: "CEO",
+      role: "ceo",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(ensured.adapterType).toBe("codex_local");
+    // Re-ensuring an existing Assistant never rewrites its adapter.
+    const again = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(again.id).toBe(ensured.id);
+    expect(again.adapterType).toBe("codex_local");
+    expect(await assistantRows(companyId)).toHaveLength(1);
+  });
+
+  it("rejects assigning regular issues to the Assistant but allows its conversation issue", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    await lifecycleWorker.process(assistant.id);
+    const regularAgent = await createAgentLifecycle(db).requestHire(companyId, {
+      name: "Coder",
+      role: "engineer",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await lifecycleWorker.process(regularAgent.id);
+    const issuesSvc = issueService(db);
+
+    await expect(issuesSvc.create(companyId, {
+      title: "Regular task",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: assistant.id,
+    })).rejects.toMatchObject({ status: 400, message: "The Assistant can't be assigned tasks" });
+
+    const regular = await issuesSvc.create(companyId, {
+      title: "Regular task",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: regularAgent.id,
+    });
+    await expect(issuesSvc.update(regular.id, { assigneeAgentId: assistant.id }))
+      .rejects.toMatchObject({ status: 400, message: "The Assistant can't be assigned tasks" });
+
+    const conversation = await issuesSvc.create(companyId, {
+      title: "Chat with Assistant",
+      assigneeAgentId: assistant.id,
+      conversationAgentId: assistant.id,
+      conversationUserId: "user-1",
+      conversationState: "waiting",
+      status: "in_review",
+      createdByUserId: "user-1",
+    });
+    expect(conversation.assigneeAgentId).toBe(assistant.id);
   });
 
   it("lazily provisions one agent per company/key and updates the same row on setup", async () => {

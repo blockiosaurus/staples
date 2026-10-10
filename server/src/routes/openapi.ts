@@ -1425,6 +1425,7 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "POST /api/bootstrap/claim",
   "GET /api/companies/{companyId}/resource-memberships/me",
   "GET /api/companies/{companyId}/primary-agent/me",
+  "GET /api/companies/{companyId}/assistant",
   "PUT /api/companies/{companyId}/primary-agent/me",
   "PUT /api/companies/{companyId}/resource-memberships/me/agents/{agentId}",
   "PUT /api/companies/{companyId}/resource-memberships/me/documents/{documentId}",
@@ -6584,6 +6585,32 @@ for (const method of ["get", "put"] as const) {
     },
   });
 }
+
+const assistantResponse = z.object({
+  agent: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    urlKey: z.string(),
+    adapterType: z.string(),
+    status: z.string(),
+  }),
+  conversationIssueId: z.string().uuid().nullable(),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/assistant",
+  tags: ["agents"],
+  summary: "Get the company Assistant",
+  description: "Board users only. Ensures the company's built-in Assistant exists (provisioning it without a hire approval when missing) and returns it with the caller's existing chat issue id, if any. The Assistant is excluded from agent lists, the org chart, and assignee pickers; this is how clients reach it.",
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: {
+    200: r.ok(assistantResponse),
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+  },
+});
 
 // ─── Announcements ───────────────────────────────────────────────────────────
 

@@ -8,7 +8,7 @@ import { readPaperclipSkillSyncPreference, writePaperclipSkillSyncPreference } f
 import { and, desc, eq, ne } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { activityLog, agents, builtInManagedResources, companies, issueThreadInteractions, issues, routines, routineTriggers } from "@paperclipai/db";
-import { syncRoutineVariablesWithTemplate } from "@paperclipai/shared";
+import { ASSISTANT_BUILT_IN_AGENT_KEY, syncRoutineVariablesWithTemplate } from "@paperclipai/shared";
 import type { Agent, Approval, CompanySkill, PermissionKey, Routine, RoutineTrigger, RoutineVariable } from "@paperclipai/shared";
 import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
@@ -54,6 +54,17 @@ export interface BuiltInAgentDefinition {
   defaultBudgetMonthlyCents?: number;
   defaultRuntimeConfig?: Record<string, unknown>;
   bundle?: BuiltInAgentBundleDefinition;
+  /**
+   * Provision directly through `ensure()` even when the company requires board
+   * approval for new agents (system agents such as the Assistant).
+   */
+  bypassHireApproval?: boolean;
+  /**
+   * Prefer the adapter type of an existing non-terminated company agent (any
+   * allowed adapter, regardless of config completeness) over
+   * `defaultAdapterType`, and never rewrite an existing row's adapter on ensure.
+   */
+  inheritCompanyAdapterType?: boolean;
 }
 
 export interface BuiltInAgentState {
@@ -108,14 +119,14 @@ export interface BuiltInAgentBundleDefinition {
     entryFile: string;
     files: Record<string, string>;
   };
-  skill: {
+  skill?: {
     skillKey: string;
     displayName: string;
     slug: string;
     canonicalKey: string;
     files: Record<string, string>;
   };
-  routine: {
+  routine?: {
     routineKey: string;
     title: string;
     description: string;
@@ -287,6 +298,15 @@ const REFLECTION_COACH_SKILL = readBuiltInTextWithFallback(
   FALLBACK_REFLECTION_COACH_SKILL,
 );
 
+const FALLBACK_ASSISTANT_INSTRUCTIONS = [
+  "You are the company Assistant, a built-in Paperclip agent that every person in this company can chat with.",
+  "",
+  "Answer questions about the company, its work, and how to use Paperclip, in plain language. You are never assigned regular tasks.",
+  "",
+].join("\n");
+
+const ASSISTANT_INSTRUCTIONS = readBuiltInText("assistant/AGENTS.md", FALLBACK_ASSISTANT_INSTRUCTIONS);
+
 const SUMMARIZER_INSTRUCTIONS = readBuiltInText("summarizer/AGENTS.md", FALLBACK_SUMMARIZER_INSTRUCTIONS);
 const SUMMARIZER_ROUTINE = readBuiltInText(
   "summarizer/routines/refresh-stale-summaries.md",
@@ -307,6 +327,45 @@ const SUMMARIZER_SKILL = readBuiltInTextWithFallback(
 );
 
 const DEFINITIONS = validateBuiltInAgentDefinitions([
+  {
+    key: ASSISTANT_BUILT_IN_AGENT_KEY,
+    displayName: "Assistant",
+    featureKeys: ["assistant"],
+    shortPurpose: "The in-app Assistant every person in the company can chat with.",
+    defaultInstructions: ASSISTANT_INSTRUCTIONS,
+    defaultRole: "general",
+    defaultTitle: "Assistant",
+    defaultPermissions: {
+      canCreateAgents: false,
+      canCreateSkills: false,
+    },
+    defaultStatus: "idle",
+    defaultManager: null,
+    // Local CLI adapters that support local agent JWTs (registry `type` strings).
+    allowedAdapterTypes: [
+      "claude_local",
+      "codex_local",
+      "cursor",
+      "gemini_local",
+      "grok_local",
+      "kimi_local",
+      "opencode_local",
+      "pi_local",
+    ],
+    defaultAdapterType: "claude_local",
+    defaultBudgetMonthlyCents: 0,
+    bypassHireApproval: true,
+    inheritCompanyAdapterType: true,
+    bundle: {
+      stockVersion: "2026-10-10",
+      instructions: {
+        entryFile: "AGENTS.md",
+        files: {
+          "AGENTS.md": ASSISTANT_INSTRUCTIONS,
+        },
+      },
+    },
+  },
   {
     key: "briefs",
     displayName: "Briefs Agent",
@@ -481,7 +540,8 @@ const DEFINITIONS_BY_KEY = new Map(DEFINITIONS.map((definition) => [definition.k
 // company is created (and re-ensured on startup reconcile). Empty by default so
 // a new user starts clean — the Reflection Coach and Summarizer are opt-in, not
 // seeded. Add a definition key here to restore automatic provisioning.
-const AUTO_PROVISION_ON_COMPANY_CREATE_KEYS = new Set<string>([]);
+// The Assistant is the exception: every company gets one.
+const AUTO_PROVISION_ON_COMPANY_CREATE_KEYS = new Set<string>([ASSISTANT_BUILT_IN_AGENT_KEY]);
 
 const ROOT_AGENT_DEFAULT_CHANGE_GRANTS: PermissionKey[] = ["agents:configure", "skills:create"];
 const BUILT_IN_AGENT_DEFAULT_GRANTS: Record<string, PermissionKey[]> = {
@@ -611,10 +671,10 @@ export function validateBuiltInAgentDefinitions(definitions: BuiltInAgentDefinit
       if (!definition.bundle.instructions.files[definition.bundle.instructions.entryFile]) {
         throw new Error(`Built-in agent ${definition.key} bundle instructions require the entry file`);
       }
-      if (!definition.bundle.skill.files[`${definition.bundle.skill.slug}/SKILL.md`]) {
+      if (definition.bundle.skill && !definition.bundle.skill.files[`${definition.bundle.skill.slug}/SKILL.md`]) {
         throw new Error(`Built-in agent ${definition.key} bundle skill requires SKILL.md`);
       }
-      if (!definition.bundle.routine.description.trim()) {
+      if (definition.bundle.routine && !definition.bundle.routine.description.trim()) {
         throw new Error(`Built-in agent ${definition.key} bundle routine requires a description`);
       }
     }
@@ -630,15 +690,15 @@ export function validateBuiltInAgentDefinitions(definitions: BuiltInAgentDefinit
         ...definition.bundle.instructions,
         files: { ...definition.bundle.instructions.files },
       },
-      skill: {
+      skill: definition.bundle.skill ? {
         ...definition.bundle.skill,
         files: { ...definition.bundle.skill.files },
-      },
-      routine: {
+      } : undefined,
+      routine: definition.bundle.routine ? {
         ...definition.bundle.routine,
         variables: definition.bundle.routine.variables.map((variable) => ({ ...variable, options: [...variable.options] })),
         triggers: definition.bundle.routine.triggers.map((trigger) => ({ ...trigger })),
-      },
+      } : undefined,
     } : undefined,
   }));
 }
@@ -869,6 +929,20 @@ export function builtInAgentService(db: Db) {
 
   async function defaultProvisionInput(companyId: string, definition: BuiltInAgentDefinition, input: BuiltInAgentProvisionInput) {
     if (input.adapterType || input.adapterConfig) return input;
+    if (definition.inheritCompanyAdapterType) {
+      const rows = await db
+        .select({ adapterType: agents.adapterType, metadata: agents.metadata, createdAt: agents.createdAt })
+        .from(agents)
+        .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
+      const candidate = rows
+        .filter((row) => !readBuiltInAgentMarker(row.metadata) && definition.allowedAdapterTypes?.includes(row.adapterType))
+        .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())[0];
+      return {
+        ...input,
+        adapterType: candidate?.adapterType ?? defaultAdapterType(definition),
+        adapterConfig: candidate ? {} : definition.defaultAdapterConfig ? { ...definition.defaultAdapterConfig } : {},
+      };
+    }
     if (definition.defaultAdapterType || definition.defaultAdapterConfig) {
       return {
         ...input,
@@ -1159,7 +1233,7 @@ export function builtInAgentService(db: Db) {
 
   async function getCurrentSkillFiles(companyId: string, skill: CompanySkill | null, bundle: BuiltInAgentBundleDefinition) {
     const currentFiles: Record<string, string | null> = {};
-    const stockFiles = bundle.skill.files;
+    const stockFiles = bundle.skill?.files ?? {};
     for (const packagePath of Object.keys(stockFiles)) {
       const relativePath = packagePath.split("/").slice(1).join("/") || "SKILL.md";
       if (!skill) {
@@ -1180,10 +1254,11 @@ export function builtInAgentService(db: Db) {
   }
 
   async function importBundledSkill(companyId: string, definition: BuiltInAgentDefinition) {
-    const results = await skillSvc.importPackageFiles(companyId, definition.bundle!.skill.files, { onConflict: "replace" });
-    const imported = results.find((result) => result.skill.key === definition.bundle!.skill.canonicalKey)?.skill
+    const bundleSkill = definition.bundle!.skill!;
+    const results = await skillSvc.importPackageFiles(companyId, bundleSkill.files, { onConflict: "replace" });
+    const imported = results.find((result) => result.skill.key === bundleSkill.canonicalKey)?.skill
       ?? results[0]?.skill
-      ?? await skillSvc.getByKey(companyId, definition.bundle!.skill.canonicalKey);
+      ?? await skillSvc.getByKey(companyId, bundleSkill.canonicalKey);
     if (!imported) throw notFound("Built-in bundled skill was not imported");
     return imported;
   }
@@ -1204,7 +1279,7 @@ export function builtInAgentService(db: Db) {
   }
 
   async function materializeSkill(agent: Agent, definition: BuiltInAgentDefinition, mode: "reconcile" | "reset") {
-    const bundle = definition.bundle!;
+    const bundle = definition.bundle as BuiltInAgentBundleDefinition & { skill: NonNullable<BuiltInAgentBundleDefinition["skill"]> };
     const stock = stockHash(bundle.skill.files);
     const binding = await getManagedResourceBinding(agent.companyId, definition.key, "skill", bundle.skill.skillKey);
     const boundSkill = binding ? await skillSvc.getById(agent.companyId, binding.resourceId) : null;
@@ -1296,7 +1371,7 @@ export function builtInAgentService(db: Db) {
 
   function routineDefaultsHash(
     routine: Pick<
-      BuiltInAgentBundleDefinition["routine"],
+      NonNullable<BuiltInAgentBundleDefinition["routine"]>,
       "title" | "description" | "priority" | "concurrencyPolicy" | "catchUpPolicy" | "variables"
     >,
     triggers: Array<{
@@ -1318,7 +1393,8 @@ export function builtInAgentService(db: Db) {
   }
 
   async function getRoutineByBinding(companyId: string, definition: BuiltInAgentDefinition) {
-    const binding = await getManagedResourceBinding(companyId, definition.key, "routine", definition.bundle!.routine.routineKey);
+    const routineKey = definition.bundle!.routine!.routineKey;
+    const binding = await getManagedResourceBinding(companyId, definition.key, "routine", routineKey);
     const routine = binding
       ? await db
         .select()
@@ -1331,7 +1407,7 @@ export function builtInAgentService(db: Db) {
         .where(and(
           eq(routines.companyId, companyId),
           eq(routines.originKind, "built_in_agent_bundle"),
-          eq(routines.originId, `${definition.key}:${definition.bundle!.routine.routineKey}`),
+          eq(routines.originId, `${definition.key}:${routineKey}`),
         ))
         .then((rows) => rows[0] as Routine | undefined ?? null);
     const triggers = routine
@@ -1392,7 +1468,7 @@ export function builtInAgentService(db: Db) {
 
   async function requireBundleRoutine(companyId: string, key: string, routineKey: string) {
     const definition = requireBuiltInAgentDefinition(key);
-    if (!definition.bundle || definition.bundle.routine.routineKey !== routineKey) {
+    if (!definition.bundle?.routine || definition.bundle.routine.routineKey !== routineKey) {
       throw notFound("Built-in routine not found");
     }
     await ensureCompany(companyId);
@@ -1412,7 +1488,7 @@ export function builtInAgentService(db: Db) {
   }
 
   async function createOrResetRoutine(agent: Agent, definition: BuiltInAgentDefinition, existing: Routine | null, mode: "reconcile" | "reset") {
-    const routine = definition.bundle!.routine;
+    const routine = definition.bundle!.routine!;
     const actor = { agentId: null, userId: "built-in-bundles" };
     const nextRoutine = existing
       ? await routineSvc.update(existing.id, {
@@ -1485,7 +1561,7 @@ export function builtInAgentService(db: Db) {
   }
 
   async function materializeRoutine(agent: Agent, definition: BuiltInAgentDefinition, mode: "reconcile" | "reset") {
-    const bundle = definition.bundle!;
+    const bundle = definition.bundle as BuiltInAgentBundleDefinition & { routine: NonNullable<BuiltInAgentBundleDefinition["routine"]> };
     const stock = routineDefaultsHash(bundle.routine, bundle.routine.triggers);
     const { binding, routine, triggers } = await getRoutineByBinding(agent.companyId, definition);
     const currentHash = routine ? routineDefaultsHash({
@@ -1547,31 +1623,14 @@ export function builtInAgentService(db: Db) {
     const bundle = definition.bundle;
     const [instructionBinding, skillBinding, routineBinding] = await Promise.all([
       getManagedResourceBinding(companyId, definition.key, "instructions", "AGENTS.md"),
-      getManagedResourceBinding(companyId, definition.key, "skill", bundle.skill.skillKey),
-      getManagedResourceBinding(companyId, definition.key, "routine", bundle.routine.routineKey),
+      bundle.skill ? getManagedResourceBinding(companyId, definition.key, "skill", bundle.skill.skillKey) : null,
+      bundle.routine ? getManagedResourceBinding(companyId, definition.key, "routine", bundle.routine.routineKey) : null,
     ]);
     const instructionFiles = await currentInstructionFiles(agent, bundle);
-    const skill = skillBinding
-      ? await skillSvc.getById(companyId, skillBinding.resourceId)
-      : await skillSvc.getByKey(companyId, bundle.skill.canonicalKey);
-    const skillFiles = await getCurrentSkillFiles(companyId, skill, bundle);
-    const { routine, triggers } = await getRoutineByBinding(companyId, definition);
-    const proposal = await pendingUpdateProposal(agent);
     const instructionHash = Object.values(instructionFiles).every((value) => value !== null)
       ? stockHash(instructionFiles)
       : null;
-    const skillHash = skill && Object.values(skillFiles).every((value) => value !== null)
-      ? stockHash(skillFiles)
-      : null;
-    const routineHash = routine ? routineDefaultsHash({
-      title: routine.title,
-      description: routine.description ?? "",
-      priority: routine.priority as "critical" | "high" | "medium" | "low",
-      concurrencyPolicy: routine.concurrencyPolicy as "always_enqueue" | "coalesce_if_active" | "skip_if_active",
-      catchUpPolicy: routine.catchUpPolicy as "enqueue_missed_with_cap" | "skip_missed",
-      variables: routine.variables ?? [],
-    }, triggers) : null;
-    return [
+    const states: BuiltInManagedResourceState[] = [
       stockState({
         resourceKind: "instructions",
         resourceKey: "AGENTS.md",
@@ -1582,7 +1641,16 @@ export function builtInAgentService(db: Db) {
         bindingStockHash: instructionBinding?.stockHash ?? null,
         changedFiles: changedFileList(instructionFiles, bundle.instructions.files),
       }),
-      stockState({
+    ];
+    if (bundle.skill) {
+      const skill = skillBinding
+        ? await skillSvc.getById(companyId, skillBinding.resourceId)
+        : await skillSvc.getByKey(companyId, bundle.skill.canonicalKey);
+      const skillFiles = await getCurrentSkillFiles(companyId, skill, bundle);
+      const skillHash = skill && Object.values(skillFiles).every((value) => value !== null)
+        ? stockHash(skillFiles)
+        : null;
+      states.push(stockState({
         resourceKind: "skill",
         resourceKey: bundle.skill.skillKey,
         resourceId: skill?.id ?? null,
@@ -1591,8 +1659,20 @@ export function builtInAgentService(db: Db) {
         currentHash: skillHash,
         bindingStockHash: skillBinding?.stockHash ?? null,
         changedFiles: changedFileList(skillFiles, bundle.skill.files),
-      }),
-      withRoutineControls(stockState({
+      }));
+    }
+    if (bundle.routine) {
+      const { routine, triggers } = await getRoutineByBinding(companyId, definition);
+      const proposal = await pendingUpdateProposal(agent);
+      const routineHash = routine ? routineDefaultsHash({
+        title: routine.title,
+        description: routine.description ?? "",
+        priority: routine.priority as "critical" | "high" | "medium" | "low",
+        concurrencyPolicy: routine.concurrencyPolicy as "always_enqueue" | "coalesce_if_active" | "skip_if_active",
+        catchUpPolicy: routine.catchUpPolicy as "enqueue_missed_with_cap" | "skip_missed",
+        variables: routine.variables ?? [],
+      }, triggers) : null;
+      states.push(withRoutineControls(stockState({
         resourceKind: "routine",
         resourceKey: bundle.routine.routineKey,
         resourceId: routine?.id ?? null,
@@ -1600,8 +1680,9 @@ export function builtInAgentService(db: Db) {
         latestStockHash: routineDefaultsHash(bundle.routine, bundle.routine.triggers),
         currentHash: routineHash,
         bindingStockHash: routineBinding?.stockHash ?? null,
-      }), { routine, triggers, proposal }),
-    ];
+      }), { routine, triggers, proposal }));
+    }
+    return states;
   }
 
   async function reconcileBundleResources(
@@ -1615,20 +1696,25 @@ export function builtInAgentService(db: Db) {
     const selected = new Set(resources ?? ["instructions", "skill", "routine"]);
     const existingStates = await bundleResourceStates(agent.companyId, definition, agent);
     const byKind = new Map(existingStates.map((state) => [state.resourceKind, state]));
-    const instruction = selected.has("instructions")
+    const results: BuiltInManagedResourceState[] = [];
+    results.push(selected.has("instructions")
       ? await materializeInstructions(agent, definition, mode, actor)
-      : byKind.get("instructions")!;
-    const refreshedAgent = await agentSvc.getById(agent.id) as Agent | null;
-    if (!refreshedAgent) throw notFound("Built-in agent not found");
-    const skill = selected.has("skill")
-      ? await materializeSkill(refreshedAgent, definition, mode)
-      : byKind.get("skill")!;
-    const refreshedAfterSkill = await agentSvc.getById(agent.id) as Agent | null;
-    if (!refreshedAfterSkill) throw notFound("Built-in agent not found");
-    const routine = selected.has("routine")
-      ? await materializeRoutine(refreshedAfterSkill, definition, mode)
-      : byKind.get("routine")!;
-    return [instruction, skill, routine];
+      : byKind.get("instructions")!);
+    if (definition.bundle.skill) {
+      const refreshedAgent = await agentSvc.getById(agent.id) as Agent | null;
+      if (!refreshedAgent) throw notFound("Built-in agent not found");
+      results.push(selected.has("skill")
+        ? await materializeSkill(refreshedAgent, definition, mode)
+        : byKind.get("skill")!);
+    }
+    if (definition.bundle.routine) {
+      const refreshedAfterSkill = await agentSvc.getById(agent.id) as Agent | null;
+      if (!refreshedAfterSkill) throw notFound("Built-in agent not found");
+      results.push(selected.has("routine")
+        ? await materializeRoutine(refreshedAfterSkill, definition, mode)
+        : byKind.get("routine")!);
+    }
+    return results;
   }
 
   async function ensureCompany(companyId: string) {
@@ -1737,7 +1823,10 @@ export function builtInAgentService(db: Db) {
       && !existingPendingApproval
       && input.adapterType === undefined
       && input.adapterConfig === undefined
-      && hasCompleteAdapterConfig(existing.adapterType, existing.adapterConfig),
+      && (
+        hasCompleteAdapterConfig(existing.adapterType, existing.adapterConfig)
+        || (definition.inheritCompanyAdapterType && definition.allowedAdapterTypes?.includes(existing.adapterType))
+      ),
     );
     const resolvedInput = existingPendingApproval || preserveExistingAdapter
       ? input
@@ -1838,7 +1927,7 @@ export function builtInAgentService(db: Db) {
   ): Promise<BuiltInAgentProvisionResult> {
     const definition = requireBuiltInAgentDefinition(key);
     const company = await ensureCompany(companyId);
-    if (!company.requireBoardApprovalForNewAgents) {
+    if (!company.requireBoardApprovalForNewAgents || definition.bypassHireApproval) {
       return { state: await ensure(companyId, key, input), approval: null };
     }
     await assertKnownBuiltInAgentModel(definition, input);
@@ -2050,6 +2139,21 @@ export function builtInAgentService(db: Db) {
     throw builtInAgentNotConfiguredError(current);
   }
 
+  /**
+   * Returns the company's Assistant, provisioning it when missing. An existing
+   * Assistant is returned untouched (no reconcile writes), so this is cheap to
+   * call on every Assistant surface load.
+   */
+  async function ensureAssistant(companyId: string): Promise<Agent> {
+    const definition = requireBuiltInAgentDefinition(ASSISTANT_BUILT_IN_AGENT_KEY);
+    await ensureCompany(companyId);
+    const existing = await findSingleAgent(companyId, definition);
+    if (existing && existing.status !== "pending_approval") return existing;
+    const ensured = await ensure(companyId, ASSISTANT_BUILT_IN_AGENT_KEY);
+    if (!ensured.agent) throw notFound("Assistant could not be provisioned");
+    return ensured.agent;
+  }
+
   async function autoProvisionBundledAgents(companyId: string) {
     const company = await ensureCompany(companyId);
     let autoEnsured = 0;
@@ -2065,7 +2169,7 @@ export function builtInAgentService(db: Db) {
       const existing = await findSingleAgent(companyId, definition);
       const shouldProvision = existing !== null || AUTO_PROVISION_ON_COMPANY_CREATE_KEYS.has(definition.key);
       if (!shouldProvision) continue;
-      if (company.requireBoardApprovalForNewAgents) {
+      if (company.requireBoardApprovalForNewAgents && !definition.bypassHireApproval) {
         const result = await provision(companyId, definition.key);
         if (result.approval) pendingApprovals += 1;
       } else {
@@ -2099,6 +2203,7 @@ export function builtInAgentService(db: Db) {
     runRoutine,
     requireBuiltInAgent,
     autoProvisionBundledAgents,
+    ensureAssistant,
     ensureCompanyDefaultAgentGrants,
     reconcileDefinitionDefaults,
   };

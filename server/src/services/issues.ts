@@ -9954,6 +9954,7 @@ export function issueService(db: Db) {
       if (data.assigneeAgentId) {
         await assertAssignableAgent(db, companyId, data.assigneeAgentId, {
           kind: "work",
+          conversationAgentId: data.conversationAgentId ?? null,
         });
       }
       if (data.assigneeUserId) {
@@ -11046,7 +11047,7 @@ export function issueService(db: Db) {
           dbOrTx as Db,
           existing.companyId,
           nextAssigneeAgentId,
-          { kind: "work" },
+          { kind: "work", conversationAgentId: existing.conversationAgentId },
         );
       }
       if (issueData.assigneeUserId) {
@@ -11719,13 +11720,14 @@ export function issueService(db: Db) {
       checkoutRunId: string | null,
     ) => {
       const issueCompany = await db
-        .select({ companyId: issues.companyId })
+        .select({ companyId: issues.companyId, conversationAgentId: issues.conversationAgentId })
         .from(issues)
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
       if (!issueCompany) throw notFound("Issue not found");
       await assertAssignableAgent(db, issueCompany.companyId, agentId, {
         kind: "work",
+        conversationAgentId: issueCompany.conversationAgentId,
       });
 
       const now = new Date();

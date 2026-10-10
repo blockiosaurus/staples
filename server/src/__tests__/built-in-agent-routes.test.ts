@@ -134,6 +134,36 @@ describe("built-in agent routes", () => {
     expect(res.body[0].agent.adapterConfig).toEqual({});
   });
 
+  it("omits the Assistant from the built-in agents panel list", async () => {
+    mockBuiltInAgentService.list.mockResolvedValue([
+      builtInState(),
+      builtInState({
+        definition: {
+          key: "assistant",
+          displayName: "Assistant",
+          featureKeys: ["assistant"],
+          shortPurpose: "Chat.",
+          defaultInstructions: "Chat.",
+          defaultRole: "general",
+          bundle: { stockVersion: "1", instructions: { entryFile: "AGENTS.md", files: { "AGENTS.md": "x" } } },
+        },
+        agentId: "assistant-agent",
+      }),
+    ]);
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      companyIds: [companyId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app).get(`/api/companies/${companyId}/built-in-agents`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.map((entry: { definition: { key: string } }) => entry.definition.key)).toEqual(["briefs"]);
+  });
+
   it("denies list requests outside the actor company boundary", async () => {
     const app = await createApp({
       type: "board",

@@ -3,10 +3,11 @@ import type { Db } from "@paperclipai/db";
 import { agents } from "@paperclipai/db";
 import {
   getAgentWorkEligibility,
+  isAssistantAgent,
   type AgentEligibilityAgent,
   type AgentOrgChainHealth,
 } from "@paperclipai/shared";
-import { conflict, notFound, unprocessable } from "../errors.js";
+import { badRequest, conflict, notFound, unprocessable } from "../errors.js";
 
 type AgentAssignmentKind = "work" | "routine";
 
@@ -67,7 +68,7 @@ function conflictDetails(input: {
   };
 }
 
-async function getAgent(db: Db, agentId: string): Promise<AssignabilityAgent | null> {
+async function getAgent(db: Db, agentId: string): Promise<(AssignabilityAgent & { metadata: unknown }) | null> {
   return db
     .select({
       id: agents.id,
@@ -75,6 +76,7 @@ async function getAgent(db: Db, agentId: string): Promise<AssignabilityAgent | n
       name: agents.name,
       status: agents.status,
       reportsTo: agents.reportsTo,
+      metadata: agents.metadata,
     })
     .from(agents)
     .where(eq(agents.id, agentId))
@@ -105,7 +107,11 @@ export async function assertAssignableAgent(
   db: Db,
   companyId: string,
   agentId: string | null | undefined,
-  options: { kind?: AgentAssignmentKind } = {},
+  options: {
+    kind?: AgentAssignmentKind;
+    /** The issue's conversation agent; the Assistant may only hold its own conversation issues. */
+    conversationAgentId?: string | null;
+  } = {},
 ) {
   if (!agentId) return;
   const kind = options.kind ?? "work";
@@ -113,6 +119,9 @@ export async function assertAssignableAgent(
   if (!assignee) throw notFound("Assignee agent not found");
   if (assignee.companyId !== companyId) {
     throw unprocessable("Assignee must belong to same company");
+  }
+  if (isAssistantAgent(assignee) && (kind !== "work" || options.conversationAgentId !== agentId)) {
+    throw badRequest("The Assistant can't be assigned tasks", { code: "assistant_not_assignable", assigneeAgentId: agentId });
   }
 
   const companyAgents = await listCompanyAgents(db, companyId);

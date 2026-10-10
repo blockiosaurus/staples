@@ -107,20 +107,20 @@ describeEmbeddedPostgres("companyService", () => {
     expect(rows.map((row) => row.issuePrefix).sort()).toEqual(["ARO", "AROA"]);
   });
 
-  it("does not auto-provision bundled built-in agents for a freshly created company", async () => {
+  it("auto-provisions only the Assistant built-in for a freshly created company", async () => {
     const created = await companyService(db).create({
       name: "Fresh Company",
     });
 
-    // A new company starts clean: the Reflection Coach and Summarizer are
-    // opt-in, not seeded by default for a new user.
+    // A new company starts clean apart from the Assistant: the Reflection
+    // Coach and Summarizer are opt-in, not seeded by default for a new user.
     const agentRows = await db.select().from(agents).where(eq(agents.companyId, created.id));
-    expect(agentRows.filter((row) => readBuiltInAgentMarker(row.metadata))).toHaveLength(0);
+    expect(agentRows.map((row) => readBuiltInAgentMarker(row.metadata)?.key).filter(Boolean)).toEqual(["assistant"]);
 
-    // Startup reconcile leaves a fresh company untouched — nothing is created.
+    // Startup reconcile leaves the fresh company otherwise untouched.
     await reconcileBuiltInAgentsOnStartup(db);
     const afterReconcileRows = await db.select().from(agents).where(eq(agents.companyId, created.id));
-    expect(afterReconcileRows.filter((row) => readBuiltInAgentMarker(row.metadata))).toHaveLength(0);
+    expect(afterReconcileRows.map((row) => readBuiltInAgentMarker(row.metadata)?.key).filter(Boolean)).toEqual(["assistant"]);
 
     // The Reflection Coach remains available to enable on demand, and enabling
     // it materializes its bundled skill + paused routine.

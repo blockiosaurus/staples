@@ -3,7 +3,7 @@ import { type BudgetServiceHooks } from "./budgets.js";
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, agentConfigRevisions, agentApiKeys, heartbeatRuns } from "@paperclipai/db";
-import { isUuidLike, normalizeAgentApiKeyScope, normalizeAgentUrlKey, type AgentApiKeyScope } from "@paperclipai/shared";
+import { isAssistantAgent, isUuidLike, normalizeAgentApiKeyScope, normalizeAgentUrlKey, type AgentApiKeyScope } from "@paperclipai/shared";
 
 import { conflict, notFound, unprocessable } from "../errors.js";
 
@@ -205,7 +205,8 @@ export function agentService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
 
     orgForCompany: async (companyId: string) => {
       const allCompanyRows = await listCompanyAgentRows(companyId);
-      const rows = allCompanyRows.filter((row) => row.status !== "terminated");
+      // The Assistant is a per-person chat surface, never part of the org chart.
+      const rows = allCompanyRows.filter((row) => row.status !== "terminated" && !isAssistantAgent(row));
       const normalizedRows = normalizeAgentRows(rows, allCompanyRows);
       const byManager = new Map<string | null, typeof normalizedRows>();
       for (const row of normalizedRows) {

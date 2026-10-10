@@ -2880,6 +2880,7 @@ export * from "./customer-success.js";
 export type { GitHubAppOwner, GitHubAppRegistrationInput, GitHubAppCloudState, GitHubAppWizardState } from "./types/github-app-setup.js";
 export * from "./decision-models.js";
 export { updatePrimaryAgentSchema, type UpdatePrimaryAgent, type PrimaryAgentPreference } from "./primary-agent.js";
+export { ASSISTANT_BUILT_IN_AGENT_KEY, isAssistantAgent } from "./assistant-agent.js";
 
 export * from "./agent-avatar-upload.js";
 
