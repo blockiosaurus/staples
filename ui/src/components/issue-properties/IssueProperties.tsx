@@ -28,7 +28,6 @@ import { instanceSettingsApi } from "../../api/instanceSettings";
 import { issuesApi } from "../../api/issues";
 import { useIssuePlanDocument } from "@/hooks/useIssuePlanDocument";
 import { useIssueDocuments } from "@/hooks/useIssueDocuments";
-import { useStreamlinedUiEnabled } from "@/hooks/useStreamlinedUiEnabled";
 import { selectAgentArtifactAttachments } from "@/lib/issue-artifacts";
 import { projectsApi } from "../../api/projects";
 import { useCompany } from "../../context/CompanyContext";
@@ -154,8 +153,7 @@ function TruncatedCopyable({ value, icon: Icon }: { value: string; icon: Compone
       timerRef.current = setTimeout(() => setCopied(false), 1500);
     } catch { /* noop */ }
   }, [value]);
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
-  const middle = streamlinedUiEnabled ? splitMiddleTruncation(value) : null;
+  const middle = splitMiddleTruncation(value);
 
   return (
     <div className="flex items-center gap-1.5 min-w-0 flex-1" title={value}>
@@ -164,13 +162,13 @@ function TruncatedCopyable({ value, icon: Icon }: { value: string; icon: Compone
         type="button"
         className={cn(
           "cursor-pointer text-left font-mono text-sm transition-colors hover:text-foreground",
-          streamlinedUiEnabled ? "min-w-0 flex-1" : "min-w-0 truncate",
+          "min-w-0 flex-1",
         )}
         onClick={handleCopy}
         title={value}
         aria-label={`Copy ${value} to clipboard`}
       >
-        {!streamlinedUiEnabled ? value : middle ? (
+        {middle ? (
           <span className="flex min-w-0" data-middle-truncate="true">
             <span className="min-w-0 truncate">{middle.prefix}</span>
             <span className="max-w-1/2 shrink-0 truncate">{middle.suffix}</span>
@@ -265,17 +263,16 @@ export function IssueProperties({
   // the folder the policy exists to hide.
   const hideHostPaths =
     experimentalSettings === undefined || experimentalSettings.enableManagedSandboxOnly === true;
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   // Classic Task Interface: gate the Properties | Plans | Artifacts tab shell.
   // Flag ON renders the legacy stacked sections verbatim (no Tabs wrapper);
   // flag OFF — including while settings load — renders the chat-style tab
   // shell. This pane is always task-scoped, so the flag alone is a sufficient
   // gate.
   // Classic Task Interface alone controls the production tabbed-vs-stacked
-  // boundary. Streamlined UI layers new relationship tabs and visual treatment
-  // onto master's tabbed task-chat pane without changing that boundary.
+  // boundary; the streamlined relationship tabs and visual treatment layer onto
+  // the tabbed task-chat pane without changing it.
   const taskChatShellEnabled = experimentalSettings?.enableClassicTaskInterface !== true;
-  const streamlinedPropertiesEnabled = streamlinedUiEnabled && taskChatShellEnabled;
+  const streamlinedPropertiesEnabled = taskChatShellEnabled;
   // When hosted by the resizable PropertiesPanel, the tab strip portals into
   // the pane's header bar (left of the window controls). The slot only exists
   // once the panel has committed, hence the effect; inline hosts (mobile sheet)

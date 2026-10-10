@@ -193,7 +193,6 @@ import {
 import { TaskChatThread } from "../components/TaskChatThread";
 import type { TaskChatIssueBrief } from "../components/task-chat/TaskChatDescriptionBubble";
 import { useClassicTaskInterfaceEnabled } from "../hooks/useClassicTaskInterfaceEnabled";
-import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { workModeMetaFor } from "../lib/work-mode-meta";
 import { IssueContinuationHandoff } from "../components/IssueContinuationHandoff";
 import { IssueAttachmentsSection } from "../components/IssueAttachmentsSection";
@@ -953,17 +952,14 @@ function useTaskDetailInterfaceMode(conversationMode = false) {
     enabled: classicTaskInterfacePreferenceEnabled,
     loaded: classicTaskInterfaceLoaded,
   } = useClassicTaskInterfaceEnabled();
-  const { enabled: streamlinedUiEnabled, loaded: streamlinedUiLoaded } =
-    useStreamlinedUiEnabled();
   const classicTaskInterfaceEnabled = classicTaskInterfacePreferenceEnabled && !conversationMode;
   const taskChatShellEnabled = !classicTaskInterfaceEnabled;
 
   return {
     classicTaskInterfaceEnabled,
     taskChatShellEnabled,
-    streamlinedTaskDetailEnabled: streamlinedUiEnabled && taskChatShellEnabled,
-    streamlinedUiEnabled,
-    loaded: classicTaskInterfaceLoaded && streamlinedUiLoaded,
+    streamlinedTaskDetailEnabled: taskChatShellEnabled,
+    loaded: classicTaskInterfaceLoaded,
   };
 }
 
@@ -2994,7 +2990,6 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     classicTaskInterfaceEnabled,
     taskChatShellEnabled,
     streamlinedTaskDetailEnabled,
-    streamlinedUiEnabled,
     loaded: taskInterfaceSettingsLoaded,
   } = useTaskDetailInterfaceMode(!!conversation);
   // Chat-style: the page wrapper spans the full center pane so the thread's
@@ -3454,9 +3449,9 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
   useEffect(() => {
-    if (!streamlinedUiEnabled || !issue || !sessionResolved) return;
+    if (!issue || !sessionResolved) return;
     recordRecentTask(issue, currentUserId);
-  }, [issue, currentUserId, sessionResolved, streamlinedUiEnabled]);
+  }, [issue, currentUserId, sessionResolved]);
   const { data: boardAccess } = useQuery({
     queryKey: queryKeys.access.currentBoardAccess,
     queryFn: () => accessApi.getCurrentBoardAccess(),
@@ -4192,7 +4187,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       const issueRefs = new Set<string>([issueId!, nextIssue.id]);
       if (nextIssue.identifier) issueRefs.add(nextIssue.identifier);
       mergeIssueResponseIntoCaches(issueRefs, nextIssue);
-      if (streamlinedUiEnabled && sessionResolved) {
+      if (sessionResolved) {
         recordRecentTask(nextIssue, currentUserId);
       }
       queryClient.invalidateQueries({
@@ -4795,7 +4790,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           ),
         );
       }
-      if (streamlinedUiEnabled && issue && sessionResolved) {
+      if (issue && sessionResolved) {
         recordRecentTask(
           issue,
           currentUserId,
@@ -6330,7 +6325,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     setMobileToolbar(
       <InboxMobileToolbar
         backHref={backHref}
-        preferHistoryBack={streamlinedUiEnabled ? preferInboxHistoryBack : true}
+        preferHistoryBack={preferInboxHistoryBack}
         issueId={issue?.id}
         issueHidden={issueHidden}
         archivePending={archivePending}
@@ -6346,7 +6341,6 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     showInboxToolbar,
     backHref,
     preferInboxHistoryBack,
-    streamlinedUiEnabled,
     issue?.id,
     issueHidden,
     archivePending,

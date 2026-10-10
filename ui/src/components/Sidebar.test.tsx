@@ -294,32 +294,9 @@ describe("Sidebar", () => {
     });
   });
 
-  it("restores legacy agent and organization navigation when Streamlined UI is off", async () => {
-    mockInstanceSettingsApi.getExperimental.mockResolvedValue({
-      enableStreamlinedUi: false,
-      enableApps: true,
-    });
-    const root = await renderSidebar();
-
-    const labels = [...container.querySelectorAll("nav a")].map((anchor) => anchor.textContent?.trim());
-    expect(container.querySelector('[data-testid="sidebar-recent-tasks"]')).toBeNull();
-    expect(container.querySelector('[data-testid="sidebar-projects"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="sidebar-agents"]')?.getAttribute("data-streamlined")).toBe("undefined");
-    expect(container.textContent).toContain("Organization");
-    expect(labels).toEqual(expect.arrayContaining(["Org", "Connectors", "Timeline", "Costs", "Activity", "Settings"]));
-    expect(labels).not.toContain("Audit");
-    expect(labels).not.toContain("Projects");
-    expect(container.querySelector('a[href="/agents"]')).toBeNull();
-    expect(container.querySelector("aside")?.classList).toContain("border-r");
-
-    flushSync(() => {
-      root.unmount();
-    });
-  });
-
   it("locks the legacy collapse control while a secondary sidebar forces the rail", async () => {
     mockSidebar.collapseLocked = true;
-    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableStreamlinedUi: false });
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({});
     const root = await renderSidebar();
 
     expect(container.querySelector('button[aria-label="Collapse sidebar"]')).toBeNull();
@@ -406,36 +383,9 @@ describe("Sidebar", () => {
       });
     });
 
-    it("keeps Chat in the top group in the legacy shell, which has no Work-group Chat row", async () => {
-      mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableAgentChat: true, enableStreamlinedUi: false });
-      const root = await renderSidebar();
-
-      const chatLinks = [...container.querySelectorAll("a")].filter((anchor) => anchor.getAttribute("href") === "/chats");
-      expect(chatLinks).toHaveLength(1);
-      expect(chatLinks[0]?.closest("[class*=\"group/sidebar-section\"]")).toBeNull();
-
-      flushSync(() => {
-        root.unmount();
-      });
-    });
   });
 
   describe("with Combined Inbox + Task List on (PAP-670)", () => {
-    it("keeps the Inbox row in the legacy shell, which has no merged Tasks page", async () => {
-      mockInboxBadge.inbox = 7;
-      mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableCombinedInboxTasks: true, enableStreamlinedUi: false });
-      const root = await renderSidebar();
-
-      const inboxLink = [...container.querySelectorAll("a")].find((anchor) => anchor.getAttribute("href") === "/inbox");
-      expect(inboxLink?.textContent).toContain("7");
-      const tasksLink = [...container.querySelectorAll("a")].find((anchor) => anchor.getAttribute("href") === "/issues");
-      expect(tasksLink?.textContent).not.toContain("7");
-
-      flushSync(() => {
-        root.unmount();
-      });
-    });
-
     it("drops the Inbox row and moves its unread badge onto Tasks", async () => {
       mockInboxBadge.inbox = 7;
       mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableCombinedInboxTasks: true });

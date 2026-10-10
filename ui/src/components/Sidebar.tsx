@@ -4,22 +4,18 @@ import {
   CircleCheck,
   Target,
   LayoutDashboard,
-  DollarSign,
   History,
   Search,
   SquarePen,
-  Network,
   Boxes,
   Repeat,
   Layers,
   GitBranch,
   Package,
-  Settings,
   FolderOpen,
   Unplug,
   MessagesSquare,
   MessageCircle,
-  GanttChartSquare,
   LayoutGrid,
   Users,
 } from "lucide-react";
@@ -28,7 +24,6 @@ import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { SidebarAgents } from "./SidebarAgents";
-import { SidebarProjects } from "./SidebarProjects";
 import { SidebarStarredProjects } from "./SidebarStarredProjects";
 import { useAgentChatEnabled } from "@/hooks/useAgentChatEnabled";
 import { SidebarRecentTasks } from "./SidebarRecentTasks";
@@ -41,7 +36,6 @@ import { instanceSettingsApi } from "../api/instanceSettings";
 import { queryKeys } from "../lib/queryKeys";
 import { attentionBadgeCount } from "../lib/attention";
 import { useInboxBadge } from "../hooks/useInboxBadge";
-import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { usePublishSharedQueryData, useSharedPollingQuery } from "../hooks/useSharedPolling";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn, SIDEBAR_RAIL_HIDDEN_LABEL } from "../lib/utils";
@@ -59,7 +53,6 @@ export function Sidebar({ children }: { children?: ReactNode }) {
   const [organizationOpen, setOrganizationOpen] = useState(true);
   const { selectedCompanyId, selectedCompany } = useCompany();
   const { collapsed, peeking } = useSidebar();
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const rail = collapsed && !peeking;
   const inboxBadge = useInboxBadge(selectedCompanyId);
   const { data: experimentalSettings } = useQuery({
@@ -91,13 +84,11 @@ export function Sidebar({ children }: { children?: ReactNode }) {
   );
   // PAP-670 splits the nav reorganization across two experimental flags.
   // Agent Chat: Chat leads Work as one row with its own agent rail (the
-  // streamlined shell only — the legacy shell keeps per-agent rows), and
-  // Workspaces leaves to make room. Combined Inbox + Task List: Inbox becomes
-  // views inside Tasks, so its row goes and its badge rides on Tasks.
-  const chatRail = agentChatEnabled && streamlinedUiEnabled;
-  // The merged Tasks page only exists in the streamlined shell, so the legacy
-  // shell keeps its Inbox row even with the flag on.
-  const combinedInboxTasks = streamlinedUiEnabled && experimentalSettings?.enableCombinedInboxTasks === true;
+  // per-agent rows live in that rail), and Workspaces leaves to make room.
+  // Combined Inbox + Task List: Inbox becomes views inside Tasks, so its row
+  // goes and its badge rides on Tasks.
+  const chatRail = agentChatEnabled;
+  const combinedInboxTasks = experimentalSettings?.enableCombinedInboxTasks === true;
   const showWorkspacesLink = !chatRail && experimentalSettings?.enableIsolatedWorkspaces === true;
   const showPipelines = experimentalSettings?.enablePipelines === true;
   const showStatusCards = experimentalSettings?.enableStatusCards === true;
@@ -129,9 +120,7 @@ export function Sidebar({ children }: { children?: ReactNode }) {
     <aside
       className={cn(
         "w-full h-full min-h-0 flex flex-col",
-        streamlinedUiEnabled
-          ? primarySidebarStyles.surface
-          : "border-r border-border bg-background",
+        primarySidebarStyles.surface,
       )}
     >
       {/* Top bar: company name, aligned with top sections and borderless.
@@ -226,12 +215,8 @@ export function Sidebar({ children }: { children?: ReactNode }) {
           ) : (
             <SidebarNavItem to="/issues" label="Tasks" icon={CircleCheck} />
           )}
-          {streamlinedUiEnabled ? (
-            <>
-              <SidebarNavItem to="/projects" label="Projects" icon={FolderOpen} />
-              <SidebarStarredProjects />
-            </>
-          ) : null}
+          <SidebarNavItem to="/projects" label="Projects" icon={FolderOpen} />
+          <SidebarStarredProjects />
           <SidebarNavItem to="/routines" label="Routines" icon={Repeat} />
           <SidebarNavItem to="/artifacts" label="Artifacts" icon={Package} />
           {showCases ? (
@@ -269,39 +254,19 @@ export function Sidebar({ children }: { children?: ReactNode }) {
           />
         </SidebarSection>
 
-        {streamlinedUiEnabled ? (
-          <SidebarSection
-            label="Org"
-            collapsible={{ open: organizationOpen, onOpenChange: setOrganizationOpen }}
-          >
-            <SidebarNavItem to="/agents" label="Agents" icon={Users} />
-            <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
-            <SidebarNavItem to="/apps" label="Connectors" icon={Unplug} />
-            <SidebarNavItem to="/activity" label="Audit" icon={History} />
-          </SidebarSection>
-        ) : null}
+        <SidebarSection
+          label="Org"
+          collapsible={{ open: organizationOpen, onOpenChange: setOrganizationOpen }}
+        >
+          <SidebarNavItem to="/agents" label="Agents" icon={Users} />
+          <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
+          <SidebarNavItem to="/apps" label="Connectors" icon={Unplug} />
+          <SidebarNavItem to="/activity" label="Audit" icon={History} />
+        </SidebarSection>
 
-        {children ?? (streamlinedUiEnabled ? <SidebarAgents streamlined /> : null)}
+        {children ?? <SidebarAgents streamlined />}
 
-        {streamlinedUiEnabled ? (
-          <SidebarRecentTasks companyId={selectedCompanyId} liveIssueIds={liveIssueIds} />
-        ) : (
-          <>
-            <SidebarProjects />
-            <SidebarAgents />
-            <SidebarSection
-              label="Organization"
-              collapsible={{ open: organizationOpen, onOpenChange: setOrganizationOpen }}
-            >
-              <SidebarNavItem to="/org" label="Org" icon={Network} />
-              <SidebarNavItem to="/apps" label="Connectors" icon={Unplug} />
-              <SidebarNavItem to="/timeline" label="Timeline" icon={GanttChartSquare} />
-              <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />
-              <SidebarNavItem to="/activity" label="Activity" icon={History} />
-              <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
-            </SidebarSection>
-          </>
-        )}
+        <SidebarRecentTasks companyId={selectedCompanyId} liveIssueIds={liveIssueIds} />
 
         <PluginSlotOutlet
           errorBehavior="hidden"

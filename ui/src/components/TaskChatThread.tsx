@@ -107,7 +107,6 @@ import {
 import { TaskChatQueuedMessages } from "@/components/task-chat/TaskChatQueuedMessages";
 import { TaskChatWindowScroll } from "@/components/task-chat/useWindowAutoFollow";
 import { useSidebar } from "@/context/SidebarContext";
-import { useStreamlinedUiEnabled } from "@/hooks/useStreamlinedUiEnabled";
 import { useDismissedTaskQuestions } from "@/hooks/useDismissedTaskQuestions";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -487,7 +486,6 @@ function durableInputLabel(
  * folded row. flag-OFF remains byte-for-byte IssueChatThread.
  */
 export function TaskChatThread(props: TaskChatThreadProps) {
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const {
     initialHistoryPending = false,
     initialHistoryError = false,
@@ -2304,8 +2302,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
     ? `${tailPlanItem.id}:${tailPlanItem.document.body.length}`
     : "";
   const threadContentKey = `${taskChatContentKey(items)}:${tailContentKey}:${tailPlanContentKey}:${blockerContentKey}`;
-  const repeatBlockersAtBottom =
-    !streamlinedUiEnabled || shouldRepeatTaskChatBlockers(items);
+  const repeatBlockersAtBottom = shouldRepeatTaskChatBlockers(items);
   const bottomBlockerLinks = repeatBlockersAtBottom ? (
     liveWorkLinks ? (
       <TaskChatLiveWorkLinks liveWork={liveWorkLinks} placement="bottom" />
@@ -2952,9 +2949,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
           contentKey={isMobile ? autoFollowContentKey : 0}
           enabled={isMobile && historyRevealed}
         />
-        <TaskChatPresentationProvider
-          mode={streamlinedUiEnabled ? "streamlined" : "production"}
-        >
+        <TaskChatPresentationProvider mode="streamlined">
           <div
             className={cn(
               "flex flex-col",
@@ -3018,7 +3013,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                         className={cn(
                           "mx-auto flex w-full max-w-(--tc-shell-max-w) flex-col gap-6 px-4",
                           isMobile ? "pt-4" : "pt-3",
-                          streamlinedUiEnabled && "md:px-0",
+                          "md:px-0",
                         )}
                         data-testid="task-chat-thread-header"
                       >
@@ -3032,7 +3027,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                       <div
                         className={cn(
                           "mx-auto w-full max-w-(--tc-shell-max-w) px-4 pb-4",
-                          streamlinedUiEnabled && "md:px-0",
+                          "md:px-0",
                         )}
                       >
                         {bottomBlockerLinks}
@@ -3158,7 +3153,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
               </div>
             ) : null}
             {showComposer ? (
-              <TaskChatComposerDock mobile={isMobile} streamlined={streamlinedUiEnabled} concealed={!historyRevealed}>
+              <TaskChatComposerDock mobile={isMobile} concealed={!historyRevealed}>
                 {composerAccessory}
                 {tailTurnStatus ? (
                   <TaskChatTurnStatusIsland model={tailTurnStatus} />

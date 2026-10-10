@@ -23,7 +23,6 @@ import {
   issueExecutionWorkspaceModeForExistingWorkspace,
 } from "../lib/project-workspace-defaults";
 import { useProjectOrder } from "../hooks/useProjectOrder";
-import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { getRecentAssigneeIds, getRecentAssigneeSelectionIds, sortAgentsByRecency, trackRecentAssignee, trackRecentAssigneeUser } from "../lib/recent-assignees";
 import { getLastProjectId, getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
 import { recordRecentTask } from "../lib/recent-tasks";
@@ -285,7 +284,6 @@ export function NewIssueDialog() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { pushToast } = useToastActions();
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const [title, setTitle] = useState("");
   const [hasTitle, setHasTitle] = useState(false);
   const [description, setDescription] = useState("");
@@ -460,7 +458,7 @@ export function NewIssueDialog() {
       trackRecentProject(issue.projectId ?? "", companyId);
       if (issue.assigneeAgentId) trackRecentAssignee(issue.assigneeAgentId, companyId);
       if (issue.assigneeUserId) trackRecentAssigneeUser(issue.assigneeUserId, companyId);
-      if (streamlinedUiEnabled) recordRecentTask(issue, currentUserId);
+      recordRecentTask(issue, currentUserId);
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(companyId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.listMineByMe(companyId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(companyId) });
@@ -1145,7 +1143,7 @@ export function NewIssueDialog() {
           onDragLeave={handleFileDragLeave}
           onDrop={handleFileDrop}
         >
-          <TaskChatPresentationProvider mode={streamlinedUiEnabled ? "streamlined" : "production"}>
+          <TaskChatPresentationProvider mode="streamlined">
             <TaskChatComposer
               workMode={workMode}
               onWorkModeChange={setWorkMode}

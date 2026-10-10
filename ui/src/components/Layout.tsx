@@ -38,7 +38,6 @@ import { usePanel } from "../context/PanelContext";
 import { useCompany } from "../context/CompanyContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
-import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { useCompanyPageMemory } from "../hooks/useCompanyPageMemory";
 import { useMobileNavVisibility } from "../hooks/useMobileNavVisibility";
 import { healthApi } from "../api/health";
@@ -92,7 +91,6 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
     peeking,
     setPeeking,
     isMobile,
-    setForceCollapsed,
   } = useSidebar();
   const { openNewIssue, openOnboarding } = useDialogActions();
   const { togglePanelVisible } = usePanel();
@@ -120,7 +118,6 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const navigationType = useNavigationType();
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const shellRoute = classifyShellRoute(location.pathname, companyPrefix);
   const isCompanySettingsRoute = shellRoute.builtInContextualSurface === "settings";
   const companyPathSegments = shellRoute.companySegments;
@@ -128,7 +125,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   const { enabled: agentChatEnabled } = useAgentChatEnabled();
   const isAgentChatRoute = agentChatEnabled && companyPathSegments[0]?.toLowerCase() === "chats";
   // Chat keeps its header beside the agent sidebar, including before an agent is selected.
-  const useStreamlinedTaskDetailShell = streamlinedUiEnabled && (isTaskDetailRoute || isAgentChatRoute);
+  const useStreamlinedTaskDetailShell = isTaskDetailRoute || isAgentChatRoute;
   const isToolsRoute = companyPathSegments[0]?.toLowerCase() === "tools";
   const isAppsRoute = companyPathSegments[0]?.toLowerCase() === "apps";
   const appDetailConnectionId =
@@ -177,12 +174,10 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   );
   // Most contextual routes replace the global navigation inside the same
   // sidebar shell. Skills, Apps, Agent details, and Routine details are the
-  // exceptions in Streamlined UI: their local navigation is a second rail
+  // exceptions: their local navigation is a second rail
   // beside the persistent company nav.
   const sharedSecondarySidebar = isCompanySettingsRoute ? (
     <CompanySettingsSidebar />
-  ) : !streamlinedUiEnabled && shellRoute.builtInContextualSurface === "skills" ? (
-    <SkillsContextualSidebar />
   ) : appDetailConnectionId ? (
     <AppDetailSidebar kind="connection" connectionId={appDetailConnectionId} />
   ) : appDetailApplicationId ? (
@@ -190,36 +185,27 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   ) : isAppsRoute || isToolsRoute ? (
     <AppsSidebar />
   ) : routeSidebarSlot ? (
-    streamlinedUiEnabled ? (
-      <ContextualSidebarFrame
-        surface={`plugin:${routeSidebarSlot.id}`}
-        title={routeSidebarSlot.displayName}
-      >
-        <PluginSlotMount
-          slot={routeSidebarSlot}
-          context={sidebarContext}
-          className="min-h-0 flex-1"
-          missingBehavior="placeholder"
-        />
-      </ContextualSidebarFrame>
-    ) : (
+    <ContextualSidebarFrame
+      surface={`plugin:${routeSidebarSlot.id}`}
+      title={routeSidebarSlot.displayName}
+    >
       <PluginSlotMount
         slot={routeSidebarSlot}
         context={sidebarContext}
-        className="h-full w-full"
+        className="min-h-0 flex-1"
         missingBehavior="placeholder"
       />
-    )
+    </ContextualSidebarFrame>
   ) : null;
   const secondarySidebar = isAgentChatRoute ? <AgentConversationsSidebar /> : shellRoute.builtInContextualSurface === "agent" && agentId ? (
     <AgentContextualSidebar agentRef={agentId} />
-  ) : streamlinedUiEnabled && shellRoute.builtInContextualSurface === "routine" && routineId ? (
+  ) : shellRoute.builtInContextualSurface === "routine" && routineId ? (
     <SetupWizardSidebarOutlet><RoutineContextualSidebar routineId={routineId} /></SetupWizardSidebarOutlet>
-  ) : streamlinedUiEnabled && shellRoute.builtInContextualSurface === "skills" ? (
+  ) : shellRoute.builtInContextualSurface === "skills" ? (
     <SkillsContextualSidebar />
   ) : sharedSecondarySidebar;
   const hasSecondarySidebar = secondarySidebar != null;
-  const keepsPrimarySidebar = streamlinedUiEnabled && hasSecondarySidebar && (
+  const keepsPrimarySidebar = hasSecondarySidebar && (
     isAgentChatRoute
     || shellRoute.builtInContextualSurface === "skills"
     || shellRoute.builtInContextualSurface === "agent"
@@ -227,9 +213,8 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
     || isAppsRoute
     || isToolsRoute
   );
-  const replacesPrimarySidebar = streamlinedUiEnabled && hasSecondarySidebar && !keepsPrimarySidebar;
-  const showsAdjacentSecondarySidebar = hasSecondarySidebar && (!streamlinedUiEnabled || keepsPrimarySidebar);
-  const contextualSurface: ContextualSidebarSurface | null = !streamlinedUiEnabled || !hasSecondarySidebar
+  const replacesPrimarySidebar = hasSecondarySidebar && !keepsPrimarySidebar;
+  const contextualSurface: ContextualSidebarSurface | null = !hasSecondarySidebar
     ? null
     : routeSidebarSlot && !shellRoute.builtInContextualSurface
       ? `plugin:${routeSidebarSlot.id}`
@@ -248,11 +233,6 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
     },
     refetchIntervalInBackground: false,
   });
-
-  useLayoutEffect(() => {
-    setForceCollapsed(!streamlinedUiEnabled && hasSecondarySidebar);
-    return () => setForceCollapsed(false);
-  }, [hasSecondarySidebar, setForceCollapsed, streamlinedUiEnabled]);
 
   useEffect(() => {
     const previous = previousShellRoute.current;
@@ -651,12 +631,6 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
             />
           </SidebarShell>
         )}
-
-        {!isMobile && showsAdjacentSecondarySidebar && !keepsPrimarySidebar ? (
-          <SecondarySidebar className="w-60 shrink-0">
-            {secondarySidebar}
-          </SecondarySidebar>
-        ) : null}
 
         <div className={cn("flex min-w-0 flex-col", isMobile ? "w-full" : "h-full flex-1")}>
           <div

@@ -405,7 +405,6 @@ describe("Layout", () => {
     currentPathname = "/PAP/issues/PAP-1";
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({
       enableApps: true,
-      enableStreamlinedUi: true,
     });
     const root = createRoot(container);
     const queryClient = new QueryClient({
@@ -602,36 +601,6 @@ describe("Layout", () => {
     expect(container.textContent).not.toContain("Company rail");
     expect(container.textContent).not.toContain("Instance sidebar");
     expect(container.textContent).not.toContain("Plugin route sidebar");
-
-    await act(async () => {
-      root.unmount();
-    });
-  });
-
-  it("keeps the global sidebar beside legacy settings navigation when Streamlined UI is off", async () => {
-    currentPathname = "/PAP/company/settings/access";
-    mockInstanceSettingsApi.getExperimental.mockResolvedValue({
-      enableApps: true,
-      enableStreamlinedUi: false,
-    });
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <Layout />
-        </QueryClientProvider>,
-      );
-    });
-    await flushReact();
-    await flushReact();
-
-    expect(container.textContent).toContain("Main company nav");
-    expect(container.textContent).toContain("Company settings sidebar");
-    expect(mockSetForceCollapsed).toHaveBeenCalledWith(true);
 
     await act(async () => {
       root.unmount();
@@ -1009,74 +978,6 @@ describe("Layout", () => {
       });
       container.innerHTML = "";
     }
-  });
-
-  it("keeps global navigation with agent configuration navigation in the legacy shell", async () => {
-    mockInstanceSettingsApi.getExperimental.mockResolvedValue({
-      enableApps: true,
-      enableStreamlinedUi: false,
-    });
-
-    for (const pathname of [
-      "/PAP/agents/briefing-analyst/skills",
-      "/PAP/routines/routine-1/overview",
-    ]) {
-      currentPathname = pathname;
-      const root = createRoot(container);
-      const queryClient = new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      });
-
-      await act(async () => {
-        root.render(
-          <QueryClientProvider client={queryClient}>
-            <Layout />
-          </QueryClientProvider>,
-        );
-      });
-      await flushReact();
-      await flushReact();
-
-      expect(container.textContent).toContain("Main company nav");
-      if (pathname.includes("/agents/")) expect(container.textContent).toContain("Agent sidebar");
-      else expect(container.textContent).not.toContain("Agent sidebar");
-      expect(container.textContent).not.toContain("Routine sidebar");
-
-      await act(async () => {
-        root.unmount();
-      });
-      container.innerHTML = "";
-    }
-  });
-
-  it("keeps the global rail beside Skills navigation in the legacy shell", async () => {
-    currentPathname = "/PAP/skills/studio";
-    mockInstanceSettingsApi.getExperimental.mockResolvedValue({
-      enableApps: true,
-      enableStreamlinedUi: false,
-    });
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <Layout />
-        </QueryClientProvider>,
-      );
-    });
-    await flushReact();
-    await flushReact();
-
-    expect(container.textContent).toContain("Main company nav");
-    expect(container.textContent).toContain("Skills sidebar");
-    expect(mockSetForceCollapsed).toHaveBeenCalledWith(true);
-
-    await act(async () => {
-      root.unmount();
-    });
   });
 
   it("keeps Agent and Routine collection routes in global navigation", async () => {

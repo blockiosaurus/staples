@@ -31,7 +31,6 @@ import {
 import { formatDuration, TIMELINE_COLORS } from "@/lib/timeline/layout";
 import { cn } from "@/lib/utils";
 import { useLocation } from "@/lib/router";
-import { useStreamlinedUiEnabled } from "@/hooks/useStreamlinedUiEnabled";
 
 type RangePreset = "today" | "7d" | "30d" | "custom";
 const TIMELINE_PAGE_LIMIT = 500;
@@ -308,10 +307,9 @@ export function Timeline({ embedded = false }: { embedded?: boolean } = {}) {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const location = useLocation();
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const scopedProjectId = useMemo(
-    () => streamlinedUiEnabled ? new URLSearchParams(location.search).get("projectId") || undefined : undefined,
-    [location.search, streamlinedUiEnabled],
+    () => new URLSearchParams(location.search).get("projectId") || undefined,
+    [location.search],
   );
   const [zoom, setZoom] = useState<ZoomLevel>("day");
   const [zoomScale, setZoomScale] = useState<number | undefined>(undefined);

@@ -12,8 +12,6 @@ import { instanceSettingsApi } from "../api/instanceSettings";
 import { useCompany } from "../context/CompanyContext";
 import { useDialogActions } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useSidebar } from "../context/SidebarContext";
-import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { queryKeys } from "../lib/queryKeys";
 import { isPlatformManagedEnvironment } from "../lib/managed-sandbox-environment";
 import { AgentStatusBadge, AgentStatusCapsule } from "../components/StatusBadge";
@@ -197,17 +195,13 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
   const { setBreadcrumbs } = useBreadcrumbs();
   const navigate = useNavigate();
   const location = useLocation();
-  const { isMobile } = useSidebar();
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const pathSegment = location.pathname.split("/").pop() ?? "all";
   const requestedTab: FilterTab = isFilterTab(pathSegment) ? pathSegment : "all";
-  const [view, setView] = useState<AgentsView>(() => streamlinedUiEnabled ? initialView : "org");
-  const forceListView = !streamlinedUiEnabled && isMobile;
-  const effectiveView: AgentsView = forceListView ? "list" : view;
+  const [view, setView] = useState<AgentsView>(initialView);
 
   useEffect(() => {
-    setView(streamlinedUiEnabled ? initialView : "org");
-  }, [initialView, streamlinedUiEnabled]);
+    setView(initialView);
+  }, [initialView]);
 
   const { data: instanceSettings } = useQuery({
     queryKey: queryKeys.instance.settings,
@@ -246,7 +240,7 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
   const { data: orgTree } = useQuery({
     queryKey: queryKeys.org(selectedCompanyId!),
     queryFn: () => agentsApi.org(selectedCompanyId!),
-    enabled: !!selectedCompanyId && effectiveView === "org",
+    enabled: !!selectedCompanyId && view === "org",
   });
 
   const environmentsEnabled = instanceSettings?.experimental.enableEnvironments === true;
@@ -439,7 +433,7 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
   return (
     <div className={cn(
       "@container",
-      effectiveView === "org"
+      view === "org"
         ? "flex h-full min-h-0 flex-col gap-4"
         : "space-y-4",
     )}>
@@ -452,32 +446,32 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
           />
         </Tabs>
         <div className="flex items-center gap-2">
-          {!forceListView ? <div className="flex items-center overflow-hidden rounded-md border border-border" role="group" aria-label="Agent view">
+          <div className="flex items-center overflow-hidden rounded-md border border-border" role="group" aria-label="Agent view">
               <Button
                 type="button"
                 size="icon-sm"
-                variant={effectiveView === "list" ? "secondary" : "ghost"}
+                variant={view === "list" ? "secondary" : "ghost"}
                 className="rounded-none"
                 onClick={() => setView("list")}
                 title="List view"
                 aria-label="List view"
-                aria-pressed={effectiveView === "list"}
+                aria-pressed={view === "list"}
               >
                 <List className="h-3.5 w-3.5" />
               </Button>
               <Button
                 type="button"
                 size="icon-sm"
-                variant={effectiveView === "org" ? "secondary" : "ghost"}
+                variant={view === "org" ? "secondary" : "ghost"}
                 className="rounded-none border-l border-border"
                 onClick={() => setView("org")}
                 title="Org chart view"
                 aria-label="Org chart view"
-                aria-pressed={effectiveView === "org"}
+                aria-pressed={view === "org"}
               >
                 <Network className="h-3.5 w-3.5" />
               </Button>
-          </div> : null}
+          </div>
           <Button size="sm" variant="outline" onClick={openNewAgent}>
             <Plus className="h-3.5 w-3.5 mr-1.5" />
             New Agent
@@ -501,30 +495,30 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
       )}
 
       {/* List view */}
-      {effectiveView === "list" && filtered.length > 0 && (
+      {view === "list" && filtered.length > 0 && (
         <div>
           {filtered.map(renderAgentRow)}
         </div>
       )}
 
-      {effectiveView === "list" && agents && agents.length > 0 && filtered.length === 0 && (
+      {view === "list" && agents && agents.length > 0 && filtered.length === 0 && (
         <p className="text-sm text-muted-foreground text-center py-8">
           No agents match the selected status.
         </p>
       )}
 
       {/* Org chart view */}
-      {effectiveView === "org" && filteredOrg.length > 0 && (
+      {view === "org" && filteredOrg.length > 0 && (
         <OrgChart embedded orgTree={filteredOrg} agents={agents ?? []} />
       )}
 
-      {effectiveView === "org" && orgTree && orgTree.length > 0 && filteredOrg.length === 0 && (
+      {view === "org" && orgTree && orgTree.length > 0 && filteredOrg.length === 0 && (
         <p className="text-sm text-muted-foreground text-center py-8">
           No agents match the selected status.
         </p>
       )}
 
-      {effectiveView === "org" && orgTree && orgTree.length === 0 && (
+      {view === "org" && orgTree && orgTree.length === 0 && (
         <p className="text-sm text-muted-foreground text-center py-8">
           No organizational hierarchy defined.
         </p>

@@ -44,7 +44,6 @@ const DIRECT_ADAPTER_TYPES = [
   "custom_plugin",
 ] as const;
 const editorCallbacks = vi.hoisted(() => ({ change: (_value: string) => {} }));
-const streamlinedState = vi.hoisted(() => ({ enabled: true }));
 
 vi.mock("@/components/transcript/useLiveRunTranscripts", () => ({
   useLiveRunTranscripts: ({ runs }: { runs: unknown[] }) => {
@@ -71,12 +70,6 @@ vi.mock("@/context/SidebarContext", () => ({
 }));
 vi.mock("@/hooks/useIssuePlanDocument", () => ({
   useIssuePlanDocument: () => planState,
-}));
-vi.mock("@/hooks/useStreamlinedUiEnabled", () => ({
-  useStreamlinedUiEnabled: () => ({
-    enabled: streamlinedState.enabled,
-    loaded: true,
-  }),
 }));
 vi.mock("@/lib/router", () => ({
   Link: ({
@@ -122,7 +115,6 @@ beforeEach(() => {
   transcriptHookRuns.native.length = 0;
   sidebarState.isMobile = false;
   planState.data = null;
-  streamlinedState.enabled = true;
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -175,8 +167,7 @@ describe.each(["legacy", "native"] as const)("historical %s system status", (run
     ]);
   };
 
-  it.each([true, false].flatMap(streamlined => ["done", "cancelled"].map(issueStatus => ({ streamlined, issueStatus }))))("removes failures, stops, waits and stored notices on $issueStatus tasks (streamlined=$streamlined)", ({ streamlined, issueStatus }) => {
-    streamlinedState.enabled = streamlined;
+  it.each(["done", "cancelled"])("removes failures, stops, waits and stored notices on %s tasks", (issueStatus) => {
     setTranscript("failed");
     const props = {
       comments: [
@@ -275,8 +266,7 @@ describe.each(["legacy", "native"] as const)("historical %s system status", (run
   });
 });
 
-it.each([true, false])("interleaves browser sessions with their requests and preserves position on status updates (streamlined=%s)", (streamlined) => {
-  streamlinedState.enabled = streamlined;
+it("interleaves browser sessions with their requests and preserves position on status updates", () => {
   const onOpenBrowser = vi.fn();
   const comments = [0, 2, 4].map((minute) => ({
     id: `comment-${minute}`, companyId: "company", issueId: "issue",
@@ -3245,28 +3235,6 @@ describe("TaskChatThread composer alignment", () => {
     expect(dock?.className).not.toContain("md:w-(--pct-80)");
   });
 
-  it("uses master's production composer and gutters when Streamlined UI is off", () => {
-    streamlinedState.enabled = false;
-    render(<TaskChatThread comments={[]} onAdd={async () => {}} />);
-
-    const dock = container.querySelector(
-      '[data-testid="task-chat-composer-dock"]',
-    );
-    const composer = container.querySelector(".paperclip-task-chat-composer");
-    const send = container.querySelector(
-      '[data-testid="task-chat-composer-send"]',
-    );
-
-    expect(dock?.classList).not.toContain("md:px-0");
-    expect(dock?.classList).not.toContain("md:pb-4");
-    expect(dock?.classList).toContain("bg-background/80");
-    expect(dock?.classList).toContain("pt-1");
-    expect(dock?.classList).not.toContain("-mt-(--radius-task-composer)");
-    expect(composer?.classList).not.toContain("border");
-    expect(composer?.classList).toContain("bg-card");
-    expect(send?.classList).toContain("rounded-full");
-    expect(send?.classList).not.toContain("rounded-md");
-  });
 });
 
 describe("TaskChatThread no-live-execution-path recovery", () => {

@@ -6,7 +6,6 @@ import {
   buildIssuesSearchUrl,
   getNextIssuesPageOffset,
   mergeIssuePagesStable,
-  resolveIssuesPresentation,
 } from "./Issues";
 
 function createIssue(id: string, title: string): Issue {
@@ -34,17 +33,6 @@ describe("issues page pagination helpers", () => {
 
   it("opts the Tasks route into the shared collection toolbar", () => {
     expect(ISSUES_TOOLBAR_PRESENTATION).toBe("collection");
-  });
-
-  it("restores the retained legacy list and toolbar when Streamlined UI is off", () => {
-    expect(resolveIssuesPresentation(false)).toEqual({
-      rowPresentation: "legacy",
-      toolbarPresentation: "legacy",
-    });
-    expect(resolveIssuesPresentation(true)).toEqual({
-      rowPresentation: "task",
-      toolbarPresentation: "collection",
-    });
   });
 
   it("advances to the next offset when the current page is full", () => {

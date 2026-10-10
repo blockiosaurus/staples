@@ -71,14 +71,13 @@ import {
   useLocalInboxArchiveIssueIds,
 } from "../lib/inboxArchiveCache";
 import { EmptyState } from "../components/EmptyState";
-import { CollectionToolbar, type CollectionToolbarProps } from "../components/CollectionToolbar";
+import { CollectionToolbar} from "../components/CollectionToolbar";
 import { IssueGroupHeader } from "../components/IssueGroupHeader";
 import { PageSkeleton } from "../components/PageSkeleton";
 import {
   InboxIssueMetaLeading,
   InboxIssueTrailingColumns,
   IssueColumnPicker,
-  issueActivityText,
   issueActivityTimestamp,
   issueTrailingColumns,
 } from "../components/IssueColumns";
@@ -86,8 +85,6 @@ import { IssueFiltersPopover } from "../components/IssueFiltersPopover";
 import { InboxArchiveButton, IssueRow } from "../components/IssueRow";
 import { BlockedInboxView } from "../components/BlockedInboxView";
 import { SwipeToArchive } from "../components/SwipeToArchive";
-import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
-import { Inbox as LegacyInbox } from "./LegacyInbox";
 
 import { StatusIcon } from "../components/StatusIcon";
 import { cn } from "../lib/utils";
@@ -760,41 +757,6 @@ function JoinRequestInboxRow({
   );
 }
 
-function InboxCollectionToolbar({
-  streamlined,
-  context,
-  search,
-  controls,
-  feedback,
-  ariaLabel,
-}: CollectionToolbarProps & { streamlined: boolean }) {
-  if (streamlined) {
-    return (
-      <CollectionToolbar
-        ariaLabel={ariaLabel}
-        context={context}
-        search={search}
-        controls={controls}
-        feedback={feedback}
-      />
-    );
-  }
-
-  return (
-    <div role="toolbar" aria-label={ariaLabel} className="space-y-2">
-      {search ? <div className="sm:hidden">{search}</div> : null}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        {context}
-        <div className="flex items-center gap-2">
-          {search ? <div className="hidden sm:block">{search}</div> : null}
-          {controls}
-        </div>
-      </div>
-      {feedback}
-    </div>
-  );
-}
-
 /**
  * PAP-670: the inbox stopped being its own page and became the "My work" half
  * of Tasks. `Tasks` hosts this component and drives it through these props, so
@@ -802,8 +764,7 @@ function InboxCollectionToolbar({
  * approval / failed-run / join-request rows) survives the merge by construction
  * rather than being reimplemented on the task list.
  *
- * With no props it is still the standalone `/inbox/*` page, which the legacy
- * (non-streamlined) shell continues to use.
+ * With no props it is still the standalone `/inbox/*` page.
  */
 export interface InboxSurfaceProps {
   /** Which view to render. Falls back to the last path segment when absent. */
@@ -814,17 +775,11 @@ export interface InboxSurfaceProps {
   surfaceLabel?: string;
 }
 
-export function Inbox(props: InboxSurfaceProps = {}) {
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
-  return streamlinedUiEnabled ? <StreamlinedInbox {...props} /> : <LegacyInbox />;
-}
-
-function StreamlinedInbox({
+export function Inbox({
   tab: tabOverride,
   toolbarContext,
   surfaceLabel = "Inbox",
-}: InboxSurfaceProps) {
-  const streamlinedUiEnabled = true;
+}: InboxSurfaceProps = {}) {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { openNewIssue } = useDialogActions();
@@ -2425,8 +2380,7 @@ function StreamlinedInbox({
       : null;
   return (
     <div className="space-y-6">
-      <InboxCollectionToolbar
-        streamlined={streamlinedUiEnabled}
+      <CollectionToolbar
         ariaLabel={`${surfaceLabel} controls`}
         context={toolbarContext ?? (
           <Tabs value={tab} onValueChange={(value) => navigate(`/inbox/${value}`)}>
@@ -2488,7 +2442,7 @@ function StreamlinedInbox({
                 enableRoutineVisibilityFilter
                 buttonVariant="outline"
                 iconOnly
-                presentation={streamlinedUiEnabled ? "streamlined" : "legacy"}
+                presentation="streamlined"
               />
               <Popover>
                 <PopoverTrigger asChild>
@@ -2593,7 +2547,7 @@ function StreamlinedInbox({
                 enableRoutineVisibilityFilter
                 buttonVariant="outline"
                 iconOnly
-                presentation={streamlinedUiEnabled ? "streamlined" : "legacy"}
+                presentation="streamlined"
                 inboxScopeFilters={tab === "all" ? {
                   category: allCategoryFilter,
                   approvalStatus: allApprovalFilter,
@@ -2660,7 +2614,7 @@ function StreamlinedInbox({
                 onResetColumns={() => setIssueColumns(DEFAULT_INBOX_ISSUE_COLUMNS)}
                 title="Choose which columns stay visible"
                 iconOnly
-                rowPresentation={streamlinedUiEnabled ? "task" : "legacy"}
+                rowPresentation="task"
               />
               {canMarkAllRead && (
                 <>
@@ -2731,7 +2685,7 @@ function StreamlinedInbox({
           showStatusColumn={visibleIssueColumnSet.has("status") && availableIssueColumnSet.has("status")}
           showIdentifierColumn={visibleIssueColumnSet.has("id") && availableIssueColumnSet.has("id")}
           showUpdatedColumn={visibleIssueColumnSet.has("updated") && availableIssueColumnSet.has("updated")}
-          presentation={streamlinedUiEnabled ? "task" : "legacy"}
+          presentation="task"
         />
         </div>
       ) : null}
@@ -2818,17 +2772,17 @@ function StreamlinedInbox({
                     <IssueRow
                       key={`issue:${issue.id}`}
                       issue={issue}
-                      presentation={streamlinedUiEnabled ? "task" : "legacy"}
+                      presentation="task"
                       issueLinkState={issueLinkState}
                       treeGuides={depth}
-                      chevronInGuide={streamlinedUiEnabled && depth > 0 && hasChildren}
+                      chevronInGuide={depth > 0 && hasChildren}
                       selected={selected}
                       className={
                         isArchiving
                           ? "pointer-events-none -translate-x-4 scale-(--s-0_98) opacity-0 transition-all duration-200 ease-out"
                           : "transition-all duration-200 ease-out"
                       }
-                      leadingControl={streamlinedUiEnabled && nestingEnabled && hasChildren && collapseParentId ? (
+                      leadingControl={nestingEnabled && hasChildren && collapseParentId ? (
                         <button
                           type="button"
                           data-slot="icon-button"
@@ -2842,11 +2796,11 @@ function StreamlinedInbox({
                         >
                           <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-90")} />
                         </button>
-                      ) : streamlinedUiEnabled ? (
+                      ) : (
                         <span data-slot="task-row-disclosure-spacer" className={cn("h-4 w-4 shrink-0", !nestingEnabled && "hidden sm:block")} aria-hidden="true" />
-                      ) : undefined}
-                      statusSlot={streamlinedUiEnabled ? rowStatusIcon : undefined}
-                      metadata={streamlinedUiEnabled ? (
+                      )}
+                      statusSlot={rowStatusIcon}
+                      metadata={(
                         <InboxIssueMetaLeading
                           issue={issue}
                           isLive={isLive}
@@ -2855,74 +2809,23 @@ function StreamlinedInbox({
                           showStatus={false}
                           showIdentifier={false}
                         />
-                      ) : undefined}
-                      showIdentifier={streamlinedUiEnabled
-                        ? visibleIssueColumnSet.has("id") && availableIssueColumnSet.has("id")
-                        : undefined}
-                      desktopMetaLeading={!streamlinedUiEnabled ? (
-                        <>
-                          {nestingEnabled ? (
-                            depth === 0 && hasChildren && collapseParentId ? (
-                              <button
-                                type="button"
-                                data-slot="icon-button"
-                                className="hidden w-4 shrink-0 items-center justify-center sm:inline-flex"
-                                onClick={(event) => {
-                                  event.preventDefault();
-                                  event.stopPropagation();
-                                  toggleInboxParentCollapse(collapseParentId);
-                                }}
-                              >
-                                <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-90")} />
-                              </button>
-                            ) : (
-                              <span className="hidden w-4 shrink-0 sm:block" />
-                            )
-                          ) : null}
-                          <InboxIssueMetaLeading
-                            issue={issue}
-                            isLive={isLive}
-                            subtreeLiveCount={liveDescendantCount}
-                            showSubtreeLiveChip={showSubtreeLiveChip}
-                            showStatus={showStatus}
-                            showIdentifier={visibleIssueColumnSet.has("id") && availableIssueColumnSet.has("id")}
-                            statusSlot={rowStatusIcon}
-                          />
-                        </>
-                      ) : undefined}
+                      )}
+                      showIdentifier={visibleIssueColumnSet.has("id") && availableIssueColumnSet.has("id")}
                       titleSuffix={hasChildren && !isExpanded ? (
                         <span className="ml-1.5 text-xs text-muted-foreground">
                           ({childCount} sub-task{childCount !== 1 ? "s" : ""})
                         </span>
                       ) : undefined}
-                      mobileTitleMeta={streamlinedUiEnabled ? issueActivityTimestamp(issue) : undefined}
-                      mobileMeta={streamlinedUiEnabled ? undefined : issueActivityText(issue).toLowerCase()}
-                      mobileLeading={!streamlinedUiEnabled ? (
-                        depth === 0 && hasChildren && collapseParentId ? (
-                          <button
-                            type="button"
-                            data-slot="icon-button"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              toggleInboxParentCollapse(collapseParentId);
-                            }}
-                          >
-                            <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-90")} />
-                          </button>
-                        ) : (
-                          <StatusIcon status={issue.status} externalConversationState={issue.externalConversationState} blockerAttention={blockerAttention} size="md" />
-                        )
-                      ) : undefined}
+                      mobileTitleMeta={issueActivityTimestamp(issue)}
                       unreadState={isUnread ? "visible" : isFading ? "fading" : "hidden"}
                       onMarkRead={() => markReadMutation.mutate(issue.id)}
                       onArchive={allowArchive ? () => archiveIssueMutation.mutate(issue.id) : undefined}
                       archiveDisabled={isArchiving}
                       desktopTrailing={
-                        (streamlinedUiEnabled ? visibleTaskDataColumns : visibleTrailingIssueColumns).length > 0 ? (
+                        visibleTaskDataColumns.length > 0 ? (
                           <InboxIssueTrailingColumns
                             issue={issue}
-                            columns={streamlinedUiEnabled ? visibleTaskDataColumns : visibleTrailingIssueColumns}
+                            columns={visibleTaskDataColumns}
                             projectName={project?.name ?? null}
                             projectColor={project?.color ?? null}
                             workspaceName={resolveIssueWorkspaceName(issue, {
@@ -2949,14 +2852,12 @@ function StreamlinedInbox({
                           />
                         ) : undefined
                       }
-                      trailingMeta={streamlinedUiEnabled && showTaskTimestamp ? issueActivityTimestamp(issue) : null}
+                      trailingMeta={showTaskTimestamp ? issueActivityTimestamp(issue) : null}
                     />
                   );
                 };
 
                 let previousDateGroup: TaskDateGroup | null = null;
-                let previousTimestamp = Number.POSITIVE_INFINITY;
-                const legacyTodayCutoff = Date.now() - 24 * 60 * 60 * 1000;
                 return groupedSections.flatMap((group, groupIndex) => {
                   const elements: ReactNode[] = [];
                   const isGroupCollapsed = collapsedGroupKeys.has(group.key);
@@ -3040,18 +2941,11 @@ function StreamlinedInbox({
                       </div>
                     );
                     const currentDateGroup = taskDateGroup(item.timestamp);
-                    const dateGroupLabel = streamlinedUiEnabled
-                      && filterPreferences.showDateGroupSeparators
+                    const dateGroupLabel = filterPreferences.showDateGroupSeparators
                       && groupBy === "none"
                       ? taskDateGroupSeparator(previousDateGroup, currentDateGroup)
                       : null;
                     previousDateGroup = currentDateGroup;
-                    const showLegacyEarlierDivider = !streamlinedUiEnabled
-                      && groupBy === "none"
-                      && item.timestamp > 0
-                      && item.timestamp < legacyTodayCutoff
-                      && previousTimestamp >= legacyTodayCutoff;
-                    previousTimestamp = item.timestamp > 0 ? item.timestamp : previousTimestamp;
                     if (dateGroupLabel) {
                       elements.push(
                         <div
@@ -3069,18 +2963,6 @@ function StreamlinedInbox({
                             {dateGroupLabel}
                           </span>
                           <span className="h-px min-w-0 flex-1 bg-border/80" aria-hidden="true" data-date-group-rule="" />
-                        </div>,
-                      );
-                    } else if (showLegacyEarlierDivider) {
-                      elements.push(
-                        <div key={`earlier-divider-${group.key}-${index}`} className="my-2 flex items-center gap-3 px-4">
-                          <div className="flex-1 border-t border-border" />
-                          <span
-                            className="shrink-0 text-(length:--text-micro) font-medium uppercase tracking-wider text-muted-foreground/70"
-                            data-date-group-label=""
-                          >
-                            Earlier
-                          </span>
                         </div>,
                       );
                     }

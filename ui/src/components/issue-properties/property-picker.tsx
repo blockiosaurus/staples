@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ChevronDown } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { useStreamlinedUiEnabled } from "../../hooks/useStreamlinedUiEnabled";
 import { PropertyRow } from "./primitives";
 
 /** Renders a Popover on desktop, or an inline collapsible section on mobile (inline mode). */
@@ -35,10 +34,9 @@ export function PropertyPicker({
   separateTrigger?: boolean;
   children: ReactNode;
 }) {
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const btnCn = cn(
     "inline-flex min-h-5 items-center gap-1.5 cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1 py-0.5 transition-colors min-w-0 max-w-full text-left",
-    streamlinedUiEnabled && "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
     triggerClassName,
   );
 
@@ -83,11 +81,9 @@ export function PropertyPicker({
     return (
       <div>
         <PropertyRow label={label} wrap={stacked}>
-          <button className={cn(btnCn, stacked && "items-start")} onClick={() => onOpenChange(!open)} aria-expanded={streamlinedUiEnabled ? open : undefined}>
+          <button className={cn(btnCn, stacked && "items-start")} onClick={() => onOpenChange(!open)} aria-expanded={open}>
             {triggerContent}
-            {streamlinedUiEnabled ? (
-              <ChevronDown className={cn("ml-auto h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} aria-hidden />
-            ) : null}
+            <ChevronDown className={cn("ml-auto h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} aria-hidden />
           </button>
           {extra}
         </PropertyRow>
@@ -104,11 +100,9 @@ export function PropertyPicker({
     <PropertyRow label={label} wrap={stacked}>
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger asChild>
-          <button className={cn(btnCn, stacked && "items-start")} aria-expanded={streamlinedUiEnabled ? open : undefined}>
+          <button className={cn(btnCn, stacked && "items-start")} aria-expanded={open}>
             {triggerContent}
-            {streamlinedUiEnabled ? (
-              <ChevronDown className={cn("ml-auto h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} aria-hidden />
-            ) : null}
+            <ChevronDown className={cn("ml-auto h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} aria-hidden />
           </button>
         </PopoverTrigger>
         <PopoverContent className={cn("p-1", popoverClassName)} align={popoverAlign} collisionPadding={16}>
