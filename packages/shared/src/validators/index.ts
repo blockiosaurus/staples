@@ -132,6 +132,11 @@ export {
   type UpsertSidebarOrderPreference,
 } from "./sidebar-preferences.js";
 export {
+  surfaceIdSchema,
+  patchUiPreferencesSchema,
+  type PatchUiPreferences,
+} from "./ui-preferences.js";
+export {
   resourceMembershipStateSchema,
   updateDocumentResourceMembershipSchema,
   updateResourceMembershipSchema,

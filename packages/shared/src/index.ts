@@ -1333,6 +1333,8 @@ export type {
   UserProfileWindowStats,
   SidebarBadges,
   SidebarOrderPreference,
+  CompanySignals,
+  UiPreferences,
   InboxDismissal,
   InboxDismissalKind,
   AccessUserProfile,
@@ -1743,6 +1745,15 @@ export {
   upsertSidebarOrderPreferenceSchema,
   type UpsertSidebarOrderPreference,
 } from "./validators/sidebar-preferences.js";
+export {
+  surfaceIdSchema,
+  patchUiPreferencesSchema,
+  type PatchUiPreferences,
+} from "./validators/ui-preferences.js";
+export {
+  applyUiPreferencesPatch,
+  DEFAULT_UI_PREFERENCES,
+} from "./ui-preferences.js";
 export {
   resourceMembershipStateSchema,
   updateDocumentResourceMembershipSchema,
