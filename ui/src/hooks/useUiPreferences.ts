@@ -54,12 +54,15 @@ export function useUiPreferences(companyId: string | null | undefined): {
   const mutation = useMutation({
     mutationFn: (patch: PatchUiPreferences) => uiPreferencesApi.patch(companyId!, patch),
     onMutate: async (patch) => {
-      await queryClient.cancelQueries({ queryKey });
+      // Cancel in-flight fetches (so they cannot overwrite the optimistic value) but
+      // apply the optimistic value synchronously rather than after an await.
+      const cancelled = queryClient.cancelQueries({ queryKey });
       const previous = queryClient.getQueryData<UiPreferences>(queryKey);
       queryClient.setQueryData<UiPreferences>(
         queryKey,
         applyUiPreferencesPatch(previous ?? DEFAULT_UI_PREFERENCES, patch, new Date().toISOString()),
       );
+      await cancelled;
       return { previous };
     },
     onError: (_error, _patch, context) => {

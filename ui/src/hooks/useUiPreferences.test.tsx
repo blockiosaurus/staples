@@ -42,8 +42,8 @@ describe("useUiPreferences", () => {
         </QueryClientProvider>,
       );
     });
-    await flush();
-    await flush();
+    for (let i = 0; i < 50 && !observed.loaded; i += 1) await flush();
+    expect(observed.loaded).toBe(true);
   });
   afterEach(async () => {
     await act(async () => root.unmount());
@@ -56,6 +56,8 @@ describe("useUiPreferences", () => {
     mocks.patch.mockReturnValue(new Promise((r) => { resolve = r; }));
     expect(observed.loaded).toBe(true);
     await act(async () => observed.update({ pin: ["nav.goals"] }));
+    await flush();
+    expect(mocks.patch).toHaveBeenCalledTimes(1); // request still pending
     expect(observed.preferences.pinned).toContain("nav.goals");
     await act(async () => resolve({ ...observed.preferences, pinned: ["nav.goals"], updatedAt: "2026-02-01T00:00:00.000Z" }));
     await flush();
