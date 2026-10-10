@@ -1,4 +1,9 @@
 import { randomUUID } from "node:crypto";
+import express from "express";
+import request from "supertest";
+import { issueRoutes } from "../routes/issues.js";
+import { projectRoutes } from "../routes/projects.js";
+import { errorHandler } from "../middleware/error-handler.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { activityLog, agents, authUsers, companyMemberships, heartbeatRuns, instanceUserRoles, issueThreadInteractions, issues } from "@paperclipai/db";
@@ -142,6 +147,36 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(searched.body.result.structuredContent.tasks.map((t: { id: string }) => t.id)).not.toContain(privateId);
     const read = await call(f, "paperclip_read_task", { taskId: privateId });
     expect(read.body.result).toMatchObject({ isError: true });
+  }, 60_000);
+
+  it("does not let a delegated actor manage privacy through the person's instance-admin role", async () => {
+    const f = await assistantFixture();
+    const ownerId = `owner-${randomUUID()}`;
+    await server.db.insert(authUsers).values({ id: ownerId, name: "Owner", email: `${ownerId}@fixture.invalid`, emailVerified: true, createdAt: new Date(), updatedAt: new Date() });
+    await server.db.insert(companyMemberships).values({ companyId: f.companyId, principalType: "user", principalId: ownerId, status: "active", membershipRole: "owner" });
+    const openId = randomUUID();
+    await server.db.insert(issues).values({ id: openId, companyId: f.companyId, issueNumber: 98, identifier: `OPEN-${openId.slice(0, 6)}`, title: "Someone else's task", status: "todo", createdByUserId: ownerId, responsibleUserId: ownerId });
+    await server.db.insert(instanceUserRoles).values({ userId: f.responsibleUserId!, role: "instance_admin" });
+    const app = (source: "assistant_run" | "mcp_oauth" | "session") => {
+      const a = express();
+      a.use(express.json());
+      a.use((req, _res, next) => {
+        req.actor = { type: "board", source, userId: f.responsibleUserId!, companyIds: [f.companyId],
+          memberships: [{ companyId: f.companyId, membershipRole: "member", status: "active" }], isInstanceAdmin: false,
+          ...(source === "assistant_run" ? { assistantRunId: f.runId } : {}) };
+        next();
+      });
+      a.use("/api", issueRoutes(server.db, server.storage));
+      a.use("/api", projectRoutes(server.db));
+      a.use(errorHandler);
+      return a;
+    };
+    for (const source of ["assistant_run", "mcp_oauth"] as const) {
+      expect((await request(app(source)).get(`/api/issues/${openId}/privacy-constraints`)).status).toBe(403);
+      expect((await request(app(source)).patch(`/api/projects/${f.projectId}`).send({ visibility: "private" })).status).toBe(403);
+    }
+    // Control: the same person in their own session is an instance admin.
+    expect((await request(app("session")).get(`/api/issues/${openId}/privacy-constraints`)).status).toBe(200);
   }, 60_000);
 
   it("gives viewers read tools only", async () => {

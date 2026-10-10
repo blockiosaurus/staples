@@ -81,6 +81,10 @@ export async function initializeAgentHire(txDb: Db, created: AgentHireRecord, op
 export async function prepareAgentHireApproval(txDb: Db, existing: AgentHireRecord, approvedPayload?: Record<string, unknown> | null): Promise<AgentConfigurationPatch> {
   const approvedPatch = approvedPayload ? configPatchFromApprovalPayload(approvedPayload) : {};
   const patch = { ...approvedPatch } as AgentConfigurationPatch;
+  // An approval payload is caller-shaped; it may not add or alter a built-in marker.
+  if (Object.prototype.hasOwnProperty.call(patch, "metadata")) {
+    agentRecordQueries(txDb).assertBuiltInAgentMetadataMutationAllowed(existing.metadata, patch.metadata);
+  }
   const hasApprovedAdapterConfig = Object.prototype.hasOwnProperty.call(patch, "adapterConfig") && isPlainRecord(patch.adapterConfig);
   if (
     Object.prototype.hasOwnProperty.call(patch, "adapterConfig") &&

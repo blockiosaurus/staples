@@ -49,6 +49,7 @@ import {
 import { readBuiltInAgentMarker, withBuiltInAgentMarker } from "../lib/built-in-agent-metadata.ts";
 import { issueThreadInteractionService } from "../services/issue-thread-interactions.ts";
 import { issueService } from "../services/issues.ts";
+import { isProvisionedAssistant, resolveCompanyAssistantAgentId } from "../services/assistant-identity.ts";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -339,6 +340,31 @@ describeEmbeddedPostgres("built-in agents", () => {
     const again = await createBuiltInAgentService(db).ensureAssistant(companyId);
     expect(again.id).toBe(ensured.id);
     expect(again.adapterType).toBe("codex_local");
+    expect(await assistantRows(companyId)).toHaveLength(1);
+  });
+
+  it("never adopts a stray marked agent as the Assistant", async () => {
+    const companyId = await seedCompany();
+    const strayId = randomUUID();
+    await db.insert(agents).values({
+      id: strayId, companyId, name: "Stray", role: "general", status: "idle", adapterType: "process", adapterConfig: {},
+      metadata: withBuiltInAgentMarker({ note: "kept" }, { key: "assistant", featureKeys: ["assistant"] }),
+    });
+
+    const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(ensured.id).not.toBe(strayId);
+    expect(await resolveCompanyAssistantAgentId(db, companyId)).toBe(ensured.id);
+    const [binding] = await db.select().from(builtInManagedResources).where(and(
+      eq(builtInManagedResources.companyId, companyId), eq(builtInManagedResources.bundleKey, "assistant"),
+      eq(builtInManagedResources.resourceKind, "instructions"),
+    ));
+    expect(binding?.resourceId).toBe(ensured.id);
+    const [stray] = await db.select().from(agents).where(eq(agents.id, strayId));
+    expect(readBuiltInAgentMarker(stray!.metadata)).toBeNull();
+    expect(stray!.metadata).toMatchObject({ note: "kept" });
+    expect(await isProvisionedAssistant(db, { id: strayId, companyId })).toBe(false);
+    // The provisioned Assistant is kept on later ensures.
+    expect((await createBuiltInAgentService(db).ensureAssistant(companyId)).id).toBe(ensured.id);
     expect(await assistantRows(companyId)).toHaveLength(1);
   });
 

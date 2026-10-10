@@ -46,6 +46,11 @@ export function hireApprovalService(db: Db, effects: LifecycleEffects) {
       }
       const payload = approval?.payload ?? {};
       let agentId = typeof target === "string" ? target : typeof payload.agentId === "string" ? payload.agentId : null;
+      // A hire approval may only activate or reject a pending agent in its own company.
+      if (agentId && applied) {
+        const targetAgent = await records.getById(agentId);
+        if (targetAgent && targetAgent.companyId !== companyId) throw unprocessable("Hire approval agent belongs to another company");
+      }
       if (applied && status === "approved") {
         if (agentId) {
           const activated = await records.activatePendingApproval(agentId, approval ? payload : null, approval ? approval.requestedByUserId : userId);

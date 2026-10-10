@@ -5202,7 +5202,8 @@ export function issueRoutes(
     return false;
     }
     if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) return true;
-    const instanceAdmin = req.actor.source !== "cloud_tenant"
+    // Delegated channels (MCP connections, Assistant runs) never use the person's instance-admin role.
+    const instanceAdmin = req.actor.source !== "cloud_tenant" && !isDelegatedBoardSource(req.actor.source)
       ? await db
           .select({ id: instanceUserRoles.id })
           .from(instanceUserRoles)

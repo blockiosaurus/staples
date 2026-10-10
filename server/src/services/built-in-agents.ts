@@ -5,13 +5,14 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readPaperclipSkillSyncPreference, writePaperclipSkillSyncPreference } from "@paperclipai/adapter-utils/server-utils";
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { activityLog, agents, builtInManagedResources, companies, issueThreadInteractions, issues, routines, routineTriggers } from "@paperclipai/db";
 import { ASSISTANT_BUILT_IN_AGENT_KEY, syncRoutineVariablesWithTemplate } from "@paperclipai/shared";
 import type { Agent, Approval, CompanySkill, PermissionKey, Routine, RoutineTrigger, RoutineVariable } from "@paperclipai/shared";
 import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
+import { logger } from "../middleware/logger.js";
 import { adoptAgentFiles, agentFilePath, fileHash, readAgentFile, snapshotAgentFiles } from "./agent-file-store.js";
 import { assertInstructionPathSafe, instructionBytes, materializeInstructionBytes } from "./agent-instruction-files.js";
 import { agentInstructionRevisionService } from "./agent-instruction-revisions.js";
@@ -20,6 +21,7 @@ import { agentInstructionsBundleMode, agentInstructionsService } from "./agent-i
 import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
 import {
+  BUILT_IN_AGENT_METADATA_KEY,
   readBuiltInAgentMarker,
   withBuiltInAgentMarker,
 } from "../lib/built-in-agent-metadata.js";
@@ -1802,8 +1804,43 @@ export function builtInAgentService(db: Db) {
     return keep!;
   }
 
+  /**
+   * The Assistant carries person-scoped authority, so a marker alone never makes
+   * a row the Assistant. A marked row is adopted only with server provenance:
+   * the company's managed-instructions binding for it, or the system
+   * provisioning activity row. Anything else is a stray: its marker is removed
+   * (so a fresh Assistant can be provisioned past the one-per-company index)
+   * and the incident is logged.
+   */
+  async function provenancedAssistantRows(companyId: string, markedRows: Array<typeof agents.$inferSelect>) {
+    if (markedRows.length === 0) return markedRows;
+    const ids = markedRows.map((row) => row.id);
+    const [bindings, provisioned] = await Promise.all([
+      db.select({ id: builtInManagedResources.resourceId }).from(builtInManagedResources).where(and(
+        eq(builtInManagedResources.companyId, companyId), eq(builtInManagedResources.bundleKey, ASSISTANT_BUILT_IN_AGENT_KEY),
+        eq(builtInManagedResources.resourceKind, "instructions"), inArray(builtInManagedResources.resourceId, ids),
+      )),
+      db.select({ id: activityLog.entityId }).from(activityLog).where(and(
+        eq(activityLog.companyId, companyId), eq(activityLog.actorType, "system"), eq(activityLog.actorId, "built-in-agents"),
+        eq(activityLog.action, "built_in_agent.provisioned"), eq(activityLog.entityType, "agent"), inArray(activityLog.entityId, ids),
+      )),
+    ]);
+    const trusted = new Set([...bindings.map((row) => row.id), ...provisioned.map((row) => row.id)]);
+    for (const stray of markedRows.filter((row) => !trusted.has(row.id))) {
+      const { [BUILT_IN_AGENT_METADATA_KEY]: _marker, ...rest } = (stray.metadata ?? {}) as Record<string, unknown>;
+      await db.update(agents).set({ metadata: rest, updatedAt: new Date() }).where(eq(agents.id, stray.id));
+      logger.warn({ companyId, agentId: stray.id }, "removed an Assistant marker without provisioning provenance");
+      await logActivity(db, {
+        companyId, actorType: "system", actorId: "built-in-agents", action: "built_in_agent.stray_marker_removed",
+        entityType: "agent", entityId: stray.id, details: { key: ASSISTANT_BUILT_IN_AGENT_KEY },
+      });
+    }
+    return markedRows.filter((row) => trusted.has(row.id));
+  }
+
   async function findSingleAgent(companyId: string, definition: BuiltInAgentDefinition) {
-    const markedRows = await findMarkedRows(companyId, definition.key);
+    let markedRows = await findMarkedRows(companyId, definition.key);
+    if (definition.key === ASSISTANT_BUILT_IN_AGENT_KEY) markedRows = await provenancedAssistantRows(companyId, markedRows);
     if (markedRows.length === 0) return null;
     const survivor = markedRows.length > 1
       ? await resolveDuplicateMarkedRows(companyId, definition, markedRows)
@@ -2033,6 +2070,12 @@ export function builtInAgentService(db: Db) {
       throw error;
     }
 
+    // Provenance for Assistant adoption: only server provisioning writes this row.
+    await logActivity(db, {
+      companyId, actorType: "system", actorId: "built-in-agents", action: "built_in_agent.provisioned",
+      entityType: "agent", entityId: pending.id,
+      details: { key: definition.key, featureKeys: definition.featureKeys, status: deriveBuiltInAgentStatus(pending) },
+    });
     const approval = await approvalSvc.create(companyId, {
       type: "hire_agent",
       requestedByAgentId: actor.requestedByAgentId ?? null,
