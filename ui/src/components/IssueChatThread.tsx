@@ -1,4 +1,5 @@
 import { resolveIssueChatHumanAuthor } from "@/lib/issue-chat-human-author";
+import type { ProposedActionAcceptResult } from "../api/issues";
 import { useWorkspaceBaseRefRecovery } from "./WorkspaceBaseRefRecovery";
 import { WorkspaceBaseRefRecoveryNotice } from "./WorkspaceBaseRefRecoveryNotice";
 import { DispositionRecoveryNotice, useDispositionRecoverySnapshot } from "./DispositionRecoveryNotice";
@@ -293,6 +294,7 @@ interface IssueChatMessageContext {
     selectedClientKeys?: string[],
     selectedOptionIds?: string[],
     rememberAction?: boolean,
+    proposedActionResult?: ProposedActionAcceptResult,
   ) => Promise<void> | void;
   onRejectInteraction?: (
     interaction:
@@ -698,6 +700,7 @@ interface IssueChatThreadProps {
     selectedClientKeys?: string[],
     selectedOptionIds?: string[],
     rememberAction?: boolean,
+    proposedActionResult?: ProposedActionAcceptResult,
   ) => Promise<void> | void;
   onRejectInteraction?: (
     interaction:

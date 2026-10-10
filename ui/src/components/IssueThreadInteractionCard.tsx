@@ -47,6 +47,11 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { AppLogo } from "@/pages/apps/AppLogo";
 import { ConnectionIntentInteractionBody } from "@/features/connections/ConnectionIntentInteractionBody";
 import { QuestionForm } from "./task-chat/QuestionForm";
+import {
+  executeProposedAction,
+  readProposedActionStaleValue,
+  type ProposedActionAcceptResult,
+} from "../api/issues";
 
 const OTHER_ANSWER_ID = "__paperclip_other__";
 
@@ -105,6 +110,8 @@ interface IssueThreadInteractionCardProps {
     selectedClientKeys?: string[],
     selectedOptionIds?: string[],
     rememberAction?: boolean,
+    /** Set only when confirming an Assistant proposed action the browser just executed. */
+    proposedActionResult?: ProposedActionAcceptResult,
   ) => Promise<void> | void;
   onRejectInteraction?: (
     interaction:
@@ -1799,6 +1806,145 @@ function RequestToolActionCard({
               </DropdownMenu>
             ) : null}
           </div>
+        </div>
+      ) : null}
+      <InteractionActionError message={actionError} />
+    </div>
+  );
+}
+
+
+const PROPOSED_ACTION_CATEGORY_LABELS: Record<string, string> = {
+  approval: "Approval",
+  agent_lifecycle: "Agent lifecycle",
+  budget: "Budget",
+  secret: "Secret",
+  connection: "Connection",
+  outbound: "Outbound",
+  delete: "Delete",
+  other_governed: "Governed action",
+};
+
+/**
+ * An Assistant-proposed governed API call (`payload.proposedAction`). Nothing
+ * runs until the person clicks Confirm: their browser then performs exactly
+ * the stored call with their own session and reports the outcome (with the
+ * proposal hash) through accept. Cancel rejects without calling anything.
+ */
+function ProposedActionCard({
+  interaction,
+  onAcceptInteraction,
+  onRejectInteraction,
+}: {
+  interaction: RequestConfirmationInteraction;
+  onAcceptInteraction?: IssueThreadInteractionCardProps["onAcceptInteraction"];
+  onRejectInteraction?: (interaction: RequestConfirmationInteraction, reason?: string) => Promise<void> | void;
+}) {
+  const action = interaction.payload.proposedAction!;
+  const [working, setWorking] = useState<"confirm" | "cancel" | null>(null);
+  const [staleWarning, setStaleWarning] = useState(false);
+  const [localResult, setLocalResult] = useState<Omit<ProposedActionAcceptResult, "hash"> | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [bodyOpen, setBodyOpen] = useState(false);
+  const resolutionErrorMessage = useResolutionErrorMessage();
+  const isPending = interaction.status === "pending";
+  const recorded = interaction.result?.proposedAction ?? null;
+  const outcome = recorded ?? (isPending ? localResult : null);
+  const destructive = action.method === "DELETE" || action.category === "delete";
+  const prettyBody = action.body === null || action.body === undefined ? null : JSON.stringify(action.body, null, 2);
+
+  async function confirm() {
+    setWorking("confirm");
+    setActionError(null);
+    try {
+      // First Confirm verifies the target is unchanged; a mismatch (or an
+      // unreadable target) requires an explicit second Confirm.
+      if (action.staleCheck && !staleWarning) {
+        const current = await readProposedActionStaleValue(action.staleCheck);
+        if (current !== action.staleCheck.expected) {
+          setStaleWarning(true);
+          return;
+        }
+      }
+      const result = await executeProposedAction(action);
+      setLocalResult(result);
+      try {
+        await onAcceptInteraction?.(interaction, undefined, undefined, undefined, { ...result, hash: action.hash });
+      } catch (error) {
+        setActionError(`The call ${result.status === "executed" ? "ran" : "was attempted"}, but recording the outcome failed: ${resolutionErrorMessage(error)}`);
+      }
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  async function cancel() {
+    setWorking("cancel");
+    setActionError(null);
+    try {
+      await onRejectInteraction?.(interaction);
+    } catch (error) {
+      setActionError(resolutionErrorMessage(error));
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  const statusLabel = !isPending
+    ? interaction.status === "accepted"
+      ? recorded?.status === "executed" ? "Executed" : recorded?.status === "stale" ? "Not run · changed" : "Failed"
+      : interaction.status === "rejected" ? "Cancelled" : interaction.status === "expired" ? "Expired" : "Closed"
+    : outcome ? (outcome.status === "executed" ? "Executed" : "Failed") : "Needs your confirmation";
+  const failed = outcome?.status === "failed" || (interaction.status === "accepted" && recorded?.status !== "executed");
+
+  return (
+    <div id={`interaction-${interaction.id}`} data-testid="proposed-action-card" className={cn("rounded-lg border p-5 shadow-none", isPending ? (destructive ? "border-2 border-red-500/70" : "border-2 border-violet-500/70") : "border-border")}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-1 rounded-sm border border-border bg-muted/60 px-2 py-0.5 text-(length:--text-micro) font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">
+          <ShieldAlert className="h-3.5 w-3.5" />
+          {PROPOSED_ACTION_CATEGORY_LABELS[action.category] ?? "Governed action"}
+        </span>
+        <span data-testid="interaction-status-badge" className={cn("text-xs", failed ? "text-destructive" : "text-muted-foreground")}>{statusLabel}</span>
+      </div>
+      <p className="mt-2 text-sm font-medium text-foreground">{action.summary}</p>
+      <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+        <span className="font-semibold text-foreground">{action.method}</span> {action.path}
+      </p>
+      {prettyBody ? (
+        <Collapsible open={bodyOpen} onOpenChange={setBodyOpen}>
+          <CollapsibleTrigger asChild>
+            <button type="button" className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <ChevronRight className={cn("h-3 w-3", bodyOpen && "rotate-90")} />Request body
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-mono text-xs text-foreground">{prettyBody}</pre>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : null}
+      {outcome ? (
+        <p className={cn("mt-2 flex items-center gap-1.5 text-sm", failed ? "text-destructive" : "text-muted-foreground")} aria-live="polite">
+          {failed ? <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />}
+          <span className="break-words">
+            {outcome.status === "executed" ? "Done" : "Did not complete"}
+            {outcome.httpStatus ? ` · HTTP ${outcome.httpStatus}` : ""}
+            {outcome.message && outcome.message !== `HTTP ${outcome.httpStatus}` ? ` · ${outcome.message}` : ""}
+          </span>
+        </p>
+      ) : null}
+      {isPending && staleWarning ? (
+        <p className="mt-2 flex items-center gap-1.5 text-sm text-amber-700 dark:text-amber-300" role="status">
+          <TriangleAlert className="h-3.5 w-3.5 shrink-0" />Changed since the Assistant proposed this. Review it, then confirm again to run it anyway.
+        </p>
+      ) : null}
+      {isPending && !localResult ? (
+        <div className="mt-3 flex justify-end gap-2">
+          <Button size="sm" variant="ghost" disabled={!onRejectInteraction || working !== null} onClick={() => void cancel()}>
+            {working === "cancel" ? "Cancelling…" : (interaction.payload.rejectLabel || "Cancel")}
+          </Button>
+          <Button size="sm" variant={destructive ? "destructive" : "cta"} disabled={!onAcceptInteraction || working !== null} onClick={() => void confirm()}>
+            {working === "confirm" ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Running…</> : staleWarning ? "Confirm anyway" : (interaction.payload.acceptLabel || "Confirm")}
+          </Button>
         </div>
       ) : null}
       <InteractionActionError message={actionError} />
@@ -3733,6 +3879,17 @@ export function IssueThreadInteractionCard({
           addresseeLabel={addresseeLabel ?? "the addressed person"}
         />
       </div>
+    );
+  }
+  if (interaction.kind === "request_confirmation" && interaction.payload.proposedAction) {
+    return (
+      <InteractionAudienceContext.Provider value={audience}>
+        <ProposedActionCard
+          interaction={interaction}
+          onAcceptInteraction={onAcceptInteraction}
+          onRejectInteraction={onRejectInteraction}
+        />
+      </InteractionAudienceContext.Provider>
     );
   }
   if (isToolAction && interaction.kind === "request_confirmation" && toolActionState) {

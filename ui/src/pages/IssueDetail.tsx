@@ -54,7 +54,7 @@ import {
   useSharedPollingQuery,
 } from "@/hooks/useSharedPolling";
 import { ApiError } from "../api/client";
-import { issuesApi } from "../api/issues";
+import { issuesApi, type ProposedActionAcceptResult } from "../api/issues";
 import { CommentSubmissionUnknownError } from "../lib/comment-submit-result";
 import { approvalsApi } from "../api/approvals";
 import { activityApi, type RunForIssue } from "../api/activity";
@@ -1308,6 +1308,7 @@ type IssueDetailChatTabProps = {
     selectedClientKeys?: string[],
     selectedOptionIds?: string[],
     rememberAction?: boolean,
+    proposedActionResult?: ProposedActionAcceptResult,
   ) => Promise<void>;
   onRejectInteraction: (
     interaction: ActionableIssueThreadInteraction,
@@ -4801,16 +4802,19 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       selectedClientKeys,
       selectedOptionIds,
       rememberAction,
+      proposedActionResult,
     }: {
       interaction: ActionableIssueThreadInteraction;
       selectedClientKeys?: string[];
       selectedOptionIds?: string[];
       rememberAction?: boolean;
+      proposedActionResult?: ProposedActionAcceptResult;
     }) =>
       issuesApi.acceptInteraction(issueId!, interaction.id, {
         selectedClientKeys,
         selectedOptionIds,
         rememberAction,
+        proposedActionResult,
       }),
     onSuccess: (interaction) => {
       upsertInteractionInCache(interaction);
@@ -6425,12 +6429,14 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       selectedClientKeys?: string[],
       selectedOptionIds?: string[],
       rememberAction?: boolean,
+      proposedActionResult?: ProposedActionAcceptResult,
     ) => {
       await acceptInteraction.mutateAsync({
         interaction,
         selectedClientKeys,
         selectedOptionIds,
         rememberAction,
+        proposedActionResult,
       });
     },
     [acceptInteraction],

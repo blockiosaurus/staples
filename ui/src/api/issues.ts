@@ -41,7 +41,61 @@ import type {
   UpsertIssueWatchdog,
   UpsertIssueDocument,
 } from "@paperclipai/shared";
-import { api, ApiError, detachInflightGet, type RequestOptions } from "./client";
+import { api, ApiError, detachInflightGet, requestResponse, type RequestOptions } from "./client";
+import type { RequestConfirmationProposedActionPayload } from "@paperclipai/shared";
+
+/** The outcome the person's browser reports when accepting a proposed action. */
+export interface ProposedActionAcceptResult {
+  status: "executed" | "failed" | "stale";
+  httpStatus?: number;
+  message?: string;
+  /** Echo of the stored proposal hash. */
+  hash: string;
+}
+
+/** Stored proposal paths include the `/api` prefix; the api client adds it again. */
+function proposedActionClientPath(path: string) {
+  if (!path.startsWith("/api/")) throw new Error("Proposed action paths must start with /api/");
+  return path.slice("/api".length);
+}
+
+function shortMessage(value: string) {
+  const trimmed = value.trim();
+  return trimmed.length > 500 ? `${trimmed.slice(0, 497)}...` : trimmed;
+}
+
+/**
+ * Perform an Assistant-proposed call exactly as stored (method, path, body)
+ * with the person's own session, through the app's api client. Never throws:
+ * failures are reported as a `failed` result for the accept call.
+ */
+export async function executeProposedAction(
+  action: Pick<RequestConfirmationProposedActionPayload, "method" | "path" | "body">,
+): Promise<Omit<ProposedActionAcceptResult, "hash">> {
+  try {
+    const response = await requestResponse(proposedActionClientPath(action.path), {
+      method: action.method,
+      ...(action.body === null || action.body === undefined ? {} : { body: JSON.stringify(action.body) }),
+    });
+    return { status: response.ok ? "executed" : "failed", httpStatus: response.status, message: `HTTP ${response.status}` };
+  } catch (error) {
+    if (error instanceof ApiError) return { status: "failed", httpStatus: error.status, message: shortMessage(error.message) };
+    return { status: "failed", message: shortMessage(error instanceof Error ? error.message : "The request could not be sent") };
+  }
+}
+
+/** Read the stale-check field fresh (never from cache). Returns null when it cannot be read. */
+export async function readProposedActionStaleValue(
+  staleCheck: NonNullable<RequestConfirmationProposedActionPayload["staleCheck"]>,
+): Promise<string | null> {
+  try {
+    const value = await api.get<Record<string, unknown>>(proposedActionClientPath(staleCheck.path), { cache: "no-store" });
+    const field = value?.[staleCheck.field];
+    return typeof field === "string" ? field : null;
+  } catch {
+    return null;
+  }
+}
 import { CommentSubmissionUnknownError } from "../lib/comment-submit-result";
 
 function hasCommentReceipt(value: unknown): boolean {
@@ -441,6 +495,7 @@ export const issuesApi = {
       selectedClientKeys?: string[];
       selectedOptionIds?: string[];
       rememberAction?: boolean;
+      proposedActionResult?: ProposedActionAcceptResult;
     },
   ) =>
     api.post<IssueThreadInteraction>(

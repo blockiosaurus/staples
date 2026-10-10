@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import type { Agent } from "@paperclipai/shared";
-import { issuesApi } from "../api/issues";
+import { issuesApi, type ProposedActionAcceptResult } from "../api/issues";
 import { queryKeys } from "../lib/queryKeys";
 import {
   interactionReadinessRefetchInterval,
@@ -92,11 +92,13 @@ export function AttentionInteractionResolver({
       selectedClientKeys?: string[];
       selectedOptionIds?: string[];
       rememberAction?: boolean;
+      proposedActionResult?: ProposedActionAcceptResult;
     }) =>
       issuesApi.acceptInteraction(issueId, input.interaction.id, {
         selectedClientKeys: input.selectedClientKeys,
         selectedOptionIds: input.selectedOptionIds,
         rememberAction: input.rememberAction,
+        proposedActionResult: input.proposedActionResult,
       }),
     onSuccess: invalidate,
   });
@@ -149,8 +151,8 @@ export function AttentionInteractionResolver({
       agentMap={agentMap}
       currentUserId={currentUserId}
       userLabelMap={userLabelMap}
-      onAcceptInteraction={(target, selectedClientKeys, selectedOptionIds, rememberAction) =>
-        acceptMutation.mutateAsync({ interaction: target, selectedClientKeys, selectedOptionIds, rememberAction }).then(() => undefined)
+      onAcceptInteraction={(target, selectedClientKeys, selectedOptionIds, rememberAction, proposedActionResult) =>
+        acceptMutation.mutateAsync({ interaction: target, selectedClientKeys, selectedOptionIds, rememberAction, proposedActionResult }).then(() => undefined)
       }
       onRejectInteraction={(target, reason) =>
         rejectMutation.mutateAsync({ interactionId: target.id, reason }).then(() => undefined)

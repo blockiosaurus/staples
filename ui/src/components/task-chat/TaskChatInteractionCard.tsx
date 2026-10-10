@@ -63,6 +63,11 @@ export function TaskChatInteractionCard({
       </button>
     );
   }
+  // Assistant proposed actions always render the governed Confirm card: it
+  // executes the exact stored call from the person's browser on Confirm.
+  if (interaction.kind === "request_confirmation" && interaction.payload.proposedAction) {
+    return <IssueThreadInteractionCard interaction={interaction} {...cardProps} />;
+  }
   if (interaction.kind === "request_confirmation" && interaction.payload.toolAction) {
     const action = interaction.payload.toolAction;
     if (presentation === "takeover") {
