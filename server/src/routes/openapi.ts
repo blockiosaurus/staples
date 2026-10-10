@@ -5912,6 +5912,15 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/api/companies/{companyId}/signals",
+  tags: ["dashboard"],
+  summary: "Get company usage signals",
+  request: { params: z.object({ companyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/api/companies/{companyId}/recovery-observability",
   tags: ["dashboard"],
   summary: "Get recovery observability report",
