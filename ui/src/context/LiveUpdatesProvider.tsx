@@ -1277,6 +1277,7 @@ function invalidateActivityQueries(
 ) {
   queryClient.invalidateQueries({ queryKey: queryKeys.activity(companyId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(companyId) });
+  queryClient.invalidateQueries({ queryKey: queryKeys.signals(companyId) });
   queryClient.invalidateQueries({
     queryKey: queryKeys.sidebarBadges(companyId),
   });
@@ -1752,6 +1753,9 @@ function handleLiveEvent(
     });
     queryClient.invalidateQueries({
       queryKey: queryKeys.dashboard(expectedCompanyId),
+    });
+    queryClient.invalidateQueries({
+      queryKey: queryKeys.signals(expectedCompanyId),
     });
     queryClient.invalidateQueries({
       queryKey: queryKeys.org(expectedCompanyId),

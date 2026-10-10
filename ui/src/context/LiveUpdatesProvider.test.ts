@@ -47,6 +47,16 @@ describe("LiveUpdatesProvider issue invalidation", () => {
     client.clear();
   });
 
+  it("refreshes company signals on activity", () => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    __liveUpdatesTestUtils.invalidateActivityQueries(client, "company-1", {
+      entityType: "issue", entityId: "issue-1", action: "issue.updated", actorType: "system",
+    }, { userId: "user-1", agentId: null });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.signals("company-1") });
+    client.clear();
+  });
+
   it("refreshes the source task activity when a company skill is created", () => {
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries");
