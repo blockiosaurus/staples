@@ -27,10 +27,8 @@ import { Stepper } from "./Stepper";
  * at it, pick one, and flip the whole row between subscription and API
  * credentials — so it can be judged before any of that machinery is moved.
  *
- * It lives in `components/` rather than beside a story because two surfaces
- * render it: the Storybook stories, and the standalone
- * `connect-model-preview.html` entry that gets deployed for review. A copy in
- * each would have drifted the moment one was tweaked.
+ * It lives in `components/` rather than beside a story so it can be reused
+ * by any surface that needs to render it.
  *
  * Nothing here reaches a backend, and it needs none of the app's providers —
  * every piece it composes is presentational.
