@@ -32,6 +32,11 @@ function schemaBooleanFlagKeys(): string[] {
 }
 
 describe("RETIRED_FEATURE_KEYS", () => {
+  it("includes the goals sidebar link, now driven by the surface registry", () => {
+    expect(RETIRED_FEATURE_KEYS).toContain("enableGoalsSidebarLink");
+    expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableGoalsSidebarLink");
+  });
+
   it("are all boolean keys of the experimental settings schema", () => {
     for (const key of RETIRED_FEATURE_KEYS) {
       const shape = instanceExperimentalSettingsSchema.shape as Record<string, z.ZodTypeAny>;

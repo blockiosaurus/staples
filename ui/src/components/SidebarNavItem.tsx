@@ -65,6 +65,8 @@ interface SidebarNavItemProps {
   trailingLabel?: string;
   /** Rendered inside the right-aligned status cluster, before the live dot. */
   liveAccessory?: ReactNode;
+  /** Tooltip text for the row (e.g. why a newly revealed surface appeared). */
+  hint?: string;
 }
 
 export function SidebarNavItem({
@@ -86,6 +88,7 @@ export function SidebarNavItem({
   trailing,
   trailingLabel,
   liveAccessory,
+  hint,
 }: SidebarNavItemProps) {
   const { isMobile, setSidebarOpen, collapsed, peeking } = useSidebar();
   // A contextual takeover forces full labels even when the saved global app
@@ -119,6 +122,7 @@ export function SidebarNavItem({
       state={SIDEBAR_SCROLL_RESET_STATE}
       end={end}
       aria-label={railAriaLabel}
+      title={hint}
       onClick={() => { if (isMobile) setSidebarOpen(false); }}
       className={({ isActive }) =>
         cn(

@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommandPalette } from "./CommandPalette";
 import { queryKeys } from "../lib/queryKeys";
+import { makeSurfacesFixture, type SurfacesFixture } from "../staples/surfaces/testing";
 
 function act(callback: () => void | Promise<void>) {
   let result: void | Promise<void> | undefined;
@@ -45,6 +46,12 @@ const mockProjectsApi = vi.hoisted(() => ({
 
 const mockInstanceSettingsApi = vi.hoisted(() => ({
   getExperimental: vi.fn(),
+}));
+
+const surfacesState = vi.hoisted(() => ({ current: null as unknown as SurfacesFixture }));
+
+vi.mock("../staples/surfaces/useSurfaces", () => ({
+  useSurfaces: () => surfacesState.current,
 }));
 
 const mockAuthApi = vi.hoisted(() => ({
@@ -204,6 +211,7 @@ describe("CommandPalette", () => {
     mockProjectsApi.list.mockReset();
     mockInstanceSettingsApi.getExperimental.mockReset();
     mockAuthApi.getSession.mockReset();
+    surfacesState.current = makeSurfacesFixture();
     navigateState.navigate.mockReset();
     locationState.location.pathname = "/";
     locationState.location.search = "";
@@ -243,6 +251,51 @@ describe("CommandPalette", () => {
         includeRoutineExecutions: true,
       });
     });
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("lists Routines under Pages even when it is hidden, with a muted hidden suffix", async () => {
+    surfacesState.current = makeSurfacesFixture({ signals: { routines: 0 } });
+    expect(surfacesState.current.visible.map((s) => s.surface.id)).not.toContain("nav.routines");
+    const { root } = renderWithQueryClient(<CommandPalette />, container);
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+
+    const routinesItem = [...container.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Routines"));
+    expect(routinesItem).toBeDefined();
+    expect(routinesItem!.textContent).toContain("hidden");
+    expect(routinesItem!.querySelector("span.text-muted-foreground")?.textContent).toContain("hidden");
+    const dashboardItem = [...container.querySelectorAll("button")].find((b) => b.textContent === "Dashboard");
+    expect(dashboardItem).toBeDefined();
+
+    act(() => {
+      routinesItem!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(navigateState.navigate).toHaveBeenCalledWith("/routines");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("omits unavailable surfaces from Pages and drops the hardcoded Goals/Costs entries", async () => {
+    surfacesState.current = makeSurfacesFixture({ flags: { enableDecisions: false } });
+    const { root } = renderWithQueryClient(<CommandPalette />, container);
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+
+    const labels = [...container.querySelectorAll("button")].map((b) => b.textContent ?? "");
+    expect(labels.some((l) => l.startsWith("Decisions"))).toBe(false);
+    expect(labels.filter((l) => l.startsWith("Goals"))).toHaveLength(1);
+    expect(labels.filter((l) => l.startsWith("Costs"))).toHaveLength(1);
+    expect(labels.some((l) => l === "Activity")).toBe(false);
 
     act(() => {
       root.unmount();

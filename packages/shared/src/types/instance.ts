@@ -66,6 +66,8 @@ export interface InstanceExperimentalSettings {
   enableStreamlinedUi: boolean;
   /** @deprecated Compatibility key only. Board Chat / Conference Room was removed. */
   enableConferenceRoomChat: boolean;
+  /** @deprecated Compatibility key only. Goals navigation is driven by the adaptive surface registry. */
+  enableGoalsSidebarLink: boolean;
   /** @deprecated Compatibility key only. Apps is always enabled. */
   enableApps: boolean;
   /** Exposes chat connector setup and Board surfaces; existing delivery continues when hidden. */
@@ -95,7 +97,6 @@ export interface InstanceExperimentalSettings {
   enableSummaries: boolean;
   enableStatusCards: boolean;
   enableDecisions: boolean;
-  enableGoalsSidebarLink: boolean;
   enableServerInfoDebugView: boolean;
   /** Shows internal Paperclip maintainer tools and observability links. */
   enablePaperclipDeveloperMode: boolean;

@@ -39,3 +39,15 @@ export function surfaceForPath(surfaces: readonly SurfaceDefinition[], pathWitho
   if (!root) return null;
   return surfaces.find((surface) => surface.matchRoots.includes(root)) ?? null;
 }
+
+/**
+ * Surfaces safe to render now. Until everything has settled (`ready`), only
+ * core, pinned and already-revealed surfaces show so nothing flashes in and out.
+ */
+export function renderableSurfaces(states: readonly SurfaceState[], ready: boolean): SurfaceState[] {
+  return states.filter(
+    (state) =>
+      state.visible &&
+      (ready || state.source === "core" || state.source === "pinned" || state.source === "revealed"),
+  );
+}

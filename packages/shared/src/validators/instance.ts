@@ -52,6 +52,10 @@ export const instanceExperimentalSettingsSchema = z.object({
   // Deprecated compatibility key. Board Chat / Conference Room was removed;
   // this remains accepted so older stored rows and managed configs still load.
   enableConferenceRoomChat: z.boolean().default(false),
+  // Deprecated compatibility key. The Goals sidebar link is now driven by the
+  // adaptive surface registry; this remains accepted so older stored rows and
+  // managed configs still load.
+  enableGoalsSidebarLink: z.boolean().default(false),
   // Deprecated compatibility key. Apps is a standard product surface and is
   // always enabled; this remains accepted so older stored rows and managed
   // configs continue to load during upgrades.
@@ -77,7 +81,6 @@ export const instanceExperimentalSettingsSchema = z.object({
   enableSummaries: z.boolean().default(false),
   enableStatusCards: z.boolean().default(false),
   enableDecisions: z.boolean().default(false),
-  enableGoalsSidebarLink: z.boolean().default(false),
   enableServerInfoDebugView: z.boolean().default(false),
   enablePaperclipDeveloperMode: z.boolean().default(false),
   enableSimplifiedEnglishInteractions: z.boolean().default(false),

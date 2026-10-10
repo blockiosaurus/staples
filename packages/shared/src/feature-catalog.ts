@@ -31,6 +31,7 @@ export const RETIRED_FEATURE_KEYS = [
   "enableStreamlinedLeftNavigation",
   "enableStreamlinedUi",
   "enableConferenceRoomChat",
+  "enableGoalsSidebarLink",
 ] as const;
 
 type RetiredFeatureKey = (typeof RETIRED_FEATURE_KEYS)[number];
@@ -261,13 +262,6 @@ export const INSTANCE_FEATURE_CATALOG: Record<InstanceFeatureKey, FeatureCatalog
     title: "Decisions",
     description:
       "Show the Decisions item in the main sidebar — the attention home that surfaces tasks awaiting input.",
-    tier: "preference",
-    cloudDefault: false,
-    selfHostedDefault: false,
-  },
-  enableGoalsSidebarLink: {
-    title: "Goals Sidebar Link",
-    description: "Restore the Goals item in the main sidebar while the goals surface is being evaluated.",
     tier: "preference",
     cloudDefault: false,
     selfHostedDefault: false,

@@ -1,30 +1,10 @@
-import {
-  Inbox,
-  ListChecks,
-  CircleCheck,
-  Target,
-  LayoutDashboard,
-  History,
-  Search,
-  SquarePen,
-  Boxes,
-  Repeat,
-  Layers,
-  GitBranch,
-  Package,
-  FolderOpen,
-  Unplug,
-  MessageCircle,
-  LayoutGrid,
-  Users,
-} from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Search, SquarePen } from "lucide-react";
+import { Fragment, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { SidebarAgents } from "./SidebarAgents";
 import { SidebarStarredProjects } from "./SidebarStarredProjects";
-import { useAgentChatEnabled } from "@/hooks/useAgentChatEnabled";
 import { SidebarRecentTasks } from "./SidebarRecentTasks";
 import { useDialogActions } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
@@ -42,10 +22,11 @@ import { PluginSlotOutlet } from "@/plugins/slots";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
 import { primarySidebarStyles } from "./primary-sidebar-styles";
+import { useSurfaces } from "../staples/surfaces/useSurfaces";
+import { renderableSurfaces, type SurfaceState } from "../staples/surfaces/resolve";
 
 export function Sidebar({ children }: { children?: ReactNode }) {
   const { openNewIssue } = useDialogActions();
-  const { enabled: agentChatEnabled } = useAgentChatEnabled();
   // Every labeled section is collapsible (session-scoped, default open) —
   // one policy across static nav groups and the data-driven sections.
   const [workOpen, setWorkOpen] = useState(true);
@@ -81,22 +62,14 @@ export function Sidebar({ children }: { children?: ReactNode }) {
   const liveIssueIds = new Set(
     (liveRuns ?? []).flatMap((run) => run.issueId ? [run.issueId] : []),
   );
-  // PAP-670 splits the nav reorganization across two experimental flags.
-  // Agent Chat: Chat leads Work as one row with its own agent rail (the
-  // per-agent rows live in that rail), and Workspaces leaves to make room.
-  // Combined Inbox + Task List: Inbox becomes views inside Tasks, so its row
-  // goes and its badge rides on Tasks.
-  const chatRail = agentChatEnabled;
+  const { states, ready } = useSurfaces();
+  // No-flash: until signals/prefs/flags settle, render only core surfaces plus
+  // ones already persisted (pinned/revealed); never render then remove a
+  // grows item because late signals arrived.
+  const shown = renderableSurfaces(states, ready);
+  const shownIds = new Set(shown.map((state) => state.surface.id));
   const combinedInboxTasks = experimentalSettings?.enableCombinedInboxTasks === true;
-  const showWorkspacesLink = !chatRail && experimentalSettings?.enableIsolatedWorkspaces === true;
-  const showPipelines = experimentalSettings?.enablePipelines === true;
-  const showStatusCards = experimentalSettings?.enableStatusCards === true;
-  const goalsLinkPending = experimentalSettings === undefined;
-  const showGoalsLink = experimentalSettings?.enableGoalsSidebarLink === true;
-  // Decisions (attention home) is an experimental surface (PAP-13481): the nav
-  // item is hidden entirely until the flag is enabled (same no-flash pattern as
-  // showWorkspacesLink — it defaults hidden, so no placeholder is needed).
-  const showDecisions = experimentalSettings?.enableDecisions === true;
+  const showDecisions = shownIds.has("nav.decisions");
   const { data: attentionFeed } = useQuery({
     queryKey: queryKeys.attention(selectedCompanyId!),
     queryFn: () => attentionApi.list(selectedCompanyId!),
@@ -104,12 +77,59 @@ export function Sidebar({ children }: { children?: ReactNode }) {
     refetchInterval: 60_000,
   });
   const attentionCount = attentionBadgeCount(attentionFeed);
-  const showCases = experimentalSettings?.enableCases === true;
 
   const pluginContext = {
     companyId: selectedCompanyId,
     companyPrefix: selectedCompany?.issuePrefix ?? null,
   };
+
+  const topSurfaces = shown.filter((state) => state.surface.group === "top");
+  const workSurfaces = shown.filter((state) => state.surface.group === "work");
+  const orgSurfaces = shown.filter((state) => state.surface.group === "org");
+
+  const inboxBadgeProps = {
+    badge: inboxBadge.inbox,
+    badgeLabel: "unread",
+    badgeTone: inboxBadge.failedRuns > 0 ? ("danger" as const) : ("default" as const),
+    alert: inboxBadge.failedRuns > 0,
+  };
+
+  function renderSurface({ surface, isNew }: SurfaceState) {
+    let extras: Record<string, unknown> = {};
+    let textBadge: string | undefined;
+    switch (surface.id) {
+      case "nav.dashboard":
+        extras = { liveCount: liveRunCount };
+        break;
+      case "nav.inbox":
+        extras = inboxBadgeProps;
+        break;
+      case "nav.tasks":
+        if (combinedInboxTasks) extras = inboxBadgeProps;
+        break;
+      case "nav.decisions":
+        extras = { badge: attentionCount, badgeLabel: "decisions" };
+        break;
+      case "nav.status":
+      case "nav.cases":
+        textBadge = "beta";
+        break;
+    }
+    if (isNew) textBadge = "new";
+    return (
+      <Fragment key={surface.id}>
+        <SidebarNavItem
+          to={surface.to}
+          label={surface.label}
+          icon={surface.icon}
+          textBadge={textBadge}
+          hint={isNew ? surface.reason : undefined}
+          {...extras}
+        />
+        {surface.id === "nav.projects" ? <SidebarStarredProjects /> : null}
+      </Fragment>
+    );
+  }
 
   return (
     <aside
@@ -158,77 +178,12 @@ export function Sidebar({ children }: { children?: ReactNode }) {
               collapsed rail, where the old header icon was dropped entirely.
               Cmd/Ctrl+K remains the keyboard path (command palette). */}
           <SidebarNavItem to="/search" label="Search" icon={Search} />
-          <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
-          {!combinedInboxTasks ? (
-            <SidebarNavItem
-              to="/inbox"
-              label="Inbox"
-              icon={Inbox}
-              badge={inboxBadge.inbox}
-              badgeLabel="unread"
-              badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
-              alert={inboxBadge.failedRuns > 0}
-            />
-          ) : null}
-          {agentChatEnabled && !chatRail ? <SidebarNavItem to="/chats" label="Chat" icon={MessageCircle} /> : null}
-          {showDecisions ? (
-            <SidebarNavItem
-              to="/decisions"
-              label="Decisions"
-              icon={ListChecks}
-              badge={attentionCount}
-              badgeLabel="decisions"
-            />
-          ) : null}
-          {showStatusCards ? (
-            <SidebarNavItem to="/status" label="Status" icon={LayoutGrid} textBadge="beta" />
-          ) : null}
+          {topSurfaces.map(renderSurface)}
         </div>
 
+        {workSurfaces.length > 0 ? (
         <SidebarSection label="Work" collapsible={{ open: workOpen, onOpenChange: setWorkOpen }}>
-          {/* Agent Chat: Chat leads the Work group as a single row — the
-              agents you talk to live in the Chat surface's own secondary rail
-              (ChatContextualSidebar), not in the primary nav. */}
-          {chatRail ? (
-            <SidebarNavItem to="/chats" label="Chat" icon={MessageCircle} />
-          ) : null}
-          {/* Combined Inbox + Task List: Inbox is a view inside Tasks, so the
-              unread/failed-run badge rides on Tasks. */}
-          {combinedInboxTasks ? (
-            <SidebarNavItem
-              to="/issues"
-              label="Tasks"
-              icon={CircleCheck}
-              badge={inboxBadge.inbox}
-              badgeLabel="unread"
-              badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
-              alert={inboxBadge.failedRuns > 0}
-            />
-          ) : (
-            <SidebarNavItem to="/issues" label="Tasks" icon={CircleCheck} />
-          )}
-          <SidebarNavItem to="/projects" label="Projects" icon={FolderOpen} />
-          <SidebarStarredProjects />
-          <SidebarNavItem to="/routines" label="Routines" icon={Repeat} />
-          <SidebarNavItem to="/artifacts" label="Artifacts" icon={Package} />
-          {showCases ? (
-            <SidebarNavItem to="/cases" label="Cases" icon={Layers} textBadge="beta" />
-          ) : null}
-          {showPipelines ? (
-            <SidebarNavItem to="/pipelines" label="Pipelines" icon={GitBranch} />
-          ) : null}
-          {showGoalsLink ? (
-            <SidebarNavItem to="/goals" label="Goals" icon={Target} />
-          ) : goalsLinkPending ? (
-            <div
-              data-testid="sidebar-goals-placeholder"
-              className="h-8 pointer-coarse:h-7"
-              aria-hidden="true"
-            />
-          ) : null}
-          {showWorkspacesLink ? (
-            <SidebarNavItem to="/workspaces" label="Workspaces" icon={GitBranch} />
-          ) : null}
+          {workSurfaces.map(renderSurface)}
           <PluginSlotOutlet
             errorBehavior="hidden"
             slotTypes={["sidebar"]}
@@ -245,16 +200,16 @@ export function Sidebar({ children }: { children?: ReactNode }) {
             itemClassName="text-(length:--text-compact) font-medium"
           />
         </SidebarSection>
+        ) : null}
 
-        <SidebarSection
-          label="Org"
-          collapsible={{ open: organizationOpen, onOpenChange: setOrganizationOpen }}
-        >
-          <SidebarNavItem to="/agents" label="Agents" icon={Users} />
-          <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
-          <SidebarNavItem to="/apps" label="Connectors" icon={Unplug} />
-          <SidebarNavItem to="/activity" label="Audit" icon={History} />
-        </SidebarSection>
+        {orgSurfaces.length > 0 ? (
+          <SidebarSection
+            label="Org"
+            collapsible={{ open: organizationOpen, onOpenChange: setOrganizationOpen }}
+          >
+            {orgSurfaces.map(renderSurface)}
+          </SidebarSection>
+        ) : null}
 
         {children ?? <SidebarAgents />}
 

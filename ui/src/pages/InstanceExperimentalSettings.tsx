@@ -223,7 +223,6 @@ export function InstanceExperimentalSettings() {
   const statusCardsBlockedByManagedSummaries = summariesManaged && !enableSummaries;
   const summariesRequiredByManagedStatusCards = statusCardsManaged && enableStatusCards;
   const enableDecisions = experimentalQuery.data?.enableDecisions === true;
-  const enableGoalsSidebarLink = experimentalQuery.data?.enableGoalsSidebarLink === true;
   const enableCases = experimentalQuery.data?.enableCases === true;
   const enableServerInfoDebugView = experimentalQuery.data?.enableServerInfoDebugView === true;
   const enablePaperclipDeveloperMode =
@@ -244,7 +243,7 @@ export function InstanceExperimentalSettings() {
     "enableSmokeLab",
     "enableIssuePlanDecompositions",
   ] satisfies InstanceFeatureKey[]).some(isVisible);
-  const showLegacySection = isVisible("enableClassicTaskInterface") || isVisible("enableGoalsSidebarLink");
+  const showLegacySection = isVisible("enableClassicTaskInterface");
   return (
     <div className="max-w-6xl space-y-6">
       <div className="space-y-2">
@@ -720,19 +719,6 @@ export function InstanceExperimentalSettings() {
             settingKey="enableClassicTaskInterface"
             managed={managedKeys.enableClassicTaskInterface}
             ariaLabel="Toggle classic task interface experimental setting"
-          />
-
-          <ExperimentalToggleCard
-            title="Goals Sidebar Link"
-            description="Restore the Goals item in the main sidebar while the goals surface is being evaluated."
-            checked={enableGoalsSidebarLink}
-            onCheckedChange={(checked) =>
-              toggleMutation.mutate({ enableGoalsSidebarLink: checked })
-            }
-            disabled={toggleMutation.isPending}
-            settingKey="enableGoalsSidebarLink"
-            managed={managedKeys.enableGoalsSidebarLink}
-            ariaLabel="Toggle goals sidebar link experimental setting"
           />
         </section>
       ) : null}

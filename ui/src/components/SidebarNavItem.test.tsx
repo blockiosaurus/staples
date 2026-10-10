@@ -192,4 +192,16 @@ describe("SidebarNavItem", () => {
 
     expect(link().getAttribute("aria-label")).toBe("Dashboard, 3 live");
   });
+
+  it("renders the hint as the link title", () => {
+    render(<SidebarNavItem to="/routines" label="Routines" icon={Inbox} hint="Routines appeared because you scheduled one." />);
+
+    expect(link().getAttribute("title")).toBe("Routines appeared because you scheduled one.");
+  });
+
+  it("sets no title without a hint", () => {
+    render(<SidebarNavItem to="/routines" label="Routines" icon={Inbox} />);
+
+    expect(link().getAttribute("title")).toBeNull();
+  });
 });

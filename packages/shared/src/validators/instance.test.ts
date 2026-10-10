@@ -42,6 +42,15 @@ describe("instance experimental settings validators", () => {
     expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableConferenceRoomChat");
   });
 
+  it("still accepts the retired goals sidebar link key but not in the catalog", () => {
+    expect(instanceExperimentalSettingsSchema.safeParse({ enableGoalsSidebarLink: true }).success).toBe(true);
+    expect(instanceExperimentalSettingsSchema.parse({}).enableGoalsSidebarLink).toBe(false);
+    expect(patchInstanceExperimentalSettingsSchema.parse({ enableGoalsSidebarLink: true })).toEqual({
+      enableGoalsSidebarLink: true,
+    });
+    expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableGoalsSidebarLink");
+  });
+
   it("defaults the server info debug view off", () => {
     const settings = instanceExperimentalSettingsSchema.parse({});
 
@@ -70,12 +79,6 @@ describe("instance experimental settings validators", () => {
 
     expect(settings.enableWorkspaceBranchReconcileForward).toBe(true);
     expect(settings.enableWorkspaceDirtyQuarantineRepair).toBe(true);
-  });
-
-  it("defaults the goals sidebar link off", () => {
-    const settings = instanceExperimentalSettingsSchema.parse({});
-
-    expect(settings.enableGoalsSidebarLink).toBe(false);
   });
 
   it("defaults the sandbox duplex bridge kill switch off", () => {
@@ -184,16 +187,6 @@ describe("instance experimental settings validators", () => {
     ).toEqual({
       enableWorkspaceBranchReconcileForward: false,
       enableWorkspaceDirtyQuarantineRepair: false,
-    });
-  });
-
-  it("accepts goals sidebar link patches", () => {
-    expect(
-      patchInstanceExperimentalSettingsSchema.parse({
-        enableGoalsSidebarLink: true,
-      }),
-    ).toEqual({
-      enableGoalsSidebarLink: true,
     });
   });
 

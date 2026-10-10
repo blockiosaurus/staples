@@ -1,5 +1,5 @@
 import { AgentIdentity } from "@/components/AgentIdentity";
-import { useCombinedInboxTasksEnabled } from "@/hooks/useCombinedInboxTasksEnabled";
+import { useSurfaces } from "../staples/surfaces/useSurfaces";
 import { useState, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
@@ -25,11 +25,6 @@ import {
   CircleDot,
   Bot,
   Hexagon,
-  Target,
-  LayoutDashboard,
-  Inbox,
-  DollarSign,
-  History,
   SquarePen,
   FileCode2,
   Plus,
@@ -104,7 +99,8 @@ export function CommandPalette() {
     queryFn: () => instanceSettingsApi.getExperimental(),
     retry: false,
   });
-  const { enabled: combinedInboxTasksEnabled } = useCombinedInboxTasksEnabled();
+  const { states: surfaceStates } = useSurfaces();
+  const availableSurfaces = surfaceStates.filter((state) => state.available);
   const fileViewerEnabled = experimentalSettings?.enableExperimentalFileViewer === true;
 
   useEffect(() => {
@@ -356,38 +352,16 @@ export function CommandPalette() {
         <CommandSeparator />
 
         <CommandGroup heading="Pages">
-          <CommandItem onSelect={() => go("/dashboard")}>
-            <LayoutDashboard className="mr-2 h-4 w-4" />
-            Dashboard
-          </CommandItem>
-          <CommandItem onSelect={() => go(combinedInboxTasksEnabled ? "/issues?view=mine" : "/inbox")}>
-            <Inbox className="mr-2 h-4 w-4" />
-            {combinedInboxTasksEnabled ? "My work" : "Inbox"}
-          </CommandItem>
-          <CommandItem onSelect={() => go("/issues")}>
-            <CircleDot className="mr-2 h-4 w-4" />
-            Tasks
-          </CommandItem>
-          <CommandItem onSelect={() => go("/projects")}>
-            <Hexagon className="mr-2 h-4 w-4" />
-            Projects
-          </CommandItem>
-          <CommandItem onSelect={() => go("/goals")}>
-            <Target className="mr-2 h-4 w-4" />
-            Goals
-          </CommandItem>
-          <CommandItem onSelect={() => go("/agents")}>
-            <Bot className="mr-2 h-4 w-4" />
-            Agents
-          </CommandItem>
-          <CommandItem onSelect={() => go("/costs")}>
-            <DollarSign className="mr-2 h-4 w-4" />
-            Costs
-          </CommandItem>
-          <CommandItem onSelect={() => go("/activity")}>
-            <History className="mr-2 h-4 w-4" />
-            Activity
-          </CommandItem>
+          {availableSurfaces.map(({ surface, visible }) => {
+            const Icon = surface.icon;
+            return (
+              <CommandItem key={surface.id} onSelect={() => go(surface.to)}>
+                <Icon className="mr-2 h-4 w-4" />
+                {surface.label}
+                {visible ? null : <span className="ml-1 text-muted-foreground"> · hidden</span>}
+              </CommandItem>
+            );
+          })}
         </CommandGroup>
 
         {visibleIssues.length > 0 && (
