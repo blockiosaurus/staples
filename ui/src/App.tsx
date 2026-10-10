@@ -1,10 +1,9 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense } from "react";
 import type { ToolConnectionCredentialSource } from "@paperclipai/shared";
 import { Navigate, Outlet, Route, Routes, useActiveCompanyPrefix, useLocation, useParams } from "@/lib/router";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
 import { Layout } from "./components/Layout";
-import { Layout as ProductionLayout } from "./components/Layout.production";
 import { ConferenceRoomChatGate } from "./components/ConferenceRoomChatGate";
 import { TaskChatLab } from "./pages/TaskChatLab";
 import { PipelinesExperimentalGate } from "./components/PipelinesExperimentalGate";
@@ -26,7 +25,6 @@ import { PaperclipLoading } from "./components/AnimatedPaperclipIcon";
 import { NoCompaniesStartPage, UnprefixedBoardRedirect } from "./components/UnprefixedBoardRedirect";
 import { Dashboard } from "./pages/Dashboard";
 import { DashboardLive } from "./pages/DashboardLive";
-import { Timeline } from "./pages/Timeline";
 import { Companies } from "./pages/Companies";
 import { AGENT_FILTER_TABS, Agents } from "./pages/Agents";
 import { AgentDetail } from "./pages/AgentDetail";
@@ -54,7 +52,6 @@ import { Approvals } from "./pages/Approvals";
 import { ApprovalDetail } from "./pages/ApprovalDetail";
 import { CompanyActivity } from "./pages/audit/CompanyActivity";
 import { AuditHub } from "./pages/audit/AuditHub";
-import { Costs } from "./pages/Costs";
 import { Inbox } from "./pages/Inbox";
 import { useCombinedInboxTasksEnabled } from "./hooks/useCombinedInboxTasksEnabled";
 import { WhatNeedsMe } from "./pages/WhatNeedsMe";
@@ -117,7 +114,6 @@ import {
 } from "./lib/onboarding-route";
 import { filterHiddenInstanceSettingsPath, normalizeRememberedInstanceSettingsPath } from "./lib/instance-settings";
 import { useCloudInstance } from "./hooks/useCloudInstance";
-import { useStreamlinedUiEnabled } from "./hooks/useStreamlinedUiEnabled";
 import { cloudStackCreateUrl } from "./lib/cloudLinks";
 import { navigateTopLevel } from "@/lib/browserNavigation";
 
@@ -125,32 +121,8 @@ const CompanyExport = lazy(() =>
   import("./pages/CompanyExport").then((module) => ({ default: module.CompanyExport })),
 );
 
-const ProductionAgents = lazy(() =>
-  import("./pages/Agents.production").then((module) => ({ default: module.Agents })),
-);
-const ProductionRoutines = lazy(() =>
-  import("./pages/Routines.production").then((module) => ({ default: module.Routines })),
-);
-const ProductionRoutineDetail = lazy(() =>
-  import("./pages/RoutineDetail.production").then((module) => ({ default: module.RoutineDetail })),
-);
-const ProductionCompanySkills = lazy(() =>
-  import("./pages/CompanySkills.production").then((module) => ({ default: module.CompanySkills })),
-);
-const ProductionCompanyActivity = lazy(() =>
-  import("./pages/audit/CompanyActivity.production").then((module) => ({ default: module.CompanyActivity })),
-);
-const ProductionOrgChart = lazy(() =>
-  import("./pages/OrgChart.production").then((module) => ({ default: module.OrgChart })),
-);
-
-function ProductionSurface({ children }: { children: ReactNode }) {
-  return <Suspense fallback={<PaperclipLoading />}>{children}</Suspense>;
-}
-
-function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: boolean) {
-  // Combined Inbox + Task List (PAP-670) only exists in the streamlined shell.
-  const mergedTasks = streamlinedUiEnabled && combinedInboxTasksEnabled;
+function boardRoutes(combinedInboxTasksEnabled: boolean) {
+  const mergedTasks = combinedInboxTasksEnabled;
   return (
     <>
       <Route index element={<Navigate to="dashboard" replace />} />
@@ -158,7 +130,7 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="dashboard/live" element={<DashboardLive />} />
       <Route
         path="timeline"
-        element={streamlinedUiEnabled ? <AuditCompatibilityRedirect to="/activity/timeline" /> : <Timeline />}
+        element={<AuditCompatibilityRedirect to="/activity/timeline" />}
       />
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="companies" element={<Companies />} />
@@ -274,21 +246,21 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="skills/:skillId/studio" element={<LegacySkillStudioRedirect />} />
       <Route
         path="skills/*"
-        element={streamlinedUiEnabled ? <CompanySkills /> : <ProductionSurface><ProductionCompanySkills /></ProductionSurface>}
+        element={<CompanySkills />}
       />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
       <Route path="plugins/:pluginId" element={<PluginPage />} />
       <Route
         path="org"
-        element={streamlinedUiEnabled ? <Navigate to="/agents/all" replace /> : <ProductionSurface><ProductionOrgChart /></ProductionSurface>}
+        element={<Navigate to="/agents/all" replace />}
       />
       <Route path="agents" element={<Navigate to="/agents/all" replace />} />
       {AGENT_FILTER_TABS.map((tab) => (
         <Route
           key={tab}
           path={`agents/${tab}`}
-          element={streamlinedUiEnabled ? <Agents /> : <ProductionSurface><ProductionAgents /></ProductionSurface>}
+          element={<Agents />}
         />
       ))}
       <Route path="agents/new" element={<NewAgent />} />
@@ -336,7 +308,7 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       {import.meta.env.DEV ? (
         <Route path="tests/perf/long-thread" element={<IssueChatLongThreadPerf />} />
       ) : null}
-      <Route path="routines" element={streamlinedUiEnabled ? <Routines /> : <ProductionSurface><ProductionRoutines /></ProductionSurface>} />
+      <Route path="routines" element={<Routines />} />
       <Route
         path="cases"
         element={<CasesExperimentalGate><Cases /></CasesExperimentalGate>}
@@ -388,8 +360,8 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
         path="pipelines/:pipelineId/cases/:caseId"
         element={<PipelinesExperimentalGate><PipelineItemLegacyRedirect /></PipelinesExperimentalGate>}
       />
-      <Route path="routines/:routineId" element={streamlinedUiEnabled ? <RoutineDetail /> : <ProductionSurface><ProductionRoutineDetail /></ProductionSurface>} />
-      <Route path="routines/:routineId/:section" element={streamlinedUiEnabled ? <RoutineDetail /> : <ProductionSurface><ProductionRoutineDetail /></ProductionSurface>} />
+      <Route path="routines/:routineId" element={<RoutineDetail />} />
+      <Route path="routines/:routineId/:section" element={<RoutineDetail />} />
       <Route element={<IsolatedWorkspacesRouteGate />}>
         <Route element={<ExecutionWorkspaceCompanyGate />}>
           <Route path="execution-workspaces/:workspaceId" element={<ExecutionWorkspaceDetail />} />
@@ -407,29 +379,20 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="approvals/pending" element={<Approvals />} />
       <Route path="approvals/all" element={<Approvals />} />
       <Route path="approvals/:approvalId" element={<ApprovalDetail />} />
-      <Route path="activity" element={streamlinedUiEnabled ? <CompanyActivity /> : <ProductionSurface><ProductionCompanyActivity /></ProductionSurface>} />
-      {streamlinedUiEnabled ? (
-        <>
-          <Route path="activity/runs" element={<AuditHub section="runs" />} />
-          <Route path="activity/costs" element={<AuditHub section="costs" />} />
-          <Route path="activity/budgets" element={<AuditHub section="budgets" />} />
-          <Route path="activity/timeline" element={<AuditHub section="timeline" />} />
-          <Route path="audit" element={<AuditCompatibilityRedirect to="/activity" forceAgentMode />} />
-          <Route path="audit/activity" element={<AuditCompatibilityRedirect to="/activity" />} />
-          <Route path="audit/runs" element={<AuditCompatibilityRedirect to="/activity/runs" />} />
-          <Route path="audit/costs" element={<AuditCompatibilityRedirect to="/activity/costs" />} />
-          <Route path="audit/budgets" element={<AuditCompatibilityRedirect to="/activity/budgets" />} />
-          <Route path="audit/timeline" element={<AuditCompatibilityRedirect to="/activity/timeline" />} />
-          <Route path="runs" element={<AuditCompatibilityRedirect to="/activity/runs" />} />
-          <Route path="costs" element={<AuditCompatibilityRedirect to="/activity/costs" />} />
-          <Route path="budgets" element={<AuditCompatibilityRedirect to="/activity/budgets" />} />
-        </>
-      ) : (
-        <>
-          <Route path="costs" element={<Costs />} />
-          <Route path="audit" element={<Navigate to="/activity?mode=agents" replace />} />
-        </>
-      )}
+      <Route path="activity" element={<CompanyActivity />} />
+      <Route path="activity/runs" element={<AuditHub section="runs" />} />
+      <Route path="activity/costs" element={<AuditHub section="costs" />} />
+      <Route path="activity/budgets" element={<AuditHub section="budgets" />} />
+      <Route path="activity/timeline" element={<AuditHub section="timeline" />} />
+      <Route path="audit" element={<AuditCompatibilityRedirect to="/activity" forceAgentMode />} />
+      <Route path="audit/activity" element={<AuditCompatibilityRedirect to="/activity" />} />
+      <Route path="audit/runs" element={<AuditCompatibilityRedirect to="/activity/runs" />} />
+      <Route path="audit/costs" element={<AuditCompatibilityRedirect to="/activity/costs" />} />
+      <Route path="audit/budgets" element={<AuditCompatibilityRedirect to="/activity/budgets" />} />
+      <Route path="audit/timeline" element={<AuditCompatibilityRedirect to="/activity/timeline" />} />
+      <Route path="runs" element={<AuditCompatibilityRedirect to="/activity/runs" />} />
+      <Route path="costs" element={<AuditCompatibilityRedirect to="/activity/costs" />} />
+      <Route path="budgets" element={<AuditCompatibilityRedirect to="/activity/budgets" />} />
       {/* Conference Room Chat surfaces (PAP-136/PAP-137): routes stay
           registered but redirect to the company home while the experimental
           flag is off. The board-level `artifacts` mount below is the new
@@ -494,9 +457,8 @@ function AppsConnectEntryRoute({
 }
 
 function InboxRootRedirect() {
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const { enabled: combinedInboxTasksEnabled } = useCombinedInboxTasksEnabled();
-  return streamlinedUiEnabled && combinedInboxTasksEnabled
+  return combinedInboxTasksEnabled
     ? <TaskViewRedirect view={taskViewForInboxTab(loadLastInboxTab())} />
     : <Navigate to={`/inbox/${loadLastInboxTab()}`} replace />;
 }
@@ -723,7 +685,6 @@ function AuditCompatibilityRedirect({
 }
 
 export function App() {
-  const { enabled: streamlinedUiEnabled, loaded: streamlinedUiLoaded } = useStreamlinedUiEnabled();
   const { enabled: combinedInboxTasksEnabled } = useCombinedInboxTasksEnabled();
 
   return (
@@ -738,7 +699,7 @@ export function App() {
         <Route path="assistant-connections" element={<AssistantConnectionsPage />} />
         <Route path="cli-auth/:id" element={<CliAuthPage />} />
         <Route path="invite/:token" element={<InviteLandingPage />} />
-        <Route element={streamlinedUiLoaded ? <CloudAccessGate allowMembershipRequest /> : <PaperclipLoading />}>
+        <Route element={<CloudAccessGate allowMembershipRequest />}>
           {/* The identity APIs enforce the chat rollout flag. Nonmembers cannot
               read experimental settings, but a private invitation may request membership. */}
           <Route path="chat-identity/confirm" element={<ChatIdentityConfirm />} />
@@ -748,7 +709,7 @@ export function App() {
         <Route path="ux-lab/responsible-user-denial" element={<ResponsibleUserDenialUxLab />} />
         <Route path="ux-lab/cross-issue-collaboration" element={<CrossIssueCollaborationUxLab />} />
 
-        <Route element={streamlinedUiLoaded ? <CloudAccessGate /> : <PaperclipLoading />}>
+        <Route element={<CloudAccessGate />}>
           <Route index element={<CompanyRootRedirect />} />
           <Route path="onboarding" element={<OnboardingRoutePage />} />
           <Route path="instance" element={<LegacySettingsRedirect />} />
@@ -776,16 +737,12 @@ export function App() {
           <Route path="pipelines/:pipelineId/cases/:caseId" element={<UnprefixedBoardRedirect />} />
           <Route path="artifacts" element={<UnprefixedBoardRedirect />} />
           <Route path="audit" element={<UnprefixedBoardRedirect />} />
-          {streamlinedUiEnabled ? (
-            <>
-              <Route path="audit/*" element={<UnprefixedBoardRedirect />} />
-              <Route path="activity" element={<UnprefixedBoardRedirect />} />
-              <Route path="activity/*" element={<UnprefixedBoardRedirect />} />
-              <Route path="runs" element={<UnprefixedBoardRedirect />} />
-              <Route path="costs" element={<UnprefixedBoardRedirect />} />
-              <Route path="budgets" element={<UnprefixedBoardRedirect />} />
-            </>
-          ) : null}
+          <Route path="audit/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="activity" element={<UnprefixedBoardRedirect />} />
+          <Route path="activity/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="runs" element={<UnprefixedBoardRedirect />} />
+          <Route path="costs" element={<UnprefixedBoardRedirect />} />
+          <Route path="budgets" element={<UnprefixedBoardRedirect />} />
           <Route path="decisions" element={<UnprefixedBoardRedirect />} />
           <Route path="u/:userSlug" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/studio" element={<UnprefixedBoardRedirect />} />
@@ -818,8 +775,8 @@ export function App() {
           <Route path="execution-workspaces/:workspaceId/runtime-logs" element={<UnprefixedExecutionWorkspaceRedirect />} />
           <Route path="execution-workspaces/:workspaceId/issues" element={<UnprefixedExecutionWorkspaceRedirect />} />
           <Route path="execution-workspaces/:workspaceId/routines" element={<UnprefixedExecutionWorkspaceRedirect />} />
-          <Route path=":companyPrefix" element={streamlinedUiEnabled ? <Layout /> : <ProductionLayout />}>
-            {boardRoutes(streamlinedUiEnabled, combinedInboxTasksEnabled)}
+          <Route path=":companyPrefix" element={<Layout />}>
+            {boardRoutes(combinedInboxTasksEnabled)}
           </Route>
           <Route path="*" element={<NotFoundPage scope="global" />} />
         </Route>

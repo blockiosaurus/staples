@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../context/ToastContext";
 import type { BuiltInAgentState } from "../api/builtInAgents";
 import { Agents } from "./Agents";
-import { Agents as ProductionAgents } from "./Agents.production";
 import type { AgentOrgChainHealth } from "@paperclipai/shared";
 
 const mockRouterState = vi.hoisted(() => ({
@@ -358,10 +357,8 @@ describe("Agents", () => {
     vi.clearAllMocks();
   });
 
-  it.each([
-    ["streamlined", Agents],
-    ["production", ProductionAgents],
-  ] as const)("omits the action bar from %s agent list rows", async (_mode, AgentList) => {
+  it("omits the action bar from streamlined agent list rows", async () => {
+    const AgentList = Agents;
     mockAgentsApi.list.mockResolvedValue([
       makeAgent({ name: "Alpha", status: "active" }),
       makeAgent({ id: "agent-paused", name: "Paused agent", status: "paused" }),
@@ -1005,10 +1002,8 @@ describe("Agents", () => {
     expect(container.querySelector(".min-w-\\(--sz-7rem\\)")).toBeNull();
   });
 
-  it.each([
-    ["streamlined", Agents],
-    ["production", ProductionAgents],
-  ] as const)("omits star and leave/join actions from %s agent index list and org views", async (_mode, AgentList) => {
+  it("omits star and leave/join actions from streamlined agent index list and org views", async () => {
+    const AgentList = Agents;
     root = createRoot(container);
     await act(async () => {
       root!.render(

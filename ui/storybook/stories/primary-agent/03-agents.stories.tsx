@@ -16,4 +16,3 @@ export const MobileRoster: Story = { globals: mobile };
 export const MobileProfile: Story = { ...Profile, globals: mobile };
 export const MobileSpecialistProfile: Story = { ...SpecialistProfile, globals: mobile };
 export const LoadingProfile: Story = { ...SpecialistProfile, parameters: { ...SpecialistProfile.parameters, primaryAgent: { loading: true } } };
-export const ClassicProfile: Story = { ...Profile, parameters: { ...Profile.parameters, primaryAgent: { classic: true } } };

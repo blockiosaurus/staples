@@ -9,7 +9,7 @@ import { AppLogo } from "@/pages/apps/AppLogo";
 import { ActionsSection } from "@/pages/apps/app-detail/PermissionsPanel";
 import { RoutineTriggerWizard, defaultTriggerDraft } from "@/components/routine-triggers/TriggerWizard";
 import { RoutineTriggerCard } from "@/components/RoutineTriggerCard";
-import { TriggersSection } from "@/components/routine-sections/editable-sections.production";
+import { TriggersSection } from "@/components/routine-sections/editable-sections";
 import { RoutineDetailContext, type RoutineDetailContextValue } from "@/components/routine-sections/context";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "@/lib/router";

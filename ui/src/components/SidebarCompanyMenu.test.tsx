@@ -7,7 +7,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { queryKeys } from "@/lib/queryKeys";
 import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
-import { SidebarCompanyMenu as SidebarCompanyMenuProduction } from "./SidebarCompanyMenu.production";
 
 vi.mock("./PluginOrganizationSwitcher", () => ({ PluginOrganizationSwitcher: ({ children }: { children: ReactNode }) => children }));
 
@@ -168,7 +167,7 @@ describe("SidebarCompanyMenu", () => {
     vi.clearAllMocks();
   });
 
-  function renderMenu(options: { cloud?: boolean; health?: unknown; production?: boolean } = {}) {
+  function renderMenu(options: { cloud?: boolean; health?: unknown} = {}) {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -178,11 +177,10 @@ describe("SidebarCompanyMenu", () => {
       queryClient.setQueryData(queryKeys.health, options.health ?? CLOUD_HEALTH);
     }
     const root = createRoot(container);
-    const Menu = options.production ? SidebarCompanyMenuProduction : SidebarCompanyMenu;
     act(() => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <Menu />
+          <SidebarCompanyMenu />
         </QueryClientProvider>,
       );
     });
@@ -341,56 +339,6 @@ describe("SidebarCompanyMenu", () => {
     expect(mockNavigateTopLevel).not.toHaveBeenCalled();
     expect(queryClient.getQueryState(queryKeys.health)?.isInvalidated).toBe(true);
     expect(document.body.textContent).not.toContain("Organizations");
-
-    act(() => {
-      root.unmount();
-    });
-  });
-
-  it("shows the production-shell invite shortcut when no surface is hidden", async () => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    queryClient.setQueryData(queryKeys.health, { status: "ok" });
-    const root = createRoot(container);
-    act(() => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <SidebarCompanyMenuProduction />
-        </QueryClientProvider>,
-      );
-    });
-    await flushReact();
-    await flushReact();
-
-    await openMenu("Open Acme Labs company switcher");
-
-    expect(document.body.textContent).toContain("Invite people to Acme Labs");
-
-    act(() => {
-      root.unmount();
-    });
-  });
-
-  it("hides the production-shell invite shortcut when the operator hides the invites surface", async () => {
-    // The production shell (streamlined UI disabled) must honor
-    // PAPERCLIP_HIDDEN_SETTINGS like the streamlined menu — this is the knob
-    // Paperclip Cloud uses to drop the shortcut on its managed stacks.
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    queryClient.setQueryData(queryKeys.health, { status: "ok", hiddenSettings: ["company.invites"] });
-    const root = createRoot(container);
-    act(() => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <SidebarCompanyMenuProduction />
-        </QueryClientProvider>,
-      );
-    });
-    await flushReact();
-    await flushReact();
-
-    await openMenu("Open Acme Labs company switcher");
-
-    expect(document.body.textContent).toContain("Organizations");
-    expect(document.body.textContent).not.toContain("Invite people");
 
     act(() => {
       root.unmount();
@@ -630,11 +578,11 @@ describe("SidebarCompanyMenu", () => {
       });
     });
 
-    it.each([false, true])("keeps company navigation without local creation when a managed host has no switcher plugin (production=%s)", async (production) => {
-      const { root } = renderMenu({ cloud: true, production });
+    it("keeps company navigation without local creation when a managed host has no switcher plugin", async () => {
+      const { root } = renderMenu({ cloud: true });
       await flushReact();
       await flushReact();
-      await openMenu(`Open Acme Labs ${production ? "company" : "organization"} switcher`);
+      await openMenu("Open Acme Labs organization switcher");
       expect(document.body.textContent).toContain("Anachronist Wiki");
       expect(document.body.textContent).toContain("ANA");
       expect(document.body.textContent).not.toContain("Create organization");

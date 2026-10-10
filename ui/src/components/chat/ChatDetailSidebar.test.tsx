@@ -11,7 +11,6 @@ import { queryKeys } from "@/lib/queryKeys";
 const setup = vi.hoisted(() => ({ params: "provider=github&resume=endpoint-a", advance: vi.fn() }));
 vi.mock("@/api/githubChat", () => ({ githubChatApi: { advance: setup.advance } }));
 import { SidebarNavItem, SidebarNavExpandedProvider } from "../SidebarNavItem";
-import { SidebarNavItem as ProductionNavItem, SidebarNavExpandedProvider as ProductionProvider } from "../SidebarNavItem.production";
 import { TooltipProvider } from "../ui/tooltip";
 
 vi.mock("@/context/SidebarContext", () => ({
@@ -24,10 +23,9 @@ vi.mock("@/lib/router", () => ({
 }));
 
 describe("chat detail sidebar with collapsed global navigation", () => {
-  it.each([
-    ["default", SidebarNavExpandedProvider, SidebarNavItem],
-    ["production", ProductionProvider, ProductionNavItem],
-  ] as const)("keeps labels visible in the %s layout", (_name, Provider, NavItem) => {
+  it("keeps labels visible in the collapsed layout", () => {
+    const Provider = SidebarNavExpandedProvider;
+    const NavItem = SidebarNavItem;
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
     const container = document.createElement("div");
     const root = createRoot(container);

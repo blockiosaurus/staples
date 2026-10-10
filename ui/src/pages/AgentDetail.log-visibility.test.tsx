@@ -4,7 +4,6 @@ import { createRoot } from "react-dom/client";
 import type { HeartbeatRun } from "@paperclipai/shared";
 import { afterEach, expect, it, vi } from "vitest";
 import { LogViewer } from "./AgentDetail";
-import { LogViewer as ProductionLogViewer } from "./AgentDetail.production";
 
 const { log, events, empty } = vi.hoisted(() => ({ log: vi.fn(), events: vi.fn(async () => []), empty: [] }));
 vi.mock("../api/heartbeats", () => ({ heartbeatsApi: { log, events } }));
@@ -23,7 +22,8 @@ vi.mock("../components/transcript/RunTranscriptView", () => ({
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); log.mockReset(); events.mockClear(); });
 
-it.each([LogViewer, ProductionLogViewer])("retains legacy history and reads only the next offset on visibility recovery (%#)", async (Viewer) => {
+it("retains legacy history and reads only the next offset on visibility recovery", async () => {
+  const Viewer = LogViewer;
   const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   const row = (seq: number, chunk: string) => JSON.stringify({ seq, ts: `2026-09-10T12:00:0${seq}Z`, stream: "stdout", chunk }) + "\n";
   const first = row(1, "retained history");
@@ -62,7 +62,8 @@ it.each([LogViewer, ProductionLogViewer])("retains legacy history and reads only
   }
 });
 
-it.each([LogViewer, ProductionLogViewer])("polls logs when WebSocket construction fails and recovers on retry (%#)", async (Viewer) => {
+it("polls logs when WebSocket construction fails and recovers on retry", async () => {
+  const Viewer = LogViewer;
   vi.useFakeTimers();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   vi.stubGlobal("WebSocket", undefined);
