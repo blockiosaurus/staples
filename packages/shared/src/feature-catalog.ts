@@ -27,7 +27,11 @@ type ExperimentalSettings = z.infer<typeof instanceExperimentalSettingsSchema>;
  * Flags that remain accepted by the settings schema so older stored rows and
  * managed configs still parse, but are no longer feature-catalog entries.
  */
-export const RETIRED_FEATURE_KEYS = ["enableStreamlinedLeftNavigation", "enableStreamlinedUi"] as const;
+export const RETIRED_FEATURE_KEYS = [
+  "enableStreamlinedLeftNavigation",
+  "enableStreamlinedUi",
+  "enableConferenceRoomChat",
+] as const;
 
 type RetiredFeatureKey = (typeof RETIRED_FEATURE_KEYS)[number];
 
@@ -179,14 +183,6 @@ export const INSTANCE_FEATURE_CATALOG: Record<InstanceFeatureKey, FeatureCatalog
     title: "Combined Inbox + Task List",
     description:
       "Inbox becomes a set of views inside Tasks: one Tasks row in the nav carries the unread badge, and a Views menu reaches every inbox and task view.",
-    tier: "managed",
-    cloudDefault: false,
-    selfHostedDefault: false,
-  },
-  enableConferenceRoomChat: {
-    title: "Conference Room Chat",
-    description:
-      "Add the Conference Room team chat, the live activity feed, and the redesigned onboarding; restyles task threads as chat bubbles.",
     tier: "managed",
     cloudDefault: false,
     selfHostedDefault: false,

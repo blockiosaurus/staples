@@ -6792,31 +6792,6 @@ registry.registerPath({
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
 });
 
-// ─── Board chat (Conference Room Chat, experimental) ──────────────────────────
-
-registry.registerPath({
-  method: "post",
-  path: "/api/board/chat/stream",
-  tags: ["instance"],
-  summary:
-    "Stream a board-level chat response (requires enableConferenceRoomChat)",
-  request: {
-    body: jsonBody(
-      z.object({
-        companyId: z.string(),
-        message: z.string(),
-        taskId: z.string().optional(),
-      }),
-    ),
-  },
-  responses: {
-    200: r.ok(),
-    400: r.badRequest,
-    401: r.unauthorized,
-    403: r.forbidden,
-  },
-});
-
 // ─── Access / invites / members ───────────────────────────────────────────────
 
 registry.registerPath({

@@ -3642,7 +3642,6 @@ export function issueThreadInteractionService(
                     eq(issueComments.issueId, issue.id),
                     eq(issueComments.authorType, "user"),
                     isNotNull(issueComments.authorUserId),
-                    ne(issueComments.authorUserId, "board-concierge"),
                     isNull(issueComments.createdByRunId),
                     isNull(issueComments.deletedAt),
                     gte(issueComments.createdAt, sourceRunCreatedAt),

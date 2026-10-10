@@ -33,6 +33,15 @@ describe("instance experimental settings validators", () => {
     expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableStreamlinedLeftNavigation");
   });
 
+  it("still accepts the retired conference room chat key but not in the catalog", () => {
+    expect(instanceExperimentalSettingsSchema.safeParse({ enableConferenceRoomChat: true }).success).toBe(true);
+    expect(instanceExperimentalSettingsSchema.parse({}).enableConferenceRoomChat).toBe(false);
+    expect(patchInstanceExperimentalSettingsSchema.parse({ enableConferenceRoomChat: true })).toEqual({
+      enableConferenceRoomChat: true,
+    });
+    expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableConferenceRoomChat");
+  });
+
   it("defaults the server info debug view off", () => {
     const settings = instanceExperimentalSettingsSchema.parse({});
 

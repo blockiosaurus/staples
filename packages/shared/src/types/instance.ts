@@ -64,6 +64,8 @@ export interface InstanceExperimentalSettings {
   enableStreamlinedLeftNavigation: boolean;
   /** @deprecated Compatibility key only. The streamlined shell is the only shell. */
   enableStreamlinedUi: boolean;
+  /** @deprecated Compatibility key only. Board Chat / Conference Room was removed. */
+  enableConferenceRoomChat: boolean;
   /** @deprecated Compatibility key only. Apps is always enabled. */
   enableApps: boolean;
   /** Exposes chat connector setup and Board surfaces; existing delivery continues when hidden. */
@@ -83,7 +85,6 @@ export interface InstanceExperimentalSettings {
   enableAgentChat: boolean;
   /** Reorganized left nav, Inbox-as-Tasks-views, and the chat agent rail + task cards. */
   enableCombinedInboxTasks: boolean;
-  enableConferenceRoomChat: boolean;
   enableClassicTaskInterface: boolean;
   enableIssuePlanDecompositions: boolean;
   enableExperimentalFileViewer: boolean;

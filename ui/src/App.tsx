@@ -4,7 +4,6 @@ import { Navigate, Outlet, Route, Routes, useActiveCompanyPrefix, useLocation, u
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
 import { Layout } from "./components/Layout";
-import { ConferenceRoomChatGate } from "./components/ConferenceRoomChatGate";
 import { TaskChatLab } from "./pages/TaskChatLab";
 import { PipelinesExperimentalGate } from "./components/PipelinesExperimentalGate";
 import { CasesExperimentalGate } from "./components/CasesExperimentalGate";
@@ -55,7 +54,6 @@ import { Inbox } from "./pages/Inbox";
 import { useCombinedInboxTasksEnabled } from "./hooks/useCombinedInboxTasksEnabled";
 import { WhatNeedsMe } from "./pages/WhatNeedsMe";
 import { DecisionQueuePage } from "./pages/DecisionQueuePage";
-import { BoardChat } from "./pages/BoardChat";
 import { CompanySettings } from "./pages/CompanySettings";
 import { CompanyEnvironments } from "./pages/CompanyEnvironments";
 import { CompanySettingsPluginPage } from "./pages/CompanySettingsPluginPage";
@@ -386,15 +384,6 @@ function boardRoutes(combinedInboxTasksEnabled: boolean) {
       <Route path="runs" element={<AuditCompatibilityRedirect to="/activity/runs" />} />
       <Route path="costs" element={<AuditCompatibilityRedirect to="/activity/costs" />} />
       <Route path="budgets" element={<AuditCompatibilityRedirect to="/activity/budgets" />} />
-      {/* Conference Room Chat surfaces (PAP-136/PAP-137): routes stay
-          registered but redirect to the company home while the experimental
-          flag is off. The board-level `artifacts` mount below is the new
-          conference-room one; the master-level mount above it still serves
-          `/artifacts` in both modes. */}
-      <Route element={<ConferenceRoomChatGate />}>
-        <Route path="board-chat" element={<BoardChat />} />
-        <Route path="artifacts" element={<Artifacts />} />
-      </Route>
       {/* Task chat dev harness — dev builds only. */}
       {import.meta.env.DEV ? (
         <Route path="dev/task-chat-lab" element={<TaskChatLab />} />

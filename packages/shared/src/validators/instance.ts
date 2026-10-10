@@ -49,6 +49,9 @@ export const instanceExperimentalSettingsSchema = z.object({
   // these remain accepted so older stored rows and managed configs continue to load.
   enableStreamlinedLeftNavigation: z.boolean().default(true),
   enableStreamlinedUi: z.boolean().default(true),
+  // Deprecated compatibility key. Board Chat / Conference Room was removed;
+  // this remains accepted so older stored rows and managed configs still load.
+  enableConferenceRoomChat: z.boolean().default(false),
   // Deprecated compatibility key. Apps is a standard product surface and is
   // always enabled; this remains accepted so older stored rows and managed
   // configs continue to load during upgrades.
@@ -64,7 +67,6 @@ export const instanceExperimentalSettingsSchema = z.object({
   enableCases: z.boolean().default(false),
   enableAgentChat: z.boolean().default(false),
   enableCombinedInboxTasks: z.boolean().default(false),
-  enableConferenceRoomChat: z.boolean().default(false),
   enableClassicTaskInterface: z.boolean().default(false),
   enableIssuePlanDecompositions: z.boolean().default(false),
   enableExperimentalFileViewer: z.boolean().default(false),

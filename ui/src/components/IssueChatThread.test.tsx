@@ -1994,7 +1994,7 @@ describe("IssueChatThread", () => {
     });
   });
 
-  it("renders a genuine agent comment in the conference-room neutral bubble (PAP-97 rev 7)", () => {
+  it("renders a genuine agent comment in the neutral agent bubble (PAP-97 rev 7)", () => {
     const root = createRoot(container);
     act(() => {
       root.render(
@@ -2027,7 +2027,7 @@ describe("IssueChatThread", () => {
       );
     });
 
-    // Conference-room canonical agent bubble: bg-card + border + tail corner.
+    // Canonical agent bubble: bg-card + border + tail corner.
     const bubble = Array.from(container.querySelectorAll("div")).find(
       (el) =>
         el.className.includes("bg-card") &&

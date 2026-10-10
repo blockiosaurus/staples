@@ -14,7 +14,6 @@ import {
   Package,
   FolderOpen,
   Unplug,
-  MessagesSquare,
   MessageCircle,
   LayoutGrid,
   Users,
@@ -106,10 +105,6 @@ export function Sidebar({ children }: { children?: ReactNode }) {
   });
   const attentionCount = attentionBadgeCount(attentionFeed);
   const showCases = experimentalSettings?.enableCases === true;
-  // Conference Room Chat flag (PAP-136/PAP-137): the Conference Room nav item
-  // is a new surface, hidden entirely while the flag is off (same no-flash
-  // pattern as showWorkspacesLink above).
-  const conferenceRoomChatEnabled = experimentalSettings?.enableConferenceRoomChat === true;
 
   const pluginContext = {
     companyId: selectedCompanyId,
@@ -187,9 +182,6 @@ export function Sidebar({ children }: { children?: ReactNode }) {
           ) : null}
           {showStatusCards ? (
             <SidebarNavItem to="/status" label="Status" icon={LayoutGrid} textBadge="beta" />
-          ) : null}
-          {conferenceRoomChatEnabled ? (
-            <SidebarNavItem to="/board-chat" label="Conference Room" icon={MessagesSquare} />
           ) : null}
         </div>
 

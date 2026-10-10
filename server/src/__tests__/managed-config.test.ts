@@ -184,6 +184,11 @@ describe("parseManagedConfigEnv", () => {
     expect(parsed?.features).toEqual({});
   });
 
+  it("accepts and ignores the retired conference room chat feature key", () => {
+    const parsed = parseManagedConfigEnv(envWith(validDoc({ features: { enableConferenceRoomChat: true } })));
+    expect(parsed?.features).toEqual({});
+  });
+
   it("throws on a feature key the catalog does not mark tier \"managed\"", () => {
     // `enableDecisions` is a real schema flag, but its catalog tier is
     // `preference` (tenant-controllable) — a managed-config document

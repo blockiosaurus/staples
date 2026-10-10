@@ -57,9 +57,6 @@ function formatActivationTimestamp(iso: string): string {
   return parsed.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-// PAP-11233: keep Conference Room code intact, but hide the user-facing opt-in for now.
-const SHOW_CONFERENCE_ROOM_EXPERIMENTAL_SETTING = false;
-
 function ManagedByCloudBadge() {
   return (
     <Badge variant="outline" className="text-muted-foreground">
@@ -211,7 +208,6 @@ export function InstanceExperimentalSettings() {
     experimentalQuery.data?.enableIsolatedWorkspacesByDefault === true;
   // Streamlined left navigation is now the standard sidebar (PAP-12472); the
   // experimental opt-out was retired, so it no longer surfaces a toggle here.
-  const enableConferenceRoomChat = experimentalQuery.data?.enableConferenceRoomChat === true;
   const enableClassicTaskInterface = experimentalQuery.data?.enableClassicTaskInterface === true;
   const enableIssuePlanDecompositions =
     experimentalQuery.data?.enableIssuePlanDecompositions === true;
@@ -374,19 +370,6 @@ export function InstanceExperimentalSettings() {
           managed={managedKeys.enableCombinedInboxTasks}
           ariaLabel="Toggle combined inbox and task list experimental setting"
         />
-
-        {SHOW_CONFERENCE_ROOM_EXPERIMENTAL_SETTING ? (
-          <ExperimentalToggleCard
-            title="Conference Room Chat"
-            description="Adds a Conference Room — one chat where you and your whole team work together — plus the live activity feed and the redesigned onboarding. Also restyles task threads as chat bubbles. Turn off anytime to restore the classic UI."
-            checked={enableConferenceRoomChat}
-            onCheckedChange={(checked) => toggleMutation.mutate({ enableConferenceRoomChat: checked })}
-            disabled={toggleMutation.isPending}
-            settingKey="enableConferenceRoomChat"
-            managed={managedKeys.enableConferenceRoomChat}
-            ariaLabel="Toggle conference room chat experimental setting"
-          />
-        ) : null}
 
         <ExperimentalToggleCard
           title="Decisions"

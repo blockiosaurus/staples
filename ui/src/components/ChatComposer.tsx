@@ -15,8 +15,7 @@ import { cn } from "../lib/utils";
 /**
  * Shared chat composer (PAP-95a / PAP-96).
  *
- * One reusable input shell used by BOTH the conference room (BoardChat) and
- * task comments (IssueChatThread). It is intentionally a *plain textarea* —
+ * One reusable input shell used by task comments (IssueChatThread). It is intentionally a *plain textarea* —
  * **no formatting toolbar** — with attach + send. The focus state is a neutral
  * border darkening (no blue focus ring) so the box reads as calm chrome in both
  * surfaces.

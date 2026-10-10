@@ -573,26 +573,6 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
     expect(created).toMatchObject({ kind: "request_confirmation", status: "pending" });
   });
 
-  it("does not treat the board concierge reply as human direction", async () => {
-    const fixture = await seedSourceQuestionFixture({ paperclipWake: { comments: [] } });
-    await db.insert(issueComments).values({
-      companyId: fixture.companyId,
-      issueId: fixture.issueId,
-      authorType: "user",
-      authorUserId: "board-concierge",
-      body: "The concierge relay replied.",
-      createdAt: new Date("2026-07-25T12:01:00.000Z"),
-      updatedAt: new Date("2026-07-25T12:01:00.000Z"),
-    });
-
-    const created = await interactionsSvc.create(
-      { id: fixture.issueId, companyId: fixture.companyId },
-      questionCreateInput(fixture.runId),
-      { agentId: fixture.agentId, runId: fixture.runId },
-    );
-    expect(created.status).toBe("pending");
-  });
-
   it("rejects an explicitly mismatched source-run issue or agent", async () => {
     const fixture = await seedSourceQuestionFixture({ paperclipWake: { comments: [] } });
     const otherAgentId = randomUUID();

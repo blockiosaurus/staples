@@ -13104,7 +13104,6 @@ export function issueService(db: Db) {
       if (
         authorType === "user" &&
         actor.userId &&
-        actor.userId !== "board-concierge" &&
         !createdByRunId
       ) {
         const { issueThreadInteractionService } =
