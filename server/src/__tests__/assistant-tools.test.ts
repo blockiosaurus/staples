@@ -9,7 +9,6 @@ import {
   createAssistantTools,
   type AssistantToolContext,
 } from "../services/assistant-tools.js";
-import { assistantRuntimeMcpServer } from "../services/heartbeat/assistant-mcp-server.js";
 import { McpApiError, type ApiDispatch } from "../services/public-mcp/capabilities.js";
 
 const companyId = "11111111-1111-4111-8111-111111111111";
@@ -63,9 +62,24 @@ describe("assistant tools", () => {
     expect(done.content[0]!.text).toMatch(/cannot set status to done/);
     expect(dispatch).not.toHaveBeenCalled();
 
+    const review = await t.call(context(), "paperclip_update_task", { taskId, requestId, changes: { status: "in_review" } });
+    expect(review).toMatchObject({ isError: true });
+    expect(review.content[0]!.text).toMatch(/cannot set status to in_review/);
+    expect(dispatch).not.toHaveBeenCalled();
+
     const ok = await t.call(context(), "paperclip_update_task", { taskId, requestId, changes: { title: "Renamed", priority: "high" } });
     expect(ok.isError).toBeUndefined();
     expect(dispatch).toHaveBeenCalledWith(expect.anything(), "PATCH", `/issues/${taskId}`, { title: "Renamed", priority: "high" });
+  });
+
+  it("never reopens or edits a done or cancelled task", async () => {
+    for (const status of ["done", "cancelled"]) {
+      const dispatch = vi.fn<ApiDispatch>(async (_p, method) => method === "GET" ? { id: taskId, status } : {});
+      const result = await tools(dispatch).call(context(), "paperclip_update_task", { taskId, requestId, changes: { status: "todo" } });
+      expect(result).toMatchObject({ isError: true });
+      expect(result.content[0]!.text).toMatch(/closed/);
+      expect(dispatch.mock.calls.map((c) => c[1])).toEqual(["GET"]);
+    }
   });
 
   it("pins a validated surface through the person's preferences route", async () => {
@@ -116,17 +130,5 @@ describe("assistant run actor attribution", () => {
     expect(isDelegatedBoardSource("assistant_run")).toBe(true);
     expect(isDelegatedBoardSource("mcp_oauth")).toBe(true);
     expect(isDelegatedBoardSource("session")).toBe(false);
-  });
-});
-
-describe("assistant runtime MCP injection", () => {
-  const assistant = { metadata: { paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } } };
-  it("adds the tools server only for Assistant runs with a run token", () => {
-    expect(assistantRuntimeMcpServer({ agent: assistant, authToken: "jwt", apiBaseUrl: "http://127.0.0.1:3100/" })).toEqual({
-      name: "Staples assistant", url: "http://127.0.0.1:3100/api/mcp/assistant-tools", token: "jwt", connectionId: "staples-assistant-tools",
-    });
-    expect(assistantRuntimeMcpServer({ agent: { metadata: {} }, authToken: "jwt", apiBaseUrl: "http://127.0.0.1:3100" })).toBeNull();
-    expect(assistantRuntimeMcpServer({ agent: assistant, authToken: null, apiBaseUrl: "http://127.0.0.1:3100" })).toBeNull();
-    expect(assistantRuntimeMcpServer({ agent: assistant, authToken: "jwt", apiBaseUrl: null })).toBeNull();
   });
 });

@@ -1173,6 +1173,33 @@ describeEmbeddedPostgres("built-in agents", () => {
     });
   });
 
+  it("rejects malformed or partial built-in markers on create and update", async () => {
+    const companyId = await seedCompany();
+    const builtIn = await builtInAgentService(db).ensure(companyId, "briefs");
+    const hire = (metadata: Record<string, unknown>) => createAgentLifecycle(db).requestHire(companyId, {
+      name: `Spoof ${randomUUID().slice(0, 6)}`, role: "engineer", status: "idle", adapterType: "codex_local",
+      adapterConfig: { model: "gpt-5.4" }, runtimeConfig: {}, permissions: {}, metadata,
+    });
+    const forged = [
+      { paperclipBuiltInAgent: { key: "assistant" } },
+      { paperclipBuiltInAgent: { key: "assistant", featureKeys: "assistant" } },
+      { paperclipBuiltInAgent: "assistant" },
+      { paperclipBuiltInAgent: null },
+    ];
+    for (const metadata of forged) {
+      await expect(hire(metadata)).rejects.toMatchObject({ status: 409, details: { code: "built_in_agent_marker_readonly" } });
+    }
+    const normal = await hire({ note: "plain" });
+    for (const metadata of forged) {
+      await expect(agentService(db).update(normal.id, { metadata }))
+        .rejects.toMatchObject({ status: 409, details: { code: "built_in_agent_marker_readonly" } });
+    }
+    // A stored marker may only be resubmitted byte-identically.
+    await expect(agentService(db).update(builtIn.agentId!, {
+      metadata: { paperclipBuiltInAgent: { key: "briefs", featureKeys: ["briefs"], extra: true } },
+    })).rejects.toMatchObject({ status: 409, details: { code: "built_in_agent_marker_readonly" } });
+  });
+
   it("repairs display/default drift for marked rows during startup reconciliation", async () => {
     const companyId = await seedCompany();
     const agentId = randomUUID();

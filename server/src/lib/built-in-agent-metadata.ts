@@ -18,6 +18,12 @@ function normalizeFeatureKeys(value: unknown): string[] | null {
   return featureKeys.length === value.length ? featureKeys : null;
 }
 
+/** The raw marker value, any shape; `undefined` only when the key is absent. */
+export function rawBuiltInAgentMarker(metadata: unknown): unknown {
+  if (!isPlainRecord(metadata) || !Object.prototype.hasOwnProperty.call(metadata, BUILT_IN_AGENT_METADATA_KEY)) return undefined;
+  return metadata[BUILT_IN_AGENT_METADATA_KEY];
+}
+
 export function readBuiltInAgentMarker(metadata: unknown): BuiltInAgentMarker | null {
   if (!isPlainRecord(metadata)) return null;
   const marker = metadata[BUILT_IN_AGENT_METADATA_KEY];

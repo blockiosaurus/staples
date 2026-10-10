@@ -23,15 +23,7 @@ function throwOrShadowResponsibleUserCompanyAccessDeny(
   throw new HttpError(403, message, { code });
 }
 
-/**
- * Board actors that act for a person through a delegated, non-browser channel:
- * a public MCP connection (`mcp_oauth`) or a person-scoped Assistant run
- * (`assistant_run`). They never get board overrides, instance-admin elevation,
- * or implicit run cancellation that an interactive board session would.
- */
-export function isDelegatedBoardSource(source: Request["actor"]["source"]) {
-  return source === "mcp_oauth" || source === "assistant_run";
-}
+export { isDelegatedBoardSource } from "../lib/delegated-board-source.js";
 
 export function assertAuthenticated(req: Request) {
   if (req.actor.type === "none") {

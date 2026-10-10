@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { activityLog, agents, companyMemberships, heartbeatRuns, issueThreadInteractions, issues } from "@paperclipai/db";
+import { activityLog, agents, authUsers, companyMemberships, heartbeatRuns, instanceUserRoles, issueThreadInteractions, issues } from "@paperclipai/db";
+import { builtInAgentService } from "../services/built-in-agents.js";
+import { assistantRuntimeMcpServer } from "../services/heartbeat/assistant-mcp-server.js";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import { uiPreferencesService } from "../services/ui-preferences.js";
 import { startRunnerApiTestServer } from "./helpers/runner-api-server.js";
 import { getEmbeddedPostgresTestSupport } from "./helpers/embedded-postgres.js";
 
-const ASSISTANT_METADATA = { paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } };
 
 const support = await getEmbeddedPostgresTestSupport();
 (support.supported ? describe : describe.skip)("assistant tools endpoint", () => {
@@ -20,12 +21,15 @@ const support = await getEmbeddedPostgresTestSupport();
   });
 
   type Fixture = Awaited<ReturnType<typeof server.fixture>>;
+  // A real provisioned Assistant (built-in service), with the fixture's run and
+  // conversation repointed to it. The fixture's own agent stays as staff.
   async function assistantFixture(options: { conversation?: boolean } = { conversation: true }) {
     const f = await server.fixture({ conversation: options.conversation, disableWakeOnDemand: true });
-    await server.db.update(agents).set({ metadata: ASSISTANT_METADATA }).where(eq(agents.id, f.agentId));
-    const staffAgentId = randomUUID();
-    await server.db.insert(agents).values({ id: staffAgentId, companyId: f.companyId, name: "Staff engineer", adapterType: "process", adapterConfig: {}, runtimeConfig: { heartbeat: { enabled: false, wakeOnDemand: false } }, status: "active" });
-    return { ...f, staffAgentId };
+    const assistant = await builtInAgentService(server.db).ensureAssistant(f.companyId);
+    await server.db.update(heartbeatRuns).set({ agentId: assistant.id }).where(eq(heartbeatRuns.id, f.runId));
+    await server.db.update(issues).set({ assigneeAgentId: assistant.id, ...(options.conversation ? { conversationAgentId: assistant.id } : {}) })
+      .where(eq(issues.id, f.issueId));
+    return { ...f, agentId: assistant.id, staffAgentId: f.agentId };
   }
   async function rpc(f: Fixture, method: string, params?: Record<string, unknown>) {
     const token = createLocalAgentJwt(f.agentId, f.companyId, "paperclip_runner", f.runId, f.responsibleUserId)!;
@@ -42,12 +46,24 @@ const support = await getEmbeddedPostgresTestSupport();
     const staff = await server.fixture({ conversation: true, disableWakeOnDemand: true });
     expect((await rpc(staff, "tools/list")).status).toBe(403);
 
+    // A hand-written marker (bypassing the metadata guard) is not the Assistant.
+    for (const metadata of [{ paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } }, { paperclipBuiltInAgent: { key: "assistant" } }]) {
+      const forged = await server.fixture({ conversation: true, disableWakeOnDemand: true });
+      await server.db.update(agents).set({ metadata }).where(eq(agents.id, forged.agentId));
+      expect((await rpc(forged, "tools/list")).status).toBe(403);
+      expect(await assistantRuntimeMcpServer(server.db, { agent: { id: forged.agentId, companyId: forged.companyId }, authToken: "jwt", apiBaseUrl: "http://127.0.0.1:1" })).toBeNull();
+    }
+
     const unowned = await assistantFixture({ conversation: false });
     expect(unowned.responsibleUserId).toBeNull();
     expect((await rpc(unowned, "tools/list")).status).toBe(403);
 
     const finished = await assistantFixture();
     expect((await rpc(finished, "tools/list")).status).toBe(200);
+    expect(await assistantRuntimeMcpServer(server.db, { agent: { id: finished.agentId, companyId: finished.companyId }, authToken: "jwt", apiBaseUrl: "http://127.0.0.1:1/" }))
+      .toEqual({ name: "Staples assistant", url: "http://127.0.0.1:1/api/mcp/assistant-tools", token: "jwt", connectionId: "staples-assistant-tools" });
+    expect(await assistantRuntimeMcpServer(server.db, { agent: { id: finished.agentId, companyId: finished.companyId }, authToken: null, apiBaseUrl: "http://127.0.0.1:1" })).toBeNull();
+    expect(await assistantRuntimeMcpServer(server.db, { agent: { id: finished.staffAgentId, companyId: finished.companyId }, authToken: "jwt", apiBaseUrl: "http://127.0.0.1:1" })).toBeNull();
     await server.db.update(heartbeatRuns).set({ status: "succeeded", finishedAt: new Date() }).where(eq(heartbeatRuns.id, finished.runId));
     expect((await rpc(finished, "tools/list")).status).toBe(403);
   }, 60_000);
@@ -82,6 +98,11 @@ const support = await getEmbeddedPostgresTestSupport();
     const ids = listed.body.result.structuredContent.agents.map((a: { id: string }) => a.id);
     expect(ids).toContain(f.staffAgentId);
     expect(ids).not.toContain(f.agentId);
+    const self = await call(f, "paperclip_get_agent", { agentId: f.agentId });
+    expect(self.body.result).toMatchObject({ isError: true });
+    expect(self.body.result.content[0].text).toMatch(/not found/i);
+    const staff = await call(f, "paperclip_get_agent", { agentId: f.staffAgentId });
+    expect(staff.body.result.isError, JSON.stringify(staff.body)).toBeUndefined();
 
     const disallowed = await call(f, "paperclip_update_task", { taskId: f.blockerId, requestId: randomUUID(), changes: { visibility: "private" } });
     expect(disallowed.status).toBe(200);
@@ -106,6 +127,21 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(answered.body.result.isError, JSON.stringify(answered.body)).toBeUndefined();
     const [row] = await server.db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, mine!.id));
     expect(row).toMatchObject({ status: "answered", resolvedByUserId: f.responsibleUserId });
+  }, 60_000);
+
+  it("does not inherit the person's instance-admin read of private tasks", async () => {
+    const f = await assistantFixture();
+    const ownerId = `owner-${randomUUID()}`;
+    await server.db.insert(authUsers).values({ id: ownerId, name: "Private owner", email: `${ownerId}@fixture.invalid`, emailVerified: true, createdAt: new Date(), updatedAt: new Date() });
+    await server.db.insert(companyMemberships).values({ companyId: f.companyId, principalType: "user", principalId: ownerId, status: "active", membershipRole: "owner" });
+    const privateId = randomUUID();
+    await server.db.insert(issues).values({ id: privateId, companyId: f.companyId, issueNumber: 99, identifier: `PRIV-${privateId.slice(0, 6)}`, title: "Private plum-heron plan", status: "todo", visibility: "private", createdByUserId: ownerId, responsibleUserId: ownerId });
+    await server.db.insert(instanceUserRoles).values({ userId: f.responsibleUserId!, role: "instance_admin" });
+    const searched = await call(f, "paperclip_search_tasks", { query: "plum-heron" });
+    expect(searched.body.result.isError, JSON.stringify(searched.body)).toBeUndefined();
+    expect(searched.body.result.structuredContent.tasks.map((t: { id: string }) => t.id)).not.toContain(privateId);
+    const read = await call(f, "paperclip_read_task", { taskId: privateId });
+    expect(read.body.result).toMatchObject({ isError: true });
   }, 60_000);
 
   it("gives viewers read tools only", async () => {

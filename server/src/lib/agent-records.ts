@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { agents, costEvents, type Db } from "@paperclipai/db";
 import {
@@ -9,7 +10,7 @@ import {
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
 import { normalizeAgentPermissions } from "./agent-permissions.js";
-import { builtInAgentMarkersEqual, readBuiltInAgentMarker } from "./built-in-agent-metadata.js";
+import { builtInAgentMarkersEqual, rawBuiltInAgentMarker, readBuiltInAgentMarker } from "./built-in-agent-metadata.js";
 
 export function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -461,7 +462,13 @@ export function agentRecordQueries(db: Db) {
     if (options?.allowBuiltInAgentMetadata) return;
     const beforeMarker = readBuiltInAgentMarker(beforeMetadata);
     const afterMarker = readBuiltInAgentMarker(afterMetadata);
-    if (builtInAgentMarkersEqual(beforeMarker, afterMarker)) return;
+    // Raw presence matters, not just a well-formed marker: a partial or
+    // malformed marker must never be writable by callers, and a stored marker
+    // may only be resubmitted exactly as stored.
+    const rawBefore = rawBuiltInAgentMarker(beforeMetadata);
+    const rawAfter = rawBuiltInAgentMarker(afterMetadata);
+    const rawUnchanged = rawAfter === undefined || (rawBefore !== undefined && isDeepStrictEqual(rawBefore, rawAfter));
+    if (rawUnchanged && builtInAgentMarkersEqual(beforeMarker, afterMarker)) return;
     throw conflict("Built-in agent marker is managed by Paperclip and cannot be edited directly", {
       code: "built_in_agent_marker_readonly",
       key: beforeMarker?.key ?? afterMarker?.key ?? null,

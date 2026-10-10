@@ -5,6 +5,7 @@ import { agents, companies, companyMemberships, issueThreadInteractions, issues,
 import { askUserQuestionsAnswerSchema, isAssistantAgent, surfaceIdSchema } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
+import { isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { publicMcpCapabilities } from "./public-mcp/capabilities.js";
 import { McpApiError, McpCapabilityError, object, pick, rows, taskFields, pathId, type ApiDispatch, type Capability } from "./public-mcp/contracts.js";
 import type { McpPrincipal } from "./public-mcp/oauth.js";
@@ -26,8 +27,10 @@ export const ASSISTANT_WRITE_TOOL_NAMES = [
 export const ASSISTANT_UPDATE_TASK_FIELDS = [
   "title", "description", "status", "priority", "assigneeAgentId", "assigneeUserId", "projectId", "parentId",
 ] as const;
-/** Terminal and blocking transitions are governed (finish/block/cancel), not low-risk edits. */
-const GOVERNED_STATUSES = new Set(["done", "cancelled", "blocked"]);
+/** Terminal, blocking and review transitions are governed (finish/block/cancel/review), not low-risk edits. */
+const GOVERNED_STATUSES = new Set(["done", "cancelled", "blocked", "in_review"]);
+/** Closed tasks are never edited or reopened by the Assistant. */
+const CLOSED_STATUSES = new Set(["done", "cancelled"]);
 const BRIEFING_CAP = 20;
 
 export type AssistantToolContext = {
@@ -49,9 +52,10 @@ export async function assistantToolContext(db: Db, actor: Request["actor"]): Pro
   if (actor.type !== "agent" || actor.source !== "agent_jwt" || !actor.runId || !actor.agentId || !actor.companyId) {
     throw forbidden("Assistant tools require an authenticated Assistant run");
   }
-  const [agent] = await db.select({ id: agents.id, metadata: agents.metadata, status: agents.status })
-    .from(agents).where(and(eq(agents.id, actor.agentId), eq(agents.companyId, actor.companyId)));
-  if (!agent || !isAssistantAgent(agent)) throw forbidden("Assistant tools are only available to the Assistant");
+  // Provisioning record plus marker; a marker in agent metadata alone is not authority.
+  if (!(await isProvisionedAssistant(db, { id: actor.agentId, companyId: actor.companyId }))) {
+    throw forbidden("Assistant tools are only available to the Assistant");
+  }
   // Locks the task/run and accepts any acknowledged steering, so the
   // responsible person is the one currently attached to this live run.
   const { run } = await captureRunIdentity(db, { companyId: actor.companyId, agentId: actor.agentId, runId: actor.runId });
@@ -104,9 +108,13 @@ export function assistantPrincipal(context: AssistantToolContext): McpPrincipal 
   return { grant: grant as unknown as McpPrincipal["grant"], actor: assistantBoardActor(context), company: context.company };
 }
 
+/** Agents hidden from and unassignable by the Assistant: the provisioned one plus anything carrying the marker. */
 async function assistantAgentIds(db: Db, companyId: string) {
   const companyAgents = await db.select({ id: agents.id, metadata: agents.metadata }).from(agents).where(eq(agents.companyId, companyId));
-  return new Set(companyAgents.filter((agent) => isAssistantAgent(agent)).map((agent) => agent.id));
+  const ids = new Set(companyAgents.filter((agent) => isAssistantAgent(agent)).map((agent) => agent.id));
+  const provisioned = await resolveCompanyAssistantAgentId(db, companyId);
+  if (provisioned) ids.add(provisioned);
+  return ids;
 }
 
 function capability(name: string) {
@@ -140,8 +148,14 @@ function assistantCapabilities(db: Db): Capability[] {
       },
     }),
     ...["paperclip_list_projects", "paperclip_search_tasks", "paperclip_read_task", "paperclip_list_deliverables",
-      "paperclip_read_document", "paperclip_list_document_revisions", "paperclip_pending_approvals", "paperclip_get_agent",
+      "paperclip_read_document", "paperclip_list_document_revisions", "paperclip_pending_approvals",
       "paperclip_get_project", "paperclip_list_skills", "paperclip_get_skill", "paperclip_add_comment"].map((name) => reused(name)),
+    reused("paperclip_get_agent", {
+      run: async (p, a, api, origin) => {
+        if ((await assistantAgentIds(db, p.company.id)).has(String(a.agentId))) throw new McpCapabilityError("Agent not found.");
+        return capability("paperclip_get_agent").run(p, a, api, origin);
+      },
+    }),
     reused("paperclip_create_task", {
       run: async (p, a, api, origin) => {
         await rejectAssistantAssignee(p.company.id, a.assigneeAgentId);
@@ -153,6 +167,10 @@ function assistantCapabilities(db: Db): Capability[] {
       run: async (p, a, api, origin) => {
         const changes = object(a.changes);
         await rejectAssistantAssignee(p.company.id, changes.assigneeAgentId);
+        const current = await api(p, "GET", `/issues/${pathId(a.taskId)}`);
+        if (CLOSED_STATUSES.has(String(object(current).status))) {
+          throw new McpCapabilityError("This task is closed. The Assistant cannot edit or reopen it; ask the person to do it in Paperclip.");
+        }
         return capability("paperclip_update_task").run(p, a, api, origin);
       },
     }),

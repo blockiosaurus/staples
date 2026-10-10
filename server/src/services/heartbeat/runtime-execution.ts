@@ -772,7 +772,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
         runtimeMcpServers.unshift({ name: "Paperclip projects", url: `${paperclipApiBaseUrl()}/api/mcp/project-tools`,
           token: authToken, connectionId: "paperclip-project-tools" });
       }
-      const assistantServer = assistantRuntimeMcpServer({
+      const assistantServer = await assistantRuntimeMcpServer(db, {
         agent, authToken, apiBaseUrl: configuredPaperclipApiBaseUrl() ? paperclipApiBaseUrl() : null,
       });
       if (assistantServer) runtimeMcpServers.unshift(assistantServer);

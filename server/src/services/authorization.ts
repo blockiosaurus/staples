@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import { isDelegatedBoardSource } from "../lib/delegated-board-source.js";
 import type { Db } from "@paperclipai/db";
 import { withHumanDirectedWork } from "./human-directed-work.js";
 import { hasOwnerChatInstructionAuthority } from "./owner-chat-instruction-authority.js";
@@ -633,7 +634,9 @@ export async function canActorReadIssuePrivacy(db: Db | DbTransaction, actor: Au
 export async function issueReadSqlCondition(db: Db | DbTransaction, actor: AuthorizationActor): Promise<SQL<boolean>> {
   if (issuePrivacyMode() !== "enforce") return sql<boolean>`true`;
   if (actor.source === "local_implicit" || actor.isInstanceAdmin) return sql<boolean>`true`;
-  if (actor.type === "board" && !actor.ignoreInstanceAdmin && actor.source !== "cloud_tenant"
+  // Delegated channels (MCP connections, Assistant runs) never inherit the
+  // person's instance-admin read of every private task.
+  if (actor.type === "board" && !actor.ignoreInstanceAdmin && actor.source !== "cloud_tenant" && !isDelegatedBoardSource(actor.source)
     && await db.select({ id: instanceUserRoles.id }).from(instanceUserRoles)
       .where(and(eq(instanceUserRoles.userId, actor.userId ?? ""), eq(instanceUserRoles.role, "instance_admin")))
       .limit(1).then(rows => rows.length > 0)) return sql<boolean>`true`;
@@ -648,6 +651,7 @@ export async function projectReadSqlCondition(db: Db | DbTransaction, actor: Aut
     actor.type === "board"
     && !actor.ignoreInstanceAdmin
     && actor.source !== "cloud_tenant"
+    && !isDelegatedBoardSource(actor.source)
     && Boolean(await db
       .select({ id: instanceUserRoles.id })
       .from(instanceUserRoles)
@@ -1866,7 +1870,7 @@ export function authorizationService(db: Db | DbTransaction) {
       // instance_admin row left behind by deployments that ran the
       // pre-hardening cloud_tenant path still elevates nothing.
       if (
-        !input.actor.ignoreInstanceAdmin && input.actor.source !== "mcp_oauth" && input.actor.source !== "assistant_run" &&
+        !input.actor.ignoreInstanceAdmin && !isDelegatedBoardSource(input.actor.source) &&
         (input.actor.isInstanceAdmin ||
           (input.actor.source !== "cloud_tenant" && await isInstanceAdmin(input.actor.userId)))
       ) {
