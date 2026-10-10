@@ -4,6 +4,22 @@ import { ASSISTANT_BUILT_IN_AGENT_KEY } from "@paperclipai/shared";
 import { readBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
 
 /**
+ * Local CLI adapters the Assistant itself may run on (registry `type` strings
+ * that support local agent JWTs). Also the only adapter types the Assistant
+ * may propose when hiring an agent.
+ */
+export const ASSISTANT_ALLOWED_ADAPTER_TYPES = [
+  "claude_local",
+  "codex_local",
+  "cursor",
+  "gemini_local",
+  "grok_local",
+  "kimi_local",
+  "opencode_local",
+  "pi_local",
+] as const;
+
+/**
  * Authority check for the built-in Assistant. The marker alone is caller-shaped
  * metadata, so authority also requires the company's provisioning record: the
  * built-in service binds the Assistant's managed instructions to its agent id.

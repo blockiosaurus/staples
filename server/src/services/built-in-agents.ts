@@ -1,4 +1,5 @@
 import { createAgentLifecycle } from "./agent-lifecycle.js";
+import { ASSISTANT_ALLOWED_ADAPTER_TYPES } from "./assistant-identity.js";
 import fs from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -345,16 +346,7 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
     defaultStatus: "idle",
     defaultManager: null,
     // Local CLI adapters that support local agent JWTs (registry `type` strings).
-    allowedAdapterTypes: [
-      "claude_local",
-      "codex_local",
-      "cursor",
-      "gemini_local",
-      "grok_local",
-      "kimi_local",
-      "opencode_local",
-      "pi_local",
-    ],
+    allowedAdapterTypes: [...ASSISTANT_ALLOWED_ADAPTER_TYPES],
     defaultAdapterType: "claude_local",
     defaultBudgetMonthlyCents: 0,
     bypassHireApproval: true,

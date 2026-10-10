@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { agents, approvals, companySecrets, issues, toolConnections, type Db } from "@paperclipai/db";
+import { ASSISTANT_ALLOWED_ADAPTER_TYPES } from "./assistant-identity.js";
 import {
   PROPOSED_ACTION_BODY_MAX_BYTES,
   type ProposedActionCategory,
@@ -67,25 +68,41 @@ function assertBudgetAmounts(body: unknown, keys: readonly string[]) {
   }
 }
 
-/** Adapters that run arbitrary commands or call arbitrary URLs. */
-const COMMAND_ADAPTER_TYPES = new Set(["process", "http"]);
-/** Agent fields the person must set themselves in the agent settings, never via a proposal. */
-const AGENT_FORBIDDEN_FIELDS = ["applyStoredClaudeLogin", "permissions", "instructionsBundle"] as const;
-/** Adapter config keys that execute commands or inject environment. */
-const AGENT_FORBIDDEN_DEEP_KEYS = new Set(["command", "env"]);
+/**
+ * Agent create/hire bodies are an allowlist: identity, reporting line, budget
+ * and a local CLI adapter type. Adapter config, runtime/workspace settings,
+ * permissions, instructions, environments and metadata can run host commands
+ * or widen authority, so the person sets them in the agent's settings.
+ */
+const AGENT_CREATE_ALLOWED_KEYS = new Set([
+  "name", "role", "title", "icon", "capabilities", "reportsTo", "budgetMonthlyCents", "adapterType",
+]);
+const AGENT_CREATE_STRING_KEYS = ["name", "role", "title", "icon", "capabilities"] as const;
+const AGENT_SETTINGS_HINT = "Configure adapters, permissions and instructions in the agent's settings after hiring.";
 
 function assertSafeAgentCreate(body: unknown) {
-  const record = bodyRecord(body);
-  if (typeof record.adapterType === "string" && COMMAND_ADAPTER_TYPES.has(record.adapterType)) {
-    throw new ProposedActionError(`The Assistant cannot propose agents with the ${record.adapterType} adapter; the person sets that up in agent settings.`);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new ProposedActionError("An agent proposal needs a JSON object body.");
   }
-  const fields = AGENT_FORBIDDEN_FIELDS.filter((key) => Object.prototype.hasOwnProperty.call(record, key));
-  if (fields.length) {
-    throw new ProposedActionError(`The Assistant cannot propose ${fields.join(", ")} for an agent; the person sets that up in agent settings.`);
+  const record = body as Record<string, unknown>;
+  const extra = Object.keys(record).filter((key) => !AGENT_CREATE_ALLOWED_KEYS.has(key));
+  if (extra.length) {
+    throw new ProposedActionError(`The Assistant cannot propose ${extra.join(", ")} for an agent. ${AGENT_SETTINGS_HINT}`);
   }
-  const deep = [...findKeysDeep(body, AGENT_FORBIDDEN_DEEP_KEYS)];
-  if (deep.length) {
-    throw new ProposedActionError(`The Assistant cannot propose adapter ${deep.join(", ")} settings; the person sets that up in agent settings.`);
+  if (typeof record.name !== "string" || !record.name.trim()) {
+    throw new ProposedActionError("An agent proposal needs a name.");
+  }
+  for (const key of AGENT_CREATE_STRING_KEYS) {
+    if (record[key] !== undefined && record[key] !== null && typeof record[key] !== "string") {
+      throw new ProposedActionError(`${key} must be text.`);
+    }
+  }
+  if (record.reportsTo !== undefined && record.reportsTo !== null && typeof record.reportsTo !== "string") {
+    throw new ProposedActionError("reportsTo must be an agent id.");
+  }
+  if (record.adapterType !== undefined
+    && !(ASSISTANT_ALLOWED_ADAPTER_TYPES as readonly unknown[]).includes(record.adapterType)) {
+    throw new ProposedActionError(`adapterType must be one of ${ASSISTANT_ALLOWED_ADAPTER_TYPES.join(", ")}, or omitted. ${AGENT_SETTINGS_HINT}`);
   }
   assertBudgetAmounts(body, ["budgetMonthlyCents"]);
 }

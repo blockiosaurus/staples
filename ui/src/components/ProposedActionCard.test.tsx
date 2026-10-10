@@ -174,30 +174,31 @@ describe("ProposedActionCard", () => {
   });
 
   it("requires a second Confirm when the target changed since the proposal", async () => {
-    fetchMock.mockResolvedValueOnce(json(200, { id: APPROVAL_ID, updatedAt: "2026-10-10T11:00:00.000Z" }));
+    fetchMock.mockResolvedValueOnce(claimed()).mockResolvedValueOnce(json(200, { id: APPROVAL_ID, updatedAt: "2026-10-10T11:00:00.000Z" }));
     const accept = vi.fn(async () => undefined);
     const host = await render({ interaction: proposal({}, true), onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
     await click(button(host, "Confirm"));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]![0]).toBe(`/api/approvals/${APPROVAL_ID}`);
+    // Claim first (server re-validation), then the stale read; nothing executed yet.
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([CLAIM_PATH, `/api/approvals/${APPROVAL_ID}`]);
     expect(host.textContent).toContain("Changed since the Assistant proposed this");
     expect(accept).not.toHaveBeenCalled();
 
-    fetchMock.mockResolvedValueOnce(claimed()).mockResolvedValueOnce(json(200, { ok: true }));
+    // The claim is still held, so the second Confirm executes directly.
+    fetchMock.mockResolvedValueOnce(json(200, { ok: true }));
     await click(button(host, "Confirm anyway"));
-    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([`/api/approvals/${APPROVAL_ID}`, CLAIM_PATH, ACTION_PATH]);
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([CLAIM_PATH, `/api/approvals/${APPROVAL_ID}`, ACTION_PATH]);
     expect(accept).toHaveBeenCalledWith(expect.anything(), undefined, undefined, undefined, expect.objectContaining({ status: "executed", hash: HASH }));
   });
 
   it("goes straight through when the stale check still matches", async () => {
     fetchMock
-      .mockResolvedValueOnce(json(200, { id: APPROVAL_ID, updatedAt: "2026-10-10T10:00:00.000Z" }))
       .mockResolvedValueOnce(claimed())
+      .mockResolvedValueOnce(json(200, { id: APPROVAL_ID, updatedAt: "2026-10-10T10:00:00.000Z" }))
       .mockResolvedValueOnce(json(200, {}));
     const accept = vi.fn(async () => undefined);
     const host = await render({ interaction: proposal({}, true), onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
     await click(button(host, "Confirm"));
-    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([`/api/approvals/${APPROVAL_ID}`, CLAIM_PATH, ACTION_PATH]);
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([CLAIM_PATH, `/api/approvals/${APPROVAL_ID}`, ACTION_PATH]);
     expect(accept).toHaveBeenCalledTimes(1);
   });
 
