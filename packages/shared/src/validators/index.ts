@@ -485,6 +485,7 @@ export {
   requestConfirmationSecretProposalPayloadSchema,
   requestConfirmationSecretProposalResultSchema,
   requestConfirmationProposedActionPayloadSchema,
+  proposedActionContextSchema,
   requestConfirmationProposedActionResultSchema,
   PROPOSED_ACTION_METHODS,
   PROPOSED_ACTION_CATEGORIES,

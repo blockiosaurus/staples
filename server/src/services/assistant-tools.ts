@@ -1,8 +1,8 @@
 import type { Request } from "express";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { agents, companies, companyMemberships, issueThreadInteractions, issues, type Db } from "@paperclipai/db";
-import { PROPOSED_ACTION_CATEGORIES, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, isAssistantAgent, surfaceIdSchema } from "@paperclipai/shared";
+import { agents, approvals, authUsers, companies, companyMemberships, issueThreadInteractions, issues, type Db } from "@paperclipai/db";
+import { PROPOSED_ACTION_CATEGORIES, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, isAssistantAgent, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
@@ -237,7 +237,7 @@ function assistantCapabilities(db: Db): Capability[] {
       name: PROPOSE_ACTION_TOOL, write: true,
       description: [
         "Propose one exact governed API call for this person to confirm. Nothing runs until they click Confirm on the card in this conversation; their browser then performs the call with their own session and you are woken with the result.",
-        "Only governed actions are allowed: approval approve/reject/request-revision, agent hire/create/pause/resume/terminate, budget policy and budget updates, secret create/update/delete (never include secret values), revoking a connection, grant or delegation (DELETE with body null), and DELETE under this company or one of its tasks. Creating or changing connections is not proposable: point the person to the Connectors page to set them up.",
+        "Only governed actions are allowed: approval approve/reject/request-revision, agent hire/create/pause/resume/terminate (adapterType is required; CEO-level hires are done in the Agents page), budget policy and budget updates, secret create/update/delete (never include secret values; an update may only change name, description or status), revoking a connection, grant or delegation (DELETE with body null), and DELETE with body null under this company or one of its tasks (removing tool policies, the skill policy, issue approval links, watchdogs or skill files is not proposable). Creating or changing connections is not proposable: point the person to the Connectors page to set them up.",
         "The path must start with /api/ and refer to this company. category is derived from the path. Optionally pass staleCheck { path, field: \"updatedAt\", expected } with a GET path whose updatedAt must be unchanged when the person confirms.",
       ].join(" "),
       schema: z.object({
@@ -264,6 +264,55 @@ function assistantCapabilities(db: Db): Capability[] {
 }
 
 const PROPOSE_ACTION_TOOL = "staples_propose_action";
+
+const APPROVAL_DECISION_PATH = /^\/api\/approvals\/([0-9a-fA-F-]{36})\/(?:approve|reject|request-revision)$/;
+/** Adapter config keys that run or shape a host process. */
+const COMMAND_LIKE_KEY = /command|^cmd$|args$|^env$|script|shell|executable|entrypoint|binary/i;
+const clip = (value: unknown, max: number) => (typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null);
+
+function commandLikeKeys(value: unknown, found: string[] = []): string[] {
+  if (Array.isArray(value)) for (const item of value) commandLikeKeys(item, found);
+  else if (value && typeof value === "object") {
+    for (const [key, child] of Object.entries(value)) {
+      if (COMMAND_LIKE_KEY.test(key) && !found.includes(key) && found.length < 20) found.push(key.slice(0, 120));
+      commandLikeKeys(child, found);
+    }
+  }
+  return found;
+}
+
+/**
+ * For approval decisions, read the approval and describe what is being
+ * decided, so the card does not rely on the Assistant's summary. Display only:
+ * not hashed, and the Assistant cannot supply it.
+ */
+async function approvalDecisionContext(db: Db, companyId: string, path: string): Promise<ProposedActionContext | null> {
+  const approvalId = APPROVAL_DECISION_PATH.exec(path)?.[1];
+  if (!approvalId) return null;
+  const [approval] = await db.select({
+    type: approvals.type, payload: approvals.payload,
+    requestedByAgentId: approvals.requestedByAgentId, requestedByUserId: approvals.requestedByUserId,
+  }).from(approvals).where(and(eq(approvals.id, approvalId), eq(approvals.companyId, companyId)));
+  if (!approval) return null;
+  let requestedBy: string | null = null;
+  if (approval.requestedByAgentId) {
+    const [agent] = await db.select({ name: agents.name }).from(agents)
+      .where(and(eq(agents.id, approval.requestedByAgentId), eq(agents.companyId, companyId)));
+    requestedBy = clip(agent?.name, 200);
+  } else if (approval.requestedByUserId) {
+    const [user] = await db.select({ name: authUsers.name, email: authUsers.email }).from(authUsers).where(eq(authUsers.id, approval.requestedByUserId));
+    requestedBy = clip(user?.name, 200) ?? clip(user?.email, 200);
+  }
+  const context: ProposedActionContext = { source: "approval", approvalType: approval.type.slice(0, 80), requestedBy };
+  if (approval.type === "hire_agent") {
+    const payload = object(approval.payload);
+    context.agentName = clip(payload.name, 200);
+    context.agentRole = clip(payload.role, 80);
+    context.adapterType = clip(payload.adapterType, 120);
+    context.adapterConfigCommandFields = commandLikeKeys(payload.adapterConfig).sort();
+  }
+  return context;
+}
 
 /**
  * Create a governed Confirm card on the run's own Assistant conversation,
@@ -298,9 +347,11 @@ async function proposeAction(db: Db, context: AssistantToolContext, args: Record
     if (error instanceof ProposedActionError) throw new McpCapabilityError(error.message);
     throw error;
   }
+  const approvalContext = category === "approval" ? await approvalDecisionContext(db, context.companyId, path) : null;
   const proposedAction = {
     version: 1 as const, method: method as (typeof PROPOSED_ACTION_METHODS)[number], path, body, summary, category, hash,
     ...(staleCheck ? { staleCheck: { path: staleCheck.path, field: "updatedAt" as const, expected: staleCheck.expected } } : {}),
+    ...(approvalContext ? { context: approvalContext } : {}),
   };
   const interaction = await issueThreadInteractionService(db).create(issue, {
     kind: "request_confirmation",

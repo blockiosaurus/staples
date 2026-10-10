@@ -694,6 +694,19 @@ describe("proposed action confirmation schemas", () => {
     expect(requestConfirmationPayloadSchema.safeParse({ ...payload, proposedAction: { ...proposedAction, body: null, method: "DELETE" } }).success).toBe(true);
   });
 
+  it("keeps optional server-built approval context for display", () => {
+    const context = { source: "approval", approvalType: "hire_agent", requestedBy: "CEO", agentName: "Writer", agentRole: "general", adapterType: "claude_local", adapterConfigCommandFields: ["command"] };
+    expect(requestConfirmationPayloadSchema.parse({ ...payload, proposedAction: { ...proposedAction, context } }).proposedAction?.context).toEqual(context);
+    expect(requestConfirmationPayloadSchema.parse(payload).proposedAction?.context).toBeUndefined();
+    for (const bad of [
+      { ...context, source: "assistant" },
+      { ...context, requestedBy: "x".repeat(300) },
+      { ...context, adapterConfigCommandFields: Array.from({ length: 30 }, (_, i) => `k${i}`) },
+    ]) {
+      expect(requestConfirmationPayloadSchema.safeParse({ ...payload, proposedAction: { ...proposedAction, context: bad } }).success).toBe(false);
+    }
+  });
+
   it("accepts a proposedActionResult with the echoed hash on accept", () => {
     expect(acceptIssueThreadInteractionSchema.parse({ proposedActionResult: { status: "failed", httpStatus: 403, message: "Forbidden", hash } }).proposedActionResult)
       .toEqual({ status: "failed", httpStatus: 403, message: "Forbidden", hash });

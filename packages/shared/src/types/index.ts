@@ -772,6 +772,7 @@ export type {
   ConnectionIntentResult,
   RequestConfirmationSecretProposalPayload,
   RequestConfirmationProposedActionPayload,
+  ProposedActionContext,
   RequestConfirmationProposedActionResult,
   ProposedActionMethod,
   ProposedActionCategory,

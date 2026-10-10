@@ -53,7 +53,10 @@ describe("governed body restrictions", () => {
     [{ name: "Ops", adapterType: "claude_local", metadata: {} }, /metadata/],
     [{ name: "Ops", adapterType: "claude_local", defaultEnvironmentId: "33333333-3333-4333-8333-333333333333" }, /defaultEnvironmentId/],
     [{ name: "Ops", adapterType: "claude_local", budgetMonthlyCents: 10_000_001 }, /budgetMonthlyCents/],
-    [{ name: 42 }, /name/],
+    [{ name: 42, adapterType: "claude_local" }, /name/],
+    [{ name: "Ops" }, /adapterType is required/],
+    [{ name: "Ops", role: "general" }, /adapterType is required/],
+    [{ name: "Ops", role: "overlord", adapterType: "claude_local" }, /role/],
   ])("refuses agent create/hire bodies beyond the allowlist (%j)", async (body, message) => {
     for (const path of [`/api/companies/${companyId}/agents`, `/api/companies/${companyId}/agent-hires`]) {
       await expect(check("POST", path, body)).rejects.toThrow(message);
@@ -68,8 +71,82 @@ describe("governed body restrictions", () => {
   it("allows an ordinary agent hire with only allowlisted fields", async () => {
     for (const path of [`/api/companies/${companyId}/agents`, `/api/companies/${companyId}/agent-hires`]) {
       await expect(check("POST", path, { name: "Writer", role: "general", adapterType: "claude_local" })).resolves.toMatchObject({ category: "agent_lifecycle" });
-      await expect(check("POST", path, { name: "Writer", title: "Copywriter", icon: "pen", capabilities: "Writes", reportsTo: null, budgetMonthlyCents: 5000 })).resolves.toBeTruthy();
+      await expect(check("POST", path, { name: "Writer", title: "Copywriter", icon: "pen", capabilities: "Writes", reportsTo: null, budgetMonthlyCents: 5000, adapterType: "codex_local" })).resolves.toBeTruthy();
     }
+  });
+
+  it.each(["ceo", "CEO", " Ceo "])("refuses hiring a CEO-level agent (role %j): the role carries elevated authority", async (role) => {
+    for (const path of [`/api/companies/${companyId}/agents`, `/api/companies/${companyId}/agent-hires`]) {
+      await expect(check("POST", path, { name: "Boss", role, adapterType: "claude_local" }))
+        .rejects.toThrow("Hiring a CEO-level agent must be done in the Agents page.");
+    }
+  });
+
+  it("allows every non-privileged role", async () => {
+    for (const role of ["cto", "cmo", "cfo", "security", "engineer", "designer", "pm", "qa", "devops", "researcher", "general"]) {
+      await expect(check("POST", `/api/companies/${companyId}/agent-hires`, { name: "Staff", role, adapterType: "claude_local" })).resolves.toBeTruthy();
+    }
+  });
+
+  describe("secret updates change only name, description and status", () => {
+    const secretId = "44444444-4444-4444-8444-444444444444";
+    // Entity-bound: the secret's company is looked up after body checks, so body refusals need no database.
+    it.each([
+      [{ externalRef: "arn:aws:secretsmanager:evil" }],
+      [{ providerConfigId: "55555555-5555-4555-8555-555555555555" }],
+      [{ providerMetadata: { region: "x" } }],
+      [{ key: "OTHER_KEY" }],
+      [{ value: "sk-live" }],
+      [{ name: "API", description: { externalRef: "x" } }],
+      [{ name: "API", nested: [{ providerConfigId: "x" }] }],
+    ])("refuses %j", async (body) => {
+      await expect(check("PATCH", `/api/secrets/${secretId}`, body)).rejects.toThrow("Change where a secret points in Secrets settings.");
+    });
+
+    it("refuses other keys and non-text values", async () => {
+      await expect(check("PATCH", `/api/secrets/${secretId}`, { rotate: true })).rejects.toThrow(/name, description or status/);
+      await expect(check("PATCH", `/api/secrets/${secretId}`, { name: 7 })).rejects.toThrow(/name/);
+      await expect(check("PATCH", `/api/secrets/${secretId}`, null)).rejects.toThrow(/name, description or status/);
+    });
+
+    it("allows renaming, describing and changing status", async () => {
+      const db = { select: () => ({ from: () => ({ where: async () => [{ companyId }] }) }) } as unknown as Db;
+      await expect(validateGovernedAction(db, { method: "PATCH", path: `/api/secrets/${secretId}`, body: { name: "API", description: null, status: "disabled" } }, companyId))
+        .resolves.toMatchObject({ category: "secret" });
+    });
+  });
+
+  describe("generic deletes", () => {
+    const id = "66666666-6666-4666-8666-666666666666";
+    const db = { select: () => ({ from: () => ({ where: async () => [{ companyId }] }) }) } as unknown as Db;
+    const del = (path: string, body: unknown = null) => validateGovernedAction(db, { method: "DELETE", path, body }, companyId);
+
+    it("take no request body", async () => {
+      await expect(del(`/api/companies/${companyId}/labels/${id}`, { reason: "x" })).rejects.toThrow(/no request body/);
+      await expect(del(`/api/issues/${id}/comments/${id}`, { reason: "x" })).rejects.toThrow(/no request body/);
+      await expect(del(`/api/companies/${companyId}/ai-connection-pools/${id}`, { expectedRevision: 1 })).rejects.toThrow(/no request body/);
+      await expect(del(`/api/companies/${companyId}/labels/${id}`)).resolves.toMatchObject({ category: "delete" });
+      await expect(del(`/api/issues/${id}/comments/${id}`)).resolves.toMatchObject({ category: "delete" });
+      await expect(del(`/api/issues/${id}`)).resolves.toMatchObject({ category: "delete" });
+    });
+
+    it.each([
+      `/api/companies/${companyId}/tools/policies/${id}`,
+      `/api/companies/${companyId}/skill-policy`,
+      `/api/issues/${id}/approvals/${id}`,
+      `/api/issues/${id}/watchdog`,
+      // Express routes case-insensitively.
+      `/api/issues/${id}/Watchdog`,
+      `/api/companies/${companyId}/Skill-Policy`,
+      `/api/companies/${companyId}/TOOLS/policies/${id}`,
+    ])("refuses removing a safety control: %s", async (path) => {
+      await expect(del(path)).rejects.toThrow("This removes a safety control; do it from the app.");
+    });
+
+    it("refuses skill file deletes", async () => {
+      await expect(del(`/api/companies/${companyId}/skills/${id}/files`)).rejects.toThrow(/skill files/i);
+      await expect(del(`/api/companies/${companyId}/skills/${id}/files`, { path: "SKILL.md" })).rejects.toThrow(/skill files/i);
+    });
   });
 
   it.each([-1, 1.5, 10_000_001, "100", null])("refuses budget amount %j", async (amount) => {
@@ -208,6 +285,53 @@ const support = await getEmbeddedPostgresTestSupport();
     // Proposing never executes the call.
     const [unchanged] = await server.db.select().from(approvals).where(eq(approvals.id, approval.id));
     expect(unchanged!.status).toBe("pending");
+  }, 60_000);
+
+  it("stores server-built approval context on approval decisions, outside the hash", async () => {
+    const f = await assistantFixture();
+    const [approval] = await server.db.insert(approvals).values({
+      companyId: f.companyId, type: "hire_agent", status: "pending", requestedByAgentId: f.staffAgentId,
+      payload: { name: "Shell Runner", role: "engineer", adapterType: "hermes_local",
+        adapterConfig: { model: "x", nested: { hermesCommand: "/bin/sh", extraArgs: ["-c", "id"] }, env: { A: "1" } } },
+    }).returning();
+    for (const verb of ["approve", "reject", "request-revision"] as const) {
+      const path = `/api/approvals/${approval!.id}/${verb}`;
+      const result = await call(f, "staples_propose_action", { method: "POST", path, body: null, summary: `${verb} the hire` });
+      expect(result.body.result.isError, JSON.stringify(result.body)).toBeUndefined();
+      const [row] = await server.db.select().from(issueThreadInteractions)
+        .where(eq(issueThreadInteractions.id, result.body.result.structuredContent.interaction.id as string));
+      const stored = (row!.payload as { proposedAction: Record<string, unknown> }).proposedAction;
+      expect(stored.context).toEqual({
+        source: "approval", approvalType: "hire_agent", requestedBy: "API eval agent",
+        agentName: "Shell Runner", agentRole: "engineer", adapterType: "hermes_local",
+        adapterConfigCommandFields: ["env", "extraArgs", "hermesCommand"],
+      });
+      // Display only: the hash still describes exactly method, path and body.
+      expect(stored.hash).toBe(proposedActionHash({ method: "POST", path, body: null }));
+    }
+    // Hydrated reads keep it, so the card can render it.
+    const listed = await request(personApp(f, "session")).get(`/api/issues/${f.issueId}/interactions`);
+    expect(listed.status).toBe(200);
+    const contexts = (listed.body as Array<{ payload: { proposedAction?: { context?: unknown } } }>).map((i) => i.payload.proposedAction?.context);
+    expect(contexts.every((c) => (c as { approvalType?: string } | undefined)?.approvalType === "hire_agent")).toBe(true);
+    // The Assistant cannot supply context itself.
+    const forged = await call(f, "staples_propose_action", {
+      method: "POST", path: `/api/approvals/${approval!.id}/approve`, body: { decisionNote: "x" }, summary: "Approve",
+      context: { source: "approval", approvalType: "budget_override_required", requestedBy: "You" },
+    });
+    expect(forged.body.result).toMatchObject({ isError: true });
+  }, 60_000);
+
+  it("approval context for a non-hire approval names the type and requester only", async () => {
+    const f = await assistantFixture();
+    const [approval] = await server.db.insert(approvals).values({ companyId: f.companyId, type: "approve_ceo_strategy", status: "pending", requestedByUserId: f.responsibleUserId, payload: { plan: "x" } }).returning();
+    const result = await call(f, "staples_propose_action", { method: "POST", path: `/api/approvals/${approval!.id}/approve`, body: null, summary: "Approve" });
+    const [row] = await server.db.select().from(issueThreadInteractions)
+      .where(eq(issueThreadInteractions.id, result.body.result.structuredContent.interaction.id as string));
+    const context = (row!.payload as { proposedAction: { context: Record<string, unknown> } }).proposedAction.context;
+    expect(context).toMatchObject({ source: "approval", approvalType: "approve_ceo_strategy" });
+    expect(typeof context.requestedBy).toBe("string");
+    expect(context).not.toHaveProperty("agentName");
   }, 60_000);
 
   it("rejects non-allowlisted paths, other-company entities and oversized bodies", async () => {

@@ -1600,6 +1600,21 @@ const proposedActionPathSchema = z
   .max(1000)
   .refine((value) => value.startsWith("/api/"), "path must start with /api/");
 
+/**
+ * Server-owned display data the Assistant tool reads from the database (for
+ * approval decisions: the approval itself). Not part of the hash; shown on the
+ * card as "From the approval" so the person sees what they are deciding on.
+ */
+export const proposedActionContextSchema = z.object({
+  source: z.literal("approval"),
+  approvalType: z.string().trim().min(1).max(80),
+  requestedBy: z.string().max(200).nullable(),
+  agentName: z.string().max(200).nullable().optional(),
+  agentRole: z.string().max(80).nullable().optional(),
+  adapterType: z.string().max(120).nullable().optional(),
+  adapterConfigCommandFields: z.array(z.string().max(120)).max(20).optional(),
+});
+
 /** Server-owned: an exact governed API call executed by the person's browser after Confirm. */
 export const requestConfirmationProposedActionPayloadSchema = z.object({
   version: z.literal(1),
@@ -1628,6 +1643,7 @@ export const requestConfirmationProposedActionPayloadSchema = z.object({
       expected: z.string().trim().min(1).max(100),
     })
     .optional(),
+  context: proposedActionContextSchema.optional(),
 });
 
 export const requestConfirmationPayloadSchema = z.object({

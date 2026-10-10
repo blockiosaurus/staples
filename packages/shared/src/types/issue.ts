@@ -1405,6 +1405,22 @@ export interface RequestConfirmationProposedActionPayload {
   category: ProposedActionCategory;
   hash: string;
   staleCheck?: { path: string; field: "updatedAt"; expected: string };
+  /** Server-owned display data read from the database; not hashed. */
+  context?: ProposedActionContext;
+}
+
+/** What the server read from the approval a proposal decides on, shown as "From the approval". */
+export interface ProposedActionContext {
+  source: "approval";
+  approvalType: string;
+  /** Requesting agent's or person's name, when known. */
+  requestedBy: string | null;
+  /** hire_agent only. */
+  agentName?: string | null;
+  agentRole?: string | null;
+  adapterType?: string | null;
+  /** Command-like keys found anywhere in the hire's adapterConfig. */
+  adapterConfigCommandFields?: string[];
 }
 
 export interface RequestConfirmationProposedActionResult {

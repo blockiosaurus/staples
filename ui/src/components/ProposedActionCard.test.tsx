@@ -126,6 +126,34 @@ describe("ProposedActionCard", () => {
     expect(button(host, "Cancel")).toBeTruthy();
   });
 
+  it("shows server-built approval context above the request, labelled as from the approval", async () => {
+    const base = proposal();
+    const interaction = {
+      ...base,
+      payload: { ...base.payload, proposedAction: { ...base.payload.proposedAction!, context: {
+        source: "approval", approvalType: "hire_agent", requestedBy: "Hiring Manager", agentName: "Shell Runner",
+        agentRole: "engineer", adapterType: "hermes_local", adapterConfigCommandFields: ["hermesCommand", "env"],
+      } } },
+    } as RequestConfirmationInteraction;
+    const host = await render({ interaction, onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+    const block = host.querySelector('[data-testid="proposed-action-context"]')!;
+    expect(block).toBeTruthy();
+    expect(block.textContent).toContain("From the approval");
+    expect(block.textContent).toContain("Hire agent");
+    expect(block.textContent).toContain("Hiring Manager");
+    expect(block.textContent).toContain("Shell Runner");
+    expect(block.textContent).toContain("hermes_local");
+    expect(block.textContent).toContain("hermesCommand");
+    expect(block.textContent).toContain("env");
+    const requestBlock = host.querySelector('[data-testid="proposed-action-request"]')!;
+    expect(block.compareDocumentPosition(requestBlock) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows no approval context block without server context", async () => {
+    const host = await render({ onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+    expect(host.querySelector('[data-testid="proposed-action-context"]')).toBeNull();
+  });
+
   it("claims, then executes the exact call with the person's session, then reports executed", async () => {
     fetchMock.mockResolvedValueOnce(claimed()).mockResolvedValueOnce(json(200, { id: APPROVAL_ID, status: "approved" }));
     const accept = vi.fn(async () => undefined);

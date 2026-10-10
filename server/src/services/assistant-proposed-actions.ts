@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { agents, approvals, companySecrets, issues, toolConnections, type Db } from "@paperclipai/db";
 import { ASSISTANT_ALLOWED_ADAPTER_TYPES } from "./assistant-identity.js";
 import {
+  AGENT_ROLES,
   PROPOSED_ACTION_BODY_MAX_BYTES,
   type ProposedActionCategory,
   type ProposedActionMethod,
@@ -84,6 +85,18 @@ const AGENT_CREATE_ALLOWED_KEYS = new Set([
 const AGENT_CREATE_STRING_KEYS = ["name", "role", "title", "icon", "capabilities"] as const;
 const AGENT_SETTINGS_HINT = "Configure adapters, permissions and instructions in the agent's settings after hiring.";
 
+/**
+ * Roles that authorization code treats specially. `ceo` alone today:
+ * canCreateAgents (services/authorization.ts), task assignment
+ * (routes/agents.ts buildAgentAccessState), checkout management
+ * (authorization.ts), workspace runtime control
+ * (routes/workspace-runtime-service-authz.ts), and company/access/issue
+ * routes that gate on `role === "ceo"`. The Assistant may only propose the
+ * remaining roles from AGENT_ROLES.
+ */
+export const PRIVILEGED_AGENT_ROLES: readonly string[] = ["ceo"];
+const PROPOSABLE_AGENT_ROLES: readonly string[] = AGENT_ROLES.filter((role) => !PRIVILEGED_AGENT_ROLES.includes(role));
+
 function assertSafeAgentCreate(body: unknown) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new ProposedActionError("An agent proposal needs a JSON object body.");
@@ -104,11 +117,44 @@ function assertSafeAgentCreate(body: unknown) {
   if (record.reportsTo !== undefined && record.reportsTo !== null && typeof record.reportsTo !== "string") {
     throw new ProposedActionError("reportsTo must be an agent id.");
   }
-  if (record.adapterType !== undefined
-    && !(ASSISTANT_ALLOWED_ADAPTER_TYPES as readonly unknown[]).includes(record.adapterType)) {
-    throw new ProposedActionError(`adapterType must be one of ${ASSISTANT_ALLOWED_ADAPTER_TYPES.join(", ")}, or omitted. ${AGENT_SETTINGS_HINT}`);
+  if (typeof record.role === "string" && PRIVILEGED_AGENT_ROLES.includes(record.role.trim().toLowerCase())) {
+    throw new ProposedActionError("Hiring a CEO-level agent must be done in the Agents page.");
+  }
+  if (record.role !== undefined && record.role !== null && !PROPOSABLE_AGENT_ROLES.includes(record.role as string)) {
+    throw new ProposedActionError(`role must be one of ${PROPOSABLE_AGENT_ROLES.join(", ")}, or omitted.`);
+  }
+  // Omitting adapterType makes the route default to "process", which runs a host command.
+  if (record.adapterType === undefined || record.adapterType === null) {
+    throw new ProposedActionError(`adapterType is required: one of ${ASSISTANT_ALLOWED_ADAPTER_TYPES.join(", ")}.`);
+  }
+  if (!(ASSISTANT_ALLOWED_ADAPTER_TYPES as readonly unknown[]).includes(record.adapterType)) {
+    throw new ProposedActionError(`adapterType must be one of ${ASSISTANT_ALLOWED_ADAPTER_TYPES.join(", ")}. ${AGENT_SETTINGS_HINT}`);
   }
   assertBudgetAmounts(body, ["budgetMonthlyCents"]);
+}
+
+/**
+ * Secret updates may rename, describe or enable/disable a secret. Anything
+ * that changes what the secret resolves to (its key, value, external
+ * reference or provider) is refused at any depth.
+ */
+const SECRET_UPDATE_ALLOWED_KEYS = new Set(["name", "description", "status"]);
+const SECRET_POINTER_KEYS = new Set(["externalRef", "providerConfigId", "providerMetadata", "providerVersionRef", "key", "value"]);
+const SECRET_POINTER_MESSAGE = "Change where a secret points in Secrets settings.";
+
+function assertSafeSecretUpdate(body: unknown) {
+  if (findKeysDeep(body, SECRET_POINTER_KEYS).size) throw new ProposedActionError(SECRET_POINTER_MESSAGE);
+  if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length === 0) {
+    throw new ProposedActionError("A secret update may only change its name, description or status.");
+  }
+  const record = body as Record<string, unknown>;
+  const extra = Object.keys(record).filter((key) => !SECRET_UPDATE_ALLOWED_KEYS.has(key));
+  if (extra.length) {
+    throw new ProposedActionError(`A secret update may only change its name, description or status (not ${extra.join(", ")}). ${SECRET_POINTER_MESSAGE}`);
+  }
+  if (record.name !== undefined && (typeof record.name !== "string" || !record.name.trim())) throw new ProposedActionError("name must be text.");
+  if (record.description !== undefined && record.description !== null && typeof record.description !== "string") throw new ProposedActionError("description must be text or null.");
+  if (record.status !== undefined && typeof record.status !== "string") throw new ProposedActionError("status must be text.");
 }
 
 const UUID = "([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})";
@@ -135,16 +181,32 @@ export const GOVERNED_ROUTE_PATTERNS: readonly GovernedRoutePattern[] = [
   { method: "PATCH", pattern: re(`/api/agents/${UUID}/budgets`), category: "budget", binding: entity("agent"), route: "PATCH /api/agents/:agentId/budgets", validateBody: (body) => assertBudgetAmounts(body, ["budgetMonthlyCents"]) },
   // secrets.ts
   { method: "POST", pattern: re(`/api/companies/${UUID}/secrets`), category: "secret", binding: company(), route: "POST /api/companies/:companyId/secrets", forbidBodyKeys: ["value"] },
-  { method: "PATCH", pattern: re(`/api/secrets/${UUID}`), category: "secret", binding: entity("secret"), route: "PATCH /api/secrets/:id", forbidBodyKeys: ["value"] },
+  { method: "PATCH", pattern: re(`/api/secrets/${UUID}`), category: "secret", binding: entity("secret"), route: "PATCH /api/secrets/:id", validateBody: assertSafeSecretUpdate },
   { method: "DELETE", pattern: re(`/api/secrets/${UUID}`), category: "secret", binding: entity("secret"), route: "DELETE /api/secrets/:id" },
   // tool-access.ts: revocations only, and only without a body. Creating or
   // changing connections and grants happens in the Connectors UI.
   { method: "DELETE", pattern: re(`/api/tool-connections/${UUID}`), category: "connection", binding: entity("tool_connection"), route: "DELETE /api/tool-connections/:connectionId", validateBody: assertNoBody },
   { method: "DELETE", pattern: re(`/api/tool-connections/${UUID}/grants/${UUID}`), category: "connection", binding: entity("tool_connection"), route: "DELETE /api/tool-connections/:connectionId/grants/:grantId", validateBody: assertNoBody },
   { method: "DELETE", pattern: re(`/api/tool-connections/${UUID}/grants/${UUID}/delegations/${UUID}`), category: "connection", binding: entity("tool_connection"), route: "DELETE /api/tool-connections/:connectionId/grants/:grantId/delegations/:delegationId", validateBody: assertNoBody },
-  // Generic deletes scoped to this company or one of its issues.
-  { method: "DELETE", pattern: re(`/api/companies/${UUID}(?:/${SEGMENT})+`), category: "delete", binding: company(), route: "DELETE /api/companies/:companyId/..." },
-  { method: "DELETE", pattern: re(`/api/issues/${UUID}(?:/${SEGMENT})*`), category: "delete", binding: entity("issue"), route: "DELETE /api/issues/:id[/...]" },
+  // Generic deletes scoped to this company or one of its issues, without a
+  // body. Routes that need a delete body (decision queue items, inbox
+  // archive, queued comments, AI connection pools) are therefore not
+  // proposable; neither are the excluded deletes below.
+  { method: "DELETE", pattern: re(`/api/companies/${UUID}(?:/${SEGMENT})+`), category: "delete", binding: company(), route: "DELETE /api/companies/:companyId/...", validateBody: assertNoBody },
+  { method: "DELETE", pattern: re(`/api/issues/${UUID}(?:/${SEGMENT})*`), category: "delete", binding: entity("issue"), route: "DELETE /api/issues/:id[/...]", validateBody: assertNoBody },
+];
+
+/**
+ * Deletes the generic patterns would otherwise admit but that loosen a
+ * guardrail or edit skill content. Case-insensitive because Express routes
+ * case-insensitively. Checked before the allowlist.
+ */
+const EXCLUDED_DELETES: ReadonlyArray<{ pattern: RegExp; message: string }> = [
+  { pattern: new RegExp(`^/api/companies/${UUID}/tools/policies(?:/${SEGMENT})*$`, "i"), message: "This removes a safety control; do it from the app." },
+  { pattern: new RegExp(`^/api/companies/${UUID}/skill-policy(?:/${SEGMENT})*$`, "i"), message: "This removes a safety control; do it from the app." },
+  { pattern: new RegExp(`^/api/issues/${UUID}/approvals(?:/${SEGMENT})*$`, "i"), message: "This removes a safety control; do it from the app." },
+  { pattern: new RegExp(`^/api/issues/${UUID}/watchdog(?:/${SEGMENT})*$`, "i"), message: "This removes a safety control; do it from the app." },
+  { pattern: new RegExp(`^/api/companies/${UUID}/skills/${SEGMENT}/files(?:/${SEGMENT})*$`, "i"), message: "The Assistant cannot propose deleting skill files; edit the skill from the app." },
 ];
 
 /** GET paths a stale check may read: an entity by id, or anything under this company. */
@@ -176,6 +238,10 @@ function assertPlainApiPath(path: string, label: string) {
 
 export function matchGovernedRoute(method: string, path: string): GovernedRoutePattern & { match: RegExpExecArray } {
   assertPlainApiPath(path, "path");
+  if (method === "DELETE") {
+    const excluded = EXCLUDED_DELETES.find((entry) => entry.pattern.test(path));
+    if (excluded) throw new ProposedActionError(excluded.message);
+  }
   for (const route of GOVERNED_ROUTE_PATTERNS) {
     if (route.method !== method) continue;
     const match = route.pattern.exec(path);

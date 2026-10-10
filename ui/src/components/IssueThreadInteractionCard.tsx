@@ -1832,6 +1832,41 @@ const PROPOSED_ACTION_CATEGORY_LABELS: Record<string, string> = {
  * the stored call with their own session and reports the outcome (with the
  * proposal hash) through accept. Cancel rejects without calling anything.
  */
+function humanizeApprovalType(type: string) {
+  const words = type.replace(/[_-]+/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : type;
+}
+
+/** Server-built facts read from the approval being decided; never written by the Assistant. */
+function ProposedActionContextBlock({ context }: { context: NonNullable<NonNullable<RequestConfirmationInteraction["payload"]["proposedAction"]>["context"]> }) {
+  const commandFields = context.adapterConfigCommandFields ?? [];
+  const rows: Array<[string, ReactNode]> = [
+    ["Approval", humanizeApprovalType(context.approvalType)],
+    ["Requested by", context.requestedBy ?? "Unknown"],
+  ];
+  if (context.approvalType === "hire_agent") {
+    rows.push(["Agent", context.agentName ?? "Unnamed"]);
+    if (context.agentRole) rows.push(["Role", context.agentRole]);
+    rows.push(["Adapter", <span className="font-mono">{context.adapterType ?? "Not set"}</span>]);
+    rows.push(["Command settings", commandFields.length
+      ? <span className="text-amber-700 dark:text-amber-300">Adapter config sets <span className="font-mono">{commandFields.join(", ")}</span></span>
+      : "None in adapter config"]);
+  }
+  return (
+    <div data-testid="proposed-action-context" className="mt-3 rounded-md border border-border bg-muted/30 p-3">
+      <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">From the approval</p>
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+        {rows.map(([label, value]) => (
+          <div key={label} className="contents">
+            <dt className="text-muted-foreground">{label}</dt>
+            <dd className="min-w-0 break-words text-foreground">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 function ProposedActionCard({
   interaction,
   currentUserId,
@@ -1925,6 +1960,7 @@ function ProposedActionCard({
         </span>
         <span data-testid="interaction-status-badge" className={cn("text-xs", failed ? "text-destructive" : "text-muted-foreground")}>{statusLabel}</span>
       </div>
+      {action.context ? <ProposedActionContextBlock context={action.context} /> : null}
       {/* The exact request comes first, at full prominence: it is what runs. */}
       <div data-testid="proposed-action-request" className="mt-3 space-y-2">
         <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">Request</p>
