@@ -305,16 +305,17 @@ describe("Sidebar", () => {
     });
   });
 
-  it("renders plugin sidebar slots in the Work group", async () => {
+  it("renders plugin sidebar slots in Work below Workspaces", async () => {
     await withSidebar(
       { preferences: { showEverything: true }, flags: { enableIsolatedWorkspaces: true } },
       () => {
-        expect(hrefs()).not.toContain("/workspaces");
+        expect(hrefs()).toContain("/workspaces");
         const sidebarSlot = [...container.querySelectorAll("nav [data-plugin-slot-types]")]
           .find((node) => node.getAttribute("data-plugin-slot-types") === "sidebar");
         expect(sidebarSlot?.textContent).toContain("Plugin slot outlet");
         const workText = sidebarSlot?.parentElement?.parentElement?.textContent ?? "";
-        expect(workText).toContain("Tasks");
+        expect(workText).toContain("Workspaces");
+        expect(workText.indexOf("Workspaces")).toBeLessThan(workText.indexOf("Plugin slot outlet"));
         const primaryNavText = container.querySelector("nav > div:first-child")?.textContent ?? "";
         expect(primaryNavText).not.toContain("Plugin slot outlet");
       },
@@ -352,7 +353,7 @@ describe("Sidebar", () => {
     );
   });
 
-  it("leads the Work group with Chat once there is more than one agent, and hides Workspaces", async () => {
+  it("leads the Work group with Chat once there is more than one agent, alongside Workspaces", async () => {
     await withSidebar(
       {
         preferences: { showEverything: true },
@@ -365,7 +366,7 @@ describe("Sidebar", () => {
         const workText = [...container.querySelectorAll("nav > div")]
           .find((section) => section.textContent?.startsWith("Work"))?.textContent ?? "";
         expect(workText.indexOf("Chat")).toBeLessThan(workText.indexOf("Tasks"));
-        expect(hrefs()).not.toContain("/workspaces");
+        expect(hrefs()).toContain("/workspaces");
       },
     );
   });

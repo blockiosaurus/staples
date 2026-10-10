@@ -180,6 +180,16 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     available: (ctx) => ctx.flags?.enablePipelines === true,
   },
   {
+    id: "nav.workspaces",
+    label: "Workspaces",
+    to: "/workspaces",
+    matchRoots: ["workspaces", "execution-workspaces"],
+    icon: GitBranch,
+    group: "work",
+    tier: "advanced",
+    available: (ctx) => ctx.flags?.enableIsolatedWorkspaces === true,
+  },
+  {
     id: "nav.agents",
     label: "Agents",
     to: "/agents",

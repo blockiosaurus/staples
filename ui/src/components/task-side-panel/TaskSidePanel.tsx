@@ -268,7 +268,7 @@ export function TaskSidePanel({
   const handleScroll = useScrollbarWhileScrolling();
   // Agent Chat: agent chats swap the conversation issue's own panels for
   // agent-scoped ones — the agent's tasks lead, and Artifacts lists the
-  // agent's output. With the flag off a chat keeps the issue's own panels.
+  // agent's output.
   const conversationAgentId = issue.conversationAgentId ?? null;
   const showRelatedTasks = showSubtasksTab && !conversationAgentId;
   const viewer = useTaskSidePanelFileRouting();
