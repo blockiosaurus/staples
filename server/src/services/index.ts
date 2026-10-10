@@ -118,6 +118,7 @@ export { dashboardService } from "./dashboard.js";
 export { companySignalsService } from "./company-signals.js";
 export { sidebarBadgeService } from "./sidebar-badges.js";
 export { sidebarPreferenceService } from "./sidebar-preferences.js";
+export { uiPreferencesService } from "./ui-preferences.js";
 export { resourceMembershipService, type ResourceMembershipPolicyHook } from "./resource-memberships.js";
 export { inboxDismissalService } from "./inbox-dismissals.js";
 export { accessService } from "./access.js";

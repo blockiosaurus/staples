@@ -143,6 +143,7 @@ import {
   adjustCostSchema,
   // Sidebar
   upsertSidebarOrderPreferenceSchema,
+  patchUiPreferencesSchema,
   // Announcements
   announcementIdSchema,
   announcementSchema,
@@ -6539,6 +6540,21 @@ registry.registerPath({
   },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized },
 });
+
+for (const method of ["get", "patch"] as const) {
+  registry.registerPath({
+    method,
+    path: "/api/companies/{companyId}/ui-preferences/me",
+    tags: ["sidebar"],
+    summary: method === "get" ? "Get my UI preferences for company" : "Patch my UI preferences for company",
+    description: "Per-person adaptive navigation preferences (pinned, hidden, revealed, seen, showEverything). Active company members, including viewers, may manage their own. Agent credentials cannot access it.",
+    request: {
+      params: z.object({ companyId: z.string() }),
+      ...(method === "patch" ? { body: jsonBody(patchUiPreferencesSchema) } : {}),
+    },
+    responses: { 200: r.ok(), ...(method === "patch" ? { 400: r.badRequest } : {}), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+  });
+}
 
 const primaryAgentPreferenceResponse = z.object({
   companyId: z.string().uuid(),
