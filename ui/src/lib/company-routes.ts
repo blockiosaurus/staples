@@ -1,43 +1,11 @@
-const BOARD_ROUTE_ROOTS = new Set([
-  "dashboard",
-  "companies",
-  "company",
-  "skills",
-  "teams-catalog",
-  "org",
-  "agents",
-  "chats",
-  "apps",
-  "projects",
-  "workspaces",
-  "execution-workspaces",
-  "issues",
-  "tasks",
-  "routines",
-  "goals",
-  "artifacts",
-  "tools",
-  "approvals",
-  "costs",
-  "usage",
-  "activity",
-  "audit",
-  "decisions",
-  "inbox",
-  "u",
-  "design-guide",
-  "search",
-  "settings",
-  "timeline",
-  "assistant",
-  "cases",
-  "status",
-  "pipelines",
-  "review-queue",
-  "learnings",
-]);
+import {
+  BOARD_ROUTE_ROOTS as SHARED_BOARD_ROUTE_ROOTS,
+  GLOBAL_ROUTE_ROOTS as SHARED_GLOBAL_ROUTE_ROOTS,
+} from "@paperclipai/shared";
 
-const GLOBAL_ROUTE_ROOTS = new Set(["auth", "invite", "board-claim", "cli-auth", "mcp-connect", "dot-connect", "assistant-connections", "docs", "instance"]);
+const BOARD_ROUTE_ROOTS: ReadonlySet<string> = new Set(SHARED_BOARD_ROUTE_ROOTS);
+
+const GLOBAL_ROUTE_ROOTS: ReadonlySet<string> = new Set(SHARED_GLOBAL_ROUTE_ROOTS);
 
 export function normalizeCompanyPrefix(prefix: string): string {
   return prefix.trim().toUpperCase();
@@ -94,7 +62,7 @@ export function applyCompanyPrefix(path: string, companyPrefix: string | null | 
 }
 
 /**
- * Build a company-prefixed href for an experimental Cases route, e.g.
+ * Build a company-prefixed href for a Cases route, e.g.
  * `caseHref("PAP", "PAP-C5")` → `/PAP/cases/PAP-C5`.
  *
  * Case paths carry identifiers like `PAP-C5` in the first segment, which the

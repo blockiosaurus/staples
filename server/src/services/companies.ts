@@ -21,6 +21,7 @@ import {
   MAX_ISSUE_PREFIX_ATTEMPTS,
   deriveIssuePrefixBase,
   isIssuePrefixConflict,
+  isReservedIssuePrefix,
   issuePrefixSuffixForAttempt,
   pickAvailableIssuePrefix,
   rekeyCompanyIssueIdentifiers,
@@ -248,6 +249,10 @@ export function companyService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
     let suffix = 1;
     while (suffix <= MAX_ISSUE_PREFIX_ATTEMPTS) {
       const candidate = `${base}${issuePrefixSuffixForAttempt(suffix)}`;
+      if (isReservedIssuePrefix(candidate)) {
+        suffix += 1;
+        continue;
+      }
       try {
         const rows = await db
           .insert(companies)
