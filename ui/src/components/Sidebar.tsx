@@ -23,6 +23,7 @@ import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
 import { primarySidebarStyles } from "./primary-sidebar-styles";
 import { useSurfaces } from "../staples/surfaces/useSurfaces";
+import { SidebarMoreMenu } from "../staples/surfaces/SidebarMoreMenu";
 import { renderableSurfaces, type SurfaceState } from "../staples/surfaces/resolve";
 
 export function Sidebar({ children }: { children?: ReactNode }) {
@@ -210,6 +211,8 @@ export function Sidebar({ children }: { children?: ReactNode }) {
             {orgSurfaces.map(renderSurface)}
           </SidebarSection>
         ) : null}
+
+        <SidebarMoreMenu />
 
         {children ?? <SidebarAgents />}
 
