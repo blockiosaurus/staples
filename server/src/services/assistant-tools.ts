@@ -7,7 +7,7 @@ import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { publicMcpCapabilities } from "./public-mcp/capabilities.js";
-import { ProposedActionError, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
+import { APPROVAL_DECISION_PATH, ProposedActionError, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
 import { logActivity } from "./activity-log.js";
 import { McpApiError, McpCapabilityError, object, pick, rows, taskFields, pathId, type ApiDispatch, type Capability } from "./public-mcp/contracts.js";
@@ -282,7 +282,6 @@ function assistantCapabilities(db: Db): Capability[] {
 
 const PROPOSE_ACTION_TOOL = "staples_propose_action";
 
-const APPROVAL_DECISION_PATH = /^\/api\/approvals\/([0-9a-fA-F-]{36})\/(?:approve|reject|request-revision)$/;
 /** Adapter config keys that run or shape a host process. */
 const COMMAND_LIKE_KEY = /command|^cmd$|args$|^env$|script|shell|executable|entrypoint|binary/i;
 const clip = (value: unknown, max: number) => (typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null);
@@ -300,14 +299,15 @@ function commandLikeKeys(value: unknown, found: string[] = []): string[] {
 
 /**
  * For approval decisions, read the approval and describe what is being
- * decided, so the card does not rely on the Assistant's summary. Display only:
- * not hashed, and the Assistant cannot supply it.
+ * decided, so the card does not rely on the Assistant's summary. Server-owned:
+ * not hashed, and the Assistant cannot supply it. `approvalUpdatedAt` pins the
+ * approval revision the decision was proposed against (checked at claim).
  */
 async function approvalDecisionContext(db: Db, companyId: string, path: string): Promise<ProposedActionContext | null> {
   const approvalId = APPROVAL_DECISION_PATH.exec(path)?.[1];
   if (!approvalId) return null;
   const [approval] = await db.select({
-    type: approvals.type, payload: approvals.payload,
+    type: approvals.type, payload: approvals.payload, updatedAt: approvals.updatedAt,
     requestedByAgentId: approvals.requestedByAgentId, requestedByUserId: approvals.requestedByUserId,
   }).from(approvals).where(and(eq(approvals.id, approvalId), eq(approvals.companyId, companyId)));
   if (!approval) return null;
@@ -320,7 +320,9 @@ async function approvalDecisionContext(db: Db, companyId: string, path: string):
     const [user] = await db.select({ name: authUsers.name, email: authUsers.email }).from(authUsers).where(eq(authUsers.id, approval.requestedByUserId));
     requestedBy = clip(user?.name, 200) ?? clip(user?.email, 200);
   }
-  const context: ProposedActionContext = { source: "approval", approvalType: approval.type.slice(0, 80), requestedBy };
+  const context: ProposedActionContext = {
+    source: "approval", approvalType: approval.type.slice(0, 80), requestedBy, approvalUpdatedAt: approval.updatedAt.toISOString(),
+  };
   if (approval.type === "hire_agent") {
     const payload = object(approval.payload);
     context.agentName = clip(payload.name, 200);

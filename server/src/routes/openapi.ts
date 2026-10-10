@@ -197,6 +197,7 @@ import {
   createIssueThreadInteractionSchema,
   createChildIssueSchema,
   acceptIssueThreadInteractionSchema,
+  claimProposedActionSchema,
   resolveConfirmationFromCommentSchema,
   rejectIssueThreadInteractionSchema,
   respondIssueThreadInteractionSchema,
@@ -1461,6 +1462,7 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "GET /api/issues/{issueId}/file-resources/list",
   "GET /api/issues/{issueId}/file-resources/resolve",
   "POST /api/issues/{id}/interactions/{interactionId}/accept",
+  "POST /api/issues/{id}/interactions/{interactionId}/claim-proposed-action",
   "POST /api/issues/{id}/interactions/{interactionId}/reject",
   "POST /api/issues/{id}/interactions/{interactionId}/respond",
   "POST /api/issues/{id}/interactions/{interactionId}/skip",
@@ -1713,6 +1715,11 @@ function operationKey(method: string, path: string) {
   return `${method.toUpperCase()} ${path}`;
 }
 
+/** Only the person's own interactive board session; never a board API key, delegated channel or agent. */
+const BOARD_SESSION_ONLY_OPERATIONS = new Set([
+  "POST /api/issues/{id}/interactions/{interactionId}/claim-proposed-action",
+]);
+
 function isVoiceSessionOperation(path: string) { return /^\/api\/companies\/\{companyId\}\/voice-(sessions|callbacks|phone|history)(?:\/|$)/.test(path); }
 
 function isBoardOnlyOperation(method: string, path: string) {
@@ -1834,7 +1841,7 @@ function applyDocumentFixups(document: any): any {
                 ? { actor: "board_or_agent" }
                 : { actor: "public" };
 
-      if (isVoiceSessionOperation(path)) {
+      if (isVoiceSessionOperation(path) || BOARD_SESSION_ONLY_OPERATIONS.has(operationKey(method, path))) {
         operation.security = [{[BOARD_SESSION_AUTH_SCHEME]: []}];
         operation["x-paperclip-authorization"] = {actor: "board", sessionBound: true};
       }
@@ -7884,6 +7891,27 @@ registry.registerPath({
   },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound,
     409: { description: "Stale or conflicting decision" }, 422: { description: "Invalid answer evidence or selection" } },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/issues/{id}/interactions/{interactionId}/claim-proposed-action",
+  tags: ["issues"],
+  summary: "Claim an Assistant-proposed action before executing it",
+  description: "The addressed person, in their own interactive board session, reserves a pending proposed action before their browser performs it. The stored call is re-validated against the governed allowlist, the echoed hash must match, and approval decisions are refused if the approval changed since the proposal. A fresh claim blocks a second tab.",
+  request: {
+    params: z.object({ id: z.string(), interactionId: z.string() }),
+    body: jsonBody(claimProposedActionSchema),
+  },
+  responses: {
+    200: r.ok(),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+    409: { description: "Already resolved, already claimed, or the approval changed since the proposal" },
+    422: { description: "The stored proposal can no longer run" },
+  },
 });
 
 registry.registerPath({

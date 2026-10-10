@@ -854,6 +854,15 @@ describe("openapi routes", () => {
     ).toBeUndefined();
   });
 
+  it("documents proposed-action claims as the person's own board session only", () => {
+    const {spec} = loadSpecRoutes();
+    const claim = spec.paths["/api/issues/{id}/interactions/{interactionId}/claim-proposed-action"].post;
+    expect(claim.security).toEqual([{BoardSessionAuth: []}]);
+    expect(claim["x-paperclip-authorization"]).toEqual({actor: "board", sessionBound: true});
+    expect(claim.requestBody.content["application/json"].schema.required).toEqual(["hash"]);
+    expect(claim.responses["409"]).toBeDefined();
+  });
+
   it("documents session-bound voice authority without durable credentials", () => {
     const {spec} = loadSpecRoutes();
     const start = spec.paths["/api/companies/{companyId}/voice-sessions"].post;

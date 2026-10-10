@@ -8,7 +8,7 @@ import {
 import { parseQuestionInteractionAnswers } from "./question-interaction-answers.js";
 import { isUniqueViolation } from "../db-errors.js";
 import { assertAgentRunWriteAllowed } from "../agent-run-cancellation.js";
-import { connectionIntentDeliveries } from "@paperclipai/db";
+import { approvals, connectionIntentDeliveries } from "@paperclipai/db";
 import { isDeepStrictEqual } from "node:util";
 import {
   and,
@@ -101,7 +101,7 @@ import {
 } from "@paperclipai/shared";
 import { z } from "zod";
 import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
-import { ProposedActionError, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
+import { APPROVAL_CHANGED_MESSAGE, APPROVAL_DECISION_PATH, ProposedActionError, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { authorizationService } from "./authorization.js";
 import { isCloudManagedInstance } from "./cloud-instance.js";
@@ -3334,6 +3334,16 @@ export function issueThreadInteractionService(
         } catch (error) {
           if (error instanceof ProposedActionError) throw unprocessable(`This proposed action cannot run: ${error.message}`);
           throw error;
+        }
+        // Approval decisions are bound to the approval revision the Assistant saw.
+        const approvalId = APPROVAL_DECISION_PATH.exec(path)?.[1];
+        if (approvalId) {
+          const recorded = (proposal as { context?: { approvalUpdatedAt?: unknown } }).context?.approvalUpdatedAt;
+          const [approval] = await tx.select({ updatedAt: approvals.updatedAt }).from(approvals)
+            .where(and(eq(approvals.id, approvalId), eq(approvals.companyId, issue.companyId)));
+          if (typeof recorded !== "string" || !approval || approval.updatedAt.toISOString() !== recorded) {
+            throw conflict(APPROVAL_CHANGED_MESSAGE);
+          }
         }
         const existing = readProposedActionClaim(current.payload);
         const now = new Date();

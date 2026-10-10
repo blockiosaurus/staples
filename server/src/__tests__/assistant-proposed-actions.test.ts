@@ -305,6 +305,7 @@ const support = await getEmbeddedPostgresTestSupport();
         source: "approval", approvalType: "hire_agent", requestedBy: "API eval agent",
         agentName: "Shell Runner", agentRole: "engineer", adapterType: "hermes_local",
         adapterConfigCommandFields: ["env", "extraArgs", "hermesCommand"],
+        approvalUpdatedAt: approval!.updatedAt.toISOString(),
       });
       // Display only: the hash still describes exactly method, path and body.
       expect(stored.hash).toBe(proposedActionHash({ method: "POST", path, body: null }));
@@ -427,6 +428,28 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(proposed.body.result.isError, JSON.stringify(proposed.body)).toBeUndefined();
     return { interactionId: proposed.body.result.structuredContent.interaction.id as string, hash: proposed.body.result.structuredContent.proposedAction.hash as string };
   }
+
+  it("records the approval's updatedAt server-side and refuses a claim after the approval changed", async () => {
+    const f = await assistantFixture();
+    const approval = await pendingApproval(f.companyId);
+    const proposed = await call(f, "staples_propose_action", { method: "POST", path: `/api/approvals/${approval.id}/approve`, body: null, summary: "Approve" });
+    expect(proposed.body.result.isError, JSON.stringify(proposed.body)).toBeUndefined();
+    const interactionId = proposed.body.result.structuredContent.interaction.id as string;
+    const hash = proposed.body.result.structuredContent.proposedAction.hash as string;
+    const [row] = await server.db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, interactionId));
+    const [stored] = await server.db.select().from(approvals).where(eq(approvals.id, approval.id));
+    expect((row!.payload as { proposedAction: { context: { approvalUpdatedAt: string } } }).proposedAction.context.approvalUpdatedAt)
+      .toBe(stored!.updatedAt.toISOString());
+    // The hash covers only method, path and body.
+    expect(hash).toBe(proposedActionHash({ method: "POST", path: `/api/approvals/${approval.id}/approve`, body: null }));
+
+    // The approval is revised after the Assistant proposed the decision.
+    await server.db.update(approvals).set({ payload: { title: "Revised" }, updatedAt: new Date(Date.now() + 5_000) }).where(eq(approvals.id, approval.id));
+    const claimUrl = `/api/issues/${f.issueId}/interactions/${interactionId}/claim-proposed-action`;
+    const refused = await request(personApp(f, "session")).post(claimUrl).send({ hash });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe("The approval changed since the Assistant proposed this.");
+  }, 60_000);
 
   it("claims only for the addressee's own session, with the stored hash", async () => {
     const f = await assistantFixture();

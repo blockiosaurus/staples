@@ -221,6 +221,10 @@ const STALE_CHECK_PATTERNS: ReadonlyArray<{ pattern: RegExp; binding: CompanyBin
 
 export class ProposedActionError extends Error {}
 
+/** POST /api/approvals/:id/{approve,reject,request-revision}; group 1 is the approval id. */
+export const APPROVAL_DECISION_PATH = /^\/api\/approvals\/([0-9a-fA-F-]{36})\/(?:approve|reject|request-revision)$/;
+export const APPROVAL_CHANGED_MESSAGE = "The approval changed since the Assistant proposed this.";
+
 /**
  * Structural path rules applied before pattern matching: a plain `/api/...`
  * path of unreserved characters only. No query string, fragment, percent

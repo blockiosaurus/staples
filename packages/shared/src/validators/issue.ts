@@ -1613,6 +1613,8 @@ export const proposedActionContextSchema = z.object({
   agentRole: z.string().max(80).nullable().optional(),
   adapterType: z.string().max(120).nullable().optional(),
   adapterConfigCommandFields: z.array(z.string().max(120)).max(20).optional(),
+  /** The approval's updatedAt when proposed; a claim is refused if it has changed since. */
+  approvalUpdatedAt: z.string().max(100).optional(),
 });
 
 /** Server-owned: an exact governed API call executed by the person's browser after Confirm. */
