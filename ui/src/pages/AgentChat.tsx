@@ -6,10 +6,10 @@ import { authApi } from "@/api/auth";
 import { useCompany } from "@/context/CompanyContext";
 import { recordAgentChatVisit } from "@/lib/recent-agent-chats";
 import { queryKeys } from "@/lib/queryKeys";
-import { useParams } from "@/lib/router";
+import { Navigate, useParams } from "@/lib/router";
 import { agentRouteRef } from "@/lib/utils";
 import { TaskDetailSurface } from "./IssueDetail";
-import { isUuidLike, type Issue } from "@paperclipai/shared";
+import { isAssistantAgent, isUuidLike, type Issue } from "@paperclipai/shared";
 
 export function AgentChat() {
   const { agentRef = "" } = useParams<{ agentRef: string }>();
@@ -79,6 +79,8 @@ export function AgentChat() {
     );
   if (!agent)
     return <p className="text-sm text-destructive">Agent not found.</p>;
+  // One conversation, one place: the Assistant's chat lives at /assistant.
+  if (isAssistantAgent(agent)) return <Navigate to="/assistant" replace />;
   if (chat.isPending)
     return (
       <p className="text-sm text-muted-foreground">Loading conversation…</p>

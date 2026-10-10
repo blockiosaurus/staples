@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { excludeAssistantAgents } from "@/lib/assistant-agent";
 import { useQuery } from "@tanstack/react-query";
 import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
@@ -37,6 +38,8 @@ function CompanyAgentChats({ companyId, userId }: { companyId: string | null; us
     queryKey: queryKeys.agents.list(companyId!),
     queryFn: () => agentsApi.list(companyId!),
     enabled: !!companyId,
+    // The Assistant lives at /assistant, not in the agent chat roster.
+    select: excludeAssistantAgents,
   });
   const agents = agentsQuery.data ?? [];
   const [pickerOpen, setPickerOpen] = useState(false);

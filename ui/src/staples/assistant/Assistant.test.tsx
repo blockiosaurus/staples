@@ -52,7 +52,14 @@ vi.mock("@/pages/IssueDetail", () => ({
       setBreadcrumbs([{ label: props.conversation.agent.name }]);
       openPanel(<div>conversation properties</div>);
     }, [setBreadcrumbs, openPanel, props.conversation.agent.name]);
-    return <div data-testid="assistant-surface">Conversation with {props.conversation.agent.name}</div>;
+    return (
+      <div data-testid="assistant-surface">
+        Conversation with {props.conversation.agent.name}
+        <div data-testid="task-chat-composer-dock">
+          <div data-testid="stub-composer" contentEditable="true" suppressContentEditableWarning tabIndex={0} />
+        </div>
+      </div>
+    );
   },
 }));
 
@@ -95,6 +102,7 @@ describe("Assistant page and dock", () => {
     mocks.chatGet.mockReset().mockResolvedValue(CONVERSATION);
     mocks.chatEnsure.mockReset().mockResolvedValue(CONVERSATION);
     localStorage.clear();
+    window.innerWidth = 1400;
   });
 
   afterEach(() => {
@@ -140,6 +148,8 @@ describe("Assistant page and dock", () => {
     issue: { id: string } | null;
     embedded?: boolean;
     commentMetadata?: () => unknown;
+    onCommentSent?: () => void;
+    focusComposerRequest?: number;
   };
 
   it("renders the Assistant conversation on the full page", async () => {
@@ -214,21 +224,91 @@ describe("Assistant page and dock", () => {
     });
   });
 
-  it("drops the context for the next message only when the person clicks ×", async () => {
+  it("drops the context until a message is actually sent when the person clicks ×", async () => {
     localStorage.setItem(ASSISTANT_DOCK_OPEN_STORAGE_KEY, "true");
     await render(<HostPage crumbs={["Tasks", "Fix login"]} />);
     const drop = container.querySelector<HTMLButtonElement>('button[aria-label="Don\'t share this page with the next message"]')!;
     await act(async () => drop.click());
     expect(container.textContent).toContain("Not sharing this page");
 
-    let metadata: unknown;
-    await act(async () => {
-      metadata = lastConversation().commentMetadata?.();
-    });
-    expect(metadata).toBeUndefined();
+    // A send that fails (no onCommentSent) keeps the context dropped for the retry.
+    expect(lastConversation().commentMetadata?.()).toBeUndefined();
+    expect(lastConversation().commentMetadata?.()).toBeUndefined();
+    expect(container.textContent).toContain("Not sharing this page");
+
+    await act(async () => lastConversation().onCommentSent?.());
     await settle();
     expect(container.querySelector('[data-testid="assistant-seeing-chip"]')).not.toBeNull();
     expect(lastConversation().commentMetadata?.()).toMatchObject({ pageContext: { entity: { type: "issue", id: "PAP-12" } } });
+  });
+
+  it("moves focus into the dock on open, closes on Escape, and returns focus", async () => {
+    window.innerWidth = 1400;
+    await render(<HostPage crumbs={["Tasks", "Fix login"]} />);
+    const textarea = container.querySelector<HTMLTextAreaElement>('[data-testid="host-composer"]')!;
+    textarea.focus();
+    pressJ(textarea, "metaKey");
+    await settle();
+    await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)); });
+    expect(lastConversation().focusComposerRequest).toBe(1);
+    expect(dock()?.contains(document.activeElement)).toBe(true);
+    // Once the composer is interactive, focus lands in it.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 250)); });
+    expect(document.activeElement?.getAttribute("data-testid")).toBe("stub-composer");
+
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    act(() => { document.activeElement!.dispatchEvent(escape); });
+    await settle();
+    expect(dock()).toBeNull();
+    expect(document.activeElement).toBe(textarea);
+
+    // Reopening asks the surface to focus its composer again.
+    pressJ(textarea, "ctrlKey");
+    await settle();
+    expect(lastConversation().focusComposerRequest).toBe(2);
+    pressJ(document.activeElement!, "ctrlKey");
+    await settle();
+    expect(dock()).toBeNull();
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it("does not steal focus when the dock is restored open on page load", async () => {
+    localStorage.setItem(ASSISTANT_DOCK_OPEN_STORAGE_KEY, "true");
+    await render(<HostPage crumbs={["Dashboard"]} />);
+    await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)); });
+    expect(lastConversation().focusComposerRequest).toBe(0);
+    expect(dock()?.contains(document.activeElement)).toBe(false);
+  });
+
+  it("stays in the flex row at 1280px and up, and overlays the page below", async () => {
+    localStorage.setItem(ASSISTANT_DOCK_OPEN_STORAGE_KEY, "true");
+    window.innerWidth = 1280;
+    await render(<HostPage crumbs={["Dashboard"]} />);
+    expect(dock()?.getAttribute("data-dock-mode")).toBe("docked");
+    expect(dock()?.className).not.toContain("fixed");
+
+    window.innerWidth = 1100;
+    act(() => { window.dispatchEvent(new Event("resize")); });
+    expect(dock()?.getAttribute("data-dock-mode")).toBe("overlay");
+    expect(dock()?.className).toContain("fixed inset-y-0 right-0");
+    expect(dock()?.className).toContain("shadow-lg");
+    expect(dock()?.getAttribute("role")).toBeNull();
+  });
+
+  it("hides the dock while the page itself shows the Assistant conversation", async () => {
+    localStorage.setItem(ASSISTANT_DOCK_OPEN_STORAGE_KEY, "true");
+    function ClaimingPage({ agentId }: { agentId: string }) {
+      const shell = useAssistantShell();
+      const claim = shell?.claimConversationPage;
+      useEffect(() => (claim ? claim(agentId) : undefined), [claim, agentId]);
+      return null;
+    }
+    await render(<><ClaimingPage agentId="alice" /><HostPage crumbs={["Chats"]} /></>);
+    expect(dock()).not.toBeNull();
+    await render(<><ClaimingPage agentId="assistant-1" /><HostPage crumbs={["Chats"]} /></>);
+    expect(dock()).toBeNull();
+    await render(<HostPage crumbs={["Chats"]} />);
+    expect(dock()).not.toBeNull();
   });
 
   it("shows the header toggle only once the Assistant is available", async () => {
@@ -255,12 +335,32 @@ describe("Assistant page and dock", () => {
     expect(dock()?.querySelector('[role="alert"]')?.textContent).toContain("Assistant down");
   });
 
-  it("renders as a full-screen sheet on mobile", async () => {
+  it("renders as a full-screen modal sheet on mobile that keeps focus inside", async () => {
     mocks.isMobile = true;
     localStorage.setItem(ASSISTANT_DOCK_OPEN_STORAGE_KEY, "true");
     await render(<HostPage crumbs={["Dashboard"]} />);
-    expect(dock()?.className).toContain("fixed inset-0");
-    expect(dock()?.querySelector('[data-presentation="sheet"]')).not.toBeNull();
+    const sheet = dock()!;
+    expect(sheet.className).toContain("fixed inset-0");
+    expect(sheet.querySelector('[data-presentation="sheet"]')).not.toBeNull();
+    expect(sheet.getAttribute("role")).toBe("dialog");
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    expect(sheet.getAttribute("aria-label")).toBe("Assistant");
+
+    const first = sheet.querySelectorAll<HTMLButtonElement>("button")[0]!;
+    const last = sheet.querySelector<HTMLElement>('[data-testid="stub-composer"]')!;
+    last.focus();
+    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    act(() => { last.dispatchEvent(tab); });
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(first);
+    const back = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
+    act(() => { first.dispatchEvent(back); });
+    expect(document.activeElement).toBe(last);
+
+    // Cmd/Ctrl+J still closes the sheet even though it is a modal dialog.
+    pressJ(last, "ctrlKey");
+    await settle();
+    expect(dock()).toBeNull();
   });
 
   it("stays out of the way on the full Assistant page and opens it from the header", async () => {

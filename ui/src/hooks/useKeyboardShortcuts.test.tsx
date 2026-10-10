@@ -266,6 +266,30 @@ describe("useKeyboardShortcuts", () => {
       act(() => root.unmount());
     });
 
+    it("ignores auto-repeat while the keys are held", () => {
+      const { root, onToggleAssistant } = renderWithToggle();
+      const event = new KeyboardEvent("keydown", { key: "j", metaKey: true, repeat: true, bubbles: true, cancelable: true });
+      document.dispatchEvent(event);
+      expect(onToggleAssistant).not.toHaveBeenCalled();
+      expect(event.defaultPrevented).toBe(true);
+      act(() => root.unmount());
+    });
+
+    it("still closes the Assistant's own modal sheet", () => {
+      const { root, onToggleAssistant } = renderWithToggle();
+      const sheet = document.createElement("div");
+      sheet.setAttribute("data-assistant-dock", "");
+      sheet.setAttribute("role", "dialog");
+      sheet.setAttribute("aria-modal", "true");
+      const textarea = document.createElement("textarea");
+      sheet.appendChild(textarea);
+      document.body.appendChild(sheet);
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "j", ctrlKey: true, bubbles: true, cancelable: true }));
+      expect(onToggleAssistant).toHaveBeenCalledTimes(1);
+      sheet.remove();
+      act(() => root.unmount());
+    });
+
     it("does nothing while a blocking modal dialog is open", () => {
       const { root, onToggleAssistant } = renderWithToggle();
       const dialog = document.createElement("div");

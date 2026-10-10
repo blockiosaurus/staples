@@ -61,10 +61,11 @@ export function useKeyboardShortcuts({
       // guard so it works from the composer; preventDefault stops Chrome's
       // Ctrl+J downloads page.
       if (onToggleAssistant && isAssistantToggleShortcut(e)) {
-        if (hasBlockingShortcutDialog()) return;
+        if (hasBlockingDialogOtherThanAssistant()) return;
         disarmGoChord();
         e.preventDefault();
-        onToggleAssistant();
+        // Holding the keys must not flap the dock open and shut.
+        if (!e.repeat) onToggleAssistant();
         return;
       }
 
@@ -160,6 +161,12 @@ export function useKeyboardShortcuts({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [onNewIssue, onSearch, onToggleSidebar, onTogglePanel, onShowShortcuts, onGoToInbox, onToggleAssistant]);
+}
+
+/** The mobile Assistant sheet is itself a modal dialog; Cmd/Ctrl+J still closes it. */
+function hasBlockingDialogOtherThanAssistant() {
+  return [...document.querySelectorAll("[role='dialog'][aria-modal='true']")]
+    .some((dialog) => !dialog.closest("[data-assistant-dock]"));
 }
 
 export function isAssistantToggleShortcut(e: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">) {

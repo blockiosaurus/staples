@@ -36,8 +36,10 @@ function AssistantPageCrumb() {
 export function AssistantConversation({ embedded = false }: { embedded?: boolean }) {
   const assistant = useAssistant();
   const shell = useAssistantShell();
-  const takeCommentMetadata = shell?.takeCommentMetadata;
-  const commentMetadata = useCallback(() => takeCommentMetadata?.(), [takeCommentMetadata]);
+  const shellCommentMetadata = shell?.commentMetadata;
+  const shellCommentSent = shell?.commentSent;
+  const commentMetadata = useCallback(() => shellCommentMetadata?.(), [shellCommentMetadata]);
+  const onCommentSent = useCallback(() => shellCommentSent?.(), [shellCommentSent]);
 
   if (assistant.error) {
     return (
@@ -63,7 +65,9 @@ export function AssistantConversation({ embedded = false }: { embedded?: boolean
         issue: assistant.conversationIssue,
         ensureIssue: assistant.ensureIssue,
         commentMetadata,
+        onCommentSent,
         embedded,
+        focusComposerRequest: embedded ? shell?.dockFocusRequest : undefined,
       }}
     />
   );

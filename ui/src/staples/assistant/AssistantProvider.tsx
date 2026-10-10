@@ -23,13 +23,25 @@ export interface AssistantShellValue {
   /** The person dropped the current page's context for their next message. */
   contextDropped: boolean;
   dropContext: () => void;
+  /** Metadata for the message being sent right now (none while dropped). */
+  commentMetadata: () => AssistantCommentMetadata | undefined;
   /**
-   * Metadata for the message being sent right now. Consumes a pending
-   * "drop context": the message after it carries context again.
+   * A message was sent successfully: a pending "drop context" is used up, so
+   * the next message carries context again. A failed send keeps it dropped.
    */
-  takeCommentMetadata: () => AssistantCommentMetadata | undefined;
-  /** The current route is the full-page Assistant. */
+  commentSent: () => void;
+  /**
+   * The current route already shows the Assistant conversation (the full
+   * page, or its agent chat/issue route), so the dock stays hidden.
+   */
   onAssistantPage: boolean;
+  /** Increments each time the dock opens; the dock focuses its composer. */
+  dockFocusRequest: number;
+  /**
+   * A page-level conversation surface reports the agent it shows. Returns a
+   * release function for unmount.
+   */
+  claimConversationPage: (agentId: string) => () => void;
 }
 
 const AssistantShellContext = createContext<AssistantShellValue | null>(null);
@@ -51,7 +63,10 @@ function writeDockOpen(open: boolean) {
 }
 
 export function AssistantProvider({ children }: { children: ReactNode }) {
-  const { available } = useAssistant({ withConversation: false });
+  const { available, summary } = useAssistant({ withConversation: false });
+  const assistantAgentId = summary?.agent.id ?? null;
+  const [pageConversationAgentId, setPageConversationAgentId] = useState<string | null>(null);
+  const [dockFocusRequest, setDockFocusRequest] = useState(0);
   const { selectedCompany } = useCompany();
   const location = useLocation();
   const breadcrumbs = useOptionalBreadcrumbs()?.breadcrumbs;
@@ -71,32 +86,38 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     }),
     [location.pathname, selectedCompany?.issuePrefix, title, label],
   );
-  const onAssistantPage = pageContext === null && /\/assistant\/?$/i.test(location.pathname);
+  const onAssistantPage = (pageContext === null && /\/assistant\/?$/i.test(location.pathname))
+    || (assistantAgentId !== null && pageConversationAgentId === assistantAgentId);
   const contextDropped = pageContext !== null && droppedRoute === pageContext.route;
 
   const latest = useRef({ pageContext, contextDropped });
   latest.current = { pageContext, contextDropped };
 
+  const dockOpenRef = useRef(dockOpen);
+  dockOpenRef.current = dockOpen;
   const setDockOpen = useCallback((open: boolean) => {
+    if (open && !dockOpenRef.current) setDockFocusRequest((current) => current + 1);
+    dockOpenRef.current = open;
     setDockOpenState(open);
     writeDockOpen(open);
   }, []);
   const toggleDock = useCallback(() => {
-    setDockOpenState((current) => {
-      writeDockOpen(!current);
-      return !current;
-    });
+    setDockOpen(!dockOpenRef.current);
+  }, [setDockOpen]);
+  const claimConversationPage = useCallback((agentId: string) => {
+    setPageConversationAgentId(agentId);
+    return () => setPageConversationAgentId((current) => (current === agentId ? null : current));
   }, []);
   const dropContext = useCallback(() => {
     if (latest.current.pageContext) setDroppedRoute(latest.current.pageContext.route);
   }, []);
-  const takeCommentMetadata = useCallback((): AssistantCommentMetadata | undefined => {
+  const commentMetadata = useCallback((): AssistantCommentMetadata | undefined => {
     const { pageContext: context, contextDropped: dropped } = latest.current;
-    if (dropped) {
-      setDroppedRoute(null);
-      return undefined;
-    }
-    return context ? { pageContext: context } : undefined;
+    if (dropped || !context) return undefined;
+    return { pageContext: context };
+  }, []);
+  const commentSent = useCallback(() => {
+    setDroppedRoute(null);
   }, []);
 
   const value = useMemo<AssistantShellValue>(() => ({
@@ -107,9 +128,15 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     pageContext,
     contextDropped,
     dropContext,
-    takeCommentMetadata,
+    commentMetadata,
+    commentSent,
     onAssistantPage,
-  }), [available, dockOpen, setDockOpen, toggleDock, pageContext, contextDropped, dropContext, takeCommentMetadata, onAssistantPage]);
+    dockFocusRequest,
+    claimConversationPage,
+  }), [
+    available, dockOpen, setDockOpen, toggleDock, pageContext, contextDropped, dropContext,
+    commentMetadata, commentSent, onAssistantPage, dockFocusRequest, claimConversationPage,
+  ]);
 
   return <AssistantShellContext.Provider value={value}>{children}</AssistantShellContext.Provider>;
 }

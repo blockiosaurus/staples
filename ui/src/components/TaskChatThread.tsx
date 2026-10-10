@@ -106,6 +106,7 @@ import {
 } from "@/components/task-chat/RunnerGoalWidget";
 import { TaskChatQueuedMessages } from "@/components/task-chat/TaskChatQueuedMessages";
 import { TaskChatWindowScroll } from "@/components/task-chat/useWindowAutoFollow";
+import { useEmbeddedSurface } from "@/context/EmbeddedSurfaceContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useDismissedTaskQuestions } from "@/hooks/useDismissedTaskQuestions";
 import { cn } from "@/lib/utils";
@@ -2838,7 +2839,11 @@ export function TaskChatThread(props: TaskChatThreadProps) {
   // in document flow instead (the same scroll={false} path the previews use)
   // and track auto-follow against window scroll. Both paths include takeover
   // state so opening or closing composer input preserves bottom pinning.
-  const { isMobile } = useSidebar();
+  // The mobile document-flow thread drives window scroll; an embedded surface
+  // (the Assistant dock/sheet) always scrolls its own element instead.
+  const { isMobile: viewportMobile } = useSidebar();
+  const embeddedSurface = useEmbeddedSurface();
+  const isMobile = viewportMobile && !embeddedSurface;
   const initialCommentWindow = useRef<{
     oldestAt: number;
     ids: Set<string>;

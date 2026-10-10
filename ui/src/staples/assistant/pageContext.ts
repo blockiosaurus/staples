@@ -40,6 +40,11 @@ function safeDecode(segment: string) {
   }
 }
 
+function isSettingsRoute(segments: string[]) {
+  const [first, second] = segments.map((segment) => segment.toLowerCase());
+  return first === "settings" || first === "instance" || (first === "company" && second === "settings");
+}
+
 export interface PageContextInput {
   pathname: string;
   companyPrefix?: string | null;
@@ -58,6 +63,9 @@ export function currentPageContext({ pathname, companyPrefix, title, label }: Pa
   const root = segments[0]?.toLowerCase();
   if (root === "assistant") return null;
   const context: AssistantPageContext = { route: clip(`/${segments.join("/")}`, ROUTE_MAX) };
+  // Settings pages (secrets, access, instance) can title or label sensitive
+  // values: the Assistant only learns which settings page is open.
+  if (isSettingsRoute(segments)) return context;
   const trimmedTitle = title?.trim();
   if (trimmedTitle) context.title = clip(trimmedTitle, TITLE_MAX);
   const entityRoot = root ? ENTITY_ROOTS[root] : undefined;

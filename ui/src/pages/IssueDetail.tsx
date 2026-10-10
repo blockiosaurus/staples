@@ -250,6 +250,8 @@ import {
 import { FileViewerSheet } from "../components/FileViewerSheet";
 import { ArtifactFileChip } from "../components/ArtifactFileChip";
 import { ScrollToBottom } from "../components/ScrollToBottom";
+import { EmbeddedSurfaceContext, useEmbeddedSurface } from "../context/EmbeddedSurfaceContext";
+import { useAssistantShell } from "../staples/assistant/AssistantProvider";
 import { StatusIcon } from "../components/StatusIcon";
 import { PriorityIcon } from "../components/PriorityIcon";
 import { SHOW_TASK_PRIORITY_UI } from "../lib/ui-flags";
@@ -1451,7 +1453,13 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
     : TaskChatThread;
   const queryClient = useQueryClient();
   const issueQueryRef = queryIssueId ?? issueId;
-  const scrollLocation = useLocation();
+  const routerScrollLocation = useLocation();
+  const embeddedSurface = useEmbeddedSurface();
+  // The Assistant dock's thread has no history entry of its own: always start
+  // at latest and never react to the host page's hash.
+  const scrollLocation = embeddedSurface
+    ? { ...routerScrollLocation, key: "embedded-surface", hash: "", state: null }
+    : routerScrollLocation;
   const scrollNavigationType = useNavigationType();
   const { pushToast } = useToastActions();
   const {
@@ -2420,7 +2428,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
         <TaskChatScrollNavigation.Provider
           value={{
             ...taskChatScrollEntry(scrollLocation),
-            restore: scrollNavigationType === "POP",
+            restore: !embeddedSurface && scrollNavigationType === "POP",
           }}
         >
           <EmailThreadProvider companyId={companyId} issueId={issueId}>
@@ -2987,6 +2995,10 @@ export interface TaskDetailConversation {
    * to the host page.
    */
   embedded?: boolean;
+  /** Called after a chat message was accepted by the server. */
+  onCommentSent?: () => void;
+  /** Each increase focuses the composer (the Assistant dock opening). */
+  focusComposerRequest?: number;
 }
 
 export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskSidePanelProps["tasksTab"]; conversation?: TaskDetailConversation }) {
@@ -3029,9 +3041,17 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const navigationType = useNavigationType();
-  const location = useLocation();
+  const routerLocation = useLocation();
+  // Embedded (Assistant dock): the host page's hash is not ours to react to.
+  const location = useMemo(
+    () => (embedded && routerLocation.hash ? { ...routerLocation, hash: "" } : routerLocation),
+    [embedded, routerLocation],
+  );
   const { pushToast } = useToastActions();
-  const { isMobile } = useSidebar();
+  // Embedded surfaces always use the element-scroller (desktop) layout, also
+  // inside the mobile sheet: no window scrolling, no mobile properties sheet.
+  const { isMobile: viewportMobile } = useSidebar();
+  const isMobile = viewportMobile && !embedded;
   const [moreOpen, setMoreOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
@@ -3078,6 +3098,12 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   >(() => new Map());
   const [pendingCommentComposerFocusKey, setPendingCommentComposerFocusKey] =
     useState(0);
+  const focusComposerRequest = conversation?.focusComposerRequest ?? 0;
+  useEffect(() => {
+    if (focusComposerRequest <= 0) return;
+    setDetailTab("chat");
+    setPendingCommentComposerFocusKey((current) => current + 1);
+  }, [focusComposerRequest]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
   const lastScrollIssueIdRef = useRef<string | undefined>(undefined);
@@ -3135,6 +3161,15 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     if (issueId) void prefetchIssueThread(queryClient, issueId);
   }, [issueId, queryClient]);
   const issue = queriedIssue ?? conversation?.issue ?? draftIssue;
+  // A page-level surface showing the Assistant's conversation keeps the
+  // Assistant dock from opening a second copy of it.
+  const assistantShell = useAssistantShell();
+  const claimConversationPage = assistantShell?.claimConversationPage;
+  const pageConversationAgentId = embedded ? null : issue?.conversationAgentId ?? conversation?.agent.id ?? null;
+  useEffect(() => {
+    if (!pageConversationAgentId || !claimConversationPage) return;
+    return claimConversationPage(pageConversationAgentId);
+  }, [pageConversationAgentId, claimConversationPage]);
   const resolveWritableIssueId = async () => {
     if (!conversation) return issueId!;
     const resolved = await conversation.ensureIssue();
@@ -3978,7 +4013,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
 
   const clearCommentHashIfCurrent = useCallback(
     (commentId: string) => {
-      if (typeof window === "undefined") return;
+      if (typeof window === "undefined" || embedded) return;
       if (window.location.hash !== `#comment-${commentId}`) return;
       window.history.replaceState(
         null,
@@ -3986,7 +4021,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         `${location.pathname}${location.search}`,
       );
     },
-    [location.pathname, location.search],
+    [embedded, location.pathname, location.search],
   );
 
   const upsertCommentInCache = useCallback(
@@ -4647,9 +4682,11 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       const pageContext = conversation?.commentMetadata?.()?.pageContext;
       const args = [await resolveWritableIssueId(), body, reopen, interrupt, attachmentIds, clientRequestId ?? crypto.randomUUID()] as const;
       // Only Assistant surfaces pass commentMetadata; every other send keeps the plain call.
-      return pageContext
+      const comment = await (pageContext
         ? issuesApi.addComment(...args, { metadata: { pageContext } })
-        : issuesApi.addComment(...args);
+        : issuesApi.addComment(...args));
+      conversation?.onCommentSent?.();
+      return comment;
     },
     onMutate: async ({ body, reopen, interrupt }) => {
       // Start cache cancellation immediately but do not put it in front of the
@@ -7557,6 +7594,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   ) : undefined;
 
   return (
+    <EmbeddedSurfaceContext.Provider value={embedded}>
     <FileViewerProvider issueId={conversation && !conversation.issue ? "" : issue.id} enabled={fileViewerEnabled}>
       <TextAttachmentContext.Provider value={taskChatShellEnabled ? handleOpenTextAttachment : null}><IssueGalleryContext.Provider value={openIssueGallery}>
         <div
@@ -8438,10 +8476,11 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
               useSidePanel={taskChatShellEnabled}
             />
           ) : null}
-          <ScrollToBottom />
+          {embedded ? null : <ScrollToBottom />}
         </div>
       </IssueGalleryContext.Provider></TextAttachmentContext.Provider>
     </FileViewerProvider>
+    </EmbeddedSurfaceContext.Provider>
   );
 }
 

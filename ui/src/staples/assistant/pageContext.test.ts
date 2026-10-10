@@ -38,6 +38,14 @@ describe("currentPageContext", () => {
     },
   );
 
+  it.each(["/PAP/company/settings/secrets", "/PAP/company/settings/access/members", "/PAP/settings/general"])(
+    "sends only the route on settings page %s",
+    (pathname) => {
+      const context = currentPageContext({ pathname, companyPrefix: "PAP", title: "API key sk-123 • Acme", label: "sk-123" });
+      expect(context).toEqual({ route: pathname.replace("/PAP", "") });
+    },
+  );
+
   it("is null on the Assistant page itself", () => {
     expect(currentPageContext({ pathname: "/PAP/assistant", companyPrefix: "PAP" })).toBeNull();
   });

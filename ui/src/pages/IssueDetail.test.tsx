@@ -533,8 +533,11 @@ vi.mock("../components/ImageGalleryModal", () => ({
   },
 }));
 
+const mockAssistantShell = vi.hoisted(() => ({ current: null as null | { claimConversationPage: (agentId: string) => () => void } }));
+vi.mock("../staples/assistant/AssistantProvider", () => ({ useAssistantShell: () => mockAssistantShell.current }));
+
 vi.mock("../components/ScrollToBottom", () => ({
-  ScrollToBottom: () => null,
+  ScrollToBottom: () => <span data-testid="scroll-to-bottom" hidden />,
 }));
 
 vi.mock("../components/StatusIcon", () => ({
@@ -1607,6 +1610,97 @@ describe("IssueDetail", () => {
     await flushReact();
     if (embedded) expect(mockNavigate).not.toHaveBeenCalled();
     else expect(mockNavigate).toHaveBeenCalled();
+  });
+
+  it.each([false, true])("ignores the host page's hash and window scroll button only when embedded (embedded=%s)", async (embedded) => {
+    mockPanelState.panelVisible = false;
+    mockSetPanelVisible.mockClear();
+    mockLocation.hash = "#document-qa-evidence";
+    const agent = createAgent();
+    const canonical = createIssue({ conversationAgentId: agent.id, conversationUserId: "user-1", conversationState: "waiting", status: "in_review" });
+    try {
+      await act(async () => {
+        root.render(<QueryClientProvider client={queryClient}><TaskDetailSurface conversation={{ agent, issue: null, ensureIssue: vi.fn().mockResolvedValue(canonical), embedded }} /></QueryClientProvider>);
+      });
+      await flushReact();
+      await flushReact();
+      if (embedded) {
+        expect(mockSetPanelVisible).not.toHaveBeenCalledWith(true);
+        expect(container.querySelector('[data-testid="scroll-to-bottom"]')).toBeNull();
+      } else {
+        expect(mockSetPanelVisible).toHaveBeenCalledWith(true);
+        expect(container.querySelector('[data-testid="scroll-to-bottom"]')).not.toBeNull();
+      }
+    } finally {
+      mockLocation.hash = "";
+    }
+  });
+
+  it("reports a sent chat message only after the server accepted it", async () => {
+    mockIssuesApi.addComment.mockReset();
+    const agent = createAgent();
+    const canonical = createIssue({ conversationAgentId: agent.id, conversationUserId: "user-1", conversationState: "waiting", status: "in_review" });
+    const onCommentSent = vi.fn();
+    await act(async () => {
+      root.render(<QueryClientProvider client={queryClient}><TaskDetailSurface conversation={{ agent, issue: null, ensureIssue: vi.fn().mockResolvedValue(canonical), onCommentSent }} /></QueryClientProvider>);
+    });
+    await flushReact();
+    const props = mockIssueChatThreadRender.mock.calls.at(-1)?.[0] as { onAdd: (body: string) => Promise<void> };
+    mockIssuesApi.addComment.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => { await props.onAdd("First try").catch(() => undefined); });
+    expect(onCommentSent).not.toHaveBeenCalled();
+    mockIssuesApi.addComment.mockResolvedValueOnce(createIssueComment({ body: "Second try" }));
+    await act(async () => { await props.onAdd("Second try"); });
+    expect(onCommentSent).toHaveBeenCalledTimes(1);
+  });
+
+  it("focuses the composer each time focusComposerRequest increases", async () => {
+    const agent = createAgent();
+    const canonical = createIssue({ conversationAgentId: agent.id, conversationUserId: "user-1", conversationState: "waiting", status: "in_review" });
+    const ensureIssue = vi.fn().mockResolvedValue(canonical);
+    const focus = vi.fn();
+    const handle = { focus, restoreDraft: vi.fn() };
+    const attachComposer = () => {
+      for (const [props] of mockIssueChatThreadRender.mock.calls as Array<[{ composerRef?: { current: unknown } }]>) {
+        if (props?.composerRef) props.composerRef.current = handle;
+      }
+    };
+    const renderWith = async (focusComposerRequest: number) => {
+      attachComposer();
+      await act(async () => {
+        root.render(<QueryClientProvider client={queryClient}><TaskDetailSurface conversation={{ agent, issue: null, ensureIssue, embedded: true, focusComposerRequest }} /></QueryClientProvider>);
+      });
+      await flushReact();
+    };
+    await renderWith(0);
+    await renderWith(0);
+    expect(focus).not.toHaveBeenCalled();
+    await renderWith(1);
+    await waitForAssertion(() => expect(focus).toHaveBeenCalledTimes(1));
+    await renderWith(1);
+    expect(focus).toHaveBeenCalledTimes(1);
+    await renderWith(2);
+    await waitForAssertion(() => expect(focus).toHaveBeenCalledTimes(2));
+  });
+
+  it.each([false, true])("claims the page for the conversation's agent unless embedded (embedded=%s)", async (embedded) => {
+    const release = vi.fn();
+    const claimConversationPage = vi.fn(() => release);
+    mockAssistantShell.current = { claimConversationPage };
+    try {
+      const agent = createAgent();
+      const canonical = createIssue({ conversationAgentId: agent.id, conversationUserId: "user-1", conversationState: "waiting", status: "in_review" });
+      await act(async () => {
+        root.render(<QueryClientProvider client={queryClient}><TaskDetailSurface conversation={{ agent, issue: null, ensureIssue: vi.fn().mockResolvedValue(canonical), embedded }} /></QueryClientProvider>);
+      });
+      await flushReact();
+      if (embedded) expect(claimConversationPage).not.toHaveBeenCalled();
+      else expect(claimConversationPage).toHaveBeenCalledWith(agent.id);
+      await act(async () => root.render(<></>));
+      if (!embedded) expect(release).toHaveBeenCalled();
+    } finally {
+      mockAssistantShell.current = null;
+    }
   });
 
   it("retries the chosen initial chat mode after creation succeeded but mode persistence failed", async () => {

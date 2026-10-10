@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { EmbeddedSurfaceContext } from "@/context/EmbeddedSurfaceContext";
 import { TaskChatThread } from "./TaskChatThread";
 import type {
   IssueDocument,
@@ -300,6 +301,36 @@ it("interleaves browser sessions with their requests and preserves position on s
   expect(anchors()).toEqual(['comment-2', 'browser:session-3', 'comment-4']);
   show();
   expect(anchors()).toEqual(expected);
+});
+
+it.each([false, true])("on a mobile viewport, embedded=%s decides window auto-follow vs its own scroller", async (embedded) => {
+  sidebarState.isMobile = true;
+  window.history.scrollRestoration = "auto";
+  document.documentElement.classList.remove("task-chat-window-scroll");
+  const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  render(
+    <EmbeddedSurfaceContext.Provider value={embedded}>
+      <TaskChatThread issueId="embedded-issue" comments={[]} onAdd={async () => {}} />
+    </EmbeddedSurfaceContext.Provider>,
+  );
+  await act(async () => {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  });
+  const thread = container.querySelector('[data-testid="task-chat-thread"]');
+  if (embedded) {
+    expect(document.documentElement.classList.contains("task-chat-window-scroll")).toBe(false);
+    expect(window.history.scrollRestoration).toBe("auto");
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(thread?.className).toContain("min-h-0 flex-1");
+  } else {
+    expect(document.documentElement.classList.contains("task-chat-window-scroll")).toBe(true);
+    expect(window.history.scrollRestoration).toBe("manual");
+    expect(thread?.className).not.toContain("min-h-0 flex-1");
+  }
+  flushSync(() => root!.render(<></>));
+  expect(document.documentElement.classList.contains("task-chat-window-scroll")).toBe(false);
+  expect(window.history.scrollRestoration).toBe("auto");
+  scrollTo.mockRestore();
 });
 
 it("coordinates first reveal while keeping the composer and visible history mounted through refresh", async () => {
