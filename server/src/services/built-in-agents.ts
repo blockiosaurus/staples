@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readPaperclipSkillSyncPreference, writePaperclipSkillSyncPreference } from "@paperclipai/adapter-utils/server-utils";
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { activityLog, agents, builtInManagedResources, companies, issueThreadInteractions, issues, routines, routineTriggers } from "@paperclipai/db";
 import { ASSISTANT_BUILT_IN_AGENT_KEY, syncRoutineVariablesWithTemplate } from "@paperclipai/shared";
@@ -13,6 +13,7 @@ import type { Agent, Approval, CompanySkill, PermissionKey, Routine, RoutineTrig
 import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { logger } from "../middleware/logger.js";
+import type { ActivityPublication } from "../types/activity-publication.js";
 import { adoptAgentFiles, agentFilePath, fileHash, readAgentFile, snapshotAgentFiles } from "./agent-file-store.js";
 import { assertInstructionPathSafe, instructionBytes, materializeInstructionBytes } from "./agent-instruction-files.js";
 import { agentInstructionRevisionService } from "./agent-instruction-revisions.js";
@@ -1805,42 +1806,74 @@ export function builtInAgentService(db: Db) {
   }
 
   /**
-   * The Assistant carries person-scoped authority, so a marker alone never makes
-   * a row the Assistant. A marked row is adopted only with server provenance:
-   * the company's managed-instructions binding for it, or the system
-   * provisioning activity row. Anything else is a stray: its marker is removed
-   * (so a fresh Assistant can be provisioned past the one-per-company index)
-   * and the incident is logged.
+   * Provisioning provenance, written in the same transaction as the agent
+   * insert so a committed marked row from provisioning always carries it. Only
+   * server code writes this system activity row (plugins log as "plugin").
    */
-  async function provenancedAssistantRows(companyId: string, markedRows: Array<typeof agents.$inferSelect>) {
-    if (markedRows.length === 0) return markedRows;
-    const ids = markedRows.map((row) => row.id);
+  function recordProvisioned(definition: BuiltInAgentDefinition) {
+    return async (tx: Db, created: typeof agents.$inferSelect, publications: ActivityPublication[]) => {
+      await logActivity(tx, {
+        companyId: created.companyId, actorType: "system", actorId: "built-in-agents", action: "built_in_agent.provisioned",
+        entityType: "agent", entityId: created.id,
+        details: { key: definition.key, featureKeys: definition.featureKeys, status: deriveBuiltInAgentStatus(created as unknown as Agent) },
+      }, publications);
+    };
+  }
+
+  /** Marked Assistant rows with server provenance: the managed-instructions binding or the provisioning record. */
+  async function provenancedAssistantIds(executor: Pick<Db, "select">, companyId: string, ids: string[]) {
+    if (ids.length === 0) return new Set<string>();
     const [bindings, provisioned] = await Promise.all([
-      db.select({ id: builtInManagedResources.resourceId }).from(builtInManagedResources).where(and(
+      executor.select({ id: builtInManagedResources.resourceId }).from(builtInManagedResources).where(and(
         eq(builtInManagedResources.companyId, companyId), eq(builtInManagedResources.bundleKey, ASSISTANT_BUILT_IN_AGENT_KEY),
         eq(builtInManagedResources.resourceKind, "instructions"), inArray(builtInManagedResources.resourceId, ids),
       )),
-      db.select({ id: activityLog.entityId }).from(activityLog).where(and(
+      executor.select({ id: activityLog.entityId }).from(activityLog).where(and(
         eq(activityLog.companyId, companyId), eq(activityLog.actorType, "system"), eq(activityLog.actorId, "built-in-agents"),
         eq(activityLog.action, "built_in_agent.provisioned"), eq(activityLog.entityType, "agent"), inArray(activityLog.entityId, ids),
       )),
     ]);
-    const trusted = new Set([...bindings.map((row) => row.id), ...provisioned.map((row) => row.id)]);
-    for (const stray of markedRows.filter((row) => !trusted.has(row.id))) {
-      const { [BUILT_IN_AGENT_METADATA_KEY]: _marker, ...rest } = (stray.metadata ?? {}) as Record<string, unknown>;
-      await db.update(agents).set({ metadata: rest, updatedAt: new Date() }).where(eq(agents.id, stray.id));
-      logger.warn({ companyId, agentId: stray.id }, "removed an Assistant marker without provisioning provenance");
+    return new Set([...bindings.map((row) => row.id), ...provisioned.map((row) => row.id)]);
+  }
+
+  /**
+   * The Assistant carries person-scoped authority, so a marker alone never makes
+   * a row the Assistant. Only `ensure` repairs strays: under row locks it
+   * re-checks provenance and removes the marker from rows that still lack it,
+   * so a fresh Assistant can be provisioned past the one-per-company index.
+   */
+  async function removeStrayAssistantMarkers(companyId: string) {
+    const removed = await db.transaction(async (tx) => {
+      // Same predicate as the one-per-company unique index, so partial markers
+      // that would block provisioning are covered too. Locks only these rows.
+      const marked = await tx.select().from(agents)
+        .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated"),
+          sql`${agents.metadata} -> ${BUILT_IN_AGENT_METADATA_KEY} ->> 'key' = ${ASSISTANT_BUILT_IN_AGENT_KEY}`))
+        .for("update");
+      const trusted = await provenancedAssistantIds(tx, companyId, marked.map((row) => row.id));
+      const strays = marked.filter((row) => !trusted.has(row.id));
+      for (const stray of strays) {
+        const { [BUILT_IN_AGENT_METADATA_KEY]: _marker, ...rest } = (stray.metadata ?? {}) as Record<string, unknown>;
+        await tx.update(agents).set({ metadata: rest, updatedAt: new Date() }).where(eq(agents.id, stray.id));
+      }
+      return strays.map((row) => row.id);
+    });
+    for (const agentId of removed) {
+      logger.warn({ companyId, agentId }, "removed an Assistant marker without provisioning provenance");
       await logActivity(db, {
         companyId, actorType: "system", actorId: "built-in-agents", action: "built_in_agent.stray_marker_removed",
-        entityType: "agent", entityId: stray.id, details: { key: ASSISTANT_BUILT_IN_AGENT_KEY },
+        entityType: "agent", entityId: agentId, details: { key: ASSISTANT_BUILT_IN_AGENT_KEY },
       });
     }
-    return markedRows.filter((row) => trusted.has(row.id));
   }
 
   async function findSingleAgent(companyId: string, definition: BuiltInAgentDefinition) {
     let markedRows = await findMarkedRows(companyId, definition.key);
-    if (definition.key === ASSISTANT_BUILT_IN_AGENT_KEY) markedRows = await provenancedAssistantRows(companyId, markedRows);
+    if (definition.key === ASSISTANT_BUILT_IN_AGENT_KEY) {
+      // Read-only: rows without provenance are ignored here, never mutated.
+      const trusted = await provenancedAssistantIds(db, companyId, markedRows.map((row) => row.id));
+      markedRows = markedRows.filter((row) => trusted.has(row.id));
+    }
     if (markedRows.length === 0) return null;
     const survivor = markedRows.length > 1
       ? await resolveDuplicateMarkedRows(companyId, definition, markedRows)
@@ -1878,6 +1911,7 @@ export function builtInAgentService(db: Db) {
   ) {
     const definition = requireBuiltInAgentDefinition(key);
     await ensureCompany(companyId);
+    if (definition.key === ASSISTANT_BUILT_IN_AGENT_KEY) await removeStrayAssistantMarkers(companyId);
     const existing = await findSingleAgent(companyId, definition);
     const existingPendingApproval = existing?.status === "pending_approval";
     const preserveExistingAdapter = Boolean(
@@ -1951,7 +1985,7 @@ export function builtInAgentService(db: Db) {
         permissions: definition.defaultPermissions ?? {},
         spentMonthlyCents: 0,
         lastHeartbeatAt: null,
-      }, { allowBuiltInAgentMetadata: true }) as Agent;
+      }, { allowBuiltInAgentMetadata: true, onCreatedInTransaction: recordProvisioned(definition) }) as Agent;
     } catch (error) {
       // Lost the provisioning race: a concurrent writer inserted the row first
       // and the partial unique index rejected ours. Re-run once; the winning
@@ -1961,20 +1995,6 @@ export function builtInAgentService(db: Db) {
       }
       throw error;
     }
-
-    await logActivity(db, {
-      companyId,
-      actorType: "system",
-      actorId: "built-in-agents",
-      action: "built_in_agent.provisioned",
-      entityType: "agent",
-      entityId: created.id,
-      details: {
-        key: definition.key,
-        featureKeys: definition.featureKeys,
-        status: deriveBuiltInAgentStatus(created),
-      },
-    });
 
     await ensureBuiltInAgentDefaultGrants(created, definition);
     const resources = await reconcileBundleResources(created, definition, "reconcile");
@@ -2052,7 +2072,7 @@ export function builtInAgentService(db: Db) {
         permissions: definition.defaultPermissions ?? {},
         spentMonthlyCents: 0,
         lastHeartbeatAt: null,
-      }, { allowBuiltInAgentMetadata: true }) as Agent;
+      }, { allowBuiltInAgentMetadata: true, onCreatedInTransaction: recordProvisioned(definition) }) as Agent;
     } catch (error) {
       // Lost the provisioning race: a concurrent writer inserted the row (and
       // its own hire approval) first, and the partial unique index rejected
@@ -2070,12 +2090,6 @@ export function builtInAgentService(db: Db) {
       throw error;
     }
 
-    // Provenance for Assistant adoption: only server provisioning writes this row.
-    await logActivity(db, {
-      companyId, actorType: "system", actorId: "built-in-agents", action: "built_in_agent.provisioned",
-      entityType: "agent", entityId: pending.id,
-      details: { key: definition.key, featureKeys: definition.featureKeys, status: deriveBuiltInAgentStatus(pending) },
-    });
     const approval = await approvalSvc.create(companyId, {
       type: "hire_agent",
       requestedByAgentId: actor.requestedByAgentId ?? null,

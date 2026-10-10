@@ -343,15 +343,21 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect(await assistantRows(companyId)).toHaveLength(1);
   });
 
-  it("never adopts a stray marked agent as the Assistant", async () => {
+  it("never adopts a stray marked agent as the Assistant; only ensure removes the marker", async () => {
     const companyId = await seedCompany();
     const strayId = randomUUID();
     await db.insert(agents).values({
       id: strayId, companyId, name: "Stray", role: "general", status: "idle", adapterType: "process", adapterConfig: {},
       metadata: withBuiltInAgentMarker({ note: "kept" }, { key: "assistant", featureKeys: ["assistant"] }),
     });
+    const service = createBuiltInAgentService(db);
+    // Read paths never adopt and never mutate.
+    expect((await service.get(companyId, "assistant")).agentId).toBeNull();
+    expect((await service.list(companyId)).find((entry) => entry.definition.key === "assistant")?.agentId).toBeNull();
+    const [untouched] = await db.select().from(agents).where(eq(agents.id, strayId));
+    expect(readBuiltInAgentMarker(untouched!.metadata)?.key).toBe("assistant");
 
-    const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    const ensured = await service.ensureAssistant(companyId);
     expect(ensured.id).not.toBe(strayId);
     expect(await resolveCompanyAssistantAgentId(db, companyId)).toBe(ensured.id);
     const [binding] = await db.select().from(builtInManagedResources).where(and(
@@ -363,9 +369,67 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect(readBuiltInAgentMarker(stray!.metadata)).toBeNull();
     expect(stray!.metadata).toMatchObject({ note: "kept" });
     expect(await isProvisionedAssistant(db, { id: strayId, companyId })).toBe(false);
-    // The provisioned Assistant is kept on later ensures.
-    expect((await createBuiltInAgentService(db).ensureAssistant(companyId)).id).toBe(ensured.id);
+    expect((await service.ensureAssistant(companyId)).id).toBe(ensured.id);
     expect(await assistantRows(companyId)).toHaveLength(1);
+  });
+
+  it("clears a partial Assistant marker that would block provisioning", async () => {
+    const companyId = await seedCompany();
+    const strayId = randomUUID();
+    await db.insert(agents).values({ id: strayId, companyId, name: "Partial", role: "general", status: "idle", adapterType: "process", adapterConfig: {},
+      metadata: { paperclipBuiltInAgent: { key: "assistant" } } });
+    const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(ensured.id).not.toBe(strayId);
+    const [stray] = await db.select().from(agents).where(eq(agents.id, strayId));
+    expect(stray!.metadata).not.toHaveProperty("paperclipBuiltInAgent");
+  });
+
+  it("records Assistant provenance atomically with the agent insert", async () => {
+    const companyId = await seedCompany();
+    await expect(createAgentLifecycle(db).requestHire(companyId, {
+      name: "Rolled back", role: "general", status: "idle", adapterType: "process", adapterConfig: {}, runtimeConfig: {}, permissions: {},
+    }, { onCreatedInTransaction: async () => { throw new Error("provenance write failed"); } })).rejects.toThrow("provenance write failed");
+    expect(await db.select().from(agents).where(eq(agents.companyId, companyId))).toHaveLength(0);
+
+    const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    const provenance = await db.select().from(activityLog).where(and(
+      eq(activityLog.companyId, companyId), eq(activityLog.action, "built_in_agent.provisioned"), eq(activityLog.entityId, ensured.id),
+    ));
+    expect(provenance).toHaveLength(1);
+    expect(provenance[0]).toMatchObject({ actorType: "system", actorId: "built-in-agents" });
+  });
+
+  it("keeps a just-provisioned Assistant under concurrent ensure, get and list", async () => {
+    const companyId = await seedCompany();
+    const service = createBuiltInAgentService(db);
+    const results = await Promise.all([
+      service.ensureAssistant(companyId), service.ensureAssistant(companyId),
+      service.get(companyId, "assistant"), service.list(companyId), service.ensureAssistant(companyId),
+    ]);
+    const rows = await assistantRows(companyId);
+    expect(rows).toHaveLength(1);
+    expect(results[0].id).toBe(rows[0]!.id);
+    expect(results[1].id).toBe(rows[0]!.id);
+    expect(results[4].id).toBe(rows[0]!.id);
+    expect(await resolveCompanyAssistantAgentId(db, companyId)).toBe(rows[0]!.id);
+    expect(await db.select().from(activityLog).where(and(
+      eq(activityLog.companyId, companyId), eq(activityLog.action, "built_in_agent.stray_marker_removed"),
+    ))).toHaveLength(0);
+
+    // A row committed together with its provenance (the provisioning shape) is
+    // adopted by read paths and ensure alike, never stripped.
+    const other = await seedCompany();
+    const provisionedId = randomUUID();
+    await db.transaction(async (tx) => {
+      await tx.insert(agents).values({ id: provisionedId, companyId: other, name: "Assistant", role: "general", status: "idle", adapterType: "process", adapterConfig: {},
+        metadata: withBuiltInAgentMarker({}, { key: "assistant", featureKeys: ["assistant"] }) });
+      await tx.insert(activityLog).values({ companyId: other, actorType: "system", actorId: "built-in-agents", action: "built_in_agent.provisioned", entityType: "agent", entityId: provisionedId, details: {} });
+    });
+    const [got, ensuredOther] = await Promise.all([service.get(other, "assistant"), service.ensureAssistant(other)]);
+    expect(got.agentId).toBe(provisionedId);
+    expect(ensuredOther.id).toBe(provisionedId);
+    const [kept] = await db.select().from(agents).where(eq(agents.id, provisionedId));
+    expect(readBuiltInAgentMarker(kept!.metadata)?.key).toBe("assistant");
   });
 
   it("falls back to claude_local when no company agent has a complete adapter config", async () => {

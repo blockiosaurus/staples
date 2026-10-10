@@ -12,7 +12,7 @@ export function agentRecords(db: Db, effects: LifecycleEffects) {
     getById,
     create: async (companyId: string, data: CreateAgentData, options?: CreateAgentOptions) => {
       if (Object.keys(data).some(key => key.startsWith("lifecycle"))) throw conflict("Lifecycle fields belong to the lifecycle module");
-      return effects.transaction(db, companyId, async (txDb) => {
+      return effects.transaction(db, companyId, async (txDb, publications) => {
         const tx = txDb;
         const prepared = await effects.prepareHire(txDb, companyId, data, options);
         const created = await tx
@@ -30,6 +30,7 @@ export function agentRecords(db: Db, effects: LifecycleEffects) {
           })
           .returning()
           .then((rows) => rows[0]);
+        if (options?.onCreatedInTransaction) await options.onCreatedInTransaction(txDb, created, publications);
         await effects.initializeHire(txDb, created, options);
         if (created.status !== "pending_approval" && created.status !== "terminated") {
           await effects.recordCreation(txDb, companyId, created.id);

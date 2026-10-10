@@ -10,6 +10,7 @@ import {
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
 import { normalizeAgentPermissions } from "./agent-permissions.js";
+import type { ActivityPublication } from "../types/activity-publication.js";
 import { builtInAgentMarkersEqual, rawBuiltInAgentMarker, readBuiltInAgentMarker } from "./built-in-agent-metadata.js";
 
 export function hashToken(token: string) {
@@ -93,6 +94,12 @@ export interface CreateAgentOptions {
   aiConnectionInstall?: { connectionId: string; memberConnectionIds?: string[]; createdByUserId: string | null };
   allowBuiltInAgentMetadata?: boolean;
   claudeLogin?: ClaudeLoginContext;
+  /**
+   * Server-only hook run inside the creating transaction, right after the
+   * insert. Built-in provisioning records its provenance here so the agent row
+   * and its provenance commit (or roll back) together.
+   */
+  onCreatedInTransaction?: (tx: Db, created: typeof agents.$inferSelect, publications: ActivityPublication[]) => Promise<void>;
 }
 
 interface AgentShortnameRow {
