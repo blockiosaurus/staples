@@ -37,7 +37,6 @@ import { Search } from "./pages/Search";
 import { IssueDetail } from "./pages/IssueDetail";
 import { AgentChats } from "./pages/AgentChats";
 import { AgentChat } from "./pages/AgentChat";
-import { IssueChatLongThreadPerf } from "./pages/IssueChatLongThreadPerf";
 import { Routines } from "./pages/Routines";
 import { Learnings, PipelineItemDetail, PipelineItemLegacyRedirect, Pipelines, ReviewQueue } from "./pages/Pipelines";
 import { PipelineSettings } from "./pages/PipelineSettings";
@@ -59,9 +58,6 @@ import { DecisionQueuePage } from "./pages/DecisionQueuePage";
 import { BoardChat } from "./pages/BoardChat";
 import { CompanySettings } from "./pages/CompanySettings";
 import { CompanyEnvironments } from "./pages/CompanyEnvironments";
-import { BootstrapSetupUxLab } from "./pages/BootstrapSetupUxLab";
-import { ResponsibleUserDenialUxLab } from "./pages/ResponsibleUserDenialUxLab";
-import { CrossIssueCollaborationUxLab } from "./pages/CrossIssueCollaborationUxLab";
 import { CompanySettingsPluginPage } from "./pages/CompanySettingsPluginPage";
 import { CompanyAccess, CompanyAccessLegacyRoute } from "./pages/CompanyAccess";
 import { AdvancedToolsRoute } from "./pages/tools/AdvancedToolsRoute";
@@ -305,9 +301,6 @@ function boardRoutes(combinedInboxTasksEnabled: boolean) {
       <Route path="chats" element={<AgentChats />} />
       <Route path="chats/:agentRef" element={<AgentChat />} />
       <Route path="issues/:issueId" element={<IssueDetail />} />
-      {import.meta.env.DEV ? (
-        <Route path="tests/perf/long-thread" element={<IssueChatLongThreadPerf />} />
-      ) : null}
       <Route path="routines" element={<Routines />} />
       <Route
         path="cases"
@@ -704,10 +697,6 @@ export function App() {
               read experimental settings, but a private invitation may request membership. */}
           <Route path="chat-identity/confirm" element={<ChatIdentityConfirm />} />
         </Route>
-        <Route path="tests/perf/long-thread" element={<IssueChatLongThreadPerf />} />
-        <Route path="ux-lab/bootstrap-setup" element={<BootstrapSetupUxLab />} />
-        <Route path="ux-lab/responsible-user-denial" element={<ResponsibleUserDenialUxLab />} />
-        <Route path="ux-lab/cross-issue-collaboration" element={<CrossIssueCollaborationUxLab />} />
 
         <Route element={experimentalSettingsLoaded ? <CloudAccessGate /> : <PaperclipLoading />}>
           <Route index element={<CompanyRootRedirect />} />
