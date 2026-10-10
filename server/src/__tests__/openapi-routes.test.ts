@@ -70,6 +70,7 @@ const apiPrefixes: Record<string, string> = {
   "primary-agent.ts": "/api",
   "public-mcp.ts": "/api",
   "project-tools.ts": "/api",
+  "assistant-tools.ts": "/api",
   "resource-memberships.ts": "/api",
   "remote-agent-profiles.ts": "/api",
   "routines.ts": "/api",
@@ -421,6 +422,7 @@ describe("openapi routes", () => {
     });
     expect(res.body.paths["/api/health"].get.security).toEqual([]);
     expect(res.body.paths["/api/mcp/project-tools"].post.security).toEqual([{ AgentRunAuth: [] }]);
+    expect(res.body.paths["/api/mcp/assistant-tools"].post.security).toEqual([{ AgentRunAuth: [] }]);
     expect(res.body.paths["/api/mcp/project-tools"].post["x-paperclip-authorization"]).toEqual({ actor: "agent", heartbeatBound: true, taskBound: true });
     expect(res.body.paths["/mcp/gateways/{gatewayPublicId}"].post.security).toEqual([]);
     expect(res.body.paths["/api/mcp/gateways/{gatewayPublicId}"]).toBeUndefined();

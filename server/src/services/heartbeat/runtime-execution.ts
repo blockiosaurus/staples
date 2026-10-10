@@ -58,6 +58,7 @@ import {
 import { PROVIDER_TRACE_MAX_BYTES } from "../provider-trace-store.js";
 import type { AdapterExecutionResult } from "../../adapters/index.js";
 import { createLocalAgentJwt } from "../../agent-auth-jwt.js";
+import { assistantRuntimeMcpServer } from "./assistant-mcp-server.js";
 import { parseObject, asNumber } from "../../adapters/utils.js";
 import { NativeRunnerOwnershipUnverifiedError } from "../native-runtime/native-runner-ownership.js";
 import {
@@ -771,6 +772,10 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
         runtimeMcpServers.unshift({ name: "Paperclip projects", url: `${paperclipApiBaseUrl()}/api/mcp/project-tools`,
           token: authToken, connectionId: "paperclip-project-tools" });
       }
+      const assistantServer = assistantRuntimeMcpServer({
+        agent, authToken, apiBaseUrl: configuredPaperclipApiBaseUrl() ? paperclipApiBaseUrl() : null,
+      });
+      if (assistantServer) runtimeMcpServers.unshift(assistantServer);
       const runtimeMcp = createAdapterRuntimeMcpAccess(runtimeMcpServers);
       if (runtimeTools && runtimeToolDelivery === "invocation_context") {
         adapterContext.paperclipRuntimeTools = runtimeTools;
