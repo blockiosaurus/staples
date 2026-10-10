@@ -31,6 +31,27 @@ function schemaBooleanFlagKeys(): string[] {
     .sort();
 }
 
+describe("RETIRED_FEATURE_KEYS", () => {
+  it("are all boolean keys of the experimental settings schema", () => {
+    for (const key of RETIRED_FEATURE_KEYS) {
+      const shape = instanceExperimentalSettingsSchema.shape as Record<string, z.ZodTypeAny>;
+      expect(Object.keys(shape), key).toContain(key);
+      let current = shape[key]!;
+      while (
+        current instanceof z.ZodDefault ||
+        current instanceof z.ZodOptional ||
+        current instanceof z.ZodNullable
+      ) {
+        current = (
+          current instanceof z.ZodDefault ? current._def.innerType : current.unwrap()
+        ) as z.ZodTypeAny;
+      }
+      expect(current instanceof z.ZodBoolean, key).toBe(true);
+      expect(instanceExperimentalSettingsSchema.safeParse({ [key]: true }).success, key).toBe(true);
+    }
+  });
+});
+
 describe("INSTANCE_FEATURE_CATALOG", () => {
   it("covers exactly the boolean flag keys of the experimental settings schema", () => {
     expect([...INSTANCE_FEATURE_KEYS]).toEqual(schemaBooleanFlagKeys());

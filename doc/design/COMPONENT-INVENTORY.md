@@ -160,18 +160,17 @@ Grouped by rough domain area. One line each; variants column is props-based wher
 |---|---|
 | `Sidebar.tsx` / `SidebarShell.tsx` / `SecondarySidebar.tsx` / `InstanceSidebar.tsx` | Primary/secondary/instance-scoped sidebar shells |
 | `SidebarSection.tsx` / `SidebarNavItem.tsx` | Sidebar section grouping + nav item row |
-| `SidebarProjects.tsx` / `SidebarStarredProjects.tsx` | Project list / starred-project list in sidebar |
+| `SidebarStarredProjects.tsx` | Starred-project list in sidebar |
 | `SidebarAgents.tsx` | Agent list in sidebar |
 | `SidebarAccountMenu.tsx` / `SidebarCompanyMenu.tsx` | Account and company switcher menus |
 | `SidebarServerInfo.tsx` | Server/instance info footer |
 | `RequestCollapsedSidebar.tsx` | Collapsed-state sidebar for request/approval views |
-| `RoutineSubSidebar.tsx` | Routine-scoped sub-sidebar |
 | `MobileBottomNav.tsx` | Mobile bottom tab bar |
 | `BreadcrumbBar.tsx` (uses `ui/breadcrumb`) | Page breadcrumb bar wrapper |
 | `PageTabBar.tsx` | In-page tab bar |
 | `CommandPalette.tsx` | ⌘K command palette (wraps `ui/command`) |
 
-**Sidebar text-size cluster** (cross-ref TOKEN-AUDIT.md 3.1): `Sidebar.tsx`, `SidebarNavItem.tsx`, `SidebarAgents.tsx`, `SidebarProjects.tsx`, `SidebarStarredProjects.tsx`, `SidebarAccountMenu.tsx` all independently use `text-[13px]` — six components implementing what looks like one shared "sidebar row label" intent as six separate arbitrary values. Flagged for the human type-scale decision, not merged here.
+**Sidebar text-size cluster** (cross-ref TOKEN-AUDIT.md 3.1): `Sidebar.tsx`, `SidebarNavItem.tsx`, `SidebarAgents.tsx`, `SidebarStarredProjects.tsx`, `SidebarAccountMenu.tsx` all independently use `text-[13px]` — five components implementing what looks like one shared "sidebar row label" intent as six separate arbitrary values. Flagged for the human type-scale decision, not merged here.
 
 ### 2.6 Pipelines / routines / goals
 
@@ -217,7 +216,7 @@ Grouped by rough domain area. One line each; variants column is props-based wher
 |---|---|
 | `OnboardingWizard.tsx` / `OnboardingWizardVariant.tsx` | Onboarding flow + an alternate variant — worth a human check on whether the variant is still live or leftover from an A/B (see 3.5) |
 | `FrontDoor.tsx` | Landing/entry gate component |
-| `CloudAccessGate.tsx` / `ConferenceRoomChatGate.tsx` / `PipelinesExperimentalGate.tsx` | Three separate feature-flag/access gate wrappers — same pattern (children-if-enabled), each hand-rolled per feature; candidate for a shared `FeatureGate` primitive (flagged, not built here) |
+| `CloudAccessGate.tsx` / `PipelinesExperimentalGate.tsx` | Two separate feature-flag/access gate wrappers — same pattern (children-if-enabled), each hand-rolled per feature; candidate for a shared `FeatureGate` primitive (flagged, not built here) |
 | `Identity.tsx` | Avatar + name identity chip (`deriveInitials` helper) |
 | `MembershipAction.tsx` | Membership accept/decline action row |
 | `access/` (2 files) | Access-request related components |
@@ -303,14 +302,9 @@ Grouped by area; one line each.
 | `Secrets.tsx` / `secrets/*` (5 files) | Secrets management + sub-tabs (import-from-vault, definitions, my-secrets, presentation helpers, missing-banner) |
 | `PluginManager.tsx` / `PluginSettings.tsx` | Plugin management + per-plugin settings |
 | `AdapterManager.tsx` | Adapter (agent runtime) management |
-| `CloudUpstream.tsx` / `CloudUpstreamUxLab.tsx` | Cloud-upstream connection page + its UxLab showcase twin |
-| `InviteLanding.tsx` / `InviteUxLab.tsx` | Invite acceptance landing page + UxLab showcase twin |
-| `BootstrapSetupUxLab.tsx` | Bootstrap-setup flow showcase |
-| `ResponsibleUserDenialUxLab.tsx` | Denial-flow showcase |
-| `SystemNoticeUxLab.tsx` | System-notice showcase |
-| `IssueChatUxLab.tsx` / `RunTranscriptUxLab.tsx` | Chat + transcript showcases |
+| `InviteLanding.tsx` | Invite acceptance landing page |
 | `DesignGuide.tsx` | Design-system showcase/reference page |
-| `BoardChat.tsx` / `BoardClaim.tsx` | Board (concierge) chat + claim flow |
+| `BoardClaim.tsx` | Board claim flow |
 | `NotFound.tsx` | 404 page |
 | `CliAuth.tsx` | CLI auth handoff page |
 | `JoinRequestQueue.tsx` | Join-request queue |
@@ -320,7 +314,7 @@ Grouped by area; one line each.
 | `CompanyImport.tsx` / `CompanyExport.tsx` | Import/export company data |
 | `RoutineDetail.tsx` | Routine detail route |
 
-**UxLab pages are real routes** (confirmed via `App.tsx` — `/ux-lab/*`, `/design-guide`), not build-excluded demo code, so all hardcoded values inside them are in-scope per DESIGN.md even though they're showcase surfaces rather than product screens a typical operator visits daily.
+**`/design-guide` is a real route** (confirmed via `App.tsx`), not build-excluded demo code, so all hardcoded values inside it are in-scope per DESIGN.md even though it is a showcase surface rather than a product screen a typical operator visits daily.
 
 ---
 
@@ -334,7 +328,7 @@ Grouped by area; one line each.
 |---|---|---|---|
 | `ToastViewport.tsx` + `context/ToastContext.tsx` | shadcn's `sonner`-based toast pattern (not currently installed) | Install `sonner`/toast primitive, migrate `useToastActions`/`useToastState` call sites to it | Low if the registry's toast is restyled to match current `toneClasses`/`toneDotClasses` tint system; the current implementation already has custom tone colors (`sky`/`emerald`/`amber`/`red`) that would need to carry over as variant props — a naive swap would look different unless those tones are preserved |
 | `components/StatusBadge.tsx` (`StatusBadge`, `AgentStatusBadge`) | shadcn `Badge` primitive (installed, `ui/badge.tsx`) | Keep as a distinct component (status badges need the `.status-chip` color-mix mechanic Badge's variant system doesn't support) but consider having it render `<Badge>` internally with a custom class rather than a bare `<span>`, for consistency of base styles (focus ring, disabled states, etc.) | Low — internal implementation change only if done carefully; skip if it risks the WCAG-tuned status hues |
-| Hand-rolled bordered-container `<div>`/`<ul>` patterns (`rounded-md border bg-card`-shaped) found in ~26 files (`pages/AdapterManager.tsx`, `pages/TeamCatalog.tsx`, `pages/InstanceAccess.tsx`, `pages/BootstrapSetupUxLab.tsx`, `pages/ResponsibleUserDenialUxLab.tsx`, `pages/CliAuth.tsx`, `pages/BoardClaim.tsx`, `pages/BoardChat.tsx`, `pages/InstanceGeneralSettings.tsx`, `pages/ProjectWorkspaceDetail.tsx`, `pages/Timeline.tsx`, `pages/PluginManager.tsx`, `pages/JoinRequestQueue.tsx`, `pages/InstanceExperimentalSettings.tsx`, `App.tsx`, `components/BootstrapPendingPage.tsx`, `components/IssuePlanDecompositionsSection.tsx`, `components/BlockedInboxView.tsx`, `components/ApprovalCard.tsx`, + ~7 more) vs. shadcn `Card` (installed, only imported in 21 files) | `Card`/`CardContent` | Low-to-medium — many of these are `<ul>` list wrappers, not literal card content; a swap would need per-site judgment, not a blanket codemod. Flagging the cluster, not asserting every site should change. |
+| Hand-rolled bordered-container `<div>`/`<ul>` patterns (`rounded-md border bg-card`-shaped) found in ~26 files (`pages/AdapterManager.tsx`, `pages/TeamCatalog.tsx`, `pages/InstanceAccess.tsx`, `pages/CliAuth.tsx`, `pages/BoardClaim.tsx`, `pages/InstanceGeneralSettings.tsx`, `pages/ProjectWorkspaceDetail.tsx`, `pages/Timeline.tsx`, `pages/PluginManager.tsx`, `pages/JoinRequestQueue.tsx`, `pages/InstanceExperimentalSettings.tsx`, `App.tsx`, `components/BootstrapPendingPage.tsx`, `components/IssuePlanDecompositionsSection.tsx`, `components/BlockedInboxView.tsx`, `components/ApprovalCard.tsx`, + ~7 more) vs. shadcn `Card` (installed, only imported in 21 files) | `Card`/`CardContent` | Low-to-medium — many of these are `<ul>` list wrappers, not literal card content; a swap would need per-site judgment, not a blanket codemod. Flagging the cluster, not asserting every site should change. |
 | Hand-rolled pill/badge-shaped `<span>`s (`rounded-full px-2 text-[...]`) outside `Badge` usage, ~34 files | `Badge` (installed, 35 files already use it) | `Badge` with a custom `className` for color | Low if colors are preserved as `className` overrides |
 | `plugins/launchers.tsx` generic plugin-shell overlay (`role="dialog"`, hand-rolled backdrop `bg-black/45`, manual z-index math, `rounded-xl`/`rounded-2xl`) | `Dialog` / `Sheet` / `Popover` (all installed) | Case-by-case: this component multiplexes dialog/drawer/popover shell types from one plugin-host abstraction, which none of the three installed primitives do individually — a clean swap likely means keeping the multiplexer but delegating each `shellType` branch to the matching installed primitive instead of a fully custom `<div>` tree | Medium — this is the most structurally custom overlay in the codebase; recommend closer human review before treating it as a simple swap |
 
@@ -381,7 +375,7 @@ All of the below are **leads for human review**, not verdicts, per KNOWN-DUPLICA
 
 ### 5.5 Feature-gate wrapper pattern (not a duplicate, but a repeated pattern)
 
-`CloudAccessGate.tsx`, `ConferenceRoomChatGate.tsx`, `PipelinesExperimentalGate.tsx` each independently implement the same "render children only if flag X is enabled, else render fallback" shape. Not byte-identical (each checks a different flag/hook), so not a strict duplicate, but a strong candidate for a shared `FeatureGate`/`ExperimentalGate` primitive that takes a flag-check function as a prop. Flagged as a recommendation, not built here.
+`CloudAccessGate.tsx` and `PipelinesExperimentalGate.tsx` each independently implement the same "render children only if flag X is enabled, else render fallback" shape. Not byte-identical (each checks a different flag/hook), so not a strict duplicate, but a strong candidate for a shared `FeatureGate`/`ExperimentalGate` primitive that takes a flag-check function as a prop. Flagged as a recommendation, not built here.
 
 ---
 

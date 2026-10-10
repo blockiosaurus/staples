@@ -19,12 +19,10 @@
       "paths": [
         "ui/src/pages/AgentChat.tsx",
         "ui/src/pages/AgentChats.tsx",
-        "ui/src/pages/BoardChat.tsx",
         "ui/src/pages/DecisionQueuePage.tsx",
         "ui/src/pages/Inbox.tsx",
         "ui/src/pages/IssueDetail.tsx",
         "ui/src/pages/Issues.tsx",
-        "ui/src/pages/LegacyInbox.tsx",
         "ui/src/pages/MyIssues.tsx",
         "ui/src/pages/Search.tsx",
         "ui/src/pages/WhatNeedsMe.tsx"
@@ -45,14 +43,11 @@
       "gap": "Per-harness/model/account capabilities, every instruction-file error, and complete built-in-agent lifecycle variants remain separate qualification matrices.",
       "paths": [
         "ui/src/pages/AdapterManager.tsx",
-        "ui/src/pages/AgentDetail.production.tsx",
         "ui/src/pages/AgentDetail.tsx",
         "ui/src/pages/AgentToolsTab.tsx",
-        "ui/src/pages/Agents.production.tsx",
         "ui/src/pages/Agents.tsx",
         "ui/src/pages/NewAgent.tsx",
         "ui/src/pages/Org.tsx",
-        "ui/src/pages/OrgChart.production.tsx",
         "ui/src/pages/OrgChart.tsx"
       ]
     },
@@ -139,7 +134,6 @@
       ],
       "gap": "Main library/Studio/source/policy and CLI team-install paths are mapped. Full source-provider conflicts, harness sync, and remote package variants remain; catalog UI is not a current top-level route.",
       "paths": [
-        "ui/src/pages/CompanySkills.production.tsx",
         "ui/src/pages/CompanySkills.tsx",
         "ui/src/pages/SkillSources.tsx",
         "ui/src/pages/SkillStudio.tsx",
@@ -247,18 +241,15 @@
       ],
       "gap": "Core goal/report/budget/audit journeys are mapped. Every aggregation/filter combination, cost source, and overlapping budget window still needs dedicated cases.",
       "paths": [
-        "ui/src/pages/Costs.production.tsx",
         "ui/src/pages/Costs.tsx",
         "ui/src/pages/Dashboard.tsx",
         "ui/src/pages/DashboardLive.tsx",
         "ui/src/pages/GoalDetail.tsx",
         "ui/src/pages/Goals.tsx",
         "ui/src/pages/Timeline.tsx",
-        "ui/src/pages/audit/AuditFeed.production.tsx",
         "ui/src/pages/audit/AuditFeed.tsx",
         "ui/src/pages/audit/AuditHub.tsx",
         "ui/src/pages/audit/AuditRuns.tsx",
-        "ui/src/pages/audit/CompanyActivity.production.tsx",
         "ui/src/pages/audit/CompanyActivity.tsx",
         "ui/src/pages/audit/RoutineAuditActivity.tsx"
       ]
@@ -291,9 +282,7 @@
         "ui/src/pages/Cases.tsx",
         "ui/src/pages/PipelineSettings.tsx",
         "ui/src/pages/Pipelines.tsx",
-        "ui/src/pages/RoutineDetail.production.tsx",
         "ui/src/pages/RoutineDetail.tsx",
-        "ui/src/pages/Routines.production.tsx",
         "ui/src/pages/Routines.tsx",
         "ui/src/pages/StatusCards/ArchivedStatusCardRow.tsx",
         "ui/src/pages/StatusCards/CreateStatusCardDialog.tsx",
@@ -382,18 +371,10 @@
         "developer-labs.md",
         "navigation-preferences.md"
       ],
-      "gap": "Developer and fallback surfaces are identified. Each synthetic fixture and performance budget is not a production journey and needs its own measurement.",
+      "gap": "Design guide, Storybook and fallback surfaces are identified. Synthetic fixtures are not a production journey and need their own measurement.",
       "paths": [
-        "ui/src/pages/BootstrapSetupUxLab.tsx",
-        "ui/src/pages/CrossIssueCollaborationUxLab.tsx",
         "ui/src/pages/DesignGuide.tsx",
-        "ui/src/pages/InviteUxLab.tsx",
-        "ui/src/pages/IssueChatLongThreadPerf.tsx",
-        "ui/src/pages/IssueChatUxLab.tsx",
         "ui/src/pages/NotFound.tsx",
-        "ui/src/pages/ResponsibleUserDenialUxLab.tsx",
-        "ui/src/pages/RunTranscriptUxLab.tsx",
-        "ui/src/pages/SystemNoticeUxLab.tsx",
         "ui/src/pages/TaskChatLab.tsx"
       ]
     }

@@ -1304,7 +1304,7 @@ test.describe("Exact failed chat run retry", () => {
     );
   });
 
-  for (const surface of ["agent run", "Inbox", "Legacy Inbox"] as const) {
+  for (const surface of ["agent run", "Inbox"] as const) {
     for (const outcome of ["queued", "deferred", "denied"] as const) {
       test(`${surface}: selected run ${outcome} preserves exact retry authority and truthful feedback`, async ({
         page,
@@ -1364,7 +1364,6 @@ test.describe("Exact failed chat run retry", () => {
           if (pathname === "/api/instance/settings/experimental") {
             await fulfill(route, {
               enableChatConnectors: true,
-              enableStreamlinedUi: surface !== "Legacy Inbox",
             });
             return;
           }

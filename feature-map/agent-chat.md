@@ -1,15 +1,14 @@
 # Agent conversations and project handoff
 
-A person can hold a persistent conversation with an agent, return to its history, and hand useful work into a project or task. The gated conference-room chat is a separate conversation surface.
+A person can hold a persistent conversation with an agent, return to its history, and hand useful work into a project or task.
 
-Implementation: [agent chat](../ui/src/pages/AgentChat.tsx), [chat landing](../ui/src/pages/AgentChats.tsx), [conference room](../ui/src/pages/BoardChat.tsx).
+Implementation: [agent chat](../ui/src/pages/AgentChat.tsx), [chat landing](../ui/src/pages/AgentChats.tsx).
 
 ## Sub-features
 
 - `discovery`: find an agent and reopen an accessible recent conversation.
 - `history`: send messages, inspect replies/files, and return to the same conversation.
 - `handoff`: create or identify a project/task from chat and follow the resulting work.
-- `conference-room`: use the separately gated board chat without assuming parity with agent chat.
 
 ## How to get to it (user POV)
 
@@ -20,10 +19,6 @@ Open `/chats`, choose an agent, or use `/chats/:agentRef` and its conversation s
 ### `project-handoff`
 
 Ask for project work in Agent Chat and follow its created project/task links.
-
-### `conference-room`
-
-Open `/board-chat` only when its conference-room gate is enabled.
 
 ## Driving it
 
@@ -40,12 +35,6 @@ Manual: Start a conversation, send a recognizable request, and inspect its reply
 Automated: [chat project tools](../server/src/__tests__/chat-project-tools.test.ts) checks tool contracts; live model choice and UI handoff require a manual run.
 
 Manual: Ask the configured agent to create bounded project work, inspect the proposed/created target, and open the resulting task. Verify the request context and intended project survived and the task produces a useful output.
-
-### `conference-room`
-
-Automated: [board chat gate](../server/src/__tests__/board-chat-route-feature-flag.test.ts) proves route gating, not a live conversation.
-
-Manual: Check disabled access first, enable in the disposable instance, then send and reload a conversation. Inspect the actual responding agent and persisted history; report this result separately from Agent Chat.
 
 ## Gotchas
 

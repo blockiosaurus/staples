@@ -2510,7 +2510,7 @@ span.paperclip-mention-chip[data-mention-kind="external-object"] {
    - components/FileViewerSheet.tsx — half-migrated var(--paperclip-code-highlight-*, fallback) pattern at the time of Batch 1; RESOLVED in Batch 4 via *-resolved wrapper tokens (see the Batch 4 MISC token block below) — no longer allowlisted.
 */
 :root {
-  --hex-959596: #959596; /* Muted feed actor/verb/title text (ActivityFeed.tsx, FeedCard.tsx) — PRIOR-ART-flagged gap cluster, no existing token match. */
+  --hex-959596: #959596; /* Muted feed actor/verb/title text (FeedCard.tsx) — PRIOR-ART-flagged gap cluster, no existing token match. */
   --hex-1d1d1d: #1d1d1d; /* OnboardingWizard.tsx dark decorative panel background, singleton. */
   --hex-22d3ee: #22d3ee; /* OrgChart.tsx agent status dot — 'running' (independent palette from --status-agent-*, see TOKEN-AUDIT.md 1.2). */
   --hex-4ade80: #4ade80; /* OrgChart.tsx agent status dot — 'active'. */
@@ -2620,11 +2620,11 @@ span.paperclip-mention-chip[data-mention-kind="external-object"] {
   --sz-390px: 390px;
   --sz-64px: 64px;
   --sz-3px: 3px; /* Extracted from ui/src/components/ActivityCharts.tsx (gap-[3px]). */
-  --sz-calc-1: calc(100% - 1.5rem); /* Extracted from ui/src/components/ActivityFeed.tsx (w-[calc(100%-1.5rem)]). */
-  --sz-calc-2: calc(100% - 0.75rem); /* Extracted from ui/src/components/ActivityFeed.tsx (w-[calc(100%-0.75rem)]). */
-  --sz-16rem: 16rem; /* Extracted from ui/src/components/ActivityFeed.tsx (max-w-[16rem]). */
+  --sz-calc-1: calc(100% - 1.5rem); /* Extracted from legacy feed card styles (w-[calc(100%-1.5rem)]). */
+  --sz-calc-2: calc(100% - 0.75rem); /* Extracted from legacy feed card styles (w-[calc(100%-0.75rem)]). */
+  --sz-16rem: 16rem; /* Extracted from legacy feed card styles (max-w-[16rem]). */
   --sz-20rem: 20rem; /* AgentSkillReleasePicker.tsx release menu width cap. */
-  --sz-18px: 18px; /* Extracted from ui/src/components/ActivityFeed.tsx (p-[18px]). */
+  --sz-18px: 18px; /* Extracted from legacy feed card styles (p-[18px]). */
   --sz-44px: 44px; /* Extracted from ui/src/components/AgentConfigForm.tsx (min-h-[44px]). */
   /* The width one source tile has when the connect step's row holds two of
      them. The row collapses to the chosen source once a sign-in starts, and the
@@ -2871,7 +2871,6 @@ span.paperclip-mention-chip[data-mention-kind="external-object"] {
   --gtc-35: minmax(10rem,14rem) 1fr; /* Extracted from ui/src/pages/InstanceExperimentalSettings.tsx (grid-cols-[minmax(10rem,14rem)_1fr]). */
   --gtc-36: minmax(0,1.15fr) minmax(360px,0.85fr); /* Extracted from ui/src/pages/InviteLanding.tsx (grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]). */
   --gtc-39: minmax(0,1.2fr) 320px; /* Extracted from ui/src/pages/PluginSettings.tsx (grid-cols-[minmax(0,1.2fr)_320px]). */
-  --gtc-40: minmax(0,1fr) 320px; /* Extracted from ui/src/pages/IssueChatLongThreadPerf.tsx (grid-cols-[minmax(0,1fr)_320px]). */
   --gtc-41: 10rem minmax(0,1fr); /* Extracted from ui/src/pages/PipelineSettings.tsx (grid-cols-[10rem_minmax(0,1fr)]). */
   --gtc-42: minmax(0,1fr) 240px; /* Extracted from ui/src/pages/PipelineSettings.tsx (grid-cols-[minmax(0,1fr)_240px]). */
   --gtc-43: minmax(0,1fr) minmax(0,1fr); /* Extracted from ui/src/pages/PipelineSettings.tsx (grid-cols-[minmax(0,1fr)_minmax(0,1fr)]). */
@@ -2906,7 +2905,7 @@ span.paperclip-mention-chip[data-mention-kind="external-object"] {
   --gtr-1: auto auto; /* Extracted from ui/src/components/ui/card.tsx (grid-rows-[auto_auto]). */
   --gtr-2: 1fr; /* Extracted from ui/src/pages/CompanySkills.tsx (grid-rows-[1fr]). */
   --gtr-3: 0fr; /* Extracted from ui/src/pages/CompanySkills.tsx (grid-rows-[0fr]). */
-  --tp-background-color-border-color: background-color,border-color; /* Extracted from ui/src/components/ActivityFeed.tsx (transition-[background-color,border-color]). */
+  --tp-background-color-border-color: background-color,border-color; /* Extracted from legacy feed card styles (transition-[background-color,border-color]). */
   --tp-width-background-color: width,background-color; /* Extracted from ui/src/components/BudgetPolicyCard.tsx (transition-[width,background-color]). */
   --tp-width: width; /* Extracted from ui/src/components/ClaudeSubscriptionPanel.tsx (transition-[width]). */
   --tp-background-color-color-opacity: background-color,color,opacity; /* Extracted from ui/src/components/FileTree.tsx (transition-[background-color,color,opacity]). */
