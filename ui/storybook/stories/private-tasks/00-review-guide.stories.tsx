@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 const surfaces = [
   ["ComposerAddMenu · ComposerPrivacyChip · TaskChatComposer", "Changed", "01 Creation", "mobile-plus-menu", "Private task under +; a mobile menu bounded by the visible viewport; selected lock chip and removal; inherited parent/project explanations on hover, focus, and tap; small-phone, short-viewport, and landscape layouts."],
   ["Identity · AccessSelectIdentity", "Added", "02 Sharing", "search-people-and-agents", "Shared rendering of human pictures or initials and agent character avatars in task and project sharing results and selected values."],
-  ["SidebarProjects · SidebarStarredProjects · production variant · Projects", "Changed", "06 Full product pages", "private-projects-in-navigation", "Right-side locks in actual navigation and project rows, current and classic shells, mobile."],
+  ["SidebarStarredProjects · Projects", "Changed", "06 Full product pages", "private-projects-in-navigation", "Right-side locks in actual navigation and project rows, current and classic shells, mobile."],
 
   [
     "NewIssueDialog",

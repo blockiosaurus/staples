@@ -56,7 +56,6 @@ const mockSidebar = vi.hoisted(() => ({
   isMobile: false,
   setSidebarOpen: vi.fn(),
   collapsed: false,
-  collapseLocked: false,
   peeking: false,
   toggleCollapsed: vi.fn(),
   setCollapsed: vi.fn(),
@@ -108,10 +107,6 @@ vi.mock("./SidebarAgents", () => ({
   ),
 }));
 
-vi.mock("./SidebarProjects", () => ({
-  SidebarProjects: () => <div data-testid="sidebar-projects">Classic projects</div>,
-}));
-
 vi.mock("./SidebarStarredProjects", () => ({
   SidebarStarredProjects: () => <div data-testid="sidebar-starred-projects" />,
 }));
@@ -161,7 +156,6 @@ describe("Sidebar", () => {
     mockAttentionApi.list.mockResolvedValue({ items: [] });
     mockSidebar.isMobile = false;
     mockSidebar.collapsed = false;
-    mockSidebar.collapseLocked = false;
     mockSidebar.peeking = false;
     mockInboxBadge.inbox = 0;
     mockInboxBadge.failedRuns = 0;
@@ -288,19 +282,6 @@ describe("Sidebar", () => {
     expect(navLabels).toContain("Projects");
     expect(container.querySelector('[data-testid="sidebar-starred-projects"]')).not.toBeNull();
     expect(navLabels).toContain("Agents");
-
-    flushSync(() => {
-      root.unmount();
-    });
-  });
-
-  it("locks the legacy collapse control while a secondary sidebar forces the rail", async () => {
-    mockSidebar.collapseLocked = true;
-    mockInstanceSettingsApi.getExperimental.mockResolvedValue({});
-    const root = await renderSidebar();
-
-    expect(container.querySelector('button[aria-label="Collapse sidebar"]')).toBeNull();
-    expect(container.querySelector('button[aria-label="Expand sidebar"]')).toBeNull();
 
     flushSync(() => {
       root.unmount();

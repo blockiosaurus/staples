@@ -264,7 +264,7 @@ export function Sidebar({ children }: { children?: ReactNode }) {
           <SidebarNavItem to="/activity" label="Audit" icon={History} />
         </SidebarSection>
 
-        {children ?? <SidebarAgents streamlined />}
+        {children ?? <SidebarAgents />}
 
         <SidebarRecentTasks companyId={selectedCompanyId} liveIssueIds={liveIssueIds} />
 

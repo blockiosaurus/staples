@@ -958,7 +958,6 @@ function useTaskDetailInterfaceMode(conversationMode = false) {
   return {
     classicTaskInterfaceEnabled,
     taskChatShellEnabled,
-    streamlinedTaskDetailEnabled: taskChatShellEnabled,
     loaded: classicTaskInterfaceLoaded,
   };
 }
@@ -1444,8 +1443,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
 }: IssueDetailChatTabProps) {
   // Preserve master's Classic Task Interface seam: Streamlined UI changes the
   // TaskChatThread presentation but never swaps it for IssueChatThread.
-  const { classicTaskInterfaceEnabled, streamlinedTaskDetailEnabled } =
-    useTaskDetailInterfaceMode(!!conversationMode);
+  const { classicTaskInterfaceEnabled } = useTaskDetailInterfaceMode(!!conversationMode);
   const ThreadComponent = classicTaskInterfaceEnabled
     ? IssueChatThread
     : TaskChatThread;
@@ -2989,7 +2987,6 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   const {
     classicTaskInterfaceEnabled,
     taskChatShellEnabled,
-    streamlinedTaskDetailEnabled,
     loaded: taskInterfaceSettingsLoaded,
   } = useTaskDetailInterfaceMode(!!conversation);
   // Chat-style: the page wrapper spans the full center pane so the thread's
@@ -3078,7 +3075,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   );
   const relationIssueLinkState = useMemo(() => {
     const sourceState = resolvedIssueDetailState ?? location.state;
-    if (!streamlinedTaskDetailEnabled) return sourceState;
+    if (!taskChatShellEnabled) return sourceState;
     if (typeof sourceState !== "object" || sourceState === null)
       return sourceState;
     return {
@@ -3088,7 +3085,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       // but do not let that one-row archive affordance leak to the relation.
       issueDetailInboxQuickArchiveArmed: false,
     };
-  }, [location.state, resolvedIssueDetailState, streamlinedTaskDetailEnabled]);
+  }, [location.state, resolvedIssueDetailState, taskChatShellEnabled]);
   const preferInboxHistoryBack = useMemo(
     () =>
       readIssueDetailLocationState(null, location.state)?.issueDetailSource ===
@@ -3360,7 +3357,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       createdFromIssueId: issue!.id,
       includeRoutineExecutions: true,
     }),
-    enabled: streamlinedTaskDetailEnabled && !!resolvedCompanyId && !!issue?.id && !tasksTab,
+    enabled: taskChatShellEnabled && !!resolvedCompanyId && !!issue?.id && !tasksTab,
   });
 
   const {
@@ -3646,7 +3643,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   }, [issue?.id, rawChildIssues]);
   const resolvedTasksTab = useMemo(() => {
     if (tasksTab) return tasksTab;
-    if (!streamlinedTaskDetailEnabled) return undefined;
+    if (!taskChatShellEnabled) return undefined;
     const createdTasks = createdTasksQuery.data ?? EMPTY_ISSUES;
     const hasError = createdTasksQuery.isError || childIssuesError;
     return {
@@ -3680,7 +3677,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     issue?.createdFrom,
     resolvedIssueDetailState,
     location.state,
-    streamlinedTaskDetailEnabled,
+    taskChatShellEnabled,
     childIssues,
     childIssuesLoading,
     childIssuesError,
@@ -4526,50 +4523,6 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     [updateChildIssue.mutate],
   );
 
-  const subTasksTree = useMemo(
-    () =>
-      taskChatShellEnabled &&
-      !streamlinedTaskDetailEnabled &&
-      issue &&
-      showRichSubIssuesSection ? (
-        <IssuesList
-          issues={childIssues}
-          isLoading={childIssuesLoading}
-          agents={agents}
-          projects={projects}
-          liveIssueIds={liveIssueIds}
-          projectId={issue.projectId ?? undefined}
-          viewStateKey={`paperclip:issue-detail:${issue.id}:subissues-view`}
-          issueLinkState={resolvedIssueDetailState ?? location.state}
-          searchFilters={{ descendantOf: issue.id, includeBlockedBy: true }}
-          searchWithinLoadedIssues
-          baseCreateIssueDefaults={buildSubIssueDefaultsForViewer(
-            issue,
-            currentUserId,
-          )}
-          createIssueLabel="Sub-task"
-          defaultSortField="workflow"
-          showProgressSummary
-          parentIssueIdForCostSummary={issue.id}
-          onUpdateIssue={handleChildIssueUpdate}
-        />
-      ) : null,
-    [
-      taskChatShellEnabled,
-      streamlinedTaskDetailEnabled,
-      issue,
-      showRichSubIssuesSection,
-      childIssues,
-      childIssuesLoading,
-      agents,
-      projects,
-      liveIssueIds,
-      resolvedIssueDetailState,
-      location.state,
-      currentUserId,
-      handleChildIssueUpdate,
-    ],
-  );
 
   const cancelIssueMonitor = useMutation({
     mutationKey: ["cancel-issue-monitor", issueId],
@@ -5593,7 +5546,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   ]);
 
   useEffect(() => {
-    if (!streamlinedTaskDetailEnabled || !taskChatShellEnabled || !issue?.id) {
+    if (!taskChatShellEnabled || !issue?.id) {
       setBreadcrumbPanelControl(null);
       return;
     }
@@ -5608,44 +5561,15 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     issue?.id,
     panelVisible,
     setBreadcrumbPanelControl,
-    streamlinedTaskDetailEnabled,
     suppressPanelUntilPlan,
     taskChatShellEnabled,
     toggleTaskSidePanel,
   ]);
 
   useEffect(() => {
-    const showTaskPanelLauncher =
-      taskChatShellEnabled &&
-      !streamlinedTaskDetailEnabled &&
-      !isMobile &&
-      Boolean(issue?.id) &&
-      (!panelVisible || suppressPanelUntilPlan);
-
-    setBreadcrumbToolbar(
-      showTaskPanelLauncher ? (
-        <TooltipProvider>
-          <SidePanelToggleButton
-            open={false}
-            onToggle={openTaskSidePanel}
-            shortcut="]"
-            className="shrink-0"
-          />
-        </TooltipProvider>
-      ) : null,
-    );
-
+    setBreadcrumbToolbar(null);
     return () => setBreadcrumbToolbar(null);
-  }, [
-    isMobile,
-    issue?.id,
-    openTaskSidePanel,
-    panelVisible,
-    setBreadcrumbToolbar,
-    streamlinedTaskDetailEnabled,
-    suppressPanelUntilPlan,
-    taskChatShellEnabled,
-  ]);
+  }, [setBreadcrumbToolbar]);
 
   const isFromInbox = resolvedIssueDetailState?.issueDetailSource === "inbox";
 
@@ -5815,7 +5739,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     const sharedProps = {
       issue: panelIssue,
       childIssues: panelChildIssues,
-      issueLinkState: streamlinedTaskDetailEnabled
+      issueLinkState: taskChatShellEnabled
         ? relationIssueLinkState
         : undefined,
       onAddSubIssue: openNewSubIssue,
@@ -5853,8 +5777,8 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
             {...sharedProps}
             accountScope={currentUserId ?? "anonymous"}
             fileTabsEnabled={fileViewerEnabled}
-            streamlinedTabs={streamlinedTaskDetailEnabled}
-            showSubtasksTab={streamlinedTaskDetailEnabled}
+            streamlinedTabs={taskChatShellEnabled}
+            showSubtasksTab={taskChatShellEnabled}
             tasksTab={resolvedTasksTab}
             artifactsOpenRequestId={!isMobile && !artifactsOpenRequest?.handled && artifactsOpenRequest?.issueId === panelIssue.id
               ? artifactsOpenRequest.requestId : undefined}
@@ -5888,7 +5812,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     panelIssue,
     suppressPanelUntilPlan,
     relationIssueLinkState,
-    streamlinedTaskDetailEnabled,
+    taskChatShellEnabled,
     resolvedHasActiveRun,
     checkIssueMonitorNow.isPending,
     checkIssueMonitorNow.mutate,
@@ -5898,7 +5822,6 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     externalObjectsState.isError,
     externalObjectsState.refetch,
     documentDeepLink,
-    taskChatShellEnabled,
     currentUserId,
     fileViewerEnabled,
     resolvedTasksTab,
@@ -7042,7 +6965,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   // stays near the viewport bottom. Flag OFF renders the same nodes in the
   // page flow, in their original order relative to the alert banners.
   const ancestorsNav =
-    !streamlinedTaskDetailEnabled && ancestors.length > 0 ? (
+    !taskChatShellEnabled && ancestors.length > 0 ? (
       <nav
         className={cn(
           "flex items-center gap-1 text-xs text-muted-foreground flex-wrap",
@@ -7078,7 +7001,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   // Creation provenance ("Created from PAP-168 by Paperclip QA"). Distinct from
   // the parent chain above; the streamlined Tasks tab renders it instead.
   const createdFromNote =
-    !streamlinedTaskDetailEnabled && issue.createdFrom ? (
+    !taskChatShellEnabled && issue.createdFrom ? (
       <IssueCreatedFromNote
         createdFrom={issue.createdFrom}
         issueLinkState={resolvedIssueDetailState ?? location.state}
@@ -7099,11 +7022,11 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     <div
       data-testid="issue-detail-header"
       className={cn(
-        streamlinedTaskDetailEnabled ? "relative space-y-2" : "space-y-3",
+        taskChatShellEnabled ? "relative space-y-2" : "space-y-3",
         shellSectionClass,
       )}
     >
-      {streamlinedTaskDetailEnabled ? (
+      {taskChatShellEnabled ? (
         <div className="flex min-w-0 items-start gap-2 md:items-center md:pr-8">
           <div className="hidden md:block">{issueStatusControl}</div>
           <div
@@ -7129,18 +7052,18 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       <div
         className={cn(
           "flex min-w-0 flex-wrap items-center gap-2",
-          streamlinedTaskDetailEnabled && "gap-x-3 gap-y-2 md:gap-x-6 md:pl-7",
+          taskChatShellEnabled && "gap-x-3 gap-y-2 md:gap-x-6 md:pl-7",
         )}
       >
-        {streamlinedTaskDetailEnabled ? (
+        {taskChatShellEnabled ? (
           <div className="md:hidden">{issueStatusControl}</div>
         ) : null}
-        {streamlinedTaskDetailEnabled ? (
+        {taskChatShellEnabled ? (
           <span className="shrink-0 font-mono text-sm text-muted-foreground md:hidden">
             {issue.identifier ?? issue.id.slice(0, 8)}
           </span>
         ) : null}
-        {!streamlinedTaskDetailEnabled ? issueStatusControl : null}
+        {!taskChatShellEnabled ? issueStatusControl : null}
         {/* PAP-411: priority UI hidden behind SHOW_TASK_PRIORITY_UI. */}
         {SHOW_TASK_PRIORITY_UI && (
           <PriorityIcon
@@ -7148,7 +7071,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
             onChange={(priority) => updateIssue.mutate({ priority })}
           />
         )}
-        {!streamlinedTaskDetailEnabled ? (
+        {!taskChatShellEnabled ? (
           <span className="shrink-0 font-mono text-sm text-muted-foreground">
             {issue.identifier ?? issue.id.slice(0, 8)}
           </span>
@@ -7261,7 +7184,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           userLabelMap={userLabelMap}
         />
 
-        {!streamlinedTaskDetailEnabled && (issue.labels ?? []).length > 0 && (
+        {!taskChatShellEnabled && (issue.labels ?? []).length > 0 && (
           <div className="hidden sm:flex items-center gap-1">
             {(issue.labels ?? []).slice(0, 4).map((label) => (
               <Badge
@@ -7285,7 +7208,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           </div>
         )}
 
-        {!streamlinedTaskDetailEnabled && !(isMobile && isFromInbox) && (
+        {!taskChatShellEnabled && !(isMobile && isFromInbox) && (
           <div className="ml-auto flex items-center gap-0.5 md:hidden shrink-0">
             <Button
               variant="ghost"
@@ -7311,7 +7234,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         )}
 
         <div className="hidden md:flex items-center md:ml-auto shrink-0">
-          {!streamlinedTaskDetailEnabled && canArchiveFromInbox && (
+          {!taskChatShellEnabled && canArchiveFromInbox && (
             <Button
               variant="ghost"
               size="icon-xs"
@@ -7337,7 +7260,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
               <FileCode2 className="h-4 w-4" />
             </Button>
           ) : null}
-          {!streamlinedTaskDetailEnabled ? (
+          {!taskChatShellEnabled ? (
             <Button
               variant="ghost"
               size="icon-xs"
@@ -7351,8 +7274,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
               )}
             </Button>
           ) : null}
-          {!streamlinedTaskDetailEnabled &&
-          !taskChatShellEnabled &&
+          {!taskChatShellEnabled &&
           (!panelVisible || suppressPanelUntilPlan) ? (
             <TooltipProvider>
               <SidePanelToggleButton
@@ -7366,7 +7288,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           <div
             data-slot="task-title-actions"
             className={cn(
-              streamlinedTaskDetailEnabled &&
+              taskChatShellEnabled &&
                 "absolute right-0 top-0 flex h-7 items-center",
             )}
           >
@@ -7397,7 +7319,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-52 p-1" align="end">
-                {streamlinedTaskDetailEnabled ? (
+                {taskChatShellEnabled ? (
                   <>
                     <button
                       className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent/50"
@@ -7503,22 +7425,14 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         </div>
       </div>
 
-      {!streamlinedTaskDetailEnabled ? (
+      {!taskChatShellEnabled ? (
         <InlineEditor
           value={issue.title}
           onSave={(title) => updateIssue.mutateAsync({ title })}
           as="h2"
-          className={
-            taskChatShellEnabled
-              ? "text-base font-semibold"
-              : "text-xl font-bold"
-          }
+          className="text-xl font-bold"
         />
       ) : null}
-
-      {taskChatShellEnabled && !streamlinedTaskDetailEnabled
-        ? subTasksTree
-        : null}
 
       <IssueMonitorBanner
         key={issue.id}
@@ -7937,10 +7851,10 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
               className={
                 taskChatShellEnabled
                   ? isMobile
-                    ? streamlinedTaskDetailEnabled
+                    ? taskChatShellEnabled
                       ? undefined
                       : "-mx-4"
-                    : streamlinedTaskDetailEnabled
+                    : taskChatShellEnabled
                       ? "flex min-h-0 flex-col"
                       : "-mx-4 -mt-4 md:-mx-6 md:-mt-6 flex min-h-0 flex-col"
                   : undefined
@@ -8380,7 +8294,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                     accountScope={currentUserId ?? "anonymous"}
                     childIssues={childIssues}
                     issueLinkState={
-                      streamlinedTaskDetailEnabled
+                      taskChatShellEnabled
                         ? relationIssueLinkState
                         : undefined
                     }
@@ -8412,8 +8326,8 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                     onCheckMonitorNow={() => checkIssueMonitorNow.mutate()}
                     checkingMonitorNow={checkIssueMonitorNow.isPending}
                     fileTabsEnabled={fileViewerEnabled}
-                    streamlinedTabs={streamlinedTaskDetailEnabled}
-                    showSubtasksTab={streamlinedTaskDetailEnabled}
+                    streamlinedTabs={taskChatShellEnabled}
+                    showSubtasksTab={taskChatShellEnabled}
                     tasksTab={resolvedTasksTab}
                     artifactsOpenRequestId={isMobile && !artifactsOpenRequest?.handled && artifactsOpenRequest?.issueId === issue.id
                       ? artifactsOpenRequest.requestId : undefined}
@@ -8446,7 +8360,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                         issue={issue}
                         childIssues={childIssues}
                         issueLinkState={
-                          streamlinedTaskDetailEnabled
+                          taskChatShellEnabled
                             ? relationIssueLinkState
                             : undefined
                         }

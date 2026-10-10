@@ -16,9 +16,7 @@ describe("chat connector UI contract", () => {
   it("retries the selected failed run from every Board entry point", () => {
     for (const file of [
       "AgentDetail.tsx",
-      "AgentDetail.production.tsx",
       "Inbox.tsx",
-      "LegacyInbox.tsx",
     ]) {
       const page = source(`../../${file}`);
       expect(page).toMatch(
@@ -33,7 +31,7 @@ describe("chat connector UI contract", () => {
       /agentsApi\.retryFailedRun\(\s*failedRun\.agentId,\s*failedRun\.runId,\s*companyId/,
     );
     expect(issue).toContain("Retry queued");
-    for (const file of ["Inbox.tsx", "LegacyInbox.tsx"]) {
+    for (const file of ["Inbox.tsx"]) {
       const page = source(`../../${file}`);
       expect(page).toMatch(
         /const retryRunMutation = useMutation\(\{[\s\S]*?onError: \(error\) => \{\s*pushToast\(\{\s*title: "Run retry failed"/,

@@ -102,9 +102,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
   AllUnfiledBanner,
-  BulkBar,
   DeleteFolderDialog,
-  FolderChip,
   FolderFormDialog,
   FolderSwatch,
   MobileFolderSheet,
@@ -114,9 +112,7 @@ import {
   type FolderSelection,
 } from "../components/folders/FolderControls";
 import {
-  FolderBreadcrumb,
   MoveToFolderDialog,
-  SkillFolderRail,
   folderBreadcrumbTrail,
   reservedRootLabel,
   isBundledFolder,
@@ -992,54 +988,8 @@ function SkillCard({
 
 export type DiscoveryCategory = { slug: string; count: number };
 
-function CategoryNav({
-  categories,
-  total,
-  active,
-  onSelect,
-}: {
-  categories: DiscoveryCategory[];
-  total: number;
-  active: string | null;
-  onSelect: (slug: string | null) => void;
-}) {
-  return (
-    <nav className="flex flex-col gap-0.5 px-2">
-      <button
-        type="button"
-        onClick={() => onSelect(null)}
-        className={cn(
-          "flex items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent/40",
-          active == null ? "bg-accent/60 font-medium text-foreground" : "text-muted-foreground",
-        )}
-      >
-        <span>All</span>
-        <span className="text-xs text-muted-foreground">{total}</span>
-      </button>
-      {categories.map((category) => (
-        <button
-          key={category.slug}
-          type="button"
-          onClick={() => onSelect(category.slug)}
-          className={cn(
-            "flex items-center justify-between rounded-md px-2 py-1.5 text-sm capitalize transition-colors hover:bg-accent/40",
-            active === category.slug ? "bg-accent/60 font-medium text-foreground" : "text-muted-foreground",
-          )}
-        >
-          <span className="truncate">{category.slug}</span>
-          <span className="ml-2 shrink-0 text-xs text-muted-foreground">{category.count}</span>
-        </button>
-      ))}
-    </nav>
-  );
-}
-
 export function DiscoveryGrid({
   tab,
-  categories,
-  categoryTotal,
-  activeCategory,
-  onCategoryChange,
   search,
   onSearchChange,
   sort,
@@ -1057,35 +1007,13 @@ export function DiscoveryGrid({
   scanPending,
   scanStatus,
   folderResult,
-  folderSelection = "all",
-  foldersLoading = false,
-  selectMode = false,
-  selectedSkillIds = [],
-  onFolderSelect,
   onCreateFolder,
-  onRenameFolder,
-  onEditFolder,
-  onMoveFolder,
-  onDeleteFolder,
-  onToggleSelectMode,
-  onSelectCard,
   onMoveCard,
   onCreateFolderAndMoveCard,
-  onMoveSelected,
-  onCreateFolderAndMoveSelected,
-  onClearSelected,
-  onOpenMobileFolders,
-  onCreateFolderIn,
-  onEnsureMyFolder,
   onOpenMoveCard,
   folderNudgeStorageKey,
-  showBrowseRails = true,
 }: {
   tab: DiscoveryTab;
-  categories: DiscoveryCategory[];
-  categoryTotal: number;
-  activeCategory: string | null;
-  onCategoryChange: (slug: string | null) => void;
   search: string;
   onSearchChange: (value: string) => void;
   sort: DiscoverySort;
@@ -1103,34 +1031,13 @@ export function DiscoveryGrid({
   scanPending: boolean;
   scanStatus: string | null;
   folderResult?: FolderListResult | null;
-  folderSelection?: FolderSelection;
-  foldersLoading?: boolean;
-  selectMode?: boolean;
-  selectedSkillIds?: string[];
-  onFolderSelect?: (selection: FolderSelection) => void;
   onCreateFolder?: () => void;
-  onRenameFolder?: (folder: FolderListItem, name: string) => void;
-  onEditFolder?: (folder: FolderListItem) => void;
-  onMoveFolder?: (folder: FolderListItem, destination: "my" | "company") => void;
-  onDeleteFolder?: (folder: FolderListItem) => void;
-  onToggleSelectMode?: () => void;
-  onSelectCard?: (card: DiscoveryCard, selected: boolean) => void;
   onMoveCard?: (card: DiscoveryCard, folderId: string | null) => void;
   onCreateFolderAndMoveCard?: (card: DiscoveryCard) => void;
-  onMoveSelected?: (folderId: string | null) => void;
-  onCreateFolderAndMoveSelected?: () => void;
-  onClearSelected?: () => void;
-  onOpenMobileFolders?: () => void;
-  /** Create a folder under `parentId` (null = top level), used by the tree rail. */
-  onCreateFolderIn?: (parentId: string | null) => void;
-  /** Provision the caller's personal "My Skills" root on demand. */
-  onEnsureMyFolder?: () => void;
   /** Open the rich move-to-folder dialog for a single card. */
   onOpenMoveCard?: (card: DiscoveryCard) => void;
   /** When set and no folders exist yet, show the dismissible all-unfiled nudge (ux-spec §6.3). */
   folderNudgeStorageKey?: string;
-  /** Category/folder navigation stays available in production, but the Streamlined UI relies on search and scrolling. */
-  showBrowseRails?: boolean;
 }) {
   const installedView = tab === "installed";
   const viewTitle = installedView ? "Installed skills" : "Discover skills";
@@ -1169,67 +1076,11 @@ export function DiscoveryGrid({
     [cards, sourceBadgeFilter],
   );
   const sourceFilterActive = sourceBadgeFilter !== "all";
-  const folderActionsReady = Boolean(
-    onCreateFolderIn && onRenameFolder && onEditFolder && onMoveFolder && onDeleteFolder,
-  );
-  // The nested folder tree owns the left rail whenever folders (reserved roots
-  // or user folders) exist for the installed view.
-  const showFolderRail = Boolean(
-    showBrowseRails && folderResult && folderResult.folders.length > 0 && onFolderSelect && folderActionsReady,
-  );
-  const activeProjectFolder = useMemo(() => {
-    if (!folderResult || folderSelection === "all" || folderSelection === "unfiled") return null;
-    const folder = folderResult.folders.find((candidate) => candidate.id === folderSelection);
-    return folder?.systemKey?.startsWith("project:") ? folder : null;
-  }, [folderResult, folderSelection]);
-  const activeProjectId = activeProjectFolder?.systemKey?.slice("project:".length) || null;
 
   return (
-    // On desktop the store is bounded to the viewport so the category sidebar
-    // and the results pane each scroll independently (PAP-10907). Mobile keeps
-    // the natural page flow.
+    // On desktop the store is bounded to the viewport so the results pane
+    // scrolls independently (PAP-10907). Mobile keeps the natural page flow.
     <div className="flex min-h-(--sz-calc-30) md:h-(--sz-calc-33) md:min-h-0 md:overflow-hidden">
-      {showFolderRail ? (
-        <div className="hidden shrink-0 pl-4 pt-4 md:block">
-          <SkillFolderRail
-            result={folderResult}
-            selection={folderSelection}
-            loading={foldersLoading}
-            tags={categories}
-            activeTag={activeCategory}
-            onSelect={onFolderSelect!}
-            onSelectTag={onCategoryChange}
-            onCreateFolder={onCreateFolderIn!}
-            onRenameFolder={onRenameFolder!}
-            onEditFolder={onEditFolder!}
-            onMoveFolder={onMoveFolder!}
-            onDeleteFolder={onDeleteFolder!}
-            onEnsureMyFolder={onEnsureMyFolder}
-          />
-        </div>
-      ) : null}
-      {showBrowseRails ? (
-        <aside className={cn("hidden w-60 shrink-0 flex-col overflow-hidden border-r border-border md:flex", showFolderRail && "md:hidden")}>
-          <div className="border-b border-border px-4 py-4">
-            <h2 className="text-sm font-semibold text-foreground">Browse by category</h2>
-            <p className="text-xs text-muted-foreground">
-              Filter {installedView ? "installed" : "discoverable"} skills.
-            </p>
-          </div>
-          <div className="px-4 pb-1 pt-3 text-(length:--text-micro) font-medium uppercase tracking-wide text-muted-foreground">
-            Categories
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto pb-4">
-            <CategoryNav
-              categories={categories}
-              total={categoryTotal}
-              active={activeCategory}
-              onSelect={onCategoryChange}
-            />
-          </div>
-        </aside>
-      ) : null}
-
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Search + sort + actions */}
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
@@ -1329,95 +1180,23 @@ export function DiscoveryGrid({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {showBrowseRails && folderResult && onFolderSelect ? (
-            <div className="w-full md:hidden">
-              <FolderChip
-                result={folderResult}
-                selection={folderSelection}
-                allLabel="All skills"
-                onClick={onOpenMobileFolders ?? (() => undefined)}
-              />
-            </div>
-          ) : null}
-          {onCreateFolder && !showFolderRail ? (
+          {onCreateFolder ? (
             <Button variant="outline" size="sm" onClick={onCreateFolder}>
               <Plus className="mr-1 h-3.5 w-3.5" />
               New folder
             </Button>
           ) : null}
-          {onToggleSelectMode ? (
-            <Button variant="ghost" size="sm" onClick={onToggleSelectMode}>
-              {selectMode ? "Done" : "Select"}
-            </Button>
-          ) : null}
         </div>
-
-        {/* Mobile category selector (sidebar is hidden below md) */}
-        {showBrowseRails && categories.length > 0 ? (
-          <div className="border-b border-border px-4 py-2 md:hidden">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="w-full justify-between">
-                  <span className="capitalize">{activeCategory ?? "All categories"}</span>
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="max-h-72 overflow-auto">
-                <DropdownMenuRadioGroup
-                  value={activeCategory ?? "__all__"}
-                  onValueChange={(value) => onCategoryChange(value === "__all__" ? null : value)}
-                >
-                  <DropdownMenuRadioItem value="__all__">All ({categoryTotal})</DropdownMenuRadioItem>
-                  {categories.map((category) => (
-                    <DropdownMenuRadioItem key={category.slug} value={category.slug} className="capitalize">
-                      {category.slug} ({category.count})
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        ) : null}
 
         {/* Grid body */}
         <div className="min-h-0 flex-1 overflow-auto p-4">
           {scanStatus ? <p className="mb-3 text-xs text-muted-foreground">{scanStatus}</p> : null}
-          {showFolderRail && onFolderSelect ? (
-            <div className="mb-4 flex items-center justify-between gap-2">
-              <FolderBreadcrumb result={folderResult} selection={folderSelection} onSelect={onFolderSelect} />
-              {activeProjectFolder && activeProjectId ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onScan(activeProjectId)}
-                  disabled={scanPending}
-                  aria-label={`Refresh ${activeProjectFolder.name} project skills`}
-                  title={`Refresh skills from ${activeProjectFolder.name}`}
-                >
-                  <RefreshCw className={cn("h-3.5 w-3.5", scanPending && "animate-spin")} />
-                  Refresh
-                </Button>
-              ) : null}
-            </div>
-          ) : null}
           {folderNudgeStorageKey && onCreateFolder && folderResult && folderResult.folders.length === 0 && !loading && cards.length > 0 ? (
             <AllUnfiledBanner
               storageKey={folderNudgeStorageKey}
               itemLabelPlural="skills"
               onCreateFolder={onCreateFolder}
             />
-          ) : null}
-          {selectMode && onMoveSelected && onCreateFolderAndMoveSelected && onClearSelected ? (
-            <div className="mb-3">
-              <BulkBar
-                selectedCount={selectedSkillIds.length}
-                folders={folderResult?.folders ?? []}
-                onMove={onMoveSelected}
-                onCreateAndMove={onCreateFolderAndMoveSelected}
-                onClear={onClearSelected}
-                onDone={onToggleSelectMode ?? onClearSelected}
-              />
-            </div>
           ) : null}
           {loading ? (
             <PageSkeleton variant="list" />
@@ -1432,7 +1211,7 @@ export function DiscoveryGrid({
                     ? installedView
                       ? "No installed skills yet. Discover a skill or create one."
                       : "No skills are available to discover yet."
-                    : search || activeCategory || sourceFilterActive
+                    : search || sourceFilterActive
                       ? "No skills match your filters."
                       : "No skills in this view yet."
                 }
@@ -1449,14 +1228,13 @@ export function DiscoveryGrid({
                     Create a skill
                   </Button>
                 </div>
-              ) : (search || activeCategory || sourceFilterActive) ? (
+              ) : (search || sourceFilterActive) ? (
                 <div className="mt-3 flex justify-center">
                   <Button
                     size="sm"
                     variant="ghost"
                     onClick={() => {
                       onSearchChange("");
-                      onCategoryChange(null);
                       setSourceBadgeFilter("all");
                     }}
                   >
@@ -1469,7 +1247,6 @@ export function DiscoveryGrid({
             <>
               <p className="mb-3 text-xs text-muted-foreground">
                 {sourceFilteredCards.length} {sourceFilteredCards.length === 1 ? "skill" : "skills"}
-                {activeCategory ? <span className="capitalize"> · {activeCategory}</span> : null}
               </p>
               <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(19rem,1fr))]">
                 {sourceFilteredCards.map((card) => (
@@ -1477,11 +1254,8 @@ export function DiscoveryGrid({
                     key={card.key}
                     card={card}
                     folders={folderResult?.folders}
-                    selected={selectedSkillIds.includes(card.skillId ?? "")}
-                    selectMode={selectMode}
                     showFolderBadge={Boolean(folderResult && search.trim())}
                     onOpen={onOpenCard}
-                    onSelectChange={onSelectCard}
                     onMove={onMoveCard}
                     onCreateFolderAndMove={onCreateFolderAndMoveCard}
                     onOpenMove={onOpenMoveCard}
@@ -4137,15 +3911,6 @@ export function CompanySkills() {
     });
   }
 
-  function setDiscoveryCategory(slug: string | null) {
-    setSearchParams((current) => {
-      const params = new URLSearchParams(current);
-      if (slug) params.set("category", slug);
-      else params.delete("category");
-      return params;
-    });
-  }
-
   function setSourceFilter(next: SourceFilter) {
     setSearchParams((current) => {
       const params = new URLSearchParams(current);
@@ -4585,17 +4350,6 @@ export function CompanySkills() {
     () => cardsForTab(discoveryCards, discoveryTab),
     [discoveryCards, discoveryTab],
   );
-  const discoveryCategoryCounts = useMemo<DiscoveryCategory[]>(() => {
-    const counts = new Map<string, number>();
-    for (const card of discoveryTabCards) {
-      for (const category of card.categories) {
-        counts.set(category, (counts.get(category) ?? 0) + 1);
-      }
-    }
-    return Array.from(counts.entries())
-      .map(([slug, count]) => ({ slug, count }))
-      .sort((a, b) => b.count - a.count || a.slug.localeCompare(b.slug));
-  }, [discoveryTabCards]);
   const visibleDiscoveryCards = useMemo(() => {
     const filtered = discoveryTabCards.filter((card) => {
       return discoveryMatchesSearch(card, discoverySearch.trim());
@@ -4752,26 +4506,6 @@ export function CompanySkills() {
       });
     },
   });
-  const moveFolder = useMutation({
-    mutationFn: ({ folderId, parentId }: { folderId: string; parentId: string | null }) =>
-      foldersApi.moveFolder(selectedCompanyId!, folderId, { parentId, position: 0 }),
-    onSuccess: async (folder) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.folders.list(selectedCompanyId!, "skill") });
-      setFolderSelection(folder.id);
-      pushToast({
-        tone: "success",
-        title: "Folder moved",
-        body: skillFolderPathDisplayFallback(folder.path) ?? folder.name,
-      });
-    },
-    onError: (error) => {
-      pushToast({
-        tone: "error",
-        title: "Folder move failed",
-        body: error instanceof Error ? error.message : "Failed to move folder.",
-      });
-    },
-  });
   const deleteFolder = useMutation({
     mutationFn: (folderId: string) => foldersApi.delete(selectedCompanyId!, folderId),
     onSuccess: async (_, folderId) => {
@@ -4809,51 +4543,8 @@ export function CompanySkills() {
     },
   });
 
-  // Provision the signed-in user's personal "My Skills" root, then select it.
-  const ensureMyFolder = useMutation({
-    mutationFn: () => foldersApi.ensureMy(selectedCompanyId!),
-    onSuccess: async (folder) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.folders.list(selectedCompanyId!, "skill") });
-      setFolderSelection(folder.id);
-    },
-    onError: (error) => {
-      pushToast({
-        tone: "error",
-        title: "Couldn't open My Skills",
-        body: error instanceof Error ? error.message : "Failed to create your personal folder.",
-      });
-    },
-  });
-
   function openNewSkill() {
     navigate(skillStudioNewRoute(null, null));
-  }
-
-  async function openCreateFolderIn(parentId: string | null) {
-    const parent = parentId ? treeFromResult(skillFoldersQuery.data).byId.get(parentId) : null;
-    if (parent?.systemKey === "my") {
-      try {
-        const personalFolder = await ensureMyFolder.mutateAsync();
-        openCreateFolder([], personalFolder.id);
-      } catch {
-        return;
-      }
-      return;
-    }
-    openCreateFolder([], parentId);
-  }
-
-  async function moveFolderBetweenScopes(folder: FolderListItem, destination: "my" | "company") {
-    if (destination === "company") {
-      moveFolder.mutate({ folderId: folder.id, parentId: null });
-      return;
-    }
-    try {
-      const personalFolder = await ensureMyFolder.mutateAsync();
-      moveFolder.mutate({ folderId: folder.id, parentId: personalFolder.id });
-    } catch {
-      return;
-    }
   }
 
   // Inline folder creation used by the move dialog's "New folder inside…" affordance.
@@ -5366,10 +5057,6 @@ export function CompanySkills() {
         <>
         <DiscoveryGrid
           tab={discoveryTab}
-          categories={discoveryCategoryCounts}
-          categoryTotal={discoveryTabCards.length}
-          activeCategory={null}
-          onCategoryChange={setDiscoveryCategory}
           search={discoverySearch}
           onSearchChange={setDiscoverySearch}
           sort={discoverySort}
@@ -5379,7 +5066,7 @@ export function CompanySkills() {
           loading={skillsQuery.isLoading || catalogListQuery.isLoading}
           error={skillsQuery.error?.message ?? catalogListQuery.error?.message ?? null}
           totalCount={discoveryTabCards.length}
-          onCreate={() => void openNewSkill()}
+          onCreate={openNewSkill}
           onImport={() => setImportDialogOpen(true)}
           onImportFromProject={() => setImportFromProjectOpen(true)}
           onBrowseDiscover={() => setDiscoveryTab("discover")}
@@ -5387,13 +5074,7 @@ export function CompanySkills() {
           scanPending={scanProjects.isPending}
           scanStatus={scanStatusMessage}
           folderResult={showInstalledFolders ? railSkillFolderResult : null}
-          folderSelection="all"
-          foldersLoading={skillFoldersQuery.isLoading}
-          onFolderSelect={showInstalledFolders ? setFolderSelection : undefined}
-          onOpenMobileFolders={showInstalledFolders ? () => setMobileFoldersOpen(true) : undefined}
           onCreateFolder={showInstalledFolders ? () => openCreateFolder() : undefined}
-          onCreateFolderIn={showInstalledFolders ? (parentId) => void openCreateFolderIn(parentId) : undefined}
-          onEnsureMyFolder={showInstalledFolders ? () => ensureMyFolder.mutate() : undefined}
           onOpenMoveCard={showInstalledFolders ? (card) => {
             if (!card.skillId) return;
             setMoveDialog({
@@ -5403,13 +5084,6 @@ export function CompanySkills() {
               currentFolderId: card.folderId ?? null,
             });
           } : undefined}
-          onRenameFolder={showInstalledFolders ? (folder, name) => updateFolder.mutate({ folderId: folder.id, payload: { name } }) : undefined}
-          onEditFolder={showInstalledFolders ? (folder) => {
-            setFolderDialogTarget(folder);
-            setFolderDialogOpen(true);
-          } : undefined}
-          onMoveFolder={showInstalledFolders ? (folder, destination) => void moveFolderBetweenScopes(folder, destination) : undefined}
-          onDeleteFolder={showInstalledFolders ? setDeleteFolderTarget : undefined}
           onMoveCard={showInstalledFolders ? (card, folderId) => {
             if (!card.skillId) return;
             const skillId = card.skillId;
@@ -5431,7 +5105,6 @@ export function CompanySkills() {
             if (card.skillId) openCreateFolder([card.skillId]);
           } : undefined}
           folderNudgeStorageKey={showInstalledFolders ? `paperclip:skills-folder-nudge:${selectedCompanyId ?? "none"}` : undefined}
-          showBrowseRails={false}
         />
         </>
       ) : activeView === "installed" && selectedSkillId ? (

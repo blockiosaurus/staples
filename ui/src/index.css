@@ -3017,7 +3017,6 @@ span.paperclip-mention-chip[data-mention-kind="external-object"] {
    * allow ui/src/components/NewIssueDialog.test.tsx — mock label color fixtures
    * allow ui/src/components/ProjectTile.test.tsx — mock project color prop
    * allow ui/src/components/RoutineRunVariablesDialog.test.tsx — mock label color fixture
-   * allow ui/src/components/SidebarProjects.test.tsx — mock project color fixture
    * allow ui/src/components/SidebarStarredProjects.test.tsx — mock project color fixture
    * allow ui/src/pages/CompanyEnvironments.test.tsx — xterm.js theme-mock assertion values (mirrors the allowlisted xterm.js config in the CompanyEnvironments.tsx source above)
    * allow ui/src/pages/ExecutionWorkspaceDetail.test.tsx — mock project color fixture

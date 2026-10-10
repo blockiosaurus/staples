@@ -71,7 +71,7 @@ import {
   useLocalInboxArchiveIssueIds,
 } from "../lib/inboxArchiveCache";
 import { EmptyState } from "../components/EmptyState";
-import { CollectionToolbar} from "../components/CollectionToolbar";
+import { CollectionToolbar } from "../components/CollectionToolbar";
 import { IssueGroupHeader } from "../components/IssueGroupHeader";
 import { PageSkeleton } from "../components/PageSkeleton";
 import {

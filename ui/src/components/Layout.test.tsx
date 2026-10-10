@@ -31,7 +31,6 @@ const mockPluginSlotContexts = vi.hoisted(
   () => [] as Array<Record<string, unknown>>,
 );
 const mockSetPeeking = vi.hoisted(() => vi.fn());
-const mockSetForceCollapsed = vi.hoisted(() => vi.fn());
 const mockSidebarState = vi.hoisted(() => ({
   sidebarOpen: true,
   isMobile: false,
@@ -243,7 +242,6 @@ vi.mock("../context/SidebarContext", () => ({
     collapsed: mockSidebarState.collapsed,
     peeking: mockSidebarState.peeking,
     setPeeking: mockSetPeeking,
-    setForceCollapsed: mockSetForceCollapsed,
     isMobile: mockSidebarState.isMobile,
     routeRequestsCollapsed: false,
     setRouteRequestsCollapsed: vi.fn(),
@@ -331,7 +329,6 @@ describe("Layout", () => {
     mockSidebarState.collapsed = false;
     mockSidebarState.peeking = false;
     mockSetPeeking.mockClear();
-    mockSetForceCollapsed.mockClear();
   });
 
   afterEach(() => {

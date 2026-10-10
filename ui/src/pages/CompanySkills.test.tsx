@@ -249,10 +249,6 @@ async function renderDiscoveryGrid(props: Partial<ComponentProps<typeof Discover
     root?.render(
       <DiscoveryGrid
         tab="installed"
-        categories={[]}
-        categoryTotal={0}
-        activeCategory={null}
-        onCategoryChange={vi.fn()}
         search=""
         onSearchChange={vi.fn()}
         sort="agents"
@@ -316,19 +312,6 @@ const projectFolderResult: FolderListResult = {
     },
   ],
 };
-
-function projectFolderGridProps() {
-  return {
-    folderResult: projectFolderResult,
-    onFolderSelect: vi.fn(),
-    onCreateFolder: vi.fn(),
-    onCreateFolderIn: vi.fn(),
-    onRenameFolder: vi.fn(),
-    onEditFolder: vi.fn(),
-    onMoveFolder: vi.fn(),
-    onDeleteFolder: vi.fn(),
-  } satisfies Partial<ComponentProps<typeof DiscoveryGrid>>;
-}
 
 function buttonsNamed(node: ParentNode, name: string) {
   return Array.from(node.querySelectorAll("button")).filter((button) => button.textContent?.trim() === name);
@@ -455,27 +438,8 @@ describe("DiscoveryGrid IA presentation", () => {
     expect(node.textContent).not.toContain("Bundled tab");
   });
 
-  it("keeps folder creation in the compact rail control", async () => {
-    const props = projectFolderGridProps();
-    const node = await renderDiscoveryGrid(props);
-    const compactCreateButton = node.querySelector<HTMLButtonElement>('button[title="New folder"]');
-
-    expect(buttonsNamed(node, "New folder")).toHaveLength(0);
-    expect(compactCreateButton).not.toBeNull();
-
-    await click(compactCreateButton!);
-
-    expect(props.onCreateFolderIn).toHaveBeenCalledWith(null);
-    expect(props.onCreateFolder).not.toHaveBeenCalled();
-  });
-
-  it("removes category and folder browse rails while keeping search available", async () => {
-    const node = await renderDiscoveryGrid({
-      ...projectFolderGridProps(),
-      categories: [{ slug: "design", count: 1 }],
-      categoryTotal: 1,
-      showBrowseRails: false,
-    });
+  it("renders no category or folder browse rails and keeps search available", async () => {
+    const node = await renderDiscoveryGrid({ folderResult: projectFolderResult, onCreateFolder: vi.fn() });
 
     expect(node.querySelector('nav[aria-label="Skill folders"]')).toBeNull();
     expect(node.querySelector("aside")).toBeNull();
@@ -483,19 +447,9 @@ describe("DiscoveryGrid IA presentation", () => {
     expect(node.querySelector('input[aria-label="Search installed skills"]')).not.toBeNull();
   });
 
-  it("omits bulk selection when its entry point is not supplied", async () => {
-    const node = await renderDiscoveryGrid({
-      ...projectFolderGridProps(),
-      onToggleSelectMode: undefined,
-    });
-
-    expect(buttonsNamed(node, "Select")).toHaveLength(0);
-  });
-
   it("keeps folder creation available when no folder rail exists", async () => {
     const onCreateFolder = vi.fn();
     const node = await renderDiscoveryGrid({
-      ...projectFolderGridProps(),
       folderResult: { ...projectFolderResult, folders: [] },
       onCreateFolder,
     });
@@ -506,25 +460,6 @@ describe("DiscoveryGrid IA presentation", () => {
     await click(createButton);
 
     expect(onCreateFolder).toHaveBeenCalledOnce();
-  });
-
-  it("refreshes only the project represented by the active project folder", async () => {
-    const onScan = vi.fn();
-    const node = await renderDiscoveryGrid({
-      ...projectFolderGridProps(),
-      folderSelection: "project-folder",
-      onScan,
-    });
-    const refreshButton = node.querySelector<HTMLButtonElement>(
-      'button[aria-label="Refresh Acme project skills"]',
-    );
-
-    expect(refreshButton).not.toBeNull();
-
-    await click(refreshButton!);
-
-    expect(onScan).toHaveBeenCalledOnce();
-    expect(onScan).toHaveBeenCalledWith("project-1");
   });
 
   it("does not open a skill when keyboard-activating its actions button", async () => {
@@ -594,7 +529,6 @@ describe("DiscoveryGrid IA presentation", () => {
     const node = await renderDiscoveryGrid({
       cards: [card],
       totalCount: 1,
-      selectMode: true,
       folderResult: {
         kind: "skill",
         folders: [{
