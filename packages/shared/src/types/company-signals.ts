@@ -8,12 +8,15 @@ export interface CompanySignals {
   openTasks: number;
   /** Projects with archivedAt null. */
   projects: number;
+  /** All goals for the company. */
   goals: number;
   /** Routines whose status is not "archived". */
   routines: number;
+  /** Agent-authored non-system issue documents, paperclip artifact work products, and standalone agent-created attachments (deduped against work products), on visible issues. */
   artifacts: number;
   /** Company skills whose key does not start with "paperclipai/paperclip/". */
   extraSkills: number;
+  /** All tool_connections rows for the company. */
   connections: number;
   /** issue_thread_interactions with kind "connection_intent", any status. */
   connectionRequests: number;

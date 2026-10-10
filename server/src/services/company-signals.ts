@@ -3,6 +3,8 @@ import type { Db } from "@paperclipai/db";
 import {
   agents,
   approvals,
+  assets,
+  issueAttachments,
   budgetPolicies,
   companies,
   companySkills,
@@ -54,7 +56,7 @@ export function companySignalsService(db: Db) {
 
       const [
         agentCount, taskCount, openTaskCount, projectCount, goalCount, routineCount,
-        documentArtifactCount, workProductArtifactCount, extraSkillCount, connectionCount,
+        documentArtifactCount, workProductArtifactCount, attachmentArtifactCount, extraSkillCount, connectionCount,
         connectionRequestCount, approvalCount, questionCount, activePolicyCount, spend,
       ] = await Promise.all([
         run(() => db.select({ count }).from(agents).where(and(
@@ -76,7 +78,7 @@ export function companySignalsService(db: Db) {
         run(() => db.select({ count }).from(routines)
           .where(and(eq(routines.companyId, companyId), not(eq(routines.status, "archived")))).then(countRows)),
         // Artifacts mirror the sources in companyArtifactsService.list: agent-authored,
-        // non-system issue documents and paperclip artifact work products on visible issues.
+        // non-system issue documents, paperclip artifact work products and standalone attachments on visible issues.
         run(() => db.select({ count }).from(issueDocuments)
           .innerJoin(documents, eq(issueDocuments.documentId, documents.id))
           .innerJoin(issues, eq(issueDocuments.issueId, issues.id))
@@ -93,6 +95,25 @@ export function companySignalsService(db: Db) {
             eq(issueWorkProducts.type, "artifact"),
             eq(issueWorkProducts.provider, "paperclip"),
             isVisibleIssue,
+          )).then(countRows)),
+        // Standalone agent-created attachments, minus those already surfaced by a work product.
+        run(() => db.select({ count }).from(issueAttachments)
+          .innerJoin(assets, and(eq(issueAttachments.assetId, assets.id), eq(assets.companyId, issueAttachments.companyId)))
+          .innerJoin(issues, and(eq(issueAttachments.issueId, issues.id), eq(issues.companyId, issueAttachments.companyId)))
+          .where(and(
+            eq(issueAttachments.companyId, companyId),
+            sql`${issueAttachments.issueCommentId} is null`,
+            isNotNull(assets.createdByAgentId),
+            isVisibleIssue,
+            sql`not exists (
+              select 1 from ${issueWorkProducts}
+              inner join ${issues} as wp_issue on wp_issue.id = ${issueWorkProducts.issueId}
+              where ${issueWorkProducts.companyId} = ${companyId}
+                and ${issueWorkProducts.type} = 'artifact'
+                and ${issueWorkProducts.provider} = 'paperclip'
+                and wp_issue.hidden_at is null and wp_issue.harness_kind is null
+                and ${issueWorkProducts.metadata}->>'attachmentId' = ${issueAttachments.id}::text
+            )`,
           )).then(countRows)),
         run(() => db.select({ count }).from(companySkills)
           .where(and(eq(companySkills.companyId, companyId), notLike(companySkills.key, "paperclipai/paperclip/%")))
@@ -135,7 +156,7 @@ export function companySignalsService(db: Db) {
         projects: projectCount,
         goals: goalCount,
         routines: routineCount,
-        artifacts: documentArtifactCount + workProductArtifactCount,
+        artifacts: documentArtifactCount + workProductArtifactCount + attachmentArtifactCount,
         extraSkills: extraSkillCount,
         connections: connectionCount,
         connectionRequests: connectionRequestCount,

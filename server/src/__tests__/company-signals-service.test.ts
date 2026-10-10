@@ -3,18 +3,23 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
   approvals,
+  assets,
+  budgetPolicies,
   companies,
   companySkills,
   costEvents,
   createDb,
   documents,
   goals,
+  issueAttachments,
   issueDocuments,
   issueThreadInteractions,
   issueWorkProducts,
   issues,
   projects,
   routines,
+  toolApplications,
+  toolConnections,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -43,6 +48,11 @@ describeEmbeddedPostgres("company signals service", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(issueAttachments);
+    await db.delete(assets);
+    await db.delete(toolConnections);
+    await db.delete(toolApplications);
+    await db.delete(budgetPolicies);
     await db.delete(issueDocuments);
     await db.delete(documents);
     await db.delete(issueWorkProducts);
@@ -122,22 +132,53 @@ describeEmbeddedPostgres("company signals service", () => {
     await db.insert(documents).values({ id: documentId, companyId: companyA, title: "Doc", latestBody: "body", createdByAgentId: liveAgent });
     await db.insert(issueDocuments).values({ companyId: companyA, issueId: issueOpen, documentId, key: "notes" });
 
+    // Attachment-only artifact (agent-created asset, no comment) and a deduped one covered by a work product.
+    const mkAsset = async (companyIdForAsset: string, tag: string) => {
+      const id = randomUUID();
+      await db.insert(assets).values({ id, companyId: companyIdForAsset, provider: "local", objectKey: `k/${tag}/${id}`, contentType: "text/plain", byteSize: 1, sha256: id, createdByAgentId: liveAgent });
+      return id;
+    };
+    const standaloneAsset = await mkAsset(companyA, "a");
+    const dedupedAsset = await mkAsset(companyA, "b");
+    const dedupedAttachment = randomUUID();
+    await db.insert(issueAttachments).values([
+      { companyId: companyA, issueId: issueOpen2, assetId: standaloneAsset },
+      { id: dedupedAttachment, companyId: companyA, issueId: issueOpen2, assetId: dedupedAsset },
+    ]);
+    await db.insert(issueWorkProducts).values({
+      companyId: companyA, issueId: issueOpen2, type: "artifact", provider: "paperclip", title: "wp", status: "active",
+      metadata: { attachmentId: dedupedAttachment },
+    });
+
+    const appId = randomUUID();
+    await db.insert(toolApplications).values({ id: appId, companyId: companyA, name: "App", type: "rest_api" });
+    await db.insert(toolConnections).values({ companyId: companyA, applicationId: appId, name: "Conn", uid: "conn-1", transport: "rest_api" });
+
     const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1, 12));
     await db.insert(costEvents).values({
       companyId: companyA, agentId: liveAgent, provider: "anthropic", model: "x",
       costCents: 250, occurredAt: new Date(Math.max(monthStart.getTime(), Date.now() - 1000)),
     });
 
+    // Spend just before the UTC month start must not count.
+    await db.insert(costEvents).values({
+      companyId: companyA, agentId: liveAgent, provider: "anthropic", model: "x",
+      costCents: 999, occurredAt: new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1) - 1000),
+    });
+
     const signals = await companySignalsService(db).get(companyA);
     expect(signals).toMatchObject({
       companyId: companyA, agents: 1, tasks: 3, openTasks: 2, projects: 1, goals: 1, routines: 1,
-      artifacts: 1, extraSkills: 1, connections: 0, connectionRequests: 1, approvalsEver: 1,
+      artifacts: 3, extraSkills: 1, connections: 1, connectionRequests: 1, approvalsEver: 1,
       questionsEver: 1, budgetSet: false, monthSpendCents: 250,
     });
     expect(typeof signals.generatedAt).toBe("string");
 
     const other = await companySignalsService(db).get(companyB);
-    expect(other).toMatchObject({ agents: 1, tasks: 1, artifacts: 0, monthSpendCents: 0 });
+    expect(other).toMatchObject({
+      agents: 1, tasks: 1, artifacts: 0, monthSpendCents: 0, connections: 0, goals: 0,
+      approvalsEver: 0, questionsEver: 0, connectionRequests: 0, routines: 0, projects: 0, extraSkills: 0,
+    });
   });
 
   it("also counts paperclip artifact work products and rejects unknown companies", async () => {
@@ -148,6 +189,12 @@ describeEmbeddedPostgres("company signals service", () => {
     await db.insert(issueWorkProducts).values({ companyId, issueId, type: "artifact", provider: "paperclip", title: "wp", status: "active" });
     const signals = await companySignalsService(db).get(companyId);
     expect(signals).toMatchObject({ artifacts: 1, budgetSet: true });
+    expect(signals.budgetSet).toBe(true);
+    const policyCompany = randomUUID();
+    await db.insert(companies).values({ id: policyCompany, name: "P", issuePrefix: `T${policyCompany.replace(/-/g, "").slice(0, 6).toUpperCase()}` });
+    expect((await companySignalsService(db).get(policyCompany)).budgetSet).toBe(false);
+    await db.insert(budgetPolicies).values({ companyId: policyCompany, scopeType: "company", scopeId: policyCompany, windowKind: "calendar_month_utc", amount: 1000 });
+    expect((await companySignalsService(db).get(policyCompany)).budgetSet).toBe(true);
     await expect(companySignalsService(db).get(randomUUID())).rejects.toThrow(/not found/i);
   });
 });
