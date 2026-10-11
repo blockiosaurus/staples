@@ -73,14 +73,24 @@ function shortMessage(value: string) {
 /** One line for the Assistant about what a plan apply created. */
 function planApplySummary(status: number, body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
-  const record = body as { agents?: Record<string, unknown>; tasks?: Record<string, unknown>; pendingAssignments?: unknown[] };
+  const record = body as { agents?: Record<string, unknown>; tasks?: Record<string, unknown>; pendingAssignments?: unknown[]; routines?: unknown[] };
   const count = (value: unknown) => (value && typeof value === "object" ? Object.keys(value).length : 0);
   const agents = count(record.agents);
   const tasks = count(record.tasks);
+  const routines = Array.isArray(record.routines) ? record.routines.length : 0;
   const pending = Array.isArray(record.pendingAssignments) ? record.pendingAssignments.length : 0;
   const parts = [`${agents} agent${agents === 1 ? "" : "s"}`, `${tasks} task${tasks === 1 ? "" : "s"}`];
+  if (routines) parts.push(`${routines} routine${routines === 1 ? "" : "s"}`);
   const waiting = pending ? ` ${pending} task${pending === 1 ? " waits" : "s wait"} for hire approval.` : "";
   return `${status === 200 ? "Plan was already created" : "Plan created"}: ${parts.join(", ")}.${waiting}`;
+}
+
+function browserTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
 }
 
 export async function executeProposedAction(
@@ -88,9 +98,16 @@ export async function executeProposedAction(
   options: { idempotencyKey?: string } = {},
 ): Promise<Omit<ProposedActionAcceptResult, "hash">> {
   try {
+    const headers: Record<string, string> = {};
+    if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
+    // Plans may install agent templates whose routines run on the person's time zone.
+    if (action.category === "plan") {
+      const timeZone = browserTimeZone();
+      if (timeZone) headers["X-Staples-Timezone"] = timeZone;
+    }
     const response = await requestResponse(proposedActionClientPath(action.path), {
       method: action.method,
-      ...(options.idempotencyKey ? { headers: { "Idempotency-Key": options.idempotencyKey } } : {}),
+      ...(Object.keys(headers).length ? { headers } : {}),
       ...(action.body === null || action.body === undefined ? {} : { body: JSON.stringify(action.body) }),
     });
     let message = `HTTP ${response.status}`;

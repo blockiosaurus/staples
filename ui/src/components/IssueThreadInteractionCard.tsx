@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Agent } from "@paperclipai/shared";
+import type { Agent, PlanTemplateSummary } from "@paperclipai/shared";
 import { AlertTriangle, ArrowUpRight, Bot, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDashed, Clock, ExternalLink, FileText, GitBranch, ImagePlus, KeyRound, Loader2, MessageSquareQuote, MinusCircle, ShieldAlert, ThumbsUp, TriangleAlert, Wrench, X, XCircle } from "lucide-react";
 import { Link } from "@/lib/router";
 import { formatAssigneeUserLabel } from "../lib/assignees";
@@ -1979,7 +1979,9 @@ function PlanPreviewSection({ label, children }: { label: string; children: Reac
  * project, new agents, and the tasks in the order they will be created, with
  * what each waits on and who it is assigned to. The exact request follows.
  */
-function ProposedPlanPreview({ path, body, hireConnections }: { path: string; body: unknown; hireConnections?: Array<{ clientKey: string; provider: string | null }> }) {
+function ProposedPlanPreview({ path, body, hireConnections, templateSummaries }: {
+  path: string; body: unknown; hireConnections?: Array<{ clientKey: string; provider: string | null }>; templateSummaries?: PlanTemplateSummary[];
+}) {
   const companyId = PLAN_PROPOSAL_PATH.exec(path)?.[1] ?? null;
   const parsed = applyPlanSchema.safeParse(body);
   const plan: ApplyPlan | null = parsed.success ? parsed.data : null;
@@ -2002,6 +2004,7 @@ function ProposedPlanPreview({ path, body, hireConnections }: { path: string; bo
   const titleByKey = new Map(plan.tasks.map((task) => [task.clientKey, task.title] as const));
   const newAgentByKey = new Map(plan.agents.map((agent) => [agent.clientKey, agent] as const));
   const connectionByKey = new Map((hireConnections ?? []).map((entry) => [entry.clientKey, entry.provider] as const));
+  const templateByKey = new Map((templateSummaries ?? []).map((entry) => [entry.clientKey, entry] as const));
   const existingName = (id: string) => agents.data?.find((agent) => agent.id === id)?.name ?? "Existing agent";
   const assignee = (task: ApplyPlan["tasks"][number]) => task.assigneeClientKey
     ? `${newAgentByKey.get(task.assigneeClientKey)?.name ?? task.assigneeClientKey} (${hiresNeedApproval ? "new, after hire approval" : "new"})`
@@ -2035,12 +2038,15 @@ function ProposedPlanPreview({ path, body, hireConnections }: { path: string; bo
           <ul data-testid="proposed-plan-agents" className="list-disc space-y-0.5 pl-5">
             {plan.agents.map((agent) => (
               <li key={agent.clientKey}>
-                {agent.name} — {agent.role} (<span className="font-mono text-xs">{agent.adapterType}</span>)
+                {agent.name ?? agent.clientKey}{agent.role ? ` — ${agent.role}` : ""}{agent.adapterType ? <> (<span className="font-mono text-xs">{agent.adapterType}</span>)</> : null}
                 {agent.title ? <span className="text-muted-foreground"> · {agent.title}</span> : null}
                 {agent.budgetMonthlyCents !== undefined ? <span className="text-muted-foreground"> · budget {formatCents(agent.budgetMonthlyCents)}/month</span> : null}
                 {agent.reportsToClientKey ? <span className="text-muted-foreground"> · reports to {newAgentByKey.get(agent.reportsToClientKey)?.name ?? agent.reportsToClientKey}</span> : null}
                 {connectionByKey.has(agent.clientKey) ? (
                   <span data-testid="proposed-plan-agent-connection" className="text-muted-foreground"> · {inheritedConnectionLabel(connectionByKey.get(agent.clientKey) ?? null)}</span>
+                ) : null}
+                {templateByKey.has(agent.clientKey) ? (
+                  <p data-testid="proposed-plan-agent-template" className="text-muted-foreground">{planTemplateLine(templateByKey.get(agent.clientKey)!)}</p>
                 ) : null}
               </li>
             ))}
@@ -2063,6 +2069,17 @@ function ProposedPlanPreview({ path, body, hireConnections }: { path: string; bo
       </PlanPreviewSection>
     </div>
   );
+}
+
+/** "Email secretary · needs AgentMail or Gmail · asks before: sending email · 2 routines · $20/mo". */
+function planTemplateLine(summary: PlanTemplateSummary) {
+  const lower = (label: string) => label.charAt(0).toLowerCase() + label.slice(1);
+  const parts = [summary.name];
+  if (summary.needs.length) parts.push(`needs ${summary.needs.join(", ")}`);
+  if (summary.asksBefore.length) parts.push(`asks before: ${summary.asksBefore.map(lower).join(", ")}`);
+  parts.push(`${summary.routineCount} routine${summary.routineCount === 1 ? "" : "s"}`);
+  if (summary.budgetMonthlyCents !== null) parts.push(`${formatCents(summary.budgetMonthlyCents).replace(/\.00$/, "")}/mo`);
+  return parts.join(" · ");
 }
 
 /** "Uses your Claude connection"; a pool binding has no single provider. */
@@ -2209,7 +2226,7 @@ function ProposedActionCard({
       </div>
       {action.context ? <ProposedActionContextBlock context={action.context} /> : null}
       {action.category === "brief" ? <ProposedBriefPreview path={action.path} body={action.body} /> : null}
-      {action.category === "plan" ? <ProposedPlanPreview path={action.path} body={action.body} hireConnections={action.planHireConnections} /> : null}
+      {action.category === "plan" ? <ProposedPlanPreview path={action.path} body={action.body} hireConnections={action.planHireConnections} templateSummaries={action.planTemplateSummaries} /> : null}
       {/* The exact request comes first, at full prominence: it is what runs. */}
       <div data-testid="proposed-action-request" className="mt-3 space-y-2">
         <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">Request</p>

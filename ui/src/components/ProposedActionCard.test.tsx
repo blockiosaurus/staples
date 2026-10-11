@@ -419,8 +419,40 @@ describe("ProposedActionCard", () => {
       await click(button(host, "Create plan"));
       const call = fetchMock.mock.calls.find(([url, init]) => url === PLAN_PATH && (init as RequestInit)?.method === "POST")!;
       expect(new Headers((call[1] as RequestInit).headers).get("Idempotency-Key")).toBe("interaction-proposed-action");
+      // Template routines run on the person's own time zone.
+      expect(new Headers((call[1] as RequestInit).headers).get("X-Staples-Timezone")).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
       expect(accept).toHaveBeenCalledWith(expect.anything(), undefined, undefined, undefined,
         { status: "executed", httpStatus: 201, message: "Plan created: 1 agent, 4 tasks.", hash: HASH });
+    });
+
+    it("shows one line per templated hire from the server's summary, and counts routines in the result", async () => {
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/claim-proposed-action")) return claimed();
+        if (url === PLAN_PATH && init?.method === "POST") {
+          return json(201, { agents: { writer: { id: "a1", status: "idle", approvalId: null, templateRef: "staples/email-secretary" } }, tasks: { first: {} }, pendingAssignments: [], routines: [{ id: "r1" }, { id: "r2" }], brief: null, goal: null, project: null });
+        }
+        return json(200, []);
+      });
+      const templated = planProposal();
+      templated.payload.proposedAction!.planTemplateSummaries = [{
+        clientKey: "writer", ref: "staples/email-secretary", name: "Email secretary", needs: ["AgentMail or Gmail"],
+        asksBefore: ["Sending email"], routineCount: 2, budgetMonthlyCents: 2000,
+      }];
+      const accept = vi.fn(async () => undefined);
+      const host = await render({ interaction: templated, onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(host.querySelector('[data-testid="proposed-plan-agent-template"]')?.textContent)
+        .toBe("Email secretary · needs AgentMail or Gmail · asks before: sending email · 2 routines · $20/mo");
+      await click(button(host, "Create plan"));
+      expect(accept).toHaveBeenCalledWith(expect.anything(), undefined, undefined, undefined,
+        expect.objectContaining({ status: "executed", message: "Plan created: 1 agent, 1 task, 2 routines." }));
+    });
+
+    it("shows no template line for untemplated hires", async () => {
+      fetchMock.mockImplementation(async (url: string) => (url === `/api/companies/${COMPANY}/agents` ? json(200, []) : json(404, { error: "unexpected" })));
+      const host = await render({ interaction: planProposal(), onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(host.querySelector('[data-testid="proposed-plan-agent-template"]')).toBeNull();
     });
 
     it("relays a partial failure's message to the Assistant", async () => {
