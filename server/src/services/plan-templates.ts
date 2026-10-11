@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { agents, authUsers, companies, routines, toolApplications, toolConnections, toolPolicies, type Db } from "@paperclipai/db";
+import { agents, authUsers, companies, companySkills, routines, toolApplications, toolConnections, toolPolicies, type Db } from "@paperclipai/db";
 import {
   APP_DEFINITIONS,
   applyPlanSchema,
@@ -19,7 +19,7 @@ import { PROPOSABLE_HIRE_ADAPTER_TYPES, resolveCompanyAssistantAgentId } from ".
 import { accessService } from "./access.js";
 import type { AuthorizationActor } from "./authorization.js";
 import { companySkillPolicyService } from "./company-skill-policy.js";
-import { companySkillService } from "./company-skills.js";
+import { companySkillService, packageSkillImportKeys } from "./company-skills.js";
 import { resolveCatalogSkillReference } from "./skills-catalog.js";
 import { AGENT_TEMPLATE_POLICY_SOURCE } from "./tool-access-policy.js";
 
@@ -210,14 +210,6 @@ function metadataRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
-/**
- * Put the template's skills in the company library and return the company
- * skill keys to hire with, in the order the agent lists them. Vendored skills
- * are imported (an existing import is reused; a different skill holding the
- * same slug is left alone and the template's copy is imported under a new
- * slug); skills-catalog skills are installed unless already present.
- * Idempotent: a retry reuses what an earlier attempt installed.
- */
 /** A company skill a template install created (for activity). */
 export interface TemplateSkillInstall {
   id: string;
@@ -233,6 +225,29 @@ function vendoredSkillLocator(ref: string, slug: string) {
   return `${ref}/skills/${slug}`;
 }
 
+/** A vendored skill's files as a company skill package import expects them. */
+function vendoredSkillFiles(vendored: RenderedAgentTemplate["vendoredSkills"][number]): Record<string, string> {
+  return Object.fromEntries(Object.entries(vendored.files).map(([path, content]) => [`skills/${vendored.slug}/${path}`, content]));
+}
+
+/**
+ * Whether install would reuse a vendored skill already in the company (same
+ * key, or an earlier renamed import of it) instead of importing it.
+ */
+function vendoredSkillPresent(
+  companyId: string,
+  vendored: RenderedAgentTemplate["vendoredSkills"][number],
+  existing: { keys: Set<string>; importedFrom: Set<string> },
+): boolean {
+  let keys: string[];
+  try {
+    keys = packageSkillImportKeys(companyId, vendoredSkillFiles(vendored));
+  } catch {
+    return false;
+  }
+  return keys.length > 0 && keys.every((key) => existing.keys.has(key) || existing.importedFrom.has(key));
+}
+
 /**
  * The company skill policy decision for installing a templated agent's
  * skills as the acting person, as the company-skills install and import
@@ -240,7 +255,7 @@ function vendoredSkillLocator(ref: string, slug: string) {
  * request actor is known; its legacy missing-grant denials are not
  * invariants for skills) and the company skill policy for `skills.install`
  * (catalog skills not yet in the company) and `skills.import` (vendored
- * skills). Returns a sentence when something is denied, else null.
+ * skills not yet in the company). Returns a sentence when something is denied, else null.
  */
 export async function templateSkillPolicyDenial(
   db: Db, companyId: string, clientKey: string, rendered: RenderedAgentTemplate,
@@ -262,7 +277,19 @@ export async function templateSkillPolicyDenial(
   const skills = companySkillService(db);
   const principal = { type: "board" as const, id: person.userId ?? "board", role: "board" };
   const vendoredSlugs = new Set(rendered.vendoredSkills.map((skill) => skill.slug));
+  // Read the rows directly: listing through the skill service syncs the bundled inventory as a side effect.
+  const existingSkills = rendered.vendoredSkills.length > 0
+    ? await db.select({ key: companySkills.key, metadata: companySkills.metadata }).from(companySkills).where(eq(companySkills.companyId, companyId))
+    : [];
+  const existing = {
+    keys: new Set(existingSkills.map((skill) => skill.key)),
+    importedFrom: new Set(existingSkills
+      .map((skill) => metadataRecord(skill.metadata).importedFromSkillKey)
+      .filter((key): key is string => typeof key === "string")),
+  };
   for (const vendored of rendered.vendoredSkills) {
+    // Install reuses a vendored skill already in the company, as it does for catalog skills.
+    if (vendoredSkillPresent(companyId, vendored, existing)) continue;
     const decision = await policies.evaluate({
       companyId, principal, action: "skills.import",
       resource: { sourceType: "catalog", sourceLocator: vendoredSkillLocator(rendered.ref, vendored.slug) },
@@ -283,6 +310,14 @@ export async function templateSkillPolicyDenial(
   return null;
 }
 
+/**
+ * Put the template's skills in the company library and return the company
+ * skill keys to hire with, in the order the agent lists them. Vendored skills
+ * are imported (an existing import is reused; a different skill holding the
+ * same slug is left alone and the template's copy is imported under a new
+ * slug); skills-catalog skills are installed unless already present.
+ * Idempotent: a retry reuses what an earlier attempt installed.
+ */
 export async function ensureTemplateSkills(
   db: Db, companyId: string, rendered: RenderedAgentTemplate,
 ): Promise<{ keys: string[]; installed: TemplateSkillInstall[] }> {
@@ -290,7 +325,7 @@ export async function ensureTemplateSkills(
   const keyBySlug = new Map<string, string>();
   const installed: TemplateSkillInstall[] = [];
   for (const vendored of rendered.vendoredSkills) {
-    const files = Object.fromEntries(Object.entries(vendored.files).map(([path, content]) => [`skills/${vendored.slug}/${path}`, content]));
+    const files = vendoredSkillFiles(vendored);
     const [first] = await skills.importPackageFiles(companyId, files, { onConflict: "skip" });
     if (!first) throw unprocessable(`The template skill ${vendored.slug} could not be imported.`);
     if (first.action !== "skipped" || first.skill.key === first.originalKey) {
@@ -348,30 +383,18 @@ const NON_READ_RISK_LEVELS = ["write", "medium", "destructive", "high", "critica
 const DESTRUCTIVE_RISK_LEVELS = ["destructive", "high", "critical"] as const;
 const WRITE_RISK_LEVELS = ["write", "medium"] as const;
 
-export type TemplateRuleKind = "read_only" | "read_only_by_name" | "destructive" | "outward";
+export type TemplateRuleKind = "read_only" | "destructive" | "outward";
 
 /**
- * Guard priorities. Policies run in ascending priority, so the read-only
- * blocks and the destructive ask-first rule (5) come before trust rules
- * (default 40) and allow rules: nothing remembered or allowed later can skip
- * them. The outward ask-first rule (50) sits after them so an explicit,
- * narrower allow for the agent (e.g. Autopilot at 45) can take its place.
+ * Priorities of the seeded rows. The read-only and destructive guards do not
+ * depend on theirs: the access decision applies them by type for the agent
+ * before any ordered policy (see `agentTemplateGuardKind` in
+ * tool-access-policy.ts), and a reorder never renumbers them. The outward
+ * ask-first rule (50) is an ordinary ordered policy, so an explicit, narrower
+ * allow for the agent (e.g. Autopilot at 45) can take its place.
  */
 export const TEMPLATE_GUARD_PRIORITY = 5;
 export const TEMPLATE_OUTWARD_PRIORITY = 50;
-
-/**
- * Tool names a read-only agent may never call, whatever risk the catalog
- * gives them (defense in depth against a misclassified tool such as a
- * `stripe_create_refund` marked read). These match the verbs that change or
- * move something (create, refund, pay, transfer...), not money nouns alone:
- * a bookkeeper must still read charges, refunds, payouts and invoices.
- */
-export const READ_ONLY_BLOCKED_TOOL_PATTERNS = [
-  "*create*", "*update*", "*delete*", "*remove*", "*cancel*", "*void*", "*send*", "*finalize*", "*capture*",
-  "*confirm*", "*approve*", "*reverse*", "refund_*", "*_refund_*", "*issue_refund*", "pay_*", "*_pay_*", "*_pay",
-  "transfer_*", "*_transfer_funds*", "payout_*", "charge_*", "*_charge_customer*", "*mark_*paid*", "*schedule_payout*",
-] as const;
 
 export interface TemplateAccessRule {
   kind: TemplateRuleKind;
@@ -383,12 +406,13 @@ export interface TemplateAccessRule {
 }
 
 /**
- * The access rules a templated agent starts with, all at priority 50 and
- * scoped to the agent. Read-only templates block every non-read call.
- * Others always ask first for destructive calls, and ask first for writes
- * whose tool name matches the template's outward-action patterns (sending,
- * publishing, deploying...). Drafts and other writes are left to the
- * company's own rules.
+ * The access rules a templated agent starts with, scoped to the agent. A
+ * read-only template gets one read-only guard: the agent may call only
+ * read-rated tools whose names lead with a read verb (list, get, search...).
+ * Others get a destructive guard (always ask first for destructive calls)
+ * and, at priority 50, an ask-first rule for writes whose tool name matches
+ * the template's outward-action patterns (sending, publishing, deploying...).
+ * Drafts and other writes are left to the company's own rules.
  */
 export function templateAccessRules(agent: { id: string; name: string }, rendered: RenderedAgentTemplate): TemplateAccessRule[] {
   const label = (text: string) => `${agent.name}: ${text}`.slice(0, 140) + ` · ${agent.id.slice(0, 8)}`;
@@ -396,13 +420,8 @@ export function templateAccessRules(agent: { id: string; name: string }, rendere
     return [{
       kind: "read_only", policyType: "block", priority: TEMPLATE_GUARD_PRIORITY,
       name: label("read-only"),
-      description: `${agent.name} is read-only: it may not change anything in connected services.`,
+      description: `${agent.name} is read-only: it may only call tools that list, get, search or otherwise read, and may not change or move anything in connected services.`,
       selectors: { agentId: agent.id, riskLevels: [...NON_READ_RISK_LEVELS] },
-    }, {
-      kind: "read_only_by_name", policyType: "block", priority: TEMPLATE_GUARD_PRIORITY,
-      name: label("never change or move money"),
-      description: `${agent.name} is read-only: it may not call tools that create, change, send, refund, pay, charge or transfer anything, whatever the tool's risk level.`,
-      selectors: { agentId: agent.id, toolNamePatterns: [...READ_ONLY_BLOCKED_TOOL_PATTERNS] },
     }];
   }
   const rules: TemplateAccessRule[] = [{
@@ -559,6 +578,32 @@ export function routineSafeText(value: string): string {
 export const AGENT_TEMPLATE_ROUTINE_ORIGIN = "agent_template";
 
 /**
+ * Record that a template routine could not be started after the hire was
+ * approved (activity `routine.activation_failed` on the agent), so the person
+ * sees it and can resume the routine. Never throws.
+ */
+export async function logTemplateRoutineActivationFailure(
+  db: Db,
+  input: { companyId: string; agentId: string; userId: string | null; routine?: { id: string; title: string } | null; error: unknown },
+): Promise<void> {
+  try {
+    const { logActivity } = await import("./activity-log.js");
+    const message = input.error instanceof Error ? input.error.message : String(input.error);
+    await logActivity(db, {
+      companyId: input.companyId, actorType: input.userId ? "user" : "system", actorId: input.userId ?? "system",
+      action: "routine.activation_failed", entityType: "agent", entityId: input.agentId,
+      details: {
+        ...(input.routine ? { routineId: input.routine.id, title: input.routine.title } : {}),
+        source: "agent_template_hire_approved",
+        error: message.slice(0, 500),
+      },
+    });
+  } catch (error) {
+    logger.warn({ err: error, agentId: input.agentId }, "could not record a template routine activation failure");
+  }
+}
+
+/**
  * After a templated agent's hire is approved: assign the template routines
  * that plans/apply created paused (and unassigned) to it, and resume them.
  * Routines the person already changed (assigned elsewhere, archived) are
@@ -597,6 +642,7 @@ export async function activateTemplateRoutinesAfterHire(db: Db, agentId: string,
       });
     } catch (error) {
       logger.warn({ err: error, routineId: routine.id, agentId }, "could not resume a template routine after hire approval");
+      await logTemplateRoutineActivationFailure(db, { companyId: agent.companyId, agentId: agent.id, userId, routine, error });
     }
   }
   return resumed;

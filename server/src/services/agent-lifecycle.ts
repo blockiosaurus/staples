@@ -63,12 +63,22 @@ async function reinheritAssistantAfterHire(db: Db, agent: { id: string; companyI
 
 /** A templated agent's routines were created paused while its hire waited: start them now. */
 async function activateTemplateRoutines(db: Db, agentId: string, userId: string | null) {
+  const actingUserId = userId && userId !== "board" ? userId : null;
   try {
     // Imported lazily: plan templates depend on services that hire through this module.
     const { activateTemplateRoutinesAfterHire } = await import("./plan-templates.js");
-    await activateTemplateRoutinesAfterHire(db, agentId, userId && userId !== "board" ? userId : null);
+    await activateTemplateRoutinesAfterHire(db, agentId, actingUserId);
   } catch (error) {
     logger.warn({ err: error, agentId }, "template routine activation after hire approval failed");
+    try {
+      const [agent] = await db.select({ companyId: agents.companyId }).from(agents).where(eq(agents.id, agentId));
+      if (agent) {
+        const { logTemplateRoutineActivationFailure } = await import("./plan-templates.js");
+        await logTemplateRoutineActivationFailure(db, { companyId: agent.companyId, agentId, userId: actingUserId, error });
+      }
+    } catch (logError) {
+      logger.warn({ err: logError, agentId }, "could not record a template routine activation failure");
+    }
   }
 }
 

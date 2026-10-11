@@ -991,6 +991,22 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       expect(resumedActivity).toHaveLength(routineRows.length);
     }, 120_000);
 
+    it("records routine.activation_failed on the agent when a template routine cannot be started", async () => {
+      const s = await seed();
+      const { app } = buildApp(sessionActor(s));
+      const response = await apply(app, s.companyId, { agents: [await templatedAgent("mail", "staples/email-secretary")] });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      const agentId = response.body.agents.mail.id as string;
+      const { logTemplateRoutineActivationFailure } = await import("../services/plan-templates.js");
+      const routineId = randomUUID();
+      await logTemplateRoutineActivationFailure(db, {
+        companyId: s.companyId, agentId, userId: s.userId, routine: { id: routineId, title: "Daily inbox sweep" }, error: new Error("boom"),
+      });
+      const [row] = await db.select().from(activityLog).where(and(eq(activityLog.companyId, s.companyId), eq(activityLog.action, "routine.activation_failed")));
+      expect(row).toMatchObject({ entityType: "agent", entityId: agentId, actorType: "user", actorId: s.userId });
+      expect(row!.details).toMatchObject({ routineId, title: "Daily inbox sweep", error: "boom", source: "agent_template_hire_approved" });
+    }, 120_000);
+
     it("blocks every write for a read-only template", async () => {
       const s = await seed();
       const { app } = buildApp(sessionActor(s));
@@ -999,13 +1015,13 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       const books = response.body.agents.books.id as string;
       const rules = await templatePolicies(books);
       expect(rules.map((rule) => [rule.policyType, (rule.config as Record<string, unknown>).templateRule, rule.priority]).sort())
-        .toEqual([["block", "read_only", 5], ["block", "read_only_by_name", 5]]);
+        .toEqual([["block", "read_only", 5]]);
       const decide = await toolFixture(s.companyId, [
         ["create_refund", "write"], ["create_payment_link", "write"], ["delete_customer", "destructive"], ["list_charges", "read"],
         ["stripe_create_refund", "read"], ["list_refunds", "read"], ["list_payouts", "read"], ["list_invoices", "read"],
       ]);
       // A misclassified money-moving tool is still blocked; money reads still work.
-      await expect(decide(books, "stripe_create_refund")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
+      await expect(decide(books, "stripe_create_refund")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_template_read_only" });
       for (const read of ["list_refunds", "list_payouts", "list_invoices"]) {
         await expect(decide(books, read), read).resolves.toMatchObject({ decision: "allow" });
       }
@@ -1015,9 +1031,9 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         { companyId: s.companyId, name: "Remember refunds", policyType: "trust_rule", priority: 40,
           selectors: { agentId: books, toolName: "create_refund" }, config: { trustRule: { hitCount: 0, argumentFilters: { allowAny: true } } } },
       ]);
-      await expect(decide(books, "create_refund")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
-      await expect(decide(books, "create_payment_link")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
-      await expect(decide(books, "delete_customer")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
+      await expect(decide(books, "create_refund")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_template_read_only" });
+      await expect(decide(books, "create_payment_link")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_template_read_only" });
+      await expect(decide(books, "delete_customer")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_template_read_only" });
       await expect(decide(books, "list_charges")).resolves.toMatchObject({ decision: "allow" });
       expect((await db.select().from(agents).where(eq(agents.id, books)))[0]!.metadata).toMatchObject({ staplesTemplate: { readOnly: true, outwardActions: [] } });
     }, 120_000);
@@ -1077,11 +1093,18 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       expect(response.body.error).toMatch(/skill policy does not allow installing the skill/);
       expect(await db.select().from(agents).where(eq(agents.companyId, s.companyId))).toHaveLength(2);
       expect(await db.select().from(companySkills).where(eq(companySkills.companyId, s.companyId))).toHaveLength(0);
-      // A template without catalog skills is unaffected by that rule... unless imports are denied too.
+      // With installs allowed, the researcher's vendored skills are imported.
+      await db.update(companySkillPolicies).set({ rules: [] }).where(eq(companySkillPolicies.companyId, s.companyId));
+      const first = await apply(app, s.companyId, { agents: [await templatedAgent("research", "staples/researcher")] });
+      expect(first.status, JSON.stringify(first.body)).toBe(201);
+      // Once imports are denied, vendored skills already in the company are not checked (install reuses them)...
       await db.update(companySkillPolicies).set({
         rules: [{ id: "no-imports", priority: 0, effect: "deny", subject: { type: "roles", roles: ["board"] }, actions: ["skills.import"], resources: { sourceTypes: ["catalog"] } }],
       }).where(eq(companySkillPolicies.companyId, s.companyId));
-      const imported = await apply(app, s.companyId, { agents: [await templatedAgent("research", "staples/researcher")] });
+      const reused = await apply(app, s.companyId, { agents: [await templatedAgent("research2", "staples/researcher")] });
+      expect(reused.status, JSON.stringify(reused.body)).toBe(201);
+      // ...but a template whose vendored skills are not yet there is refused.
+      const imported = await apply(app, s.companyId, { agents: [await templatedAgent("dev", "staples/coding-agent")] });
       expect(imported.status, JSON.stringify(imported.body)).toBe(403);
       expect(imported.body.error).toMatch(/importing the skill/);
     }, 120_000);
