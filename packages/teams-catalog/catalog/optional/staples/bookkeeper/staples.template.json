@@ -1,0 +1,53 @@
+{
+  "version": "1.0.0",
+  "tagline": "Read-only weekly summaries of your revenue and spending",
+  "icon": "calculator",
+  "marketplaceCategory": "finance",
+  "requiredApps": [
+    {
+      "capability": "payments",
+      "anyOf": ["stripe"],
+      "why": "Reads your payments, refunds and payouts to report revenue. The bookkeeper only reads; it never charges, refunds or moves money."
+    },
+    {
+      "capability": "accounting",
+      "anyOf": ["xero"],
+      "why": "Reads your invoices, bills and bank transactions for a fuller picture of spending. The bookkeeper only reads.",
+      "optional": true
+    }
+  ],
+  "setupQuestions": [
+    {
+      "id": "reportDay",
+      "header": "Report day",
+      "prompt": "Which day should the weekly summary arrive?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        { "id": "monday", "label": "Monday", "description": "Start the week knowing how the last one went.", "recommended": true },
+        { "id": "friday", "label": "Friday", "description": "Close the week with the numbers." }
+      ]
+    },
+    {
+      "id": "currency",
+      "header": "Currency",
+      "prompt": "Which currency should totals be reported in?",
+      "helpText": "Use a three-letter code such as USD, EUR or GBP. Amounts in other currencies are shown as they are, with a note.",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "USD",
+      "textValidation": { "maxLength": 20 }
+    }
+  ],
+  "outwardActions": [],
+  "defaultBudgetMonthlyCents": 1500,
+  "scheduleByAnswer": {
+    "weekly-revenue-and-spend-summary": {
+      "questionId": "reportDay",
+      "cron": {
+        "monday": "0 9 * * 1",
+        "friday": "0 9 * * 5"
+      }
+    }
+  }
+}

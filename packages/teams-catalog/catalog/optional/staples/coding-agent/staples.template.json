@@ -1,0 +1,54 @@
+{
+  "version": "1.0.0",
+  "tagline": "Triages GitHub issues, fixes bugs and opens pull requests for review",
+  "icon": "code",
+  "marketplaceCategory": "engineering",
+  "requiredApps": [
+    {
+      "capability": "code",
+      "anyOf": ["github"],
+      "why": "Reads your repository and issues, and opens pull requests. Merging, pushing to your main branch, deleting branches and closing issues wait for your approval."
+    }
+  ],
+  "setupQuestions": [
+    {
+      "id": "repository",
+      "header": "Repository",
+      "prompt": "Which GitHub repository should the coding agent work on?",
+      "helpText": "Type it as owner/name, for example acme/website. If you leave the suggestion, the agent lists your repositories and asks you to pick one.",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "Our main repository (ask me which one)",
+      "textValidation": { "maxLength": 200 }
+    },
+    {
+      "id": "branchPolicy",
+      "header": "Branch policy",
+      "prompt": "How should changes reach your main branch?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        { "id": "pull_requests", "label": "Open pull requests, never push to main", "description": "Every change is a pull request you review and merge.", "recommended": true },
+        { "id": "small_fixes", "label": "Push small fixes to main", "description": "Typos, comments and one-line fixes go straight to main after your approval. Everything else is a pull request." }
+      ]
+    },
+    {
+      "id": "testCommand",
+      "header": "Test command",
+      "prompt": "How are the tests run?",
+      "helpText": "For example: npm test, pnpm test, pytest, go test ./...",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "detect from the repo",
+      "textValidation": { "maxLength": 200 }
+    }
+  ],
+  "outwardActions": [
+    {
+      "capability": "code",
+      "label": "Merging and pushing to the default branch",
+      "destructiveLabel": "Deleting branches or closing issues"
+    }
+  ],
+  "defaultBudgetMonthlyCents": 6000
+}
