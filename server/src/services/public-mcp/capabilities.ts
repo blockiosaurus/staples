@@ -20,6 +20,12 @@ import { expandedMcpCapabilities } from "./expanded-capabilities.js";
  * One in-process request through the API router as `actor`: the route's own
  * authorization, validation, audit and scheduling apply. Returns the raw
  * status and parsed JSON body (null when empty or not JSON).
+ *
+ * `trustedOrigin` is only for a caller that is itself handling a board
+ * session request which already passed boardMutationGuard: it is that
+ * request's verified origin (trustedBoardMutationOrigin), replayed as Origin
+ * and Host so the inner request passes the same CSRF guard. Never pass a
+ * value taken from user input.
  */
 export async function injectApiRequest(
   api: Router,
@@ -27,8 +33,11 @@ export async function injectApiRequest(
   method: string,
   path: string,
   body?: unknown,
-  headers: Record<string, string> = {},
+  options: { trustedOrigin?: string | null } = {},
 ): Promise<{ statusCode: number; json: unknown }> {
+  const headers: Record<string, string> = options.trustedOrigin
+    ? { origin: options.trustedOrigin, host: new URL(options.trustedOrigin).host }
+    : {};
   const app = express();
   // light-my-request adapts the parent prototypes of app.request/response.
   // Clone Express's shared parents so injection cannot alter real HTTP traffic.

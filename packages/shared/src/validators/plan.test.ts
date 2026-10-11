@@ -131,3 +131,10 @@ describe("plan proposals", () => {
     expect(proposedActionBodyMaxBytes("plan")).toBe(128 * 1024);
   });
 });
+
+describe("idempotencyKey", () => {
+  it("accepts a plain key and refuses odd characters", () => {
+    expect(applyPlanSchema.safeParse({ tasks: [{ clientKey: "a", title: "A" }], idempotencyKey: "interaction:1234-abcd" }).success).toBe(true);
+    expect(applyPlanSchema.safeParse({ tasks: [{ clientKey: "a", title: "A" }], idempotencyKey: "a b" }).success).toBe(false);
+  });
+});

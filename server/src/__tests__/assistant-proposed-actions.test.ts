@@ -1,10 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import express from "express";
+import express, { Router } from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { approvals, authUsers, companyMemberships, heartbeatRuns, issueThreadInteractions, issues } from "@paperclipai/db";
+import { agents, approvals, authUsers, companyMemberships, heartbeatRuns, issueThreadInteractions, issues, principalPermissionGrants } from "@paperclipai/db";
 import { issueRoutes } from "../routes/issues.js";
+import { agentRoutes } from "../routes/agents.js";
+import { planRoutes } from "../routes/plans.js";
+import { injectApiRequest } from "../services/public-mcp/capabilities.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { builtInAgentService } from "../services/built-in-agents.js";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
@@ -648,6 +651,53 @@ const support = await getEmbeddedPostgresTestSupport();
       .where(eq(issueThreadInteractions.id, interactionId));
     expect((await request(personApp(f, "session")).post(claimUrl).send({ hash: payload.proposedAction.hash })).status).toBe(422);
   }, 60_000);
+
+  it("re-claiming a plan after the claim TTL and applying it again with the same interaction id creates nothing new", async () => {
+    const f = await assistantFixture();
+    await server.db.insert(principalPermissionGrants).values({ companyId: f.companyId, principalType: "user", principalId: f.responsibleUserId!, permissionKey: "agents:create" });
+    const proposed = await call(f, "staples_propose_plan", {
+      summary: "Hire a writer with one task",
+      plan: { agents: [{ clientKey: "writer", name: "Plan Writer", role: "general", adapterType: "claude_local" }], tasks: [{ clientKey: "a", title: "Draft", assigneeClientKey: "writer" }] },
+    });
+    expect(proposed.body.result.isError, JSON.stringify(proposed.body)).toBeUndefined();
+    const interactionId = proposed.body.result.structuredContent.interaction.id as string;
+    const hash = proposed.body.result.structuredContent.proposedAction.hash as string;
+    const [row] = await server.db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, interactionId));
+    const action = (row!.payload as { proposedAction: { path: string; body: unknown } }).proposedAction;
+
+    const actor = { type: "board", source: "session", userId: f.responsibleUserId!, companyIds: [f.companyId],
+      memberships: [{ companyId: f.companyId, membershipRole: "owner", status: "active" }], isInstanceAdmin: false } as Express.Request["actor"];
+    const api = Router();
+    api.use(issueRoutes(server.db, server.storage));
+    api.use(agentRoutes(server.db));
+    api.use(planRoutes(server.db, { hireAgent: (a, companyId, body) => injectApiRequest(api, a, "POST", `/companies/${companyId}/agent-hires`, body), heartbeat: { wakeup: async () => undefined } }));
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { req.actor = actor; next(); });
+    app.use("/api", api);
+    app.use(errorHandler);
+
+    const claimUrl = `/api/issues/${f.issueId}/interactions/${interactionId}/claim-proposed-action`;
+    // The browser: claim, then run the stored call with the interaction id as its idempotency key.
+    const run = () => request(app).post(action.path).set("Idempotency-Key", interactionId).send(action.body as object);
+    expect((await request(app).post(claimUrl).send({ hash })).status).toBe(200);
+    const first = await run();
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+
+    // The tab died before recording the outcome; after the TTL the person re-claims and the browser runs it again.
+    const [claimedRow] = await server.db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, interactionId));
+    const payload = claimedRow!.payload as Record<string, any>;
+    await server.db.update(issueThreadInteractions).set({ payload: { ...payload, proposedActionClaim: { ...payload.proposedActionClaim, claimedAt: new Date(Date.now() - 6 * 60_000).toISOString() } } as never })
+      .where(eq(issueThreadInteractions.id, interactionId));
+    expect((await request(app).post(claimUrl).send({ hash })).status).toBe(200);
+    const second = await run();
+    expect(second.status, JSON.stringify(second.body)).toBe(200);
+    expect(second.body.agents).toEqual(first.body.agents);
+    expect(second.body.tasks).toEqual(first.body.tasks);
+    const writers = await server.db.select().from(agents).where(and(eq(agents.companyId, f.companyId), eq(agents.name, "Plan Writer")));
+    expect(writers).toHaveLength(1);
+    expect(await server.db.select().from(issues).where(and(eq(issues.companyId, f.companyId), eq(issues.title, "Draft")))).toHaveLength(1);
+  }, 120_000);
 
   it("lets the same person re-claim a stale claim after five minutes", async () => {
     const f = await assistantFixture();

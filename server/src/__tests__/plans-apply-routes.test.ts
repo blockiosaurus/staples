@@ -13,6 +13,7 @@ import {
   createDb,
   goals,
   issueApprovals,
+  planApplications,
   principalPermissionGrants,
   issueRelations,
   issues,
@@ -82,8 +83,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
     api.use(boardMutationGuard());
     api.use(agentRoutes(db));
     api.use(planRoutes(db, {
-      hireAgent: overrides.hireAgent ?? ((a, companyId, body, origin) => injectApiRequest(api, a, "POST", `/companies/${companyId}/agent-hires`, body,
-        origin ? { origin, host: new URL(origin).host } : {})),
+      hireAgent: overrides.hireAgent ?? ((a, companyId, body, origin) => injectApiRequest(api, a, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin })),
       heartbeat: { wakeup },
     }));
     const app = express();
@@ -283,6 +283,99 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
     expect(await db.select().from(agents).where(eq(agents.companyId, s.companyId))).toHaveLength(2);
   }, 60_000);
 
+  it("refuses assigning to an existing agent the person may not assign before hiring anyone", async () => {
+    const s = await seed();
+    await db.update(agents).set({ permissions: { authorizationPolicy: { assignmentPolicy: { mode: "protected" } } } }).where(eq(agents.id, s.staffId));
+    const { app } = buildApp(sessionActor(s));
+    const response = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send(fullPlan(s));
+    expect(response.status, JSON.stringify(response.body)).toBe(403);
+    expect(response.body.error).toMatch(/assignment grant/);
+    expect(await db.select().from(agents).where(eq(agents.companyId, s.companyId))).toHaveLength(2);
+    expect(await db.select().from(issues).where(eq(issues.companyId, s.companyId))).toHaveLength(0);
+    expect(await companyBriefService(db).get(s.companyId)).toBeNull();
+  }, 60_000);
+
+  describe("idempotent apply", () => {
+    const KEY = "11111111-2222-4333-8444-555555555555";
+
+    it("a retry after success with the same key returns the same ids and creates nothing", async () => {
+      const s = await seed();
+      const { app } = buildApp(sessionActor(s));
+      const plan = fullPlan(s);
+      const first = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", KEY).send(plan);
+      expect(first.status, JSON.stringify(first.body)).toBe(201);
+      const again = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", KEY).send(plan);
+      expect(again.status, JSON.stringify(again.body)).toBe(200);
+      expect(again.body.agents).toEqual(first.body.agents);
+      expect(again.body.tasks).toEqual(first.body.tasks);
+      expect(again.body.goal).toEqual(first.body.goal);
+      expect(await db.select().from(agents).where(eq(agents.companyId, s.companyId))).toHaveLength(4);
+      expect(await db.select().from(issues).where(eq(issues.companyId, s.companyId))).toHaveLength(4);
+      expect(await db.select().from(goals).where(eq(goals.companyId, s.companyId))).toHaveLength(1);
+      // The same key with a different plan is refused.
+      const other = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", KEY)
+        .send({ tasks: [{ clientKey: "x", title: "Different" }] });
+      expect(other.status).toBe(409);
+      // A body key that disagrees with the header is refused.
+      const mismatch = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", KEY)
+        .send({ ...plan, idempotencyKey: "other-key" });
+      expect(mismatch.status).toBe(400);
+    }, 120_000);
+
+    it("a retry after a partial failure reuses the agents already hired and completes", async () => {
+      const s = await seed();
+      let failSecond = true;
+      let hires = 0;
+      const built = buildApp(sessionActor(s), {
+        hireAgent: async (actor, companyId, body, origin) => {
+          hires += 1;
+          if (failSecond && hires === 2) return { statusCode: 422, json: { error: "Adapter unavailable" } };
+          return injectApiRequest(built.api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin });
+        },
+      });
+      const plan = fullPlan(s);
+      const failed = await request(built.app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", KEY).send(plan);
+      expect(failed.status).toBe(422);
+      expect(failed.body.partial.agents.editor.id).toEqual(expect.any(String));
+      expect(failed.body.error).toMatch(/Editor/);
+      const [row] = await db.select().from(planApplications).where(eq(planApplications.companyId, s.companyId));
+      expect(row).toMatchObject({ status: "failed", idempotencyKey: KEY });
+
+      failSecond = false;
+      const resumed = await request(built.app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", KEY).send(plan);
+      expect(resumed.status, JSON.stringify(resumed.body)).toBe(201);
+      expect(resumed.body.agents.editor.id).toBe(failed.body.partial.agents.editor.id);
+      const companyAgents = await db.select().from(agents).where(eq(agents.companyId, s.companyId));
+      expect(companyAgents.filter((agent) => agent.name === "Editor")).toHaveLength(1);
+      expect(companyAgents.filter((agent) => agent.name === "Writer")).toHaveLength(1);
+      expect(await db.select().from(issues).where(eq(issues.companyId, s.companyId))).toHaveLength(4);
+
+      // Proposing the same plan again (a new key) adopts nothing once it is applied: it is a new plan run.
+      const [applied] = await db.select().from(planApplications).where(eq(planApplications.companyId, s.companyId));
+      expect(applied!.status).toBe("applied");
+    }, 120_000);
+
+    it("a different key for the same plan resumes a failed application instead of hiring again", async () => {
+      const s = await seed();
+      let failSecond = true;
+      let hires = 0;
+      const built = buildApp(sessionActor(s), {
+        hireAgent: async (actor, companyId, body, origin) => {
+          hires += 1;
+          if (failSecond && hires === 2) return { statusCode: 422, json: { error: "Adapter unavailable" } };
+          return injectApiRequest(built.api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin });
+        },
+      });
+      const plan = fullPlan(s);
+      expect((await request(built.app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", "first-card").send(plan)).status).toBe(422);
+      failSecond = false;
+      const second = await request(built.app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", "second-card").send(plan);
+      expect(second.status, JSON.stringify(second.body)).toBe(201);
+      const companyAgents = await db.select().from(agents).where(eq(agents.companyId, s.companyId));
+      expect(companyAgents.filter((agent) => agent.name === "Editor")).toHaveLength(1);
+    }, 120_000);
+  });
+
   it("reports partial creation when a hire fails after earlier hires succeeded", async () => {
     const s = await seed();
     let calls = 0;
@@ -290,7 +383,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       hireAgent: async (actor, companyId, body, origin) => {
         calls += 1;
         if (calls === 2) return { statusCode: 422, json: { error: "Adapter unavailable" } };
-        return injectApiRequest(built.api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { origin: origin!, host: new URL(origin!).host });
+        return injectApiRequest(built.api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin });
       },
     });
     const response = await request(built.app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send(fullPlan(s));

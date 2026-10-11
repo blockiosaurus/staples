@@ -89,6 +89,6 @@ Use `staples_propose_plan` with the whole plan and a one-sentence `summary`:
 
 ## After it is applied
 
-Summarize what was created in two or three lines and point to the first task that can start. If a hire or task failed, say which one and why, and offer to fix it.
+Summarize what was created in two or three lines and point to the first task that can start. If a hire or task failed, say which one and why, and offer to fix it. If it stopped partway, the result names the agents already hired; proposing the same plan again reuses them instead of hiring twice.
 
 Adapted from the to-spec and to-tickets skills in mattpocock/skills (MIT License, Copyright (c) 2026 Matt Pocock).

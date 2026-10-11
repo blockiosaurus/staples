@@ -129,6 +129,7 @@ export { summarySlots } from "./summary_slots.js";
 export { statusCards, statusCardUpdates } from "./status_cards.js";
 export { routineDocuments } from "./routine_documents.js";
 export { companyDocuments } from "./company_documents.js";
+export { planApplications } from "./plan_applications.js";
 export { documentAnnotationThreads } from "./document_annotation_threads.js";
 export { documentAnnotationComments } from "./document_annotation_comments.js";
 export { documentAnnotationAnchorSnapshots } from "./document_annotation_anchor_snapshots.js";

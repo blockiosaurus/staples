@@ -47,6 +47,13 @@ export function planRoutes(db: Db, options: PlanRoutesOptions) {
     }
     assertCompanyAccess(req, companyId);
     const plan = applyPlanSchema.parse(req.body);
+    // The browser sends the proposal's interaction id as the Idempotency-Key header.
+    const headerKey = req.header("idempotency-key")?.trim() || null;
+    if (headerKey !== null && !/^[A-Za-z0-9:_-]{1,200}$/.test(headerKey)) throw badRequest("Invalid Idempotency-Key header");
+    if (headerKey && plan.idempotencyKey && headerKey !== plan.idempotencyKey) {
+      throw badRequest("The Idempotency-Key header and body idempotencyKey differ");
+    }
+    const idempotencyKey = headerKey ?? plan.idempotencyKey ?? null;
     // Fail before creating anything when the person cannot hire.
     if (plan.agents.length) {
       const decision = await access.decide({ actor: req.actor, action: "agents:create", resource: { type: "company", companyId } });
@@ -60,20 +67,31 @@ export function planRoutes(db: Db, options: PlanRoutesOptions) {
     let applied: Awaited<ReturnType<typeof applyPlan>>;
     try {
       applied = await applyPlan(db, {
-        companyId, plan, userId,
+        companyId, plan, userId, idempotencyKey,
         hireAgent: (body) => options.hireAgent(req.actor, companyId, body, origin),
+        // The same check as assigning a task in the app (POST /issues), for every assignee.
+        assertCanAssign: async (assigneeAgentId) => {
+          const scope = { issueId: null, projectId: null, parentIssueId: null, assigneeAgentId, assigneeUserId: null };
+          const decision = await access.decide({ actor: req.actor, action: "tasks:assign", resource: { type: "issue", companyId, ...scope }, scope });
+          if (!decision.allowed) throw forbidden(decision.explanation, authorizationDeniedDetails(decision));
+        },
       });
     } catch (error) {
       if (!(error instanceof PlanPartiallyAppliedError)) throw error;
       await logActivity(db, {
         ...activityBase, action: "plan.apply_failed", entityType: "company", entityId: companyId,
-        details: { reason: error.message, createdAgents: error.createdAgents },
+        details: { reason: error.message, createdAgents: error.createdAgents, idempotencyKey },
       });
       res.status(error.status).json({ error: error.message, code: "plan_partially_applied", partial: { agents: error.createdAgents } });
       return;
     }
 
     const { result } = applied;
+    if (applied.replayed) {
+      // Already applied with this key: nothing was created now.
+      res.status(200).json(result);
+      return;
+    }
     if (applied.briefChanged && result.brief) {
       await logActivity(db, {
         ...activityBase, action: "company.brief_updated", entityType: "company", entityId: companyId,
@@ -101,6 +119,7 @@ export function planRoutes(db: Db, options: PlanRoutesOptions) {
         agents: result.agents,
         tasks: Object.fromEntries(Object.entries(result.tasks).map(([key, task]) => [key, task.id])),
         pendingAssignments: result.pendingAssignments,
+        idempotencyKey,
       },
     });
     for (const task of applied.tasks) {

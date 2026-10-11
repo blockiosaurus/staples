@@ -819,8 +819,7 @@ export async function createApp(
   );
   // Plans hire through the agent-hire route in-process, as the person.
   api.use(planRoutes(db, {
-    hireAgent: (actor, companyId, body, origin) => injectApiRequest(api, actor, "POST", `/companies/${companyId}/agent-hires`, body,
-      origin ? { origin, host: new URL(origin).host } : {}),
+    hireAgent: (actor, companyId, body, origin) => injectApiRequest(api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin }),
     pluginWorkerManager: workerManager,
   }));
   api.use(assetRoutes(db, opts.storageService));

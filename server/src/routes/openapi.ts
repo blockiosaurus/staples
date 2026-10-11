@@ -1640,7 +1640,6 @@ const INSTANCE_ADMIN_OPERATIONS = new Set([
 ]);
 
 const CREATED_OPERATIONS = new Set([
-  "POST /api/companies/{companyId}/plans/apply",
   "POST /api/adapters/install",
   "POST /api/chat-endpoints/{endpointId}/setup-secret",
   "POST /api/companies/{companyId}/agent-hires",
@@ -5958,14 +5957,18 @@ registry.registerPath({
   path: "/api/companies/{companyId}/plans/apply",
   tags: ["companies"],
   summary: "Apply a starter plan",
-  description: "The person, in their own interactive board session (never an agent, the Assistant run, an MCP connection or a board API key; viewers are read-only), creates an optional brief, goal and project, new agents and 1 to 25 tasks in one step. Usually run by the browser after the person confirms an Assistant plan proposal. References, cycles, roles (never ceo), adapters (local CLI adapters only), assignees (in this company, never the Assistant) and the brief base revision are checked before anything is created. Agents are hired through the agent-hire path (approvals apply; tasks for a hire awaiting approval are created unassigned in the backlog and linked to the approval); everything else is written in one transaction afterwards. If that fails after a hire, the response names the agents that were created. Logged as plan.applied.",
-  request: { params: z.object({ companyId: z.string().uuid() }), body: jsonBody(applyPlanSchema) },
+  description: "The person, in their own interactive board session (never an agent, the Assistant run, an MCP connection or a board API key; viewers are read-only), creates an optional brief, goal and project, new agents and 1 to 25 tasks in one step. Usually run by the browser after the person confirms an Assistant plan proposal. References, cycles, roles (never ceo), adapters (local CLI adapters only), assignees (in this company, never the Assistant) and the brief base revision are checked before anything is created. Agents are hired through the agent-hire path (approvals apply; tasks for a hire awaiting approval are created unassigned in the backlog and linked to the approval); everything else is written in one transaction afterwards. If that fails after a hire, the response names the agents that were created. A retry with the same idempotency key (Idempotency-Key header or body idempotencyKey) reuses agents already hired and, once applied, returns the stored result with 200; the same key with a different plan is a 409. Logged as plan.applied.",
+  request: {
+    params: z.object({ companyId: z.string().uuid() }),
+    body: jsonBody(applyPlanSchema),
+  },
   responses: {
-    200: r.ok(),
+    201: r.ok(),
+    200: { description: "Already applied with this idempotency key; the stored result, nothing created" },
     400: r.badRequest,
     401: r.unauthorized,
     403: r.forbidden,
-    409: { description: "The company brief changed since the plan's base revision" },
+    409: { description: "The company brief changed since the plan's base revision, the idempotency key was used for a different plan, or the plan is being applied right now" },
     422: { description: "The plan is invalid or not allowed, or a hire failed (code plan_partially_applied names agents already created)" },
   },
 });

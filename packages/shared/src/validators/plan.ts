@@ -22,6 +22,13 @@ export const applyPlanSchema = z.object({
     assigneeClientKey: z.string().optional(), assigneeAgentId: z.string().uuid().optional(),
     parentClientKey: z.string().optional(), blockedByClientKeys: z.array(z.string()).max(10).default([]),
   }).strict()).min(1).max(25),
+  /**
+   * Optional retry key (the browser sends the proposal's interaction id as the
+   * Idempotency-Key header instead). A retry with the same key resumes the
+   * same application: agents already hired are reused, and a plan already
+   * applied returns its stored result. Not part of the plan's identity.
+   */
+  idempotencyKey: z.string().regex(/^[A-Za-z0-9:_-]{1,200}$/).optional(),
 }).strict();
 
 export type ApplyPlan = z.infer<typeof applyPlanSchema>;

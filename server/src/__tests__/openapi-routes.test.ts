@@ -872,6 +872,8 @@ describe("openapi routes", () => {
     expect(apply["x-paperclip-authorization"]).toEqual({actor: "board", sessionBound: true});
     expect(apply.requestBody.content["application/json"].schema.required).toEqual(["tasks"]);
     expect(apply.responses["201"]).toBeDefined();
+    expect(apply.responses["200"].description).toMatch(/Already applied/);
+    expect(apply.description).toMatch(/Idempotency-Key/);
     expect(apply.responses["409"]).toBeDefined();
     expect(apply.responses["422"]).toBeDefined();
   });
