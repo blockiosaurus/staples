@@ -84,6 +84,8 @@ import {
   connectionIntentPayloadSchema,
   connectionIntentResultSchema,
   createIssueThreadInteractionSchema,
+  missingQuestionRecommendations,
+  QUESTION_RECOMMENDATION_REQUIRED_MESSAGE,
   legacyIssueThreadInteractionResolverPolicyAlias,
   normalizeIssueThreadInteractionResolverPolicy,
   rejectIssueThreadInteractionSchema,
@@ -177,6 +179,14 @@ type CreateInteractionOptions = {
    * (public route, native runner, plugins) is refused a proposedAction.
    */
   allowProposedAction?: boolean;
+  /**
+   * Every question an agent asks a person carries its recommended answer.
+   * Only server bridges relaying questions authored outside Paperclip (a
+   * provider harness's own question tool, an MCP elicitation) set this, since
+   * those sources have no recommendation to carry. Every other caller (public
+   * route, native request_human_input, plugins) is held to the rule.
+   */
+  allowQuestionsWithoutRecommendation?: boolean;
 };
 
 /** A claim older than this may be taken over by the same person (e.g. a closed tab). */
@@ -3523,6 +3533,15 @@ export function issueThreadInteractionService(
       const data = normalizeCreateInteractionInput(
         createIssueThreadInteractionSchema.parse(input),
       );
+      if (data.kind === "ask_user_questions" && options.allowQuestionsWithoutRecommendation !== true) {
+        const missing = missingQuestionRecommendations(data.payload);
+        if (missing.length > 0) {
+          throw unprocessable(QUESTION_RECOMMENDATION_REQUIRED_MESSAGE, {
+            code: "question_recommendation_required",
+            questionIds: missing,
+          });
+        }
+      }
       if (
         data.kind === "request_confirmation" &&
         data.payload.proposedAction !== undefined &&

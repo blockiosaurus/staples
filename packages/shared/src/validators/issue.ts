@@ -1286,6 +1286,11 @@ export const askUserQuestionsQuestionOptionSchema = z.object({
     .describe(
       "When true, selecting this option reveals an inline text field; the typed value is returned as the question's otherText. Use this for a real \"I'll describe it\" choice instead of authoring a dead option that does nothing. At most one free-text option per question.",
     ),
+
+  recommended: z
+    .boolean()
+    .optional()
+    .describe("Marks the asker's recommended answer; the form pre-selects it."),
 });
 
 export const askUserQuestionsQuestionSchema = z.object({

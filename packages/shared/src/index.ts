@@ -207,7 +207,12 @@ export type {
   AttentionWorkspaceRef,
 } from "./types/attention.js";
 export { ATTENTION_SOURCE_KINDS } from "./types/attention.js";
-export { questionSetToAskUserQuestionsPayload } from "./question-set.js";
+export {
+  askUserQuestionsPayloadToQuestionSet,
+  missingQuestionRecommendations,
+  QUESTION_RECOMMENDATION_REQUIRED_MESSAGE,
+  questionSetToAskUserQuestionsPayload,
+} from "./question-set.js";
 export type {
   DecisionQueue,
   DecisionQueueItem,

@@ -1,3 +1,4 @@
+import { missingQuestionRecommendations } from "@paperclipai/shared";
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import {
@@ -65,6 +66,9 @@ describe("buildOnboardingFirstTaskOpeningQuestion", () => {
     expect(question.options[0].freeText).toBeUndefined();
     expect(question.options[1].label).toBe("I have a task in mind");
     expect(question.options[1].freeText).toBe(true);
+    // Every question a person is asked carries its recommended answer.
+    expect(question.options[0].recommended).toBe(true);
+    expect(missingQuestionRecommendations(payload)).toEqual([]);
   });
 });
 

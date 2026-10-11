@@ -5828,6 +5828,9 @@ export function createToolGatewayService(
         },
       },
       { agentId: input.session.agentId },
+      // A remote MCP server authors elicitation fields; it has no
+      // recommendation for Paperclip to carry.
+      { allowQuestionsWithoutRecommendation: true },
     );
     const now = new Date();
     await db

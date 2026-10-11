@@ -71,7 +71,7 @@ const support = await getEmbeddedPostgresTestSupport();
     const f = await seed(false, conversation);
     const question = (prompt: string) => ({ kind: "ask_user_questions" as const, payload: { version: 1 as const,
       supersedeOnUserComment: true, questions: [{ id: "color", prompt, selectionMode: "single" as const, required: true,
-        options: [{ id: "blue", label: "Blue" }, { id: "green", label: "Green" }] }] } });
+        options: [{ id: "blue", label: "Blue", recommended: true }, { id: "green", label: "Green" }] }] } });
     const first = await f.svc.create(f.issue, question("Which color?"), { agentId: f.agentId });
     await f.svc.expireRequestConfirmationsSupersededByComment(f.issue,
       { id: f.comment.id, authorUserId: "operator", createdAt: new Date(Date.now() + 1000) }, { userId: "operator" });

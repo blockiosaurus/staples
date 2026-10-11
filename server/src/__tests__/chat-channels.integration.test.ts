@@ -26394,7 +26394,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
               required: true,
               allowOther: false,
               options: [
-                { id: "one", label: "One" },
+                { id: "one", label: "One", recommended: true },
                 { id: "two", label: "Two" },
               ],
             },
@@ -30810,7 +30810,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                           required: true,
                           allowOther: false,
                           options: [
-                            { id: "yes", label: "Yes" },
+                            { id: "yes", label: "Yes", recommended: true },
                             { id: "no", label: "No" },
                           ],
                         },
@@ -32435,7 +32435,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
               required: true,
               allowOther: false,
               options: [
-                { id: "yes", label: "Yes" },
+                { id: "yes", label: "Yes", recommended: true },
                 { id: "no", label: "No" },
               ],
             },
@@ -33046,7 +33046,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                 selectionMode: "single",
                 required: true,
                 options: [
-                  { id: "high", label: "High" },
+                  { id: "high", label: "High", recommended: true },
                   { id: "normal", label: "Normal" },
                 ],
               },
@@ -36400,7 +36400,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                 required: true,
                 allowOther: false,
                 options: [
-                  { id: "high", label: "High" },
+                  { id: "high", label: "High", recommended: true },
                   { id: "normal", label: "Normal" },
                 ],
               },
@@ -36777,7 +36777,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                   required: true,
                   allowOther: false,
                   options: [
-                    { id: "staging", label: "Staging" },
+                    { id: "staging", label: "Staging", recommended: true },
                     { id: "production", label: "Production" },
                   ],
                 },
@@ -36806,7 +36806,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                     required: true,
                     answerMode: "single_select",
                     options: [
-                      { id: "staging", label: "Staging" },
+                      { id: "staging", label: "Staging", recommended: true },
                       { id: "production", label: "Production" },
                     ],
                   },
@@ -39325,7 +39325,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
               // The shared contract defaults omission to a closed question.
               // Native provider buttons must match that canonical shape.
               options: [
-                { id: "high", label: "High" },
+                { id: "high", label: "High", recommended: true },
                 { id: "normal", label: "Normal" },
               ],
             },
@@ -40137,7 +40137,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                 required: true,
                 allowOther: false,
                 options: [
-                  { id: "staging", label: "Staging" },
+                  { id: "staging", label: "Staging", recommended: true },
                   { id: "production", label: "Production" },
                 ],
               },
@@ -40757,7 +40757,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                 required: true,
                 allowOther: false,
                 options: [
-                  { id: "staging", label: "Staging" },
+                  { id: "staging", label: "Staging", recommended: true },
                   { id: "production", label: "Production" },
                 ],
               },
@@ -41570,7 +41570,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
               selectionMode: "single",
               required: true,
               options: [
-                { id: "red", label: "Red" },
+                { id: "red", label: "Red", recommended: true },
                 { id: "blue", label: "Blue" },
               ],
             },
@@ -42404,7 +42404,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                 required: true,
                 allowOther: false,
                 options: [
-                  { id: "high", label: "High" },
+                  { id: "high", label: "High", recommended: true },
                   { id: "normal", label: "Normal" },
                 ],
               },
@@ -43658,7 +43658,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
               required: true,
               allowOther: false,
               options: [
-                { id: "us", label: "US" },
+                { id: "us", label: "US", recommended: true },
                 { id: "eu", label: "EU" },
               ],
             },
@@ -43749,7 +43749,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                 required: true,
                 allowOther: false,
                 options: [
-                  { id: "ship", label: "Ship" },
+                  { id: "ship", label: "Ship", recommended: true },
                   { id: "hold", label: "Hold" },
                 ],
               },
@@ -43897,7 +43897,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                 required: true,
                 allowOther: false,
                 options: [
-                  { id: "blue", label: "Blue" },
+                  { id: "blue", label: "Blue", recommended: true },
                   { id: "green", label: "Green" },
                 ],
               },
@@ -61499,7 +61499,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                 selectionMode: "single",
                 required: true,
                 options: [
-                  { id: "amber", label: "Amber" },
+                  { id: "amber", label: "Amber", recommended: true },
                   { id: "cobalt", label: "Cobalt" },
                 ],
               },
@@ -61661,7 +61661,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                     selectionMode: "single",
                     required: true,
                     options: [
-                      { id: "amber", label: "Amber" },
+                      { id: "amber", label: "Amber", recommended: true },
                       { id: "cobalt", label: "Cobalt" },
                     ],
                   },

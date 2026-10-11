@@ -1240,6 +1240,8 @@ export interface AskUserQuestionsQuestionOption {
    * free-text affordance.
    */
   freeText?: boolean;
+  /** The asker's recommended answer; the form pre-selects it. */
+  recommended?: boolean;
 }
 
 export interface AskUserQuestionsQuestion {

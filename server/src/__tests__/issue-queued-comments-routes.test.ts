@@ -282,7 +282,7 @@ describeEmbeddedPostgres("issue queued-comment routes", () => {
     const issue = { id: seeded.issueId, companyId: seeded.companyId };
     const interaction = await service.create(issue, kind === "questions" ? {
       kind: "ask_user_questions", resolverPolicy: "board_or_agents", payload: { version: 1,
-        questions: [{ id: "scope", prompt: "Choose scope", selectionMode: "single", options: [{ id: "first", label: "First" }] }],
+        questions: [{ id: "scope", prompt: "Choose scope", selectionMode: "single", options: [{ id: "first", label: "First", recommended: true }] }],
       },
     } : {
       kind: "request_item_verdicts", resolverPolicy: "board_or_agents", payload: { version: 1,
@@ -322,7 +322,7 @@ describeEmbeddedPostgres("issue queued-comment routes", () => {
         effectiveResolverPolicy: "human_only", resolverPolicyProvenance: "explicit",
         payload: kind === "ask_user_questions"
           ? { version: 1, questions: [{ id: "runtime", prompt: "Which runtime?", selectionMode: "single", required: true,
-              options: [{ id: "node", label: "Node.js" }, { id: "python", label: "Python" }] }] }
+              options: [{ id: "node", label: "Node.js", recommended: true }, { id: "python", label: "Python" }] }] }
           : kind === "request_checkbox_confirmation"
             ? { version: 1, prompt: "Accept scope", options: [{ id: "scope", label: "Build the app" }] }
             : { version: 1, prompt: "Build the app?", detailsMarkdown: "Create exactly one child task." },

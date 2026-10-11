@@ -206,7 +206,7 @@ describeEmbeddedPostgres("question response delivery", () => {
               selectionMode: "single",
               required: true,
               options: [
-                { id: "node", label: "Node.js" },
+                { id: "node", label: "Node.js", recommended: true },
                 { id: "bun", label: "Bun" },
               ],
             },
@@ -216,7 +216,7 @@ describeEmbeddedPostgres("question response delivery", () => {
               selectionMode: "multi",
               allowOther: true,
               options: [
-                { id: "health", label: "Health check" },
+                { id: "health", label: "Health check", recommended: true },
                 { id: "logs", label: "Request logs" },
               ],
             },
@@ -239,7 +239,7 @@ describeEmbeddedPostgres("question response delivery", () => {
                 required: true,
                 answerMode: "single_select",
                 options: [
-                  { id: "node", label: "Node.js" },
+                  { id: "node", label: "Node.js", recommended: true },
                   { id: "bun", label: "Bun" },
                 ],
               },
@@ -250,7 +250,7 @@ describeEmbeddedPostgres("question response delivery", () => {
                 required: false,
                 answerMode: "multi_select",
                 options: [
-                  { id: "health", label: "Health check" },
+                  { id: "health", label: "Health check", recommended: true },
                   { id: "logs", label: "Request logs" },
                 ],
                 customAnswer: { enabled: true, label: "Other" },

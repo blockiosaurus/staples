@@ -488,7 +488,7 @@ describe("native external-chat response wait", () => {
                 selectionMode: "single" as const,
                 required: true,
                 allowOther: false,
-                options: [{ id: "cedar", label: "Cedar" }],
+                options: [{ id: "cedar", label: "Cedar", recommended: true }],
               },
               {
                 id: "note",
@@ -516,7 +516,7 @@ describe("native external-chat response wait", () => {
                 required: true,
                 allowOther: false,
                 options: [
-                  { id: "cobalt", label: "Cobalt" },
+                  { id: "cobalt", label: "Cobalt", recommended: true },
                   { id: "amber", label: "Amber" },
                 ],
               },
@@ -752,7 +752,7 @@ describe("native external-chat response wait", () => {
                 required: true,
                 allowOther: false,
                 options: [
-                  { id: "cobalt", label: "Cobalt" },
+                  { id: "cobalt", label: "Cobalt", recommended: true },
                   { id: "amber", label: "Amber" },
                 ],
               },
