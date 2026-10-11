@@ -12,6 +12,7 @@ import { applyCompanyPrefix } from "@/lib/company-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import { useActiveCompanyPrefix } from "@/lib/router";
 import { useAskAssistant } from "@/staples/assistant/AssistantProvider";
+import { assistantUnavailableNotice } from "@/staples/assistant/unavailableNotice";
 import { BriefingCompactRow, BriefingRow, canAcceptInline } from "./BriefingRow";
 
 export const BRIEFING_REFETCH_INTERVAL_MS = 30_000;
@@ -63,8 +64,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 /** Same wording the Assistant composer uses when it can't take a message. */
-export const ASK_UNAVAILABLE_NOTICE =
-  "The Assistant can't take messages right now — your message is in the box to send later.";
+export const ASK_UNAVAILABLE_NOTICE = assistantUnavailableNotice("your message is in the box to send later.");
 
 function AskComposer() {
   const askAssistant = useAskAssistant();

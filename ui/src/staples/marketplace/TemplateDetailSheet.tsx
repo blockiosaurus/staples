@@ -8,12 +8,22 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { queryKeys } from "@/lib/queryKeys";
 import { useAskAssistant } from "@/staples/assistant/AssistantProvider";
+import { assistantUnavailableNotice } from "@/staples/assistant/unavailableNotice";
 import { describeRoutineSchedule } from "./schedule";
 import { appChoices, budgetText, templateIcon } from "./templateText";
 
-/** Shown when the Assistant can't take the hand-off (same wording as Home's, minus the composer). */
-export const HIRE_UNAVAILABLE_NOTICE =
-  "The Assistant can't take messages right now — try again in a moment, or build your own agent.";
+/** Shown when the Assistant can't take the hand-off (Home's notice; nothing waits in a composer here). */
+export const HIRE_UNAVAILABLE_NOTICE = assistantUnavailableNotice("try again in a moment, or build your own agent.");
+
+/**
+ * The description without a leading H1 that repeats the template name (the
+ * sheet header already shows it). Other leading headings are kept.
+ */
+export function descriptionWithoutTitle(description: string, name: string): string {
+  const match = description.match(/^\s*#[ \t]+(.+?)[ \t]*#*[ \t]*(?:\r?\n|$)/);
+  if (!match || match[1]!.trim().toLowerCase() !== name.trim().toLowerCase()) return description;
+  return description.slice(match[0].length).replace(/^\s+/, "");
+}
 
 /** The hand-off message: the Assistant finds the template, asks the setup questions and proposes the hire. */
 export function hireMessage(name: string): string {
@@ -61,11 +71,12 @@ function QuestionPreview({ question }: { question: PaperclipQuestionSetQuestion 
 
 function DetailBody({ detail }: { detail: AgentTemplateDetail }) {
   const budget = budgetText(detail.defaultBudgetMonthlyCents);
+  const description = descriptionWithoutTitle(detail.description, detail.name);
   return (
     <div className="flex flex-col gap-6">
-      {detail.description.trim() ? (
+      {description.trim() ? (
         <MarkdownBody softBreaks={false} linkIssueReferences={false}>
-          {detail.description}
+          {description}
         </MarkdownBody>
       ) : null}
 

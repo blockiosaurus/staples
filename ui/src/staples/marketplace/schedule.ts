@@ -82,7 +82,11 @@ export function describeSchedule(cron: string): string {
     return dayRule === "every" ? `Every day at ${at}` : `${capitalize(dayRule.text)} at ${at}`;
   }
   const dom = int(domField, 1, 31);
-  if (dom !== null && dayRule === "every") return `Monthly on the ${ordinal(dom)} at ${at}`;
+  if (dom !== null && dayRule === "every") {
+    // Cron skips months without that day (e.g. the 31st in April), so say so.
+    const skips = dom >= 29 ? " (skips shorter months)" : "";
+    return `Monthly on the ${ordinal(dom)} at ${at}${skips}`;
+  }
   return trimmed;
 }
 

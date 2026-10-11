@@ -10,7 +10,6 @@ import { environmentsApi } from "../api/environments";
 import { heartbeatsApi } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { useCompany } from "../context/CompanyContext";
-import { useDialogActions } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
 import { isPlatformManagedEnvironment } from "../lib/managed-sandbox-environment";
@@ -190,7 +189,6 @@ export type AgentsView = "list" | "org";
 
 export function Agents({ initialView = "list" }: { initialView?: AgentsView } = {}) {
   const { selectedCompanyId } = useCompany();
-  const { openNewAgent } = useDialogActions();
   const { setBreadcrumbs } = useBreadcrumbs();
   const navigate = useNavigate();
   const location = useLocation();
@@ -472,7 +470,7 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
                 <Network className="h-3.5 w-3.5" />
               </Button>
           </div>
-          <Button size="sm" variant="outline" onClick={openNewAgent}>
+          <Button size="sm" variant="outline" onClick={() => navigate("/agents/new")}>
             <Plus className="h-3.5 w-3.5 mr-1.5" />
             New Agent
           </Button>
@@ -490,7 +488,7 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
           icon={Bot}
           message="Create your first agent to get started."
           action="New Agent"
-          onAction={openNewAgent}
+          onAction={() => navigate("/agents/new")}
         />
       )}
 

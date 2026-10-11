@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTemplateDetail, AgentTemplateSummary } from "@paperclipai/shared";
 import { BreadcrumbProvider, useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { MarketplacePage, groupTemplates } from "./MarketplacePage";
-import { HIRE_UNAVAILABLE_NOTICE } from "./TemplateDetailSheet";
+import { HIRE_UNAVAILABLE_NOTICE, descriptionWithoutTitle } from "./TemplateDetailSheet";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -80,7 +80,7 @@ const CODER = summary({ slug: "coding-agent", name: "Coding agent", icon: "code"
 
 const SECRETARY_DETAIL: AgentTemplateDetail = {
   ...SECRETARY,
-  description: "Your secretary keeps the inbox tidy.",
+  description: "# Email secretary\n\nYour secretary keeps the inbox tidy.",
   setupQuestions: [
     {
       id: "callMe",
@@ -213,6 +213,7 @@ describe("MarketplacePage", () => {
     expect(mocks.get).toHaveBeenCalledWith("company-1", "email-secretary");
     const text = document.body.textContent ?? "";
     expect(document.body.querySelector('[data-testid="markdown"]')?.textContent).toBe("Your secretary keeps the inbox tidy.");
+    expect(document.body.textContent).not.toContain("# Email secretary");
     expect(text).toContain("Morning inbox sweep");
     expect(text).toContain("Weekdays at 8:00");
     expect(text).toContain("Fridays at 16:00 (America/New_York)");
@@ -227,6 +228,15 @@ describe("MarketplacePage", () => {
     expect(questions.textContent).toContain("Suggested: Pat Lee");
     expect(questions.textContent).toContain("8:00 (recommended)");
     expect(questions.querySelector("input, textarea, select")).toBeNull();
+  });
+
+  it("drops a leading H1 that repeats the template name, keeping other headings", () => {
+    expect(descriptionWithoutTitle("# Email secretary\n\nBody", "Email secretary")).toBe("Body");
+    expect(descriptionWithoutTitle("  #  email Secretary  \r\nBody", "Email secretary")).toBe("Body");
+    expect(descriptionWithoutTitle("# Email secretary", "Email secretary")).toBe("");
+    expect(descriptionWithoutTitle("# What it does\n\nBody", "Email secretary")).toBe("# What it does\n\nBody");
+    expect(descriptionWithoutTitle("## Email secretary\n\nBody", "Email secretary")).toBe("## Email secretary\n\nBody");
+    expect(descriptionWithoutTitle("Intro\n# Email secretary", "Email secretary")).toBe("Intro\n# Email secretary");
   });
 
   it("Hire hands off to the Assistant with the template's name and closes the sheet", async () => {

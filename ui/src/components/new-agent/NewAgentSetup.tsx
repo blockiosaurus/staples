@@ -24,6 +24,7 @@ import type {
 } from "@paperclipai/shared";
 import { ADAPTER_AUTH_MISSING_CHECK_CODE } from "@paperclipai/shared";
 import { useNavigate, useSearchParams } from "@/lib/router";
+import { NEW_AGENT_FORM_PARAMS as P } from "./form-params";
 import { agentsApi } from "@/api/agents";
 import { adaptersApi } from "@/api/adapters";
 import { environmentsApi } from "@/api/environments";
@@ -84,12 +85,12 @@ export function NewAgentSetup() {
     );
   return (
     <Setup
-      key={`${selectedCompanyId}:${params.get("name")}:${params.get("adapterType")}:${params.get("runnerProvider")}`}
+      key={`${selectedCompanyId}:${params.get(P.name)}:${params.get(P.adapterType)}:${params.get(P.runnerProvider)}`}
       companyId={selectedCompanyId}
-      name={params.get("name") ?? ""}
-      adapterType={params.get("adapterType") ?? ""}
-      runnerProvider={params.get("runnerProvider") ?? "codex"}
-      createdAgentId={params.get("createdAgentId")}
+      name={params.get(P.name) ?? ""}
+      adapterType={params.get(P.adapterType) ?? ""}
+      runnerProvider={params.get(P.runnerProvider) ?? "codex"}
+      createdAgentId={params.get(P.createdAgentId)}
     />
   );
 }

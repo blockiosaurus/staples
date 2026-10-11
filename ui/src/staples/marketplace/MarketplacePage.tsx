@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { AgentTemplateCategory, AgentTemplateSummary } from "@paperclipai/shared";
 import { RotateCw, Wrench } from "lucide-react";
 import { agentTemplatesApi } from "@/api/agentTemplates";
+import { NEW_AGENT_FORM_PARAM_KEYS } from "@/components/new-agent/form-params";
 import { Button } from "@/components/ui/button";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useCompany } from "@/context/CompanyContext";
@@ -15,8 +16,6 @@ import { MARKETPLACE_CATEGORY_LABELS, MARKETPLACE_CATEGORY_ORDER } from "./templ
 /** The custom new-agent form (the pre-marketplace `/agents/new`). */
 export const CUSTOM_AGENT_PATH = "/agents/new/custom";
 
-/** Query keys the custom form reads; old `/agents/new?...` links carrying them still land on the form. */
-const CUSTOM_FORM_PARAMS = ["name", "adapterType", "runnerProvider", "createdAgentId"];
 
 /** Templates grouped into marketplace sections, in section order, empty sections dropped. */
 export function groupTemplates(
@@ -32,7 +31,8 @@ export function groupTemplates(
 export function MarketplacePage() {
   const { search } = useLocation();
   const params = new URLSearchParams(search);
-  if (CUSTOM_FORM_PARAMS.some((key) => params.has(key))) {
+  // Old `/agents/new?name=…` links meant the custom form: send them on to it.
+  if (NEW_AGENT_FORM_PARAM_KEYS.some((key) => params.has(key))) {
     return <Navigate to={`${CUSTOM_AGENT_PATH}${search}`} replace />;
   }
   return <Marketplace />;

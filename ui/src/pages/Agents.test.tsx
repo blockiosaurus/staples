@@ -388,6 +388,27 @@ describe("Agents", () => {
     }
   });
 
+  it("New Agent opens the Hire an agent marketplace", async () => {
+    mockAgentsApi.list.mockResolvedValue([makeAgent({ name: "Alpha", status: "active" })]);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <Agents />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+    const button = Array.from(container.querySelectorAll("button")).find((element) => element.textContent?.includes("New Agent"));
+    expect(button).toBeTruthy();
+    await act(async () => { button!.click(); });
+    expect(mockRouterState.navigate).toHaveBeenCalledWith("/agents/new");
+    expect(mockOpenNewAgent).not.toHaveBeenCalled();
+  });
+
   it("omits the built-in Assistant from the agents list", async () => {
     mockAgentsApi.list.mockResolvedValue([
       makeAgent({ name: "Alpha", status: "active" }),

@@ -198,7 +198,7 @@ async function chooseSortMode(label: string) {
 
 function agentLinkLabels(container: HTMLElement) {
   return Array.from(container.querySelectorAll('a[href^="/agents/"]'))
-    .filter((anchor) => anchor.getAttribute("href") !== "/agents/all")
+    .filter((anchor) => !["/agents/all", "/agents/new"].includes(anchor.getAttribute("href") ?? ""))
     .map((anchor) => anchor.textContent?.trim())
     .filter(Boolean);
 }
@@ -731,6 +731,9 @@ describe("SidebarAgents", () => {
     // PAP-76: the full-list entry point stays visible even when only active
     // agents are shown.
     expect(seeAllAgentsLink(container)?.getAttribute("href")).toBe("/agents/all");
+    expect(
+      Array.from(container.querySelectorAll('a[href="/agents/new"]')).some((anchor) => anchor.textContent?.includes("Hire an agent")),
+    ).toBe(true);
   });
 
   it("keeps formerly live agents visible for the streamlined linger window", async () => {
