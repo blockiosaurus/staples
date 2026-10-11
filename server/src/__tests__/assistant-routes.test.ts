@@ -12,6 +12,7 @@ const mockBuiltInAgentService = vi.hoisted(() => ({
 const mockIssueService = vi.hoisted(() => ({
   getConversation: vi.fn(),
 }));
+const mockReadAssistantLifecycle = vi.hoisted(() => vi.fn());
 
 function registerModuleMocks() {
   vi.doMock("../services/built-in-agents.js", () => ({
@@ -19,6 +20,10 @@ function registerModuleMocks() {
   }));
   vi.doMock("../services/issues.js", () => ({
     issueService: () => mockIssueService,
+  }));
+  vi.doMock("../services/assistant-setup.js", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../services/assistant-setup.js")>()),
+    readAssistantLifecycle: mockReadAssistantLifecycle,
   }));
 }
 
@@ -62,6 +67,9 @@ describe("assistant routes", () => {
       adapterConfig: { secret: "do-not-leak" },
     });
     mockIssueService.getConversation.mockResolvedValue(null);
+    mockReadAssistantLifecycle.mockResolvedValue({
+      adapterType: "claude_local", lifecycleState: "ready", lifecycleVersion: 1, lifecycleError: null, lifecycleHolds: [], lifecycleOperation: null,
+    });
   });
 
   it("ensures the Assistant and returns it with no conversation yet", async () => {
@@ -71,6 +79,7 @@ describe("assistant routes", () => {
     expect(res.body).toEqual({
       agent: { id: assistantId, name: "Assistant", urlKey: "assistant", adapterType: "claude_local", status: "idle" },
       conversationIssueId: null,
+      setup: { state: "ready", adapterType: "claude_local" },
     });
     expect(mockBuiltInAgentService.ensureAssistant).toHaveBeenCalledWith(companyId);
     expect(mockIssueService.getConversation).toHaveBeenCalledWith(companyId, assistantId, "user-1");
@@ -82,6 +91,19 @@ describe("assistant routes", () => {
     const res = await request(app).get(`/api/companies/${companyId}/assistant`);
     expect(res.status).toBe(200);
     expect(res.body.conversationIssueId).toBe("issue-1");
+  });
+
+  it("reports that the Assistant needs a model when its harness test failed on auth", async () => {
+    mockReadAssistantLifecycle.mockResolvedValue({
+      adapterType: "claude_local", lifecycleState: "verifying", lifecycleVersion: 2,
+      lifecycleError: "The lifecycle step failed. Retry the operation.", lifecycleHolds: [],
+      lifecycleOperation: { id: "op", hostComplete: false, completedPluginIds: [], attempts: 1,
+        lastHarnessTest: { version: 2, adapterType: "claude_local", checks: [{ code: "claude_hello_probe_auth_required", level: "warn" }] } },
+    });
+    const app = await createApp(boardActor);
+    const res = await request(app).get(`/api/companies/${companyId}/assistant`);
+    expect(res.status).toBe(200);
+    expect(res.body.setup).toEqual({ state: "needs_model", adapterType: "claude_local" });
   });
 
   it("rejects agents and callers without company access", async () => {

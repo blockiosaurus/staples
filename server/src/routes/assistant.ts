@@ -3,6 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { forbidden } from "../errors.js";
 import { builtInAgentService } from "../services/built-in-agents.js";
 import { issueService } from "../services/issues.js";
+import { assistantSetupStatus, readAssistantLifecycle } from "../services/assistant-setup.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 
 /**
@@ -20,7 +21,10 @@ export function assistantRoutes(db: Db) {
     assertCompanyAccess(req, companyId);
     if (!req.actor.userId) throw forbidden("Board user access required");
     const agent = await builtIns.ensureAssistant(companyId);
-    const conversation = await issues.getConversation(companyId, agent.id, req.actor.userId);
+    const [conversation, lifecycle] = await Promise.all([
+      issues.getConversation(companyId, agent.id, req.actor.userId),
+      readAssistantLifecycle(db, agent.id),
+    ]);
     res.json({
       agent: {
         id: agent.id,
@@ -30,6 +34,11 @@ export function assistantRoutes(db: Db) {
         status: agent.status,
       },
       conversationIssueId: conversation?.id ?? null,
+      // Whether the Assistant can answer yet; drives the inline setup card.
+      setup: assistantSetupStatus(lifecycle ?? {
+        adapterType: agent.adapterType, lifecycleState: agent.lifecycleState ?? "ready",
+        lifecycleVersion: agent.lifecycleVersion ?? 0, lifecycleError: agent.lifecycleError ?? null,
+      }),
     });
   });
 

@@ -1,6 +1,7 @@
 import { cancellationRequestId } from "../services/native-runtime/native-cancellation-request.js";
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
+import { assistantSetupRequestSchema, assistantSetupStatus, readAssistantLifecycle, resolveAssistantSetupEngine, type AssistantSetupRequest } from "../services/assistant-setup.js";
 
 import { agentIdentityService } from "../services/agent-identity.js";
 import { aiConnectionRouterService, poolMemberRuntimeConfig } from "../services/ai-connection-router.js";
@@ -5158,7 +5159,23 @@ export function agentRoutes(
       return;
     }
 
-    const patchData = { ...(req.body as Record<string, unknown>) };
+    const agent = await patchAgent(req, existing, req.body as Record<string, unknown>);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    res.json(redactAgentRowForResponse(agent));
+  });
+
+  /**
+   * The PATCH /agents/:id update path: adapter/runtime validation, secret and
+   * AI-connection bindings, then the lifecycle configuration update (config
+   * revision, lifecycle invalidation). Shared with the Assistant setup route so
+   * both write configuration through one checked path.
+   */
+  async function patchAgent(req: Request, existing: NonNullable<Awaited<ReturnType<typeof svc.getById>>>, body: Record<string, unknown>, revisionSource = "patch") {
+    const id = existing.id;
+    const patchData = { ...body };
     const requestedStatus = patchData.status;
     delete patchData.status;
     if (requestedStatus !== undefined && !["paused", "idle", "terminated"].includes(String(requestedStatus))) throw badRequest("Use an agent lifecycle command to change status");
@@ -5171,10 +5188,7 @@ export function agentRoutes(
     delete patchData.applyStoredClaudeLogin;
     if (hasOwn(patchData, "adapterConfig")) {
       const adapterConfig = asRecord(patchData.adapterConfig);
-      if (!adapterConfig) {
-        res.status(422).json({ error: "adapterConfig must be an object" });
-        return;
-      }
+      if (!adapterConfig) throw unprocessable("adapterConfig must be an object");
       assertNoAgentAdapterConfigMutation(req, adapterConfig);
       const changingInstructionsConfig = adapterConfigTouchesInstructionsConfig(adapterConfig);
       if (changingInstructionsConfig) {
@@ -5196,10 +5210,7 @@ export function agentRoutes(
     let requestedRuntimeConfig: Record<string, unknown> | null = null;
     if (hasOwn(patchData, "runtimeConfig")) {
       const runtimeConfig = asRecord(patchData.runtimeConfig);
-      if (!runtimeConfig) {
-        res.status(422).json({ error: "runtimeConfig must be an object" });
-        return;
-      }
+      if (!runtimeConfig) throw unprocessable("runtimeConfig must be an object");
       assertProviderTraceSettingTransition(
         req,
         runtimeConfig,
@@ -5348,7 +5359,7 @@ export function agentRoutes(
       recordRevision: {
         createdByAgentId: actor.agentId,
         createdByUserId: actor.actorType === "user" ? actor.actorId : null,
-        source: "patch",
+        source: revisionSource,
       },
       claudeLogin: {
         ownerUserId: req.actor.type === "agent" ? null : (req.actor.userId ?? null),
@@ -5362,10 +5373,7 @@ export function agentRoutes(
     const agent = command
       ? await svcLifecycle.updateAndTransition(id, command, patchData, updateOptions)
       : await svc.update(id, patchData, updateOptions);
-    if (!agent) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
+    if (!agent) return null;
 
     await logActivity(db, {
       companyId: agent.companyId,
@@ -5379,9 +5387,8 @@ export function agentRoutes(
       entityId: agent.id,
       details: summarizeAgentUpdateDetails(patchData),
     });
-
-    res.json(redactAgentRowForResponse(agent));
-  });
+    return agent;
+  }
 
   router.post("/agents/:id/lifecycle/retry", async (req, res) => {
     assertBoard(req);
@@ -5396,6 +5403,52 @@ export function agentRoutes(
       agentId: actor.agentId, runId: actor.runId, agentApiKeyId: actor.agentApiKeyId,
       action: "agent.lifecycle_retried", entityType: "agent", entityId: agent.id });
     res.json(redactAgentRowForResponse(agent));
+  });
+
+  /**
+   * Connects a model for the company Assistant (the inline setup card). Writes
+   * the adapter through the same checked path as PATCH /agents/:id, then
+   * retries a failed setup. Not gated by `enableBuiltInAgents`: every company
+   * has an Assistant.
+   */
+  router.post("/companies/:companyId/assistant/setup", validate(assistantSetupRequestSchema), async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertBoard(req);
+    assertCompanyAccess(req, companyId);
+    if (!req.actor.userId) throw forbidden("Board user access required");
+    const body = req.body as AssistantSetupRequest;
+    const assistant = await builtInAgentService(db).ensureAssistant(companyId);
+    const existing = await svc.getById(assistant.id);
+    if (!existing || existing.companyId !== companyId) throw notFound("Assistant not found");
+    const lifecycle = await readAssistantLifecycle(db, existing.id);
+    const changingAdapter = body.adapterType !== existing.adapterType;
+    const existingConfig = asRecord(existing.adapterConfig) ?? {};
+    const adapterConfig: Record<string, unknown> = { ...(body.adapterConfig ?? {}) };
+    // Keep the current model on the same adapter; a new adapter starts on its default.
+    if (!changingAdapter && adapterConfig.model === undefined && typeof existingConfig.model === "string") adapterConfig.model = existingConfig.model;
+    const engine = resolveAssistantSetupEngine(lifecycle ?? {}, body.adapterType, body.adapterConfig?.engine);
+    if (engine) adapterConfig.engine = engine;
+    const runtimeConfig = asRecord(existing.runtimeConfig) ?? {};
+    const updated = await patchAgent(req, existing, {
+      adapterType: body.adapterType,
+      adapterConfig,
+      ...(body.aiConnection ? { runtimeConfig: { ...runtimeConfig, aiConnection: body.aiConnection } } : {}),
+      ...(body.applyStoredClaudeLogin ? { applyStoredClaudeLogin: true } : {}),
+    }, "assistant_setup");
+    if (!updated) throw notFound("Assistant not found");
+    // A config change already restarts an in-flight setup; an unchanged one
+    // (e.g. the person just signed in) needs the failed attempt retried now.
+    const agent = ["preparing", "verifying", "resuming"].includes(updated.lifecycleState ?? "")
+      ? (await svcLifecycle.retry(updated.id)) ?? updated
+      : updated;
+    const nextLifecycle = await readAssistantLifecycle(db, agent.id);
+    res.json({
+      agent: { id: agent.id, name: agent.name, urlKey: agent.urlKey, adapterType: agent.adapterType, status: agent.status },
+      setup: assistantSetupStatus(nextLifecycle ?? {
+        adapterType: agent.adapterType, lifecycleState: agent.lifecycleState ?? "ready",
+        lifecycleVersion: agent.lifecycleVersion ?? 0, lifecycleError: agent.lifecycleError ?? null,
+      }),
+    });
   });
 
   router.post("/agents/:id/pause", async (req, res) => {

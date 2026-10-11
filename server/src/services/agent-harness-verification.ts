@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { agents, companies, type Db } from "@paperclipai/db";
 import type { AdapterEnvironmentTestResult } from "@paperclipai/adapter-utils";
 import { ADAPTER_AUTH_MISSING_CHECK_CODE, aiRuntimeConnectionBindingSchema } from "@paperclipai/shared";
@@ -19,7 +19,27 @@ export function assertHarnessTestPassed(result: AdapterEnvironmentTestResult) {
   const authenticationFailed = result.checks.some(check =>
     check.code === ADAPTER_AUTH_MISSING_CHECK_CODE || /_hello_probe_auth_required$/.test(check.code));
   const incomplete = !verified && (result.status === "warn" || result.checks.some(check => check.code.includes("hello_probe")));
-  if (result.status === "fail" || authenticationFailed || incomplete) throw Object.assign(new Error("The harness test failed"), { code: "harness_test_failed" });
+  if (result.status === "fail" || authenticationFailed || incomplete) {
+    // Codes and levels only: check messages can carry provider details.
+    throw Object.assign(new Error("The harness test failed"), {
+      code: "harness_test_failed",
+      checks: result.checks.map(check => ({ code: check.code, level: check.level })),
+    });
+  }
+}
+
+/**
+ * Keeps the latest failed harness test on the lifecycle operation (for the
+ * Assistant's setup state), or clears it once the test passes. Scoped to the
+ * lifecycle version the test ran for; best effort.
+ */
+async function recordHarnessTest(db: Db, agent: { id: string; lifecycleVersion: number; adapterType: string }, checks: Array<{ code: string; level: string }> | null) {
+  const value = checks
+    ? sql`coalesce(${agents.lifecycleOperation}, '{}'::jsonb) || jsonb_build_object('lastHarnessTest', ${JSON.stringify({ version: agent.lifecycleVersion, adapterType: agent.adapterType, checks })}::jsonb)`
+    : sql`${agents.lifecycleOperation} - 'lastHarnessTest'`;
+  await db.update(agents).set({ lifecycleOperation: value })
+    .where(and(eq(agents.id, agent.id), eq(agents.lifecycleVersion, agent.lifecycleVersion), isNotNull(agents.lifecycleOperation)))
+    .catch(() => {});
 }
 
 export function agentHarnessVerificationService(db: Db, manager: PluginWorkerManager) {
@@ -67,7 +87,13 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
       const result = binding ? await withManagedAiProbe(db, { ...input, agentId: agent.id, responsibleUserId, binding },
         managed => tests.testManagedEnvironment(agent.adapterType, { ...input, config: managed.config }, binding!, managed, agent.id))
         : await requireServerAdapter(agent.adapterType).testEnvironment(input);
-      assertHarnessTestPassed(result);
+      try {
+        assertHarnessTestPassed(result);
+      } catch (error) {
+        await recordHarnessTest(db, agent, (error as { checks?: Array<{ code: string; level: string }> }).checks ?? []);
+        throw error;
+      }
+      await recordHarnessTest(db, agent, null);
       status = "released";
       return "complete";
     } finally { await target.release(status); }
