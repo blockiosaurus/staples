@@ -8,7 +8,7 @@
 
 **Tech Stack:** Express + Drizzle, Zod (`@paperclipai/shared`), React 19 + TanStack Query v5, Tailwind v4 tokens, Vitest.
 
-Spec: `doc/plans/2026-10-11-staples-phase6-agent-templates-design.md` (read the "Revisions after code research" section — it overrides earlier sections). Verified code locations: `.superpowers/sdd/phase6-research.md` (cite it in every task).
+Spec: `doc/plans/2026-10-11-staples-phase6-agent-templates-design.md` (read the "Revisions after code research" section — it overrides earlier sections). Verified code locations: `/Users/kelliott/Metaplex/staples/.superpowers/sdd/2026-10-11-staples-phase6-agent-templates-plan/research.md` (cite it in every task).
 
 ## Global Constraints
 
