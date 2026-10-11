@@ -267,3 +267,15 @@ describe("staples_ask_questions", () => {
     expect((await t.call(context(), "staples_ask_questions", { questions: many })).isError).toBe(true);
   });
 });
+
+describe("staples_propose_plan", () => {
+  it("is a write tool hidden from viewers, with the plan schema as input", () => {
+    const t = tools(vi.fn() as unknown as ApiDispatch);
+    expect(ASSISTANT_WRITE_TOOL_NAMES).toContain("staples_propose_plan");
+    const definition = t.definitions(true).find((d) => d.name === "staples_propose_plan");
+    expect(definition?.inputSchema).toMatchObject({ required: expect.arrayContaining(["plan", "summary"]) });
+    expect(JSON.stringify(definition?.inputSchema)).not.toContain("companyId");
+    expect(definition?.description).toMatch(/never ceo/);
+    expect(t.definitions(false).some((d) => d.name === "staples_propose_plan")).toBe(false);
+  });
+});

@@ -3,12 +3,12 @@ import { and, eq, inArray } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { agents, approvals, authUsers, companies, companyMemberships, issueThreadInteractions, issues, type Db } from "@paperclipai/db";
-import { COMPANY_BRIEF_MAX_CHARS, PROPOSED_ACTION_CATEGORIES, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, createIssueThreadInteractionSchema, isAssistantAgent, paperclipQuestionSchema, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
+import { COMPANY_BRIEF_MAX_CHARS, PROPOSED_ACTION_CATEGORIES, PROPOSED_PLAN_BODY_MAX_BYTES, applyPlanSchema, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, createIssueThreadInteractionSchema, isAssistantAgent, paperclipQuestionSchema, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
-import { isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
+import { PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { publicMcpCapabilities } from "./public-mcp/capabilities.js";
-import { APPROVAL_DECISION_PATH, ProposedActionError, pinBriefProposalBody, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
+import { APPROVAL_DECISION_PATH, PROPOSABLE_AGENT_ROLES, ProposedActionError, pinBriefProposalBody, pinPlanProposalBody, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
 import { logActivity } from "./activity-log.js";
 import { McpApiError, McpCapabilityError, object, pick, rows, taskFields, pathId, type ApiDispatch, type Capability } from "./public-mcp/contracts.js";
@@ -25,7 +25,7 @@ export const ASSISTANT_READ_TOOL_NAMES = [
 /** Low-risk writes. Governed actions (finish, block, delete, configure, approvals) are not exposed. */
 export const ASSISTANT_WRITE_TOOL_NAMES = [
   "paperclip_create_task", "paperclip_add_comment", "paperclip_update_task", "staples_answer_question", "staples_pin_surface",
-  "staples_propose_action", "staples_ask_questions",
+  "staples_propose_action", "staples_ask_questions", "staples_propose_plan",
 ] as const;
 
 /** `paperclip_update_task` may only touch these fields. */
@@ -255,7 +255,7 @@ function assistantCapabilities(db: Db): Capability[] {
       name: PROPOSE_ACTION_TOOL, write: true,
       description: [
         "Propose one exact governed API call for this person to confirm. Nothing runs until they click Confirm on the card in this conversation; their browser then performs the call with their own session and you are woken with the result.",
-        `Changing the company brief is governed too: propose PUT /api/companies/<companyId>/brief with category brief and body { body: <the whole new brief in markdown, at most ${COMPANY_BRIEF_MAX_CHARS} characters>, baseRevisionId: <revisionId from staples_get_company_brief> }. Batch edits: one proposal per topic, not per sentence.`,
+        `Changing the company brief is governed too: propose PUT /api/companies/<companyId>/brief with category brief and body { body: <the whole new brief in markdown, at most ${COMPANY_BRIEF_MAX_CHARS} characters>, baseRevisionId: <revisionId from staples_get_company_brief> }. Batch edits: one proposal per topic, not per sentence. To create a whole plan (brief, goal, project, agents and tasks) in one card, use staples_propose_plan instead.`,
         "Only governed actions are allowed: approval approve/reject/request-revision, agent hire/create/pause/resume/terminate (adapterType is required; CEO-level hires are done in the Agents page), budget policy and budget updates, secret create/update/delete (never include secret values; an update may only change name, description or status), revoking a connection, grant or delegation (DELETE with body null), and DELETE with body null under this company or one of its tasks (removing tool policies, the skill policy, issue approval links, watchdogs or skill files is not proposable). Creating or changing connections is not proposable: point the person to the Connectors page to set them up.",
         "The path must start with /api/ and refer to this company. category is derived from the path. Optionally pass staleCheck { path, field: \"updatedAt\", expected } with a GET path whose updatedAt must be unchanged when the person confirms.",
       ].join(" "),
@@ -287,6 +287,22 @@ function assistantCapabilities(db: Db): Capability[] {
       run: async () => { throw new McpCapabilityError("Tool is unavailable to the Assistant."); },
     },
     {
+      name: PROPOSE_PLAN_TOOL, write: true,
+      description: [
+        "Propose a whole starter plan for this person to confirm in one card: optionally the company brief (the whole new brief), a goal and a project, new agents, and 1 to 25 tasks. Nothing is created until they click Create plan; their browser then applies it with their own session and you are woken with the result.",
+        "Agents and tasks refer to each other by clientKey (lowercase letters, digits and dashes). A task's assignee is assigneeClientKey (a new agent in this plan) or assigneeAgentId (an existing staff agent, never the Assistant), or none. parentClientKey and blockedByClientKeys refer to other tasks in the plan and must not form a cycle.",
+        `New agents: role one of ${PROPOSABLE_AGENT_ROLES.join(", ")} (never ceo); adapterType one of ${PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}; no other settings. If the company requires approval for new agents, their tasks are created unassigned in the backlog and linked to the hire approval.`,
+        `brief.baseRevisionId is the revisionId from staples_get_company_brief, or null when there is no brief. The whole plan must serialize to at most ${PROPOSED_PLAN_BODY_MAX_BYTES} bytes.`,
+      ].join(" "),
+      schema: z.object({
+        ...companyField,
+        plan: applyPlanSchema,
+        summary: z.string().trim().min(1).max(500).describe("One sentence shown on the card, in plain language."),
+      }).strict(),
+      // Dispatched in createAssistantTools: it needs the run's conversation, not just the principal.
+      run: async () => { throw new McpCapabilityError("Tool is unavailable to the Assistant."); },
+    },
+    {
       name: "staples_get_company_brief",
       description: "Read the company brief (mission, glossary, key decisions) that every agent sees. Returns null when there is none. Read it before proposing a change so your proposal starts from the current text.",
       schema: z.object(companyField).strict(),
@@ -305,6 +321,7 @@ function assistantCapabilities(db: Db): Capability[] {
 
 const PROPOSE_ACTION_TOOL = "staples_propose_action";
 const ASK_QUESTIONS_TOOL = "staples_ask_questions";
+const PROPOSE_PLAN_TOOL = "staples_propose_plan";
 
 /** Adapter config keys that run or shape a host process. */
 const COMMAND_LIKE_KEY = /command|^cmd$|args$|^env$|script|shell|executable|entrypoint|binary/i;
@@ -378,15 +395,16 @@ async function proposeAction(db: Db, context: AssistantToolContext, args: Record
   }
   const method = String(args.method);
   const path = String(args.path);
-  let body = args.body === undefined ? null : args.body;
+  let body: unknown = args.body === undefined ? null : args.body;
   const summary = String(args.summary).trim();
   const staleCheck = args.staleCheck as { path: string; field: "updatedAt"; expected: string } | undefined;
   let category: Awaited<ReturnType<typeof validateGovernedAction>>["category"];
   let hash: string;
   try {
     ({ category } = await validateGovernedAction(db, { method, path, body, staleCheckPath: staleCheck?.path ?? null }, context.companyId));
-    // Brief proposals replace a specific revision; the server pins it.
+    // Brief proposals (and a plan's brief) replace a specific revision; the server pins it.
     if (category === "brief") body = await pinBriefProposalBody(db, context.companyId, body);
+    if (category === "plan") body = await pinPlanProposalBody(db, context.companyId, body);
     hash = proposedActionHash({ method, path, body });
   } catch (error) {
     if (error instanceof ProposedActionError) throw new McpCapabilityError(error.message);
@@ -407,7 +425,7 @@ async function proposeAction(db: Db, context: AssistantToolContext, args: Record
     idempotencyKey: `assistant-proposed-action:${context.runId}:${hash}`,
     title: summary.slice(0, 240),
     payload: {
-      version: 1, prompt: summary, acceptLabel: category === "brief" ? "Update brief" : "Confirm", rejectLabel: "Cancel",
+      version: 1, prompt: summary, acceptLabel: category === "brief" ? "Update brief" : category === "plan" ? "Create plan" : "Confirm", rejectLabel: "Cancel",
       detailsMarkdown: proposedActionDetailsMarkdown({ method, path, body }),
       supersedeOnUserComment: false,
       proposedAction,
@@ -547,6 +565,10 @@ export function createAssistantTools(db: Db, options: { dispatch: ApiDispatch; o
         }
         const result = name === PROPOSE_ACTION_TOOL
           ? await proposeAction(db, context, args)
+          : name === PROPOSE_PLAN_TOOL
+          ? await proposeAction(db, context, {
+            method: "POST", path: `/api/companies/${context.companyId}/plans/apply`, body: args.plan, summary: args.summary,
+          })
           : name === ASK_QUESTIONS_TOOL
           ? await askQuestions(db, context, args)
           : await c.run(assistantPrincipal(context), args, options.dispatch, origin);

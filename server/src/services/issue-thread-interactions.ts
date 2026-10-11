@@ -103,7 +103,7 @@ import {
 } from "@paperclipai/shared";
 import { z } from "zod";
 import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
-import { APPROVAL_CHANGED_MESSAGE, APPROVAL_DECISION_PATH, BRIEF_CHANGED_MESSAGE, BRIEF_UPDATE_PATH, ProposedActionError, briefProposalIsCurrent, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
+import { APPROVAL_CHANGED_MESSAGE, APPROVAL_DECISION_PATH, BRIEF_CHANGED_MESSAGE, BRIEF_UPDATE_PATH, PLAN_APPLY_PATH, PLAN_BRIEF_CHANGED_MESSAGE, ProposedActionError, briefProposalIsCurrent, planProposalIsCurrent, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { authorizationService } from "./authorization.js";
 import { isCloudManagedInstance } from "./cloud-instance.js";
@@ -3365,6 +3365,11 @@ export function issueThreadInteractionService(
         if (method === "PUT" && BRIEF_UPDATE_PATH.test(path)
           && !(await briefProposalIsCurrent(tx as unknown as Db, issue.companyId, body))) {
           throw conflict(BRIEF_CHANGED_MESSAGE);
+        }
+        // So is a plan's brief.
+        if (method === "POST" && PLAN_APPLY_PATH.test(path)
+          && !(await planProposalIsCurrent(tx as unknown as Db, issue.companyId, body))) {
+          throw conflict(PLAN_BRIEF_CHANGED_MESSAGE);
         }
         const existing = readProposedActionClaim(current.payload);
         const now = new Date();

@@ -59,6 +59,66 @@ export function excerptCompanyBrief(
   };
 }
 
+/**
+ * Create or revise the brief inside the caller's transaction (the same rule as
+ * PUT /brief): writes are serialized on the company row; creating needs no
+ * base, revising needs the exact latest revision, otherwise a 409.
+ */
+export async function writeCompanyBrief(
+  tx: Executor,
+  companyId: string,
+  input: UpdateCompanyBrief,
+  actor: BriefActor,
+): Promise<{ brief: CompanyBrief; changed: boolean }> {
+  const [company] = await tx.select({ id: companies.id }).from(companies)
+    .where(eq(companies.id, companyId)).for("update");
+  if (!company) throw notFound("Company not found");
+  const existing = await loadBrief(tx, companyId, true);
+  const baseRevisionId = input.baseRevisionId ?? null;
+  // Creating needs no base; revising needs the exact latest revision, so a
+  // writer who never saw the current brief cannot overwrite it.
+  if (existing ? baseRevisionId !== existing.revisionId : baseRevisionId !== null) {
+    throw conflict("The company brief was changed by someone else. Reload it and try again.", {
+      currentRevisionId: existing?.revisionId ?? null,
+    });
+  }
+  const now = new Date();
+  const authorship = {
+    createdByAgentId: actor.agentId ?? null,
+    createdByUserId: actor.userId ?? null,
+  };
+
+  if (existing) {
+    if (existing.body === input.body) return { brief: toBrief(existing), changed: false };
+    const revisionNumber = existing.revisionNumber + 1;
+    const [revision] = await tx.insert(documentRevisions).values({
+      companyId, documentId: existing.documentId, revisionNumber, title: BRIEF_TITLE, format: "markdown",
+      body: input.body, ...authorship, createdByRunId: actor.runId ?? null, createdAt: now,
+    }).returning({ id: documentRevisions.id });
+    await tx.update(documents).set({
+      latestBody: input.body, latestRevisionId: revision!.id, latestRevisionNumber: revisionNumber,
+      updatedByAgentId: actor.agentId ?? null, updatedByUserId: actor.userId ?? null, updatedAt: now,
+    }).where(eq(documents.id, existing.documentId));
+    await tx.update(companyDocuments).set({ updatedAt: now }).where(eq(companyDocuments.documentId, existing.documentId));
+    return { brief: toBrief({ body: input.body, revisionId: revision!.id, revisionNumber, updatedAt: now }), changed: true };
+  }
+
+  const [document] = await tx.insert(documents).values({
+    companyId, title: BRIEF_TITLE, format: "markdown", latestBody: input.body, latestRevisionNumber: 1,
+    ...authorship, updatedByAgentId: actor.agentId ?? null, updatedByUserId: actor.userId ?? null,
+    createdAt: now, updatedAt: now,
+  }).returning({ id: documents.id });
+  const [revision] = await tx.insert(documentRevisions).values({
+    companyId, documentId: document!.id, revisionNumber: 1, title: BRIEF_TITLE, format: "markdown",
+    body: input.body, ...authorship, createdByRunId: actor.runId ?? null, createdAt: now,
+  }).returning({ id: documentRevisions.id });
+  await tx.update(documents).set({ latestRevisionId: revision!.id }).where(eq(documents.id, document!.id));
+  await tx.insert(companyDocuments).values({
+    companyId, documentId: document!.id, key: COMPANY_BRIEF_DOCUMENT_KEY, createdAt: now, updatedAt: now,
+  });
+  return { brief: toBrief({ body: input.body, revisionId: revision!.id, revisionNumber: 1, updatedAt: now }), changed: true };
+}
+
 export function companyBriefService(db: Db) {
   return {
     get: async (companyId: string): Promise<CompanyBrief | null> => {
@@ -81,55 +141,7 @@ export function companyBriefService(db: Db) {
       input: UpdateCompanyBrief,
       actor: BriefActor,
     ): Promise<{ brief: CompanyBrief; changed: boolean }> =>
-      db.transaction(async (tx) => {
-        const [company] = await tx.select({ id: companies.id }).from(companies)
-          .where(eq(companies.id, companyId)).for("update");
-        if (!company) throw notFound("Company not found");
-        const existing = await loadBrief(tx, companyId, true);
-        const baseRevisionId = input.baseRevisionId ?? null;
-        // Creating needs no base; revising needs the exact latest revision, so a
-        // writer who never saw the current brief cannot overwrite it.
-        if (existing ? baseRevisionId !== existing.revisionId : baseRevisionId !== null) {
-          throw conflict("The company brief was changed by someone else. Reload it and try again.", {
-            currentRevisionId: existing?.revisionId ?? null,
-          });
-        }
-        const now = new Date();
-        const authorship = {
-          createdByAgentId: actor.agentId ?? null,
-          createdByUserId: actor.userId ?? null,
-        };
-
-        if (existing) {
-          if (existing.body === input.body) return { brief: toBrief(existing), changed: false };
-          const revisionNumber = existing.revisionNumber + 1;
-          const [revision] = await tx.insert(documentRevisions).values({
-            companyId, documentId: existing.documentId, revisionNumber, title: BRIEF_TITLE, format: "markdown",
-            body: input.body, ...authorship, createdByRunId: actor.runId ?? null, createdAt: now,
-          }).returning({ id: documentRevisions.id });
-          await tx.update(documents).set({
-            latestBody: input.body, latestRevisionId: revision!.id, latestRevisionNumber: revisionNumber,
-            updatedByAgentId: actor.agentId ?? null, updatedByUserId: actor.userId ?? null, updatedAt: now,
-          }).where(eq(documents.id, existing.documentId));
-          await tx.update(companyDocuments).set({ updatedAt: now }).where(eq(companyDocuments.documentId, existing.documentId));
-          return { brief: toBrief({ body: input.body, revisionId: revision!.id, revisionNumber, updatedAt: now }), changed: true };
-        }
-
-        const [document] = await tx.insert(documents).values({
-          companyId, title: BRIEF_TITLE, format: "markdown", latestBody: input.body, latestRevisionNumber: 1,
-          ...authorship, updatedByAgentId: actor.agentId ?? null, updatedByUserId: actor.userId ?? null,
-          createdAt: now, updatedAt: now,
-        }).returning({ id: documents.id });
-        const [revision] = await tx.insert(documentRevisions).values({
-          companyId, documentId: document!.id, revisionNumber: 1, title: BRIEF_TITLE, format: "markdown",
-          body: input.body, ...authorship, createdByRunId: actor.runId ?? null, createdAt: now,
-        }).returning({ id: documentRevisions.id });
-        await tx.update(documents).set({ latestRevisionId: revision!.id }).where(eq(documents.id, document!.id));
-        await tx.insert(companyDocuments).values({
-          companyId, documentId: document!.id, key: COMPANY_BRIEF_DOCUMENT_KEY, createdAt: now, updatedAt: now,
-        });
-        return { brief: toBrief({ body: input.body, revisionId: revision!.id, revisionNumber: 1, updatedAt: now }), changed: true };
-      }),
+      db.transaction((tx) => writeCompanyBrief(tx, companyId, input, actor)),
   };
 }
 

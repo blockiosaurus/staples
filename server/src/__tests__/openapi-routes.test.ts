@@ -67,6 +67,7 @@ const apiPrefixes: Record<string, string> = {
   "openapi.ts": "/api",
   "plugin-ui-static.ts": "/api",
   "plugins.ts": "/api",
+  "plans.ts": "/api",
   "projects.ts": "/api",
   "primary-agent.ts": "/api",
   "public-mcp.ts": "/api",
@@ -862,6 +863,17 @@ describe("openapi routes", () => {
     expect(claim["x-paperclip-authorization"]).toEqual({actor: "board", sessionBound: true});
     expect(claim.requestBody.content["application/json"].schema.required).toEqual(["hash"]);
     expect(claim.responses["409"]).toBeDefined();
+  });
+
+  it("documents plan apply as the person's own board session only", () => {
+    const {spec} = loadSpecRoutes();
+    const apply = spec.paths["/api/companies/{companyId}/plans/apply"].post;
+    expect(apply.security).toEqual([{BoardSessionAuth: []}]);
+    expect(apply["x-paperclip-authorization"]).toEqual({actor: "board", sessionBound: true});
+    expect(apply.requestBody.content["application/json"].schema.required).toEqual(["tasks"]);
+    expect(apply.responses["201"]).toBeDefined();
+    expect(apply.responses["409"]).toBeDefined();
+    expect(apply.responses["422"]).toBeDefined();
   });
 
   it("documents session-bound voice authority without durable credentials", () => {

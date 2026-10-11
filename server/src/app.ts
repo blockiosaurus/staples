@@ -18,7 +18,7 @@ import { createDotRunnerMcpTools } from "./services/dot-runner-broker.js";
 import { agentProfileAvatarRoutes } from "./routes/agent-profile-avatar.js";
 import { dotRunnerRoutes } from "./routes/dot-runner.js";
 import { createPublicMcpTransfers } from "./services/public-mcp/file-transfers.js";
-import { createMcpApiDispatch, createPublicMcpExecutor } from "./services/public-mcp/capabilities.js";
+import { createMcpApiDispatch, createPublicMcpExecutor, injectApiRequest } from "./services/public-mcp/capabilities.js";
 import { createPublicMcpEvents, type PublicMcpEvents } from "./services/public-mcp/events.js";
 import { publicMcpIngressRoutes, publicMcpManagementRoutes } from "./routes/public-mcp.js";
 import { agentAvatarRoutes } from "./routes/agent-avatars.js";
@@ -113,6 +113,7 @@ import { activityRoutes } from "./routes/activity.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 import { companySignalsRoutes } from "./routes/company-signals.js";
 import { companyBriefRoutes } from "./routes/company-brief.js";
+import { planRoutes } from "./routes/plans.js";
 import { attentionRoutes } from "./routes/attention.js";
 import { decisionTrainingRoutes } from "./routes/decision-training.js";
 import { decisionRoutes } from "./routes/decisions.js";
@@ -816,6 +817,12 @@ export async function createApp(
       },
     }),
   );
+  // Plans hire through the agent-hire route in-process, as the person.
+  api.use(planRoutes(db, {
+    hireAgent: (actor, companyId, body, origin) => injectApiRequest(api, actor, "POST", `/companies/${companyId}/agent-hires`, body,
+      origin ? { origin, host: new URL(origin).host } : {}),
+    pluginWorkerManager: workerManager,
+  }));
   api.use(assetRoutes(db, opts.storageService));
   api.use(agentProfileAvatarRoutes(db, opts.storageService));
   api.use(projectToolRoutes(db));

@@ -82,6 +82,35 @@ describe("governed body restrictions", () => {
     });
   });
 
+  describe("plans", () => {
+    const path = `/api/companies/${companyId}/plans/apply`;
+    const agent = { clientKey: "writer", name: "Writer", role: "general", adapterType: "claude_local" };
+    const plan = (overrides: Record<string, unknown> = {}) => ({
+      goal: { title: "Ship" }, agents: [agent], tasks: [{ clientKey: "a", title: "A", assigneeClientKey: "writer" }], ...overrides,
+    });
+    it.each([
+      [plan({ agents: [{ ...agent, role: "ceo" }] }), /CEO-level/],
+      [plan({ agents: [{ ...agent, role: "CEO" }] }), /CEO-level/],
+      [plan({ agents: [{ ...agent, role: "overlord" }] }), /role must be one of/],
+      [plan({ agents: [{ ...agent, adapterType: "process" }] }), /adapterType must be one of/],
+      [plan({ agents: [{ ...agent, adapterType: "hermes_local" }] }), /adapterType must be one of/],
+      [plan({ agents: [{ ...agent, adapterConfig: { command: "sh" } }] }), /not valid/],
+      [plan({ tasks: [{ clientKey: "a", title: "A", blockedByClientKeys: ["b"] }, { clientKey: "b", title: "B", blockedByClientKeys: ["a"] }] }), /cycle/],
+      [plan({ tasks: [{ clientKey: "a", title: "A", assigneeClientKey: "ghost" }] }), /ghost/],
+      [plan({ tasks: [] }), /not valid/],
+      [null, /not valid/],
+    ])("refuses plan %#", async (body, message) => {
+      await expect(check("POST", path, body)).rejects.toThrow(message);
+    });
+    it("allows a consistent plan, including a full-length brief", async () => {
+      await expect(check("POST", path, plan({ brief: { body: "x".repeat(20_000), baseRevisionId: null } }))).resolves.toMatchObject({ category: "plan" });
+    });
+    it("caps the whole plan at 128 KiB", async () => {
+      const tasks = Array.from({ length: 25 }, (_, i) => ({ clientKey: `t${i}`, title: "T", description: "d".repeat(8000) }));
+      await expect(check("POST", path, plan({ agents: [], tasks }))).rejects.toThrow(/larger than 131072 bytes/);
+    });
+  });
+
   it("explains where to configure what was refused", async () => {
     await expect(check("POST", `/api/companies/${companyId}/agent-hires`, { name: "Ops", adapterConfig: {} }))
       .rejects.toThrow(/Configure adapters, permissions and instructions in the agent's settings after hiring/);
@@ -212,6 +241,7 @@ describe("governed route allowlist", () => {
     ["DELETE", `/api/companies/${id}/labels/${id}`, "delete"],
     ["DELETE", `/api/issues/${id}/comments/${id}`, "delete"],
     ["PUT", `/api/companies/${id}/brief`, "brief"],
+    ["POST", `/api/companies/${id}/plans/apply`, "plan"],
   ])("allows %s %s as %s", (method, path, category) => {
     expect(matchGovernedRoute(method, path).category).toBe(category);
   });
@@ -222,6 +252,8 @@ describe("governed route allowlist", () => {
     ["PATCH", `/api/agents/${id}`],
     ["PATCH", `/api/companies/${id}/brief`],
     ["PUT", `/api/companies/${id}/brief/x`],
+    ["PUT", `/api/companies/${id}/plans/apply`],
+    ["POST", `/api/companies/${id}/plans/apply/x`],
     ["DELETE", `/api/companies/${id}`],
     ["POST", `/api/approvals/${id}/approve?force=true`],
     ["POST", `/api/approvals/${id}/approve/`],
@@ -519,6 +551,69 @@ const support = await getEmbeddedPostgresTestSupport();
     // Unchanged since proposing: the claim goes through.
     const fresh = await propose({ body: "# Mission v4" });
     expect((await claim(fresh)).status).toBe(200);
+  }, 60_000);
+
+  it("proposes a plan as one Create plan card, pins its brief, and refuses a claim after the brief changed", async () => {
+    const f = await assistantFixture();
+    const briefSvc = companyBriefService(server.db);
+    const plan = (extra: Record<string, unknown> = {}) => ({
+      goal: { title: "Ship weekly" },
+      agents: [{ clientKey: "writer", name: "Writer", role: "general", adapterType: "claude_local" }],
+      tasks: [{ clientKey: "a", title: "First", assigneeClientKey: "writer" }, { clientKey: "b", title: "Second", assigneeAgentId: f.staffAgentId, blockedByClientKeys: ["a"] }],
+      ...extra,
+    });
+    const propose = (body: Record<string, unknown>) => call(f, "staples_propose_plan", { summary: "Set up a writer with two starter tasks", plan: body });
+    const stored = async (result: Awaited<ReturnType<typeof propose>>) => {
+      expect(result.body.result.isError, JSON.stringify(result.body)).toBeUndefined();
+      const [row] = await server.db.select().from(issueThreadInteractions)
+        .where(eq(issueThreadInteractions.id, result.body.result.structuredContent.interaction.id));
+      return row!.payload as { acceptLabel: string; proposedAction: { method: string; path: string; category: string; body: any; hash: string } };
+    };
+    const claim = (result: Awaited<ReturnType<typeof propose>>) => request(personApp(f, "session"))
+      .post(`/api/issues/${f.issueId}/interactions/${result.body.result.structuredContent.interaction.id}/claim-proposed-action`)
+      .send({ hash: result.body.result.structuredContent.proposedAction.hash });
+
+    const plain = await propose(plan());
+    const plainPayload = await stored(plain);
+    expect(plainPayload.acceptLabel).toBe("Create plan");
+    expect(plainPayload.proposedAction).toMatchObject({ method: "POST", path: `/api/companies/${f.companyId}/plans/apply`, category: "plan" });
+    expect(plainPayload.proposedAction.body.tasks[0].blockedByClientKeys).toEqual([]);
+    expect(plainPayload.proposedAction.hash).toBe(proposedActionHash({ method: "POST", path: `/api/companies/${f.companyId}/plans/apply`, body: plainPayload.proposedAction.body }));
+
+    // No brief yet: the plan's brief is pinned to "none".
+    const withBrief = await propose(plan({ brief: { body: "# Mission", baseRevisionId: null } }));
+    expect((await stored(withBrief)).proposedAction.body.brief).toEqual({ body: "# Mission", baseRevisionId: null });
+
+    // Someone writes the brief before the person confirms: only the plan with a brief is refused.
+    const { brief: current } = await briefSvc.update(f.companyId, { body: "# Mission (by a person)" }, { userId: f.responsibleUserId! });
+    const refused = await claim(withBrief);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe("The brief changed since the Assistant proposed this plan.");
+    expect((await claim(plain)).status).toBe(200);
+
+    // A brief exists: the server pins the plan's brief to its current revision.
+    const pinned = await propose(plan({ brief: { body: "# Mission v2", baseRevisionId: null } }));
+    expect((await stored(pinned)).proposedAction.body.brief.baseRevisionId).toBe(current.revisionId);
+    expect((await claim(pinned)).status).toBe(200);
+    const stale = await propose(plan({ brief: { body: "x", baseRevisionId: randomUUID() } }));
+    expect(stale.body.result).toMatchObject({ isError: true });
+    expect(stale.body.result.content[0].text).toMatch(/brief changed/i);
+  }, 60_000);
+
+  it("refuses plans that assign the Assistant, hire a CEO, use a non-proposable adapter or contain a cycle", async () => {
+    const f = await assistantFixture();
+    const cases: Array<[Record<string, unknown>, RegExp]> = [
+      [{ tasks: [{ clientKey: "a", title: "A", assigneeAgentId: f.agentId }] }, /Assistant/],
+      [{ agents: [{ clientKey: "boss", name: "Boss", role: "ceo", adapterType: "claude_local" }], tasks: [{ clientKey: "a", title: "A" }] }, /CEO-level/],
+      [{ agents: [{ clientKey: "w", name: "W", role: "general", adapterType: "process" }], tasks: [{ clientKey: "a", title: "A" }] }, /adapterType/],
+      [{ tasks: [{ clientKey: "a", title: "A", parentClientKey: "b" }, { clientKey: "b", title: "B", parentClientKey: "a" }] }, /cycle/],
+    ];
+    for (const [plan, message] of cases) {
+      const result = await call(f, "staples_propose_plan", { summary: "Plan", plan });
+      expect(result.body.result, JSON.stringify(plan)).toMatchObject({ isError: true });
+      expect(result.body.result.content[0].text).toMatch(message);
+    }
+    expect(await server.db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.issueId, f.issueId))).toHaveLength(0);
   }, 60_000);
 
   it("claims only for the addressee's own session, with the stored hash", async () => {

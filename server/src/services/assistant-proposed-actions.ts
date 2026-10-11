@@ -1,12 +1,16 @@
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { agents, approvals, companySecrets, issues, toolConnections, type Db } from "@paperclipai/db";
-import { PROPOSABLE_HIRE_ADAPTER_TYPES } from "./assistant-identity.js";
+import { PROPOSABLE_HIRE_ADAPTER_TYPES, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { companyBriefService } from "./company-brief.js";
 import {
   AGENT_ROLES,
   COMPANY_BRIEF_MAX_CHARS,
+  applyPlanSchema,
+  isAssistantAgent,
+  planStructureErrors,
   proposedActionBodyMaxBytes,
+  type ApplyPlan,
   type ProposedActionCategory,
   type ProposedActionMethod,
 } from "@paperclipai/shared";
@@ -39,6 +43,8 @@ export type GovernedRoutePattern = {
   forbidBodyKeys?: readonly string[];
   /** Route-specific body rules; throws ProposedActionError. */
   validateBody?: (body: unknown) => void;
+  /** Body rules that read this company's rows (run after the company binding check); throws ProposedActionError. */
+  validateBodyWithDb?: (db: Db, body: unknown, companyId: string) => Promise<void>;
 };
 
 const BRIEF_BODY_KEYS = new Set(["body", "baseRevisionId"]);
@@ -118,7 +124,7 @@ const AGENT_SETTINGS_HINT = "Configure adapters, permissions and instructions in
  * remaining roles from AGENT_ROLES.
  */
 export const PRIVILEGED_AGENT_ROLES: readonly string[] = ["ceo"];
-const PROPOSABLE_AGENT_ROLES: readonly string[] = AGENT_ROLES.filter((role) => !PRIVILEGED_AGENT_ROLES.includes(role));
+export const PROPOSABLE_AGENT_ROLES: readonly string[] = AGENT_ROLES.filter((role) => !PRIVILEGED_AGENT_ROLES.includes(role));
 
 function assertSafeAgentCreate(body: unknown) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -154,6 +160,67 @@ function assertSafeAgentCreate(body: unknown) {
     throw new ProposedActionError(`adapterType must be one of ${PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}. ${AGENT_SETTINGS_HINT}`);
   }
   assertBudgetAmounts(body, ["budgetMonthlyCents"]);
+}
+
+/**
+ * Hire rules for a plan's new agents, the same as a single agent proposal:
+ * a non-privileged role and a proposable local CLI adapter. Returns the first
+ * violation as a sentence, or null. Shared by the governed allowlist (at
+ * proposal and claim) and by POST /plans/apply itself.
+ */
+export function planRuleViolation(plan: ApplyPlan): string | null {
+  for (const agent of plan.agents) {
+    const role = agent.role.trim().toLowerCase();
+    if (PRIVILEGED_AGENT_ROLES.includes(role)) {
+      return `Agent ${agent.clientKey}: hiring a CEO-level agent must be done in the Agents page.`;
+    }
+    if (!PROPOSABLE_AGENT_ROLES.includes(agent.role)) {
+      return `Agent ${agent.clientKey}: role must be one of ${PROPOSABLE_AGENT_ROLES.join(", ")}.`;
+    }
+    if (!(PROPOSABLE_HIRE_ADAPTER_TYPES as readonly string[]).includes(agent.adapterType)) {
+      return `Agent ${agent.clientKey}: adapterType must be one of ${PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}. ${AGENT_SETTINGS_HINT}`;
+    }
+  }
+  return null;
+}
+
+/** Parse a plan body: the schema, its references and ordering, and the hire rules. Throws ProposedActionError. */
+export function parseProposablePlan(body: unknown): ApplyPlan {
+  const parsed = applyPlanSchema.safeParse(body);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.slice(0, 5).map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`);
+    throw new ProposedActionError(`The plan is not valid: ${issues.join("; ")}.`);
+  }
+  const structure = planStructureErrors(parsed.data);
+  if (structure.length) throw new ProposedActionError(`The plan is not consistent: ${structure.slice(0, 5).join(" ")}`);
+  const violation = planRuleViolation(parsed.data);
+  if (violation) throw new ProposedActionError(violation);
+  return parsed.data;
+}
+
+function assertSafePlan(body: unknown) {
+  parseProposablePlan(body);
+}
+
+/** Existing agents a plan assigns tasks to: in this company, and never the Assistant. */
+export async function planExistingAssigneeViolation(db: Db, plan: ApplyPlan, companyId: string): Promise<string | null> {
+  const ids = [...new Set(plan.tasks.map((task) => task.assigneeAgentId).filter((id): id is string => Boolean(id)))];
+  if (!ids.length) return null;
+  const rows = await db.select({ id: agents.id, metadata: agents.metadata }).from(agents)
+    .where(and(eq(agents.companyId, companyId), inArray(agents.id, ids)));
+  const found = new Map(rows.map((row) => [row.id, row] as const));
+  const missing = ids.filter((id) => !found.has(id));
+  if (missing.length) return `assigneeAgentId ${missing.join(", ")} is not an agent in this company.`;
+  const assistantId = await resolveCompanyAssistantAgentId(db, companyId);
+  if (rows.some((row) => row.id === assistantId || isAssistantAgent(row))) {
+    return "Tasks cannot be assigned to the Assistant. Choose a staff agent from paperclip_list_agents.";
+  }
+  return null;
+}
+
+async function assertPlanAssignees(db: Db, body: unknown, companyId: string) {
+  const violation = await planExistingAssigneeViolation(db, applyPlanSchema.parse(body), companyId);
+  if (violation) throw new ProposedActionError(violation);
 }
 
 /**
@@ -204,6 +271,8 @@ export const GOVERNED_ROUTE_PATTERNS: readonly GovernedRoutePattern[] = [
   { method: "PATCH", pattern: re(`/api/agents/${UUID}/budgets`), category: "budget", binding: entity("agent"), route: "PATCH /api/agents/:agentId/budgets", validateBody: (body) => assertBudgetAmounts(body, ["budgetMonthlyCents"]) },
   // company-brief.ts
   { method: "PUT", pattern: re(`/api/companies/${UUID}/brief`), category: "brief", binding: company(), route: "PUT /api/companies/:companyId/brief", validateBody: assertSafeBriefUpdate },
+  // plans.ts
+  { method: "POST", pattern: re(`/api/companies/${UUID}/plans/apply`), category: "plan", binding: company(), route: "POST /api/companies/:companyId/plans/apply", validateBody: assertSafePlan, validateBodyWithDb: assertPlanAssignees },
   // secrets.ts
   { method: "POST", pattern: re(`/api/companies/${UUID}/secrets`), category: "secret", binding: company(), route: "POST /api/companies/:companyId/secrets", forbidBodyKeys: ["value"] },
   { method: "PATCH", pattern: re(`/api/secrets/${UUID}`), category: "secret", binding: entity("secret"), route: "PATCH /api/secrets/:id", validateBody: assertSafeSecretUpdate },
@@ -274,6 +343,36 @@ export async function pinBriefProposalBody(db: Db, companyId: string, body: unkn
   }
   delete record.baseRevisionId;
   return current ? { ...record, baseRevisionId: current } : record;
+}
+
+/** POST /api/companies/:companyId/plans/apply; group 1 is the company id. */
+export const PLAN_APPLY_PATH = /^\/api\/companies\/([0-9a-fA-F-]{36})\/plans\/apply$/;
+export const PLAN_BRIEF_CHANGED_MESSAGE = "The brief changed since the Assistant proposed this plan.";
+
+/**
+ * Pin a plan's brief to the brief it replaces, like pinBriefProposalBody: the
+ * server sets brief.baseRevisionId to the current revision (null when there
+ * is none). A different non-null base from the Assistant means it read an
+ * older brief. Plans without a brief are returned unchanged.
+ */
+export async function pinPlanProposalBody(db: Db, companyId: string, body: unknown): Promise<unknown> {
+  const record = body as Record<string, unknown>;
+  const brief = record?.brief as Record<string, unknown> | undefined;
+  if (!brief) return body;
+  const current = await currentBriefRevisionId(db, companyId);
+  const proposed = typeof brief.baseRevisionId === "string" ? brief.baseRevisionId : null;
+  if (proposed && proposed !== current) {
+    throw new ProposedActionError("The brief changed since you read it. Read it again with staples_get_company_brief and redo the plan's brief.");
+  }
+  return { ...record, brief: { ...brief, baseRevisionId: current } };
+}
+
+/** True when a stored plan proposal's brief (if any) still replaces the current brief. */
+export async function planProposalIsCurrent(db: Db, companyId: string, body: unknown): Promise<boolean> {
+  const brief = (body as Record<string, unknown> | null)?.brief as Record<string, unknown> | undefined;
+  if (!brief) return true;
+  const stored = typeof brief.baseRevisionId === "string" ? brief.baseRevisionId : null;
+  return stored === await currentBriefRevisionId(db, companyId);
 }
 
 /** True when the stored brief proposal still replaces the current brief. */
@@ -356,6 +455,7 @@ export async function validateGovernedAction(
   }
   route.validateBody?.(input.body);
   await assertBindingCompany(db, route.binding, route.match, companyId, "path");
+  await route.validateBodyWithDb?.(db, input.body, companyId);
   if (input.staleCheckPath) {
     assertPlainApiPath(input.staleCheckPath, "staleCheck.path");
     const check = STALE_CHECK_PATTERNS.map((c) => ({ ...c, match: c.pattern.exec(input.staleCheckPath!) })).find((c) => c.match);

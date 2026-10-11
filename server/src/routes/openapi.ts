@@ -199,6 +199,7 @@ import {
   createChildIssueSchema,
   acceptIssueThreadInteractionSchema,
   claimProposedActionSchema,
+  applyPlanSchema,
   resolveConfirmationFromCommentSchema,
   rejectIssueThreadInteractionSchema,
   respondIssueThreadInteractionSchema,
@@ -1464,6 +1465,7 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "GET /api/issues/{issueId}/file-resources/resolve",
   "POST /api/issues/{id}/interactions/{interactionId}/accept",
   "POST /api/issues/{id}/interactions/{interactionId}/claim-proposed-action",
+  "POST /api/companies/{companyId}/plans/apply",
   "POST /api/issues/{id}/interactions/{interactionId}/reject",
   "POST /api/issues/{id}/interactions/{interactionId}/respond",
   "POST /api/issues/{id}/interactions/{interactionId}/skip",
@@ -1638,6 +1640,7 @@ const INSTANCE_ADMIN_OPERATIONS = new Set([
 ]);
 
 const CREATED_OPERATIONS = new Set([
+  "POST /api/companies/{companyId}/plans/apply",
   "POST /api/adapters/install",
   "POST /api/chat-endpoints/{endpointId}/setup-secret",
   "POST /api/companies/{companyId}/agent-hires",
@@ -1719,6 +1722,7 @@ function operationKey(method: string, path: string) {
 /** Only the person's own interactive board session; never a board API key, delegated channel or agent. */
 const BOARD_SESSION_ONLY_OPERATIONS = new Set([
   "POST /api/issues/{id}/interactions/{interactionId}/claim-proposed-action",
+  "POST /api/companies/{companyId}/plans/apply",
 ]);
 
 function isVoiceSessionOperation(path: string) { return /^\/api\/companies\/\{companyId\}\/voice-(sessions|callbacks|phone|history)(?:\/|$)/.test(path); }
@@ -5947,6 +5951,23 @@ registry.registerPath({
   description: "Board members except viewers. Pass baseRevisionId (the revision you edited) to get a 409 instead of overwriting someone else's change. Logged as company.brief_updated.",
   request: { params: z.object({ companyId: z.string().uuid() }), body: jsonBody(updateCompanyBriefSchema) },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 409: r.conflict },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/plans/apply",
+  tags: ["companies"],
+  summary: "Apply a starter plan",
+  description: "The person, in their own interactive board session (never an agent, the Assistant run, an MCP connection or a board API key; viewers are read-only), creates an optional brief, goal and project, new agents and 1 to 25 tasks in one step. Usually run by the browser after the person confirms an Assistant plan proposal. References, cycles, roles (never ceo), adapters (local CLI adapters only), assignees (in this company, never the Assistant) and the brief base revision are checked before anything is created. Agents are hired through the agent-hire path (approvals apply; tasks for a hire awaiting approval are created unassigned in the backlog and linked to the approval); everything else is written in one transaction afterwards. If that fails after a hire, the response names the agents that were created. Logged as plan.applied.",
+  request: { params: z.object({ companyId: z.string().uuid() }), body: jsonBody(applyPlanSchema) },
+  responses: {
+    200: r.ok(),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+    409: { description: "The company brief changed since the plan's base revision" },
+    422: { description: "The plan is invalid or not allowed, or a hire failed (code plan_partially_applied names agents already created)" },
+  },
 });
 
 registry.registerPath({
