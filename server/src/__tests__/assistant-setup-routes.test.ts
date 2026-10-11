@@ -374,6 +374,22 @@ describe("POST /companies/:companyId/assistant/setup", () => {
     expect(viewerRes.status).toBe(403);
   });
 
+  it("forbids members without the agent configure grant, matching what saving would need", async () => {
+    mockAccessService.decide.mockResolvedValue({ allowed: false, reason: "deny_missing_grant", explanation: "no grant" });
+    const member = await createApp({
+      source: "session", userId: "member-1", companyIds: ["company-1"],
+      memberships: [{ companyId: "company-1", status: "active", membershipRole: "operator" }],
+    });
+    const res = await requestApp(member, (baseUrl) => request(baseUrl)
+      .post("/api/companies/company-1/assistant/setup").send({ adapterType: "claude_local" }));
+    expect(res.status).toBe(403);
+    expect(mockAccessService.decide).toHaveBeenCalledWith(expect.objectContaining({
+      action: "agent_config:update",
+      resource: { type: "agent", companyId: "company-1", agentId: assistantId },
+    }));
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+  });
+
   it("forbids viewers, agents, and other companies", async () => {
     const viewer = await createApp({
       source: "session", userId: "viewer-1", companyIds: ["company-1"],

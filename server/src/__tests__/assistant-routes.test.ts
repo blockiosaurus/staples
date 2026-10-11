@@ -13,6 +13,7 @@ const mockIssueService = vi.hoisted(() => ({
   getConversation: vi.fn(),
 }));
 const mockReadAssistantLifecycle = vi.hoisted(() => vi.fn());
+const mockAccessDecide = vi.hoisted(() => vi.fn());
 
 function registerModuleMocks() {
   vi.doMock("../services/built-in-agents.js", () => ({
@@ -20,6 +21,9 @@ function registerModuleMocks() {
   }));
   vi.doMock("../services/issues.js", () => ({
     issueService: () => mockIssueService,
+  }));
+  vi.doMock("../services/access.js", () => ({
+    accessService: () => ({ decide: mockAccessDecide }),
   }));
   vi.doMock("../services/assistant-setup.js", async (importOriginal) => ({
     ...(await importOriginal<typeof import("../services/assistant-setup.js")>()),
@@ -67,6 +71,7 @@ describe("assistant routes", () => {
       adapterConfig: { secret: "do-not-leak" },
     });
     mockIssueService.getConversation.mockResolvedValue(null);
+    mockAccessDecide.mockResolvedValue({ allowed: true });
     mockReadAssistantLifecycle.mockResolvedValue({
       adapterType: "claude_local", lifecycleState: "ready", lifecycleVersion: 1, lifecycleError: null, lifecycleHolds: [], lifecycleOperation: null,
     });
@@ -112,6 +117,18 @@ describe("assistant routes", () => {
     const res = await request(app).get(`/api/companies/${companyId}/assistant`);
     expect(res.status).toBe(200);
     expect(res.body.canConfigure).toBe(false);
+  });
+
+  it("does not offer setup to members without the agent configure grant", async () => {
+    mockAccessDecide.mockResolvedValue({ allowed: false });
+    const app = await createApp({ ...boardActor, memberships: [{ companyId, status: "active", membershipRole: "operator" }] });
+    const res = await request(app).get(`/api/companies/${companyId}/assistant`);
+    expect(res.status).toBe(200);
+    expect(res.body.canConfigure).toBe(false);
+    expect(mockAccessDecide).toHaveBeenCalledWith(expect.objectContaining({
+      action: "agent_config:update",
+      resource: { type: "agent", companyId, agentId: assistantId },
+    }));
   });
 
   it("rejects agents and callers without company access", async () => {

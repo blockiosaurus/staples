@@ -148,13 +148,29 @@ describe("assistantAdapterAvailability", () => {
 });
 
 describe("canConfigureAssistant", () => {
-  it("lets owners, operators, local and instance admins configure, but not viewers", () => {
-    const member = (membershipRole: string) => ({ type: "board", source: "session", memberships: [{ companyId: "c", status: "active", membershipRole }] });
-    expect(canConfigureAssistant(member("owner") as never, "c")).toBe(true);
-    expect(canConfigureAssistant(member("operator") as never, "c")).toBe(true);
-    expect(canConfigureAssistant(member("viewer") as never, "c")).toBe(false);
-    expect(canConfigureAssistant({ type: "board", source: "local_implicit" } as never, "c")).toBe(true);
-    expect(canConfigureAssistant({ type: "board", source: "session", isInstanceAdmin: true, memberships: [] } as never, "c")).toBe(true);
-    expect(canConfigureAssistant({ type: "agent" } as never, "c")).toBe(false);
+  const allow = { decide: vi.fn(async () => ({ allowed: true })) };
+  const member = (membershipRole: string) => ({ type: "board", source: "session", memberships: [{ companyId: "c", status: "active", membershipRole }] });
+
+  it("lets owners, operators, local and instance admins configure when the config grant allows, but not viewers", async () => {
+    expect(await canConfigureAssistant(allow, member("owner") as never, "c", "a")).toBe(true);
+    expect(await canConfigureAssistant(allow, member("operator") as never, "c", "a")).toBe(true);
+    expect(await canConfigureAssistant(allow, member("viewer") as never, "c", "a")).toBe(false);
+    expect(await canConfigureAssistant(allow, { type: "board", source: "local_implicit" } as never, "c", "a")).toBe(true);
+    expect(await canConfigureAssistant(allow, { type: "board", source: "session", isInstanceAdmin: true, memberships: [] } as never, "c", "a")).toBe(true);
+    expect(await canConfigureAssistant(allow, { type: "agent" } as never, "c", "a")).toBe(false);
+  });
+
+  it("asks for the same agent_config:update decision that saving the agent needs", async () => {
+    const deny = { decide: vi.fn(async () => ({ allowed: false })) };
+    expect(await canConfigureAssistant(deny, member("operator") as never, "c", "a")).toBe(false);
+    expect(deny.decide).toHaveBeenCalledWith(expect.objectContaining({
+      action: "agent_config:update",
+      resource: { type: "agent", companyId: "c", agentId: "a" },
+    }));
+  });
+
+  it("fails closed when the decision throws", async () => {
+    const broken = { decide: vi.fn(async () => { throw new Error("boom"); }) };
+    expect(await canConfigureAssistant(broken, member("owner") as never, "c", "a")).toBe(false);
   });
 });

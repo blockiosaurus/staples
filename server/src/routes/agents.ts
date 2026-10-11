@@ -1,7 +1,7 @@
 import { cancellationRequestId } from "../services/native-runtime/native-cancellation-request.js";
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
-import { assistantAdapterAvailability, assistantSetupRequestSchema, assistantSetupStatus, canConfigureAssistant, geminiCredentialsPresent, readAssistantLifecycle, resolveAssistantSetupEngine, type AssistantSetupRequest } from "../services/assistant-setup.js";
+import { assistantAdapterAvailability, assistantConfigureRoleAllowed, assistantSetupRequestSchema, assistantSetupStatus, canConfigureAssistant, geminiCredentialsPresent, readAssistantLifecycle, resolveAssistantSetupEngine, type AssistantSetupRequest } from "../services/assistant-setup.js";
 
 import { agentIdentityService } from "../services/agent-identity.js";
 import { aiConnectionRouterService, poolMemberRuntimeConfig } from "../services/ai-connection-router.js";
@@ -5413,11 +5413,17 @@ export function agentRoutes(
    * retries a failed setup. Not gated by `enableBuiltInAgents`: every company
    * has an Assistant.
    */
-  function assertCanConfigureAssistant(req: Request, companyId: string) {
+  async function assertCanConfigureAssistant(req: Request, companyId: string) {
     assertBoard(req);
     assertCompanyAccess(req, companyId);
     if (!req.actor.userId) throw forbidden("Board user access required");
-    if (!canConfigureAssistant(req.actor, companyId)) throw forbidden("Ask an owner to connect a model");
+    // Role first, so viewers learn nothing and nothing is provisioned for them.
+    if (!assistantConfigureRoleAllowed(req.actor, companyId)) throw forbidden("Ask an owner to connect a model");
+    const assistant = await builtInAgentService(db).ensureAssistant(companyId);
+    if (!(await canConfigureAssistant(access, req.actor, companyId, assistant.id))) {
+      throw forbidden("Ask an owner to connect a model");
+    }
+    return assistant;
   }
 
   /**
@@ -5427,7 +5433,7 @@ export function agentRoutes(
    */
   router.get("/companies/:companyId/assistant/adapters", async (req, res) => {
     const companyId = req.params.companyId as string;
-    assertCanConfigureAssistant(req, companyId);
+    await assertCanConfigureAssistant(req, companyId);
     res.setHeader("Cache-Control", "no-store");
     const adapters = await assistantAdapterAvailability({
       nodeVersion: process.version,
@@ -5444,11 +5450,10 @@ export function agentRoutes(
   router.post("/companies/:companyId/assistant/setup", async (req, res) => {
     const companyId = req.params.companyId as string;
     // Access first, so callers who cannot configure learn nothing from validation.
-    assertCanConfigureAssistant(req, companyId);
+    const assistant = await assertCanConfigureAssistant(req, companyId);
     const parsed = assistantSetupRequestSchema.safeParse(req.body);
     if (!parsed.success) throw badRequest("Validation error", parsed.error.issues);
     const body: AssistantSetupRequest = parsed.data;
-    const assistant = await builtInAgentService(db).ensureAssistant(companyId);
     const existing = await svc.getById(assistant.id);
     if (!existing || existing.companyId !== companyId) throw notFound("Assistant not found");
     const lifecycle = await readAssistantLifecycle(db, existing.id);

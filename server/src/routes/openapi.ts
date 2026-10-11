@@ -1,5 +1,6 @@
 import { slackRegistrationSchema, slackSetupActionSchema, slackInstallAuthorizationSchema, slackRegistrationStateSchema, slackAppConfigurationSchema, slackAvatarStateSchema, slackAccountStateSchema } from "@paperclipai/shared";
 import { experimentalApiMetadata } from "./experimental-api-metadata.js";
+import { assistantSetupRequestSchema } from "../services/assistant-setup.js";
 import {
   experimentalApiPaths,
   experimentalApiQueries,
@@ -1429,6 +1430,8 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "GET /api/companies/{companyId}/resource-memberships/me",
   "GET /api/companies/{companyId}/primary-agent/me",
   "GET /api/companies/{companyId}/assistant",
+  "GET /api/companies/{companyId}/assistant/adapters",
+  "POST /api/companies/{companyId}/assistant/setup",
   "PUT /api/companies/{companyId}/primary-agent/me",
   "PUT /api/companies/{companyId}/resource-memberships/me/agents/{agentId}",
   "PUT /api/companies/{companyId}/resource-memberships/me/documents/{documentId}",
@@ -6638,15 +6641,35 @@ for (const method of ["get", "put"] as const) {
   });
 }
 
+const assistantAgentSummary = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  urlKey: z.string(),
+  adapterType: z.string(),
+  status: z.string(),
+});
+
+const assistantSetupStatusSchema = z.object({
+  state: z.enum(["ready", "starting", "needs_model", "error"]),
+  message: z.string().optional(),
+  reason: z.string().optional().describe("Fixed copy derived from the last failed harness test's check codes"),
+  adapterType: z.string(),
+});
+
 const assistantResponse = z.object({
-  agent: z.object({
-    id: z.string().uuid(),
-    name: z.string(),
-    urlKey: z.string(),
-    adapterType: z.string(),
-    status: z.string(),
-  }),
+  agent: assistantAgentSummary,
   conversationIssueId: z.string().uuid().nullable(),
+  setup: assistantSetupStatusSchema.describe("Whether the Assistant can answer yet; drives the inline setup card"),
+  canConfigure: z.boolean().describe("Whether the caller may connect a model (the same agent_config:update decision PATCH /agents/{id} needs)"),
+});
+
+const assistantAdapterAvailabilitySchema = z.object({
+  adapterType: z.string(),
+  installed: z.boolean(),
+  available: z.boolean(),
+  engine: z.enum(["cli"]).nullable(),
+  signedIn: z.boolean().nullable(),
+  hint: z.string().optional(),
 });
 
 registry.registerPath({
@@ -6661,6 +6684,40 @@ registry.registerPath({
     401: r.unauthorized,
     403: r.forbidden,
     404: r.notFound,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/assistant/adapters",
+  tags: ["agents"],
+  summary: "List the Assistant's runtime adapters on this host",
+  description: "Board users who may configure the Assistant (not viewers; requires the agent_config:update decision on the Assistant). Cheap host detection only: command lookup, the ACP Node prerequisite and host-local sign-in signals. No model calls.",
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: {
+    200: r.ok(z.object({ adapters: z.array(assistantAdapterAvailabilitySchema) })),
+    401: r.unauthorized,
+    403: r.forbidden,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/assistant/setup",
+  tags: ["agents"],
+  summary: "Connect a model for the company Assistant",
+  description: "Board users who may configure the Assistant (not viewers; requires the agent_config:update decision on the Assistant). Writes the adapter through the same checked path as PATCH /agents/{id} (adapter, env, command and AI-connection checks, lifecycle invalidation) and retries a setup that is still in progress. Logged as agent.updated.",
+  request: {
+    params: z.object({ companyId: z.string().uuid() }),
+    body: jsonBody(assistantSetupRequestSchema),
+  },
+  responses: {
+    200: r.ok(z.object({ agent: assistantAgentSummary, setup: assistantSetupStatusSchema })),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+    422: r.unprocessable,
   },
 });
 

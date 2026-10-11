@@ -245,10 +245,39 @@ export async function geminiCredentialsPresent(env: NodeJS.ProcessEnv = process.
   return fs.access(path.join(home, ".gemini", "oauth_creds.json")).then(() => true, () => false);
 }
 
-/** Whether this board actor may connect a model for the Assistant (owners/admins/operators/members, not viewers). */
-export function canConfigureAssistant(actor: Request["actor"], companyId: string): boolean {
+/** Cheap pre-check before the grant decision: board actors who are not viewers. */
+export function assistantConfigureRoleAllowed(actor: Request["actor"], companyId: string): boolean {
   if (!actor || actor.type !== "board") return false;
   if (actor.source === "local_implicit" || actor.isInstanceAdmin) return true;
   const membership = actor.memberships?.find((item) => item.companyId === companyId && item.status === "active");
   return Boolean(membership) && membership!.membershipRole !== "viewer";
+}
+
+type AssistantConfigureAccess = {
+  decide: (input: {
+    actor: Request["actor"];
+    action: "agent_config:update";
+    resource: { type: "agent"; companyId: string; agentId: string };
+  }) => Promise<{ allowed: boolean }>;
+};
+
+/**
+ * Whether this board actor may connect a model for the Assistant. Uses the
+ * same `agent_config:update` decision that `PATCH /agents/:id` enforces, so
+ * the setup card is never offered to someone whose save would be refused.
+ * Viewers are refused before the decision.
+ */
+export async function canConfigureAssistant(
+  access: AssistantConfigureAccess,
+  actor: Request["actor"],
+  companyId: string,
+  assistantAgentId: string,
+): Promise<boolean> {
+  if (!assistantConfigureRoleAllowed(actor, companyId)) return false;
+  const decision = await access.decide({
+    actor,
+    action: "agent_config:update",
+    resource: { type: "agent", companyId, agentId: assistantAgentId },
+  }).catch(() => ({ allowed: false }));
+  return decision.allowed;
 }

@@ -3,6 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { forbidden } from "../errors.js";
 import { builtInAgentService } from "../services/built-in-agents.js";
 import { issueService } from "../services/issues.js";
+import { accessService } from "../services/access.js";
 import { assistantSetupStatus, canConfigureAssistant, readAssistantLifecycle } from "../services/assistant-setup.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 
@@ -14,6 +15,7 @@ export function assistantRoutes(db: Db) {
   const router = Router();
   const builtIns = builtInAgentService(db);
   const issues = issueService(db);
+  const access = accessService(db);
 
   router.get("/companies/:companyId/assistant", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -21,9 +23,10 @@ export function assistantRoutes(db: Db) {
     assertCompanyAccess(req, companyId);
     if (!req.actor.userId) throw forbidden("Board user access required");
     const agent = await builtIns.ensureAssistant(companyId);
-    const [conversation, lifecycle] = await Promise.all([
+    const [conversation, lifecycle, canConfigure] = await Promise.all([
       issues.getConversation(companyId, agent.id, req.actor.userId),
       readAssistantLifecycle(db, agent.id),
+      canConfigureAssistant(access, req.actor, companyId, agent.id),
     ]);
     res.json({
       agent: {
@@ -39,8 +42,9 @@ export function assistantRoutes(db: Db) {
         adapterType: agent.adapterType, lifecycleState: agent.lifecycleState ?? "ready",
         lifecycleVersion: agent.lifecycleVersion ?? 0, lifecycleError: agent.lifecycleError ?? null,
       }),
-      // Viewers see the setup state but cannot connect a model.
-      canConfigure: canConfigureAssistant(req.actor, companyId),
+      // Same decision as saving the agent's config: viewers and members
+      // without the configure grant see the state but cannot connect a model.
+      canConfigure,
     });
   });
 
