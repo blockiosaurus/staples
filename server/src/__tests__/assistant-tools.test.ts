@@ -181,7 +181,11 @@ describe("staples_ask_questions", () => {
     id: "77777777-7777-4777-8777-777777777777", companyId, status: "in_progress", assigneeAgentId: "assistant-agent",
     conversationAgentId: "assistant-agent", conversationUserId: "person-1",
   };
-  const askDb = () => ({ select: () => ({ from: () => ({ where: async () => [issueRow] }) }) }) as unknown as Db;
+  /** First select is the conversation issue, the second the Assistant's pending question cards. */
+  const askDb = (pending: unknown[] = [], issue: Record<string, unknown> = issueRow) => {
+    let call = 0;
+    return { select: () => ({ from: () => ({ where: async () => (call++ === 0 ? [issue] : pending) }) }) } as unknown as Db;
+  };
   const questions = [{
     id: "owner", prompt: "Should I assign this to Riley?", required: true, answerMode: "single_select",
     options: [{ id: "yes", label: "Yes, Riley", recommended: true }, { id: "no", label: "Someone else" }],
@@ -218,6 +222,42 @@ describe("staples_ask_questions", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("owner, when");
     expect(result.content[0].text).toContain("recommended");
+  });
+
+  it("refuses a second card while one is pending, but replays the same ask", async () => {
+    const pending = { id: "int-0", issueId: issueRow.id, status: "pending", idempotencyKey: "other" };
+    const blocked = await tools(vi.fn() as unknown as ApiDispatch, askDb([pending])).call(context(), "staples_ask_questions", { questions });
+    expect(blocked.isError).toBe(true);
+    expect(blocked.content[0].text).toContain("still waiting for the person");
+
+    create.mockResolvedValueOnce({ id: "int-1", issueId: issueRow.id, kind: "ask_user_questions", status: "pending" });
+    await tools(vi.fn() as unknown as ApiDispatch, askDb()).call(context(), "staples_ask_questions", { title: "T", questions });
+    const key = create.mock.calls.at(-1)![1].idempotencyKey as string;
+    create.mockClear();
+    const replay = await tools(vi.fn() as unknown as ApiDispatch, askDb([{ ...pending, idempotencyKey: key }])).call(context(), "staples_ask_questions", { title: "T", questions });
+    expect(replay.isError).toBeUndefined();
+    expect(replay.structuredContent).toMatchObject({ interaction: { id: "int-0" } });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("includes the title in the idempotency key", async () => {
+    create.mockResolvedValue({ id: "int-1", issueId: issueRow.id, kind: "ask_user_questions", status: "pending" });
+    create.mockClear();
+    const t = tools(vi.fn() as unknown as ApiDispatch);
+    await createWith(t, "A");
+    await createWith(t, "B");
+    expect(create.mock.calls[0][1].idempotencyKey).not.toBe(create.mock.calls[1][1].idempotencyKey);
+    async function createWith(tt: ReturnType<typeof tools>, title: string) {
+      const db = askDb();
+      await createAssistantTools(db, { dispatch: vi.fn() as unknown as ApiDispatch }).call(context(), "staples_ask_questions", { title, questions });
+    }
+  });
+
+  it("errors when the conversation is not assigned to the Assistant", async () => {
+    const result = await tools(vi.fn() as unknown as ApiDispatch, askDb([], { ...issueRow, assigneeAgentId: "someone-else" }))
+      .call(context(), "staples_ask_questions", { questions });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("not assigned to the Assistant");
   });
 
   it("refuses viewers and rejects more than 8 questions", async () => {

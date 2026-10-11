@@ -444,13 +444,30 @@ async function askQuestions(db: Db, context: AssistantToolContext, args: Record<
   const questions = args.questions as unknown[];
   const title = typeof args.title === "string" && args.title ? args.title : undefined;
   const questionSet = { schema: "paperclip.question_set.v1" as const, ...(title ? { title } : {}), questions };
-  const hash = createHash("sha256").update(JSON.stringify(questions)).digest("hex").slice(0, 24);
+  const hash = createHash("sha256").update(JSON.stringify({ title: title ?? null, questions })).digest("hex").slice(0, 24);
+  const idempotencyKey = `assistant-questions:${context.runId}:${hash}`;
+  // One open card at a time: a replay of the same ask is fine, a new ask is not.
+  const pending = await db.select({ id: issueThreadInteractions.id, issueId: issueThreadInteractions.issueId, status: issueThreadInteractions.status, idempotencyKey: issueThreadInteractions.idempotencyKey })
+    .from(issueThreadInteractions).where(and(
+      eq(issueThreadInteractions.issueId, issue.id), eq(issueThreadInteractions.kind, "ask_user_questions"),
+      eq(issueThreadInteractions.status, "pending"), eq(issueThreadInteractions.createdByAgentId, context.agentId),
+    ));
+  const replay = pending.find((row) => row.idempotencyKey === idempotencyKey);
+  if (replay) {
+    return {
+      interaction: { id: replay.id, issueId: replay.issueId, status: replay.status },
+      next: "The person will see the question card. End your turn; you will be woken with their answers.",
+    };
+  }
+  if (pending.length > 0) {
+    throw new McpCapabilityError("A question card is still waiting for the person. Wait for their answers or continue without asking.");
+  }
   const data = createIssueThreadInteractionSchema.parse({
     kind: "ask_user_questions",
     continuationPolicy: "wake_assignee",
     addresseeUserId: context.userId,
     sourceRunId: context.runId,
-    idempotencyKey: `assistant-questions:${context.runId}:${hash}`,
+    idempotencyKey,
     ...(title ? { title } : {}),
     payload: { version: 1, ...(title ? { title } : {}), questionSet },
   });
