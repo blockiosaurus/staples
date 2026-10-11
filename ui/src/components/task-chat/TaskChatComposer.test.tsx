@@ -885,6 +885,25 @@ describe("TaskChatComposer", () => {
     expect(editable().textContent).toBe("");
   });
 
+  it("fills the editor from a draft request and focuses it", async () => {
+    const onApplied = vi.fn();
+    render(<TaskChatComposer onAdd={vi.fn()} workMode="standard" draftRequest={{ text: "Ask this", nonce: 1 }} onDraftRequestApplied={onApplied} />);
+    await flushAsync();
+    expect(editable().textContent).toBe("Ask this");
+    expect(onApplied).toHaveBeenCalledWith(1);
+    await act(async () => { await new Promise((resolve) => requestAnimationFrame(() => resolve(null))); });
+    expect(document.activeElement).toBe(editable());
+  });
+
+  it("sends a draft request once through the normal add path", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    render(<TaskChatComposer onAdd={onAdd} workMode="standard" draftRequest={{ text: "Ask this", nonce: 1, send: true }} />);
+    await flushAsync();
+    await flushAsync();
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    expect(onAdd).toHaveBeenCalledWith("Ask this", undefined, undefined, undefined, expect.any(String));
+  });
+
   it("submits on Ctrl+Enter", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     render(<TaskChatComposer onAdd={onAdd} workMode="standard" />);

@@ -8,7 +8,7 @@ import { BreadcrumbProvider, useBreadcrumbs } from "@/context/BreadcrumbContext"
 import { PanelProvider, usePanel } from "@/context/PanelContext";
 import { ApiError } from "@/api/client";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
-import { ASSISTANT_DOCK_OPEN_STORAGE_KEY, AssistantProvider, useAssistantShell } from "./AssistantProvider";
+import { ASSISTANT_DOCK_OPEN_STORAGE_KEY, AssistantProvider, composeAskText, useAssistantShell, type AssistantShellValue } from "./AssistantProvider";
 import { AssistantDock, AssistantDockToggle } from "./AssistantDock";
 import { AssistantPage } from "./AssistantPage";
 import { StageZeroShell } from "./StageZeroShell";
@@ -17,6 +17,7 @@ import { StageZeroShell } from "./StageZeroShell";
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mocks = vi.hoisted(() => ({
+  companyId: "company-1",
   location: { pathname: "/PAP/issues/PAP-12", search: "", hash: "", state: null, key: "k" },
   navigate: vi.fn(),
   isMobile: false,
@@ -34,7 +35,7 @@ vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...rest }: { to: string; children: React.ReactNode }) => <a href={to} {...rest}>{children}</a>,
 }));
 vi.mock("@/context/CompanyContext", () => ({
-  useCompany: () => ({ selectedCompanyId: "company-1", selectedCompany: { id: "company-1", issuePrefix: "PAP", name: "Acme" } }),
+  useCompany: () => ({ selectedCompanyId: mocks.companyId, selectedCompany: { id: mocks.companyId, issuePrefix: "PAP", name: "Acme" } }),
 }));
 vi.mock("@/context/SidebarContext", () => ({ useSidebar: () => ({ isMobile: mocks.isMobile }) }));
 vi.mock("@/api/assistant", () => ({ assistantApi: { get: mocks.assistantGet } }));
@@ -112,6 +113,7 @@ describe("Assistant page and dock", () => {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mocks.location.pathname = "/PAP/issues/PAP-12";
     mocks.isMobile = false;
+    mocks.companyId = "company-1";
     mocks.surfaceProps.length = 0;
     mocks.fill.mockReset();
     mocks.navigate.mockReset();
@@ -494,5 +496,47 @@ describe("Assistant page and dock", () => {
     pressJ(textarea, "metaKey");
     await settle();
     expect(dock()).not.toBeNull();
+  });
+
+  describe("askAssistant", () => {
+    let shellRef: AssistantShellValue | null = null;
+    function Capture() {
+      shellRef = useAssistantShell();
+      return null;
+    }
+
+    it("composes a plain About line from the context", () => {
+      expect(composeAskText({ text: "What is blocking this?", context: { label: "Fix login", href: "/PAP/issues/PAP-12" } }))
+        .toBe("What is blocking this?\nAbout: Fix login (/PAP/issues/PAP-12)");
+      expect(composeAskText({ text: "Hi" })).toBe("Hi");
+    });
+
+    it("opens the dock with a pending draft that is consumed once", async () => {
+      await render(<><Capture /><HostPage crumbs={["Home"]} /></>);
+      expect(dock()).toBeNull();
+      await act(async () => {
+        shellRef!.askAssistant({ text: "Summarize", context: { label: "Fix login", href: "/PAP/issues/PAP-12" } });
+      });
+      await settle();
+      expect(dock()).not.toBeNull();
+      const first = shellRef!.pendingAsk!;
+      expect(first).toMatchObject({ text: "Summarize\nAbout: Fix login (/PAP/issues/PAP-12)", send: false });
+      act(() => shellRef!.consumeAsk(first.nonce));
+      expect(shellRef!.pendingAsk).toBeNull();
+      await act(async () => shellRef!.askAssistant({ text: "Again", send: true }));
+      expect(shellRef!.pendingAsk!.nonce).toBeGreaterThan(first.nonce);
+      expect(shellRef!.pendingAsk!.send).toBe(true);
+    });
+
+    it("keeps the dock closed on the Assistant page and clears a pending draft on company switch", async () => {
+      mocks.location.pathname = "/PAP/assistant";
+      await render(<><Capture /><AssistantPage /><AssistantDock /></>);
+      await act(async () => shellRef!.askAssistant({ text: "Hello" }));
+      expect(dock()).toBeNull();
+      expect(shellRef!.pendingAsk?.text).toBe("Hello");
+      mocks.companyId = "company-2";
+      await render(<><Capture /><AssistantPage /><AssistantDock /></>);
+      expect(shellRef!.pendingAsk).toBeNull();
+    });
   });
 });

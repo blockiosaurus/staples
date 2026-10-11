@@ -148,7 +148,9 @@ interface TaskChatComposerProps {
   /** Storage key used to restore, persist, and clear this task's text draft. */
   draftKey?: string;
   /** Each new request (by nonce) replaces the draft with `text` and focuses the editor. */
-  draftRequest?: { text: string; nonce: number } | null;
+  draftRequest?: { text: string; nonce: number; send?: boolean } | null;
+  /** Called once a request has been applied (and sent, when it asked to be). */
+  onDraftRequestApplied?: (nonce: number) => void;
   onReviewConversation?: () => Promise<void>;
   /** When set, the main composer temporarily edits this queued message. */
   queuedEdit?: { commentId: string; body: string; stale?: boolean } | null;
@@ -403,6 +405,7 @@ export function TaskChatComposer({
   mobile = false,
   draftKey,
   draftRequest = null,
+  onDraftRequestApplied,
   onReviewConversation,
   queuedEdit = null,
   onSaveQueuedEdit,
@@ -523,11 +526,16 @@ export function TaskChatComposer({
   changeBodyRef.current = changeBody;
   const draftRequestNonce = draftRequest?.nonce ?? 0;
   const draftRequestText = draftRequest?.text ?? "";
+  const draftRequestSend = draftRequest?.send === true;
   useEffect(() => {
     if (draftRequestNonce <= 0) return;
     changeBodyRef.current(draftRequestText);
     if (draftKey && !creation) saveDraft(draftKey, draftRequestText);
     requestAnimationFrame(() => editorRef.current?.focus());
+    // A send request goes through the same submit as pressing Send. `send` is
+    // dropped by the owner once applied, so a remount never sends it twice.
+    if (draftRequestSend) void submit();
+    onDraftRequestApplied?.(draftRequestNonce);
     // Only a new request (nonce) replaces the draft.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftRequestNonce]);

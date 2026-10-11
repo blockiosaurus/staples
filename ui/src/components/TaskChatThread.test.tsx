@@ -818,6 +818,39 @@ describe("TaskChatThread draft pass-through", () => {
     expect(loadDraft("assistant-draft")).toBe("Build a newsletter");
   });
 
+  it("fills the composer from an external draft request and reports it consumed once", async () => {
+    const consumed = vi.fn();
+    render(
+      <TaskChatThread
+        comments={[]}
+        onAdd={async () => {}}
+        draftKey="external-draft"
+        externalDraftRequest={{ text: "Ask about this", nonce: 4 }}
+        onDraftRequestConsumed={consumed}
+      />,
+    );
+    await act(async () => {});
+    expect(container.querySelector('[data-testid="mock-editor"]')?.textContent).toBe("Ask about this");
+    expect(consumed).toHaveBeenCalledTimes(1);
+    expect(consumed).toHaveBeenCalledWith(4);
+  });
+
+  it("sends an external draft request once through onAdd", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    render(
+      <TaskChatThread
+        comments={[]}
+        onAdd={onAdd}
+        draftKey="external-send"
+        externalDraftRequest={{ text: "Ask about this", nonce: 1, send: true }}
+      />,
+    );
+    await act(async () => {});
+    await act(async () => {});
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    expect(onAdd.mock.calls[0]![0]).toBe("Ask about this");
+  });
+
   it("lets the composer replacement explain a paused, failed agent instead of the lifecycle banner", () => {
     const agent = { id: "assistant", name: "Assistant", status: "paused", lifecycleState: "verifying",
       lifecycleError: "The lifecycle step failed. Retry the operation." } as never;

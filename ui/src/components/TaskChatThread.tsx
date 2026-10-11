@@ -429,6 +429,13 @@ export type TaskChatThreadProps = ComponentProps<typeof IssueChatThread> & {
   emptyState?: (composer: { fill: (text: string) => void }) => ReactNode;
   /** Rendered in the composer dock instead of the composer (e.g. setup the agent needs first). */
   composerReplacement?: ReactNode;
+  /**
+   * A draft handed in from outside (e.g. "Ask Assistant"): each new nonce
+   * replaces the composer draft and focuses it; `send` submits it through the
+   * normal Send path. Taken over by the thread, then `onDraftRequestConsumed`.
+   */
+  externalDraftRequest?: { text: string; nonce: number; send?: boolean } | null;
+  onDraftRequestConsumed?: (nonce: number) => void;
 };
 
 type PendingComposerInput =
@@ -524,6 +531,8 @@ export function TaskChatThread(props: TaskChatThreadProps) {
     emptyMessage = "No messages yet.",
     emptyState,
     composerReplacement,
+    externalDraftRequest,
+    onDraftRequestConsumed,
     companyId,
     linkedRuns,
     liveRuns,
@@ -609,9 +618,25 @@ export function TaskChatThread(props: TaskChatThreadProps) {
   const queryClient = useQueryClient();
   const createdProjectItems = useProjectCreatedItems(props.creationActivity ?? [], companyId);
   const createdSkillItems = useMemo(() => skillCreatedItems(props.creationActivity ?? []), [props.creationActivity]);
-  const [draftRequest, setDraftRequest] = useState<{ text: string; nonce: number } | null>(null);
+  const [draftRequest, setDraftRequest] = useState<{ text: string; nonce: number; send?: boolean } | null>(null);
   const fillComposer = useCallback((text: string) => {
     setDraftRequest((current) => ({ text, nonce: (current?.nonce ?? 0) + 1 }));
+  }, []);
+  // An outside request becomes a composer request; the thread owns it from
+  // here, so the sender can stop offering it.
+  const consumedExternalNonce = useRef(0);
+  const onDraftRequestConsumedRef = useRef(onDraftRequestConsumed);
+  onDraftRequestConsumedRef.current = onDraftRequestConsumed;
+  useEffect(() => {
+    if (!externalDraftRequest || externalDraftRequest.nonce === consumedExternalNonce.current) return;
+    consumedExternalNonce.current = externalDraftRequest.nonce;
+    const { text, send, nonce } = externalDraftRequest;
+    setDraftRequest((current) => ({ text, send, nonce: (current?.nonce ?? 0) + 1 }));
+    onDraftRequestConsumedRef.current?.(nonce);
+  }, [externalDraftRequest]);
+  // Once applied, a send request must not fire again if the composer remounts.
+  const markDraftRequestApplied = useCallback((nonce: number) => {
+    setDraftRequest((current) => (current && current.nonce === nonce && current.send ? { ...current, send: false } : current));
   }, []);
   const [pendingComposerAssignee, setPendingComposerAssignee] = useState<
     string | null
@@ -3277,6 +3302,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                           : null
                       }
                       draftRequest={draftRequest}
+                      onDraftRequestApplied={markDraftRequestApplied}
                     />
                   </div>
                 </div>

@@ -1255,6 +1255,9 @@ type IssueDetailChatTabProps = {
   emptyState?: TaskChatThreadProps["emptyState"];
   /** Chat-style thread only: rendered instead of the composer. */
   composerReplacement?: ReactNode;
+  /** Chat-style thread only: a draft handed in from outside (see TaskChatThread). */
+  externalDraftRequest?: TaskChatThreadProps["externalDraftRequest"];
+  onDraftRequestConsumed?: TaskChatThreadProps["onDraftRequestConsumed"];
   /**
    * The task description rendered as the requester's first chat bubble in the
    * chat-style thread (PAP-375). Ignored by the classic thread.
@@ -1398,6 +1401,8 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   threadHeader,
   emptyState,
   composerReplacement,
+  externalDraftRequest,
+  onDraftRequestConsumed,
   issueBrief,
   footer,
   feedbackVotes,
@@ -2440,7 +2445,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
           <EmailThreadProvider companyId={companyId} issueId={issueId}>
           <ThreadComponent
             key={conversationMode ? draftKey : issueId}
-            {...(!classicTaskInterfaceEnabled ? { creationActivity: resolvedActivity, emptyState, composerReplacement } : {})}
+            {...(!classicTaskInterfaceEnabled ? { creationActivity: resolvedActivity, emptyState, composerReplacement, externalDraftRequest, onDraftRequestConsumed } : {})}
             onOpenSkill={onOpenSkill}
             browsers={browsers}
             onOpenBrowser={onOpenBrowser}
@@ -3180,6 +3185,12 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     if (!pageConversationAgentId || !claimConversationPage) return;
     return claimConversationPage(pageConversationAgentId);
   }, [pageConversationAgentId, claimConversationPage]);
+  // "Ask Assistant" drafts go to whichever surface shows the Assistant's conversation.
+  const assistantDraftRequest =
+    assistantShell?.assistantAgentId
+    && (issue?.conversationAgentId ?? conversation?.agent.id) === assistantShell.assistantAgentId
+      ? assistantShell.pendingAsk
+      : null;
   const resolveWritableIssueId = async () => {
     if (!conversation) return issueId!;
     const resolved = await conversation.ensureIssue();
@@ -8074,6 +8085,8 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                   composerRef={commentComposerRef}
                   emptyState={conversation?.emptyState}
                   composerReplacement={conversation?.composerReplacement}
+                  externalDraftRequest={assistantDraftRequest}
+                  onDraftRequestConsumed={assistantShell?.consumeAsk}
                   composerAccessory={
                     hasVisibleMonitorSurface(issue) ? (
                       <IssueMonitorComposerStrip
