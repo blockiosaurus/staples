@@ -26,6 +26,20 @@ Spec: `doc/plans/2026-10-10-staples-adaptive-ux-design.md` (Stage 1, §6 Home br
 
 ---
 
+### Task 0: Phase 4 carry-over
+
+**Files:** `server/src/services/plans.ts` (`assistantHireDefaults`, `planHireBody`), `packages/shared` + `server` setup reason copy (`engineUnavailableReason`, `ui/src/staples/assistant/setup-reasons.ts`), `ui/src/components/IssueThreadInteractionCard.tsx` (plan card), `server/src/services/assistant-proposed-actions.ts`, `packages/mcp-server/src/tools.test.ts`, tests.
+
+- [ ] Hires also inherit a `shared` Assistant connection (never `delegated`); the applier's access is checked the same way agent-made hires are (`canInstallSharedAiConnectionForNewAgent`).
+- [ ] If an inherited `router` or `shared` binding fails hire validation, retry the hire once without the binding instead of failing the plan.
+- [ ] The plan card lists "Uses your <provider> connection" for hires that will inherit one.
+- [ ] `adapter_engine_unavailable` copy: only mention Node 24.11 when the check says the Node version is the cause; otherwise "its default engine isn't available here".
+- [ ] Move the `pinBriefProposalBody` JSDoc back above the function.
+- [ ] Fix `packages/mcp-server/src/tools.test.ts` "allows create issue requests to omit status" for the current body (`allowDuplicate`, `visibility`).
+- [ ] Tests for each; commit.
+
+---
+
 ### Task 1: Briefing API
 
 **Files:** `packages/shared/src/types/briefing.ts` (new) + export from `packages/shared/src/index.ts`; `server/src/services/briefing.ts` (new); `server/src/routes/briefing.ts` (new) registered beside `attentionRoutes` in `server/src/app.ts`; `server/src/routes/openapi.ts`; `server/src/__tests__/briefing-service.test.ts` (embedded PG, pattern `attention-service.test.ts`).
