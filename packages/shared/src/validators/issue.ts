@@ -1040,7 +1040,7 @@ export const issueCommentMetadataSectionSchema = z
   .strict();
 
 export const assistantPageContextSchema = z.object({
-  route: z.string().max(500),
+  route: z.string().min(1).max(500),
   title: z.string().max(200).optional(),
   entity: z.object({
     type: z.enum(["issue", "agent", "project", "goal", "routine", "approval", "skill", "artifact", "other"]),

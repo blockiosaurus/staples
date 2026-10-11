@@ -1421,6 +1421,8 @@ export interface ProposedActionContext {
   adapterType?: string | null;
   /** Command-like keys found anywhere in the hire's adapterConfig. */
   adapterConfigCommandFields?: string[];
+  /** The approval's updatedAt when proposed; claims are refused once it changes. */
+  approvalUpdatedAt?: string;
 }
 
 export interface RequestConfirmationProposedActionResult {

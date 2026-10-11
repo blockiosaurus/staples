@@ -18258,6 +18258,10 @@ export function issueRoutes(
         res.status(201).json(comment);
         return;
       }
+      // Page context belongs only to the person's own chat messages.
+      if (req.body.metadata?.pageContext !== undefined) {
+        throw badRequest("pageContext is only accepted on chat messages from the conversation owner");
+      }
       if (req.actor.type === "agent" && req.body.onBehalfOfUserId != null) {
         await auditAgentIssueCommentAttributionSpoof({
           db,

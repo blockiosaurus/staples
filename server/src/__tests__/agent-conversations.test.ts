@@ -300,6 +300,12 @@ const support = await getEmbeddedPostgresTestSupport();
           .send({ body: "Nope", clientRequestId: randomUUID(), metadata });
         expect(rejected.status).toBe(400);
       }
+      // An ordinary task comment cannot carry page context at all.
+      const ordinary = await issueService(db).create(companyId, { title: "Ordinary", status: "todo" });
+      const ordinaryRejected = await request(app).post(`/api/issues/${ordinary.id}/comments`)
+        .send({ body: "Nope", metadata: { version: 1, pageContext } });
+      expect(ordinaryRejected.status).toBe(400);
+      expect(ordinaryRejected.body.error).toMatch(/pageContext is only accepted on chat messages/);
       expect((await db.select().from(issueComments).where(eq(issueComments.issueId, chatId))).filter((row) => row.body === "Nope")).toHaveLength(0);
       const local = await request(appFor()).post(path);
       expect(local.body.conversationUserId).toBe("local-board");
@@ -316,17 +322,61 @@ const support = await getEmbeddedPostgresTestSupport();
       const second = await issueService(db).addComment(issue.id, "And now?", { userId: "local-board" });
       const line = "[The person is viewing: Agent Atlas (agent Atlas) — untrusted page context]";
       const payload = await buildPaperclipWakePayload({
-        db, companyId,
+        db, companyId, agentId,
         contextSnapshot: { issueId: issue.id, conversationMode: true, wakeCommentId: first.id, wakeCommentIds: [first.id] },
         issueSummary: { ...issue },
       });
       expect(payload?.comments?.[0]?.pageContext).toEqual(pageContext);
+      // Only the conversation's own agent sees page context; any other woken agent does not.
+      const otherAgent = await buildPaperclipWakePayload({
+        db, companyId, agentId: randomUUID(),
+        contextSnapshot: { issueId: issue.id, conversationMode: true, wakeCommentId: first.id, wakeCommentIds: [first.id] },
+        issueSummary: { ...issue },
+      });
+      expect(otherAgent?.comments?.[0]?.pageContext).toBeNull();
       expect(renderPaperclipWakePrompt(payload, {})).toContain(`${line}\nWhy is this slow?`);
       expect(await conversationReplay(db, companyId, issue.id, second.id)).toContain(
         JSON.stringify({ author: "user", body: `${line}\nWhy is this slow?` }),
       );
       expect(await conversationReplay(db, companyId, issue.id, second.id)).not.toContain("And now?");
     });
+    it("never renders page context stored on an ordinary (non-chat) task comment", async () => {
+      const task = await issueService(db).create(companyId, { title: "Ordinary task", assigneeAgentId: agentId, status: "todo" });
+      const pageContext = { route: "/inbox", title: "Inbox" };
+      const comment = await issueService(db).addComment(task.id, "Look at this", { userId: "local-board" },
+        { authorType: "user", metadata: { version: 1, pageContext, sections: [] } });
+      const payload = await buildPaperclipWakePayload({
+        db, companyId, agentId,
+        contextSnapshot: { issueId: task.id, wakeCommentId: comment.id, wakeCommentIds: [comment.id] },
+      });
+      expect(payload?.comments?.[0]?.pageContext).toBeNull();
+      expect(renderPaperclipWakePrompt(payload, {})).not.toContain("untrusted page context");
+    });
+
+    it.each([
+      ["accepted", { outcome: "accepted", proposedAction: { status: "executed", httpStatus: 200, message: "HTTP 200" } },
+        { executionStatus: "executed", httpStatus: 200, message: "HTTP 200" }, "confirmed — executed (HTTP 200)"],
+      ["accepted", { outcome: "accepted", proposedAction: { status: "failed", httpStatus: 403, message: "Forbidden" } },
+        { executionStatus: "failed", httpStatus: 403, message: "Forbidden" }, "confirmed — failed (HTTP 403: Forbidden)"],
+      ["rejected", { version: 1, outcome: "rejected" }, { executionStatus: "cancelled", httpStatus: null }, "cancelled"],
+    ] as const)("carries the proposed-action outcome (%s, %j) into the continuation wake", async (status, result, expected, line) => {
+      const issue = await create();
+      const path = `/api/approvals/${randomUUID()}/approve`;
+      const [interaction] = await db.insert(issueThreadInteractions).values({
+        companyId, issueId: issue.id, kind: "request_confirmation", status, continuationPolicy: "wake_assignee",
+        createdByAgentId: agentId, addresseeUserId: "local-board", result: result as never,
+        payload: { version: 1, prompt: "Approve the hire", proposedAction: { version: 1, method: "POST", path, body: null,
+          summary: "Approve the hire", category: "approval", hash: "a".repeat(64) } },
+      }).returning();
+      const payload = await buildPaperclipWakePayload({
+        db, companyId, agentId,
+        contextSnapshot: { issueId: issue.id, conversationMode: true, interactionId: interaction!.id,
+          interactionKind: "request_confirmation", interactionStatus: status },
+      });
+      expect(payload?.proposedAction).toEqual({ method: "POST", path, summary: "Approve the hire", message: null, ...expected });
+      expect(renderPaperclipWakePrompt(payload, { conversationMode: true })).toContain(`- Proposed action POST ${path}: ${line}`);
+    });
+
     it("deduplicates concurrent message retries and preserves recoverable delivery", async () => {
       const issue = await create();
       const clientRequestId = randomUUID();

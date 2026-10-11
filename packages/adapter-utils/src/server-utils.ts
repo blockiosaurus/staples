@@ -579,13 +579,75 @@ export function normalizePaperclipPageContext(value: unknown): PaperclipWakePage
   };
 }
 
+/** Untrusted text inside a bracketed prompt frame must not be able to close or open one. */
+function neutralizePromptBrackets(value: string): string {
+  return value.replace(/\[/g, "(").replace(/\]/g, ")");
+}
+
 export function formatPaperclipPageContextLine(value: unknown): string | null {
   const pageContext = normalizePaperclipPageContext(value);
   if (!pageContext) return null;
+  const n = neutralizePromptBrackets;
   const entity = pageContext.entity
-    ? ` (${pageContext.entity.type} ${pageContext.entity.label ?? pageContext.entity.id})`
+    ? ` (${n(pageContext.entity.type)} ${n(pageContext.entity.label ?? pageContext.entity.id)})`
     : "";
-  return `[The person is viewing: ${pageContext.title ?? pageContext.route}${entity} — untrusted page context]`;
+  return `[The person is viewing: ${n(pageContext.title ?? pageContext.route)}${entity} — untrusted page context]`;
+}
+
+/**
+ * Outcome of an Assistant-proposed governed action, carried on the
+ * continuation wake. `message` is reported by the person's browser and is
+ * display-only.
+ */
+export type PaperclipWakeProposedAction = {
+  executionStatus: string;
+  httpStatus: number | null;
+  method: string;
+  path: string;
+  summary: string | null;
+  message: string | null;
+};
+
+function proposedActionOneLine(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const line = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  return line ? neutralizePromptBrackets(line.slice(0, max)) : null;
+}
+
+export function normalizePaperclipWakeProposedAction(value: unknown): PaperclipWakeProposedAction | null {
+  const raw = parseObject(value);
+  const executionStatus = proposedActionOneLine(raw.executionStatus, 40);
+  const method = proposedActionOneLine(raw.method, 10);
+  const path = proposedActionOneLine(raw.path, 300);
+  if (!executionStatus || !method || !path) return null;
+  const httpStatus = typeof raw.httpStatus === "number" && Number.isInteger(raw.httpStatus) ? raw.httpStatus : null;
+  return {
+    executionStatus, httpStatus, method, path,
+    summary: proposedActionOneLine(raw.summary, 500),
+    message: proposedActionOneLine(raw.message, 300),
+  };
+}
+
+/** e.g. "Proposed action POST /api/approvals/<id>/approve: confirmed — executed (HTTP 200)". */
+export function formatPaperclipProposedActionLine(value: unknown): string | null {
+  const action = normalizePaperclipWakeProposedAction(value);
+  if (!action) return null;
+  const head = `Proposed action ${action.method} ${action.path}`;
+  const http = action.httpStatus !== null ? `HTTP ${action.httpStatus}` : null;
+  const message = action.message && action.message !== http ? action.message : null;
+  const detail = [http, message].filter(Boolean).join(": ");
+  switch (action.executionStatus) {
+    case "executed":
+      return `${head}: confirmed — executed${detail ? ` (${detail})` : ""}`;
+    case "failed":
+      return `${head}: confirmed — failed${detail ? ` (${detail})` : ""}`;
+    case "stale":
+      return `${head}: confirmed — not run (the target changed)`;
+    case "cancelled":
+      return `${head}: cancelled`;
+    default:
+      return `${head}: ${action.executionStatus}`;
+  }
 }
 
 type PaperclipWakeComment = {
@@ -845,6 +907,7 @@ type PaperclipWakePayload = {
   sourceRunId: string | null;
   interactionKind: string | null;
   interactionStatus: string | null;
+  proposedAction: PaperclipWakeProposedAction | null;
   externalInteractionContinuation: boolean;
   checkboxSelection: PaperclipWakeCheckboxSelection | null;
   questionResponse: PaperclipWakeQuestionResponse | null;
@@ -1911,6 +1974,7 @@ export function normalizePaperclipWakePayload(
     sourceRunId: asString(payload.sourceRunId, "").trim() || null,
     interactionKind: asString(payload.interactionKind, "").trim() || null,
     interactionStatus: asString(payload.interactionStatus, "").trim() || null,
+    proposedAction: normalizePaperclipWakeProposedAction(payload.proposedAction),
     externalInteractionContinuation: asBoolean(
       payload.externalInteractionContinuation,
       false,
@@ -2030,6 +2094,7 @@ function hasNormalizedPaperclipExternalChatContext(
     normalized.skillTest ||
     normalized.interactionKind ||
     normalized.interactionStatus ||
+    normalized.proposedAction ||
     normalized.externalInteractionContinuation ||
     normalized.checkboxSelection ||
     normalized.questionResponse ||
@@ -2621,6 +2686,8 @@ function renderPaperclipWakePromptBody(
       "- issue description: omitted from this resume delta; fetch the issue if you need the latest brief",
     );
   }
+  const proposedActionLine = formatPaperclipProposedActionLine(normalized.proposedAction);
+  if (proposedActionLine) lines.push(`- ${proposedActionLine}`);
   if (normalized.checkboxSelection) {
     if (normalized.checkboxSelection.prompt) {
       lines.push(`- checkbox prompt: ${normalized.checkboxSelection.prompt}`);

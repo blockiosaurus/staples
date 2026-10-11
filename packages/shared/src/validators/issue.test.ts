@@ -706,6 +706,7 @@ describe("assistantPageContextSchema", () => {
   });
   it("rejects oversized or unknown fields", () => {
     expect(assistantPageContextSchema.safeParse({ route: "x".repeat(501) }).success).toBe(false);
+    expect(assistantPageContextSchema.safeParse({ route: "" }).success).toBe(false);
     expect(assistantPageContextSchema.safeParse({ route: "/a", title: "x".repeat(201) }).success).toBe(false);
     expect(assistantPageContextSchema.safeParse({ route: "/a", entity: { type: "issue", id: "x".repeat(201) } }).success).toBe(false);
     expect(assistantPageContextSchema.safeParse({ route: "/a", entity: { type: "bogus", id: "1" } }).success).toBe(false);

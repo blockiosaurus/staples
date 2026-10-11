@@ -50,6 +50,7 @@ import {
   issueComments,
   issuePlanDecompositions,
   issueRecoveryActions,
+  issueThreadInteractions,
   issues,
   routineRevisions,
   routineRuns,
@@ -2215,6 +2216,45 @@ export async function attestReviewedExternalChatRun(input: {
   throw new Error("reviewed_chat_execution_binding_not_ready");
 }
 
+/**
+ * The outcome of an Assistant-proposed action, read from the resolved
+ * interaction so the continuation wake tells the Assistant what actually
+ * happened (including a browser-reported failure), not merely "accepted".
+ */
+async function loadProposedActionOutcome(db: Db, input: {
+  companyId: string; issueId: string | null; interactionId: string | null;
+  interactionKind: string | null; interactionStatus: string | null;
+}) {
+  if (!input.issueId || !input.interactionId || input.interactionKind !== "request_confirmation") return null;
+  if (input.interactionStatus !== "accepted" && input.interactionStatus !== "rejected") return null;
+  const [row] = await db
+    .select({ status: issueThreadInteractions.status, payload: issueThreadInteractions.payload, result: issueThreadInteractions.result })
+    .from(issueThreadInteractions)
+    .where(and(
+      eq(issueThreadInteractions.id, input.interactionId),
+      eq(issueThreadInteractions.companyId, input.companyId),
+      eq(issueThreadInteractions.issueId, input.issueId),
+    ));
+  const proposal = parseObject(parseObject(row?.payload).proposedAction);
+  const method = readNonEmptyString(proposal.method);
+  const path = readNonEmptyString(proposal.path);
+  if (!row || !method || !path) return null;
+  const reported = parseObject(parseObject(row.result).proposedAction);
+  const executionStatus = row.status === "rejected"
+    ? "cancelled"
+    : row.status === "accepted"
+      ? readNonEmptyString(reported.status) ?? "unknown"
+      : row.status;
+  return {
+    executionStatus,
+    httpStatus: typeof reported.httpStatus === "number" ? reported.httpStatus : null,
+    method,
+    path,
+    summary: readNonEmptyString(proposal.summary),
+    message: row.status === "accepted" ? readNonEmptyString(reported.message) : null,
+  };
+}
+
 export async function buildPaperclipWakePayload(input: {
   db: Db;
   companyId: string;
@@ -2323,6 +2363,13 @@ export async function buildPaperclipWakePayload(input: {
   const inlineIssueDescription = issueDescriptionTruncated
     ? issueDescription.slice(0, MAX_INLINE_WAKE_ISSUE_DESCRIPTION_CHARS)
     : issueDescription;
+  // Page context is the Assistant chat's display-only hint. It is shown only
+  // to the conversation's own agent, never on ordinary task comments.
+  const pageContextAllowed = Boolean(issueId && input.agentId && commentRows.length > 0) && await input.db
+    .select({ conversationAgentId: issues.conversationAgentId })
+    .from(issues)
+    .where(and(eq(issues.id, issueId!), eq(issues.companyId, input.companyId)))
+    .then((rows) => rows[0]?.conversationAgentId === input.agentId);
   const comments: Array<Record<string, unknown>> = [];
   let remainingBodyChars = MAX_INLINE_WAKE_COMMENT_BODY_TOTAL_CHARS;
   let truncated = false;
@@ -2378,7 +2425,7 @@ export async function buildPaperclipWakePayload(input: {
       presentation: deletedAt ? null : (safeRow.presentation ?? null),
       metadata: deletedAt ? null : (safeRow.metadata ?? null),
       // Untrusted display data from the person's browser; only their own messages carry it.
-      pageContext: !deletedAt && !row.authorAgentId && row.authorUserId ? readPageContext(safeRow.metadata) : null,
+      pageContext: pageContextAllowed && !deletedAt && !row.authorAgentId && row.authorUserId ? readPageContext(safeRow.metadata) : null,
       deletedAt: deletedAt ? deletedAt.toISOString() : null,
       deletedByType: deletedAt ? (row.deletedByType ?? null) : null,
       deletedByAgentId: deletedAt ? (row.deletedByAgentId ?? null) : null,
@@ -2547,6 +2594,9 @@ export async function buildPaperclipWakePayload(input: {
   const checkboxSelection = parseObject(
     input.contextSnapshot.checkboxSelection,
   );
+  const proposedAction = await loadProposedActionOutcome(input.db, {
+    companyId: input.companyId, issueId, interactionId, interactionKind, interactionStatus,
+  });
   // A resolved plan review is new user input, including in chat. Ordinary chat
   // wakes must still exclude historical plan context across /new boundaries.
   const resolvedPlanInteraction = interactionId && interactionKind === "request_confirmation" &&
@@ -2744,6 +2794,7 @@ export async function buildPaperclipWakePayload(input: {
     interactionKind,
     interactionStatus,
     interactionId,
+    proposedAction,
     sourceRunId: readNonEmptyString(input.contextSnapshot.sourceRunId),
     externalChatQuestionResponse: externalChatProvider
       ? (input.contextSnapshot[EXTERNAL_CHAT_QUESTION_RESPONSE_KEY] ?? null)
