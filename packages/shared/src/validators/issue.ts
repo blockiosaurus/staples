@@ -1596,6 +1596,7 @@ export const PROPOSED_ACTION_CATEGORIES = [
   "delete",
   "other_governed",
   "brief",
+  "plan",
 ] as const;
 /** Serialized JSON body limit for a proposed action. */
 export const PROPOSED_ACTION_BODY_MAX_BYTES = 20 * 1024;
@@ -1604,8 +1605,19 @@ export const PROPOSED_ACTION_BODY_MAX_BYTES = 20 * 1024;
  * which can serialize past the general limit once escaped or multi-byte.
  */
 export const PROPOSED_BRIEF_BODY_MAX_BYTES = 96 * 1024;
+/**
+ * Plan proposals carry a whole starter plan: possibly the brief (up to 20,000
+ * characters) plus up to 25 tasks and 8 agents. The per-field limits allow far
+ * more than any real plan needs (25 x 8,000-character descriptions alone is
+ * 200,000 characters), so this total cap is what bounds the stored card. A
+ * full brief plus 25 tasks with ~2,500-character descriptions fits; a plan
+ * past it should be split or its descriptions shortened.
+ */
+export const PROPOSED_PLAN_BODY_MAX_BYTES = 128 * 1024;
 export function proposedActionBodyMaxBytes(category: string | null | undefined): number {
-  return category === "brief" ? PROPOSED_BRIEF_BODY_MAX_BYTES : PROPOSED_ACTION_BODY_MAX_BYTES;
+  if (category === "brief") return PROPOSED_BRIEF_BODY_MAX_BYTES;
+  if (category === "plan") return PROPOSED_PLAN_BODY_MAX_BYTES;
+  return PROPOSED_ACTION_BODY_MAX_BYTES;
 }
 function proposedActionBodyBytes(value: unknown): number | null {
   try {

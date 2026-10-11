@@ -1391,7 +1391,8 @@ export type ProposedActionCategory =
   | "outbound"
   | "delete"
   | "other_governed"
-  | "brief";
+  | "brief"
+  | "plan";
 
 /**
  * Server-owned: an exact governed API call the Assistant proposes. The person's

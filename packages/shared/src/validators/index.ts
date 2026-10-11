@@ -144,6 +144,18 @@ export {
   type UpdateCompanyBrief,
 } from "./company-brief.js";
 export {
+  applyPlanSchema,
+  planAgentCreationOrder,
+  planStructureErrors,
+  planTaskCreationOrder,
+  PlanStructureError,
+  type ApplyPlan,
+  type ApplyPlanAgent,
+  type ApplyPlanInput,
+  type ApplyPlanResult,
+  type ApplyPlanTask,
+} from "./plan.js";
+export {
   resourceMembershipStateSchema,
   updateDocumentResourceMembershipSchema,
   updateResourceMembershipSchema,
@@ -499,6 +511,7 @@ export {
   PROPOSED_ACTION_CATEGORIES,
   PROPOSED_ACTION_BODY_MAX_BYTES,
   PROPOSED_BRIEF_BODY_MAX_BYTES,
+  PROPOSED_PLAN_BODY_MAX_BYTES,
   proposedActionBodyMaxBytes,
   requestCheckboxConfirmationOptionSchema,
   requestCheckboxConfirmationPayloadSchema,
