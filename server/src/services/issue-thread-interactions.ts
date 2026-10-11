@@ -185,6 +185,12 @@ type CreateInteractionOptions = {
    * provider harness's own question tool, an MCP elicitation) set this, since
    * those sources have no recommendation to carry. Every other caller (public
    * route, native request_human_input, plugins) is held to the rule.
+   *
+   * Known gap: exempt questions can still reach a person with no
+   * recommendation. The Codex adapter maps a trailing "(recommended)" in an
+   * option label to `recommended: true`, but a harness question without that
+   * marker, other harnesses, and MCP elicitations arrive unrecommended. The UI
+   * then hides "Accept recommendations" for those cards.
    */
   allowQuestionsWithoutRecommendation?: boolean;
 };
@@ -3533,15 +3539,6 @@ export function issueThreadInteractionService(
       const data = normalizeCreateInteractionInput(
         createIssueThreadInteractionSchema.parse(input),
       );
-      if (data.kind === "ask_user_questions" && options.allowQuestionsWithoutRecommendation !== true) {
-        const missing = missingQuestionRecommendations(data.payload);
-        if (missing.length > 0) {
-          throw unprocessable(QUESTION_RECOMMENDATION_REQUIRED_MESSAGE, {
-            code: "question_recommendation_required",
-            questionIds: missing,
-          });
-        }
-      }
       if (
         data.kind === "request_confirmation" &&
         data.payload.proposedAction !== undefined &&
@@ -3684,6 +3681,18 @@ export function issueThreadInteractionService(
           const interaction = hydrateInteraction(existing);
           await enqueueIssueInteractionChatPublications(db, interaction);
           return interaction;
+        }
+      }
+
+      // After the idempotent replay: a retry of a row stored before this rule
+      // returns that row instead of failing.
+      if (data.kind === "ask_user_questions" && options.allowQuestionsWithoutRecommendation !== true) {
+        const missing = missingQuestionRecommendations(data.payload);
+        if (missing.length > 0) {
+          throw unprocessable(QUESTION_RECOMMENDATION_REQUIRED_MESSAGE, {
+            code: "question_recommendation_required",
+            questionIds: missing,
+          });
         }
       }
 

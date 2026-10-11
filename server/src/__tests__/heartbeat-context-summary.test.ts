@@ -308,6 +308,7 @@ describe("buildPaperclipTaskMarkdown", () => {
       expect(markdown).toContain("do not continue gated work until the required approval is recorded");
       expect(markdown).toContain("ask_user_questions");
       expect(markdown).toContain("single_select");
+      expect(markdown).toContain("Every question needs your recommended answer");
       expect(markdown).toContain("resumes this task after the answer");
       expect(markdown).toContain("Do not post a second copy of your ordinary reply");
       expect(markdown).toContain("Neither queued nor uncertain means delivered");

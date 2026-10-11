@@ -248,6 +248,34 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
     expect(exempt.status).toBe("pending");
   });
 
+  it("accepts a single-select question with exactly one recommended option", async () => {
+    const { companyId, issueId } = await seedSourceQuestionFixture({});
+    const created = await interactionsSvc.create({ id: issueId, companyId }, {
+      kind: "ask_user_questions",
+      payload: { version: 1, questionSet: { schema: "paperclip.question_set.v1", questions: [{
+        id: "pick", prompt: "Pick one?", required: true, answerMode: "single_select",
+        options: [{ id: "x", label: "X" }, { id: "y", label: "Y", recommended: true }],
+      }] } },
+    }, { userId: "local-board" });
+    expect(created).toMatchObject({ kind: "ask_user_questions", status: "pending" });
+    if (created.kind !== "ask_user_questions") throw new Error("expected questions");
+    expect(created.payload.questionSet?.questions[0]?.options?.[1]).toMatchObject({ id: "y", recommended: true });
+  });
+
+  it("replays an existing idempotent question even when it predates the recommendation rule", async () => {
+    const { companyId, issueId } = await seedSourceQuestionFixture({});
+    const issue = { id: issueId, companyId };
+    const input = {
+      kind: "ask_user_questions" as const,
+      idempotencyKey: "pre-rule-question",
+      payload: { version: 1 as const, questions: [{ id: "old", prompt: "Old?", selectionMode: "single" as const, options: [{ id: "a", label: "A" }, { id: "b", label: "B" }] }] },
+    };
+    // Stands in for a row stored before recommendations were required.
+    const stored = await interactionsSvc.create(issue, input, { userId: "local-board" }, { allowQuestionsWithoutRecommendation: true });
+    const replayed = await interactionsSvc.create(issue, input, { userId: "local-board" });
+    expect(replayed.id).toBe(stored.id);
+  });
+
   it("persists and answers a canonical-only mixed question form", async () => {
     const { companyId, issueId } = await seedSourceQuestionFixture({});
     const questionSet = {

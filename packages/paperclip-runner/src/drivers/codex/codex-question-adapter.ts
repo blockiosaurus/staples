@@ -164,6 +164,8 @@ function exactRedactedQuestionText(
   );
 }
 
+const RECOMMENDED_LABEL_SUFFIX = /\s*\(recommended\)\s*$/i;
+
 function codexOptions(value: unknown): NormalizedQuestionOptions | undefined {
   if (!Array.isArray(value)) return undefined;
   if (value.length > 128) throw new Error("Codex question exceeds 128 options");
@@ -200,9 +202,17 @@ function codexOptions(value: unknown): NormalizedQuestionOptions | undefined {
       id,
       structuredClone("value" in option ? option.value : nativeLabel),
     );
+    // Codex marks its suggestion with a trailing "(recommended)" in the label.
+    // Show it as Paperclip's recommended flag; the answer still returns the
+    // native value or label kept above.
+    const recommendedLabel = RECOMMENDED_LABEL_SUFFIX.exec(nativeLabel);
+    const displayLabel = recommendedLabel && recommendedLabel.index > 0
+      ? nativeLabel.slice(0, recommendedLabel.index)
+      : nativeLabel;
     return {
       id,
-      label: exactOptionLabel(nativeLabel, index),
+      label: exactOptionLabel(displayLabel, index),
+      ...(displayLabel !== nativeLabel ? { recommended: true } : {}),
       ...(text(option.description).length > 0
         ? {
             description: exactRedactedQuestionText(
