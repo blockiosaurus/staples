@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { agents, approvals, companySecrets, issues, toolConnections, type Db } from "@paperclipai/db";
-import { ASSISTANT_ALLOWED_ADAPTER_TYPES } from "./assistant-identity.js";
+import { PROPOSABLE_HIRE_ADAPTER_TYPES } from "./assistant-identity.js";
 import {
   AGENT_ROLES,
   PROPOSED_ACTION_BODY_MAX_BYTES,
@@ -125,10 +125,10 @@ function assertSafeAgentCreate(body: unknown) {
   }
   // Omitting adapterType makes the route default to "process", which runs a host command.
   if (record.adapterType === undefined || record.adapterType === null) {
-    throw new ProposedActionError(`adapterType is required: one of ${ASSISTANT_ALLOWED_ADAPTER_TYPES.join(", ")}.`);
+    throw new ProposedActionError(`adapterType is required: one of ${PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}.`);
   }
-  if (!(ASSISTANT_ALLOWED_ADAPTER_TYPES as readonly unknown[]).includes(record.adapterType)) {
-    throw new ProposedActionError(`adapterType must be one of ${ASSISTANT_ALLOWED_ADAPTER_TYPES.join(", ")}. ${AGENT_SETTINGS_HINT}`);
+  if (!(PROPOSABLE_HIRE_ADAPTER_TYPES as readonly unknown[]).includes(record.adapterType)) {
+    throw new ProposedActionError(`adapterType must be one of ${PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}. ${AGENT_SETTINGS_HINT}`);
   }
   assertBudgetAmounts(body, ["budgetMonthlyCents"]);
 }

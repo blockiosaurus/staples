@@ -4,11 +4,25 @@ import { ASSISTANT_BUILT_IN_AGENT_KEY } from "@paperclipai/shared";
 import { readBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
 
 /**
- * Local CLI adapters the Assistant itself may run on (registry `type` strings
- * that support local agent JWTs). Also the only adapter types the Assistant
- * may propose when hiring an agent.
+ * Adapters the Assistant itself may run on: those whose default engine
+ * actually delivers `ctx.runtimeMcp` (the Assistant's tools) to the model.
+ * Verified in each adapter's execute path: claude_local and codex_local (CLI
+ * and ACP engines), gemini_local and kimi_local (default ACP engine, which
+ * passes runtime MCP servers to the agent). All issue local agent JWTs.
  */
-export const ASSISTANT_ALLOWED_ADAPTER_TYPES = [
+export const ASSISTANT_RUNTIME_ADAPTER_TYPES = [
+  "claude_local",
+  "codex_local",
+  "gemini_local",
+  "kimi_local",
+] as const;
+
+/**
+ * Local CLI adapters (registry `type` strings that support local agent JWTs)
+ * the Assistant may propose when hiring a staff agent. Broader than the
+ * runtime set: staff agents do not need the Assistant's tools.
+ */
+export const PROPOSABLE_HIRE_ADAPTER_TYPES = [
   "claude_local",
   "codex_local",
   "cursor",

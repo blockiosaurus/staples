@@ -4,7 +4,8 @@ import request from "supertest";
 import { issueRoutes } from "../routes/issues.js";
 import { projectRoutes } from "../routes/projects.js";
 import { errorHandler } from "../middleware/error-handler.js";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { logger } from "../middleware/logger.js";
 import { and, eq } from "drizzle-orm";
 import { activityLog, agentWakeupRequests, agents, authUsers, companyMemberships, heartbeatRuns, instanceUserRoles, issueComments, issueThreadInteractions, issues } from "@paperclipai/db";
 import { hasOwnerChatInstructionAuthority } from "../services/owner-chat-instruction-authority.js";
@@ -79,7 +80,19 @@ const support = await getEmbeddedPostgresTestSupport();
     expect((await rpc(finished, "tools/list")).status).toBe(200);
     expect(await assistantRuntimeMcpServer(server.db, { agent: { id: finished.agentId, companyId: finished.companyId }, authToken: "jwt", apiBaseUrl: "http://127.0.0.1:1/" }))
       .toEqual({ name: "Staples assistant", url: "http://127.0.0.1:1/api/mcp/assistant-tools", token: "jwt", connectionId: "staples-assistant-tools" });
-    expect(await assistantRuntimeMcpServer(server.db, { agent: { id: finished.agentId, companyId: finished.companyId }, authToken: null, apiBaseUrl: "http://127.0.0.1:1" })).toBeNull();
+    const warn = vi.spyOn(logger, "warn");
+    try {
+      expect(await assistantRuntimeMcpServer(server.db, { agent: { id: finished.agentId, companyId: finished.companyId }, authToken: null, apiBaseUrl: "http://127.0.0.1:1", runId: finished.runId })).toBeNull();
+      expect(await assistantRuntimeMcpServer(server.db, { agent: { id: finished.agentId, companyId: finished.companyId }, authToken: "jwt", apiBaseUrl: null })).toBeNull();
+      expect(warn.mock.calls.filter(([, message]) => message === "Assistant run started without its tools: no run JWT or no configured API base URL")
+        .map(([fields]) => (fields as { missing: string[] }).missing)).toEqual([["authToken"], ["apiBaseUrl"]]);
+      // A staff agent without a token is not the Assistant: nothing to warn about.
+      warn.mockClear();
+      await assistantRuntimeMcpServer(server.db, { agent: { id: finished.staffAgentId, companyId: finished.companyId }, authToken: null, apiBaseUrl: null });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
     expect(await assistantRuntimeMcpServer(server.db, { agent: { id: finished.staffAgentId, companyId: finished.companyId }, authToken: "jwt", apiBaseUrl: "http://127.0.0.1:1" })).toBeNull();
     await server.db.update(heartbeatRuns).set({ status: "succeeded", finishedAt: new Date() }).where(eq(heartbeatRuns.id, finished.runId));
     expect((await rpc(finished, "tools/list")).status).toBe(403);

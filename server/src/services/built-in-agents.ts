@@ -1,5 +1,5 @@
 import { createAgentLifecycle } from "./agent-lifecycle.js";
-import { ASSISTANT_ALLOWED_ADAPTER_TYPES } from "./assistant-identity.js";
+import { ASSISTANT_RUNTIME_ADAPTER_TYPES } from "./assistant-identity.js";
 import fs from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { readPaperclipSkillSyncPreference, writePaperclipSkillSyncPreference } from "@paperclipai/adapter-utils/server-utils";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { activityLog, agents, builtInManagedResources, companies, issueThreadInteractions, issues, routines, routineTriggers } from "@paperclipai/db";
+import { activityLog, agents, builtInManagedResources, companies, heartbeatRuns, issueThreadInteractions, issues, routines, routineTriggers } from "@paperclipai/db";
 import { ASSISTANT_BUILT_IN_AGENT_KEY, syncRoutineVariablesWithTemplate } from "@paperclipai/shared";
 import type { Agent, Approval, CompanySkill, PermissionKey, Routine, RoutineTrigger, RoutineVariable } from "@paperclipai/shared";
 import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
@@ -347,8 +347,8 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
     },
     defaultStatus: "idle",
     defaultManager: null,
-    // Local CLI adapters that support local agent JWTs (registry `type` strings).
-    allowedAdapterTypes: [...ASSISTANT_ALLOWED_ADAPTER_TYPES],
+    // Only adapters whose default engine delivers the Assistant's run-scoped tools.
+    allowedAdapterTypes: [...ASSISTANT_RUNTIME_ADAPTER_TYPES],
     defaultAdapterType: "claude_local",
     defaultBudgetMonthlyCents: 0,
     bypassHireApproval: true,
@@ -757,6 +757,30 @@ function assertAdapterAllowed(definition: BuiltInAgentDefinition, adapterType: s
   }
 }
 
+const ADAPTER_MODEL_LOOKUP_TIMEOUT_MS = 4_000;
+
+/**
+ * Adapter model discovery can shell out to a CLI; provisioning must not hang
+ * on it. Returns "timeout" when the lookup does not finish in time and an
+ * empty list when it fails.
+ */
+export async function listAdapterModelsWithin(
+  adapterType: string,
+  timeoutMs = ADAPTER_MODEL_LOOKUP_TIMEOUT_MS,
+  lister: (type: string) => Promise<Array<{ id: string; label: string }>> = listAdapterModels,
+): Promise<Array<{ id: string; label: string }> | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([lister(adapterType).catch(() => []), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function hasCompleteAdapterConfig(adapterType: string, adapterConfig: unknown) {
   if (!isPlainRecord(adapterConfig)) return false;
   if (["process", "command"].includes(adapterType)) {
@@ -949,8 +973,14 @@ export function builtInAgentService(db: Db) {
         let model = typeof rawModel === "string" ? rawModel.trim() : "";
         if (model) {
           // Drop a model the adapter does not list rather than failing provisioning.
-          const known = await listAdapterModels(candidate.adapterType).catch(() => []);
-          if (known.length > 0 && !known.some((entry) => entry.id === model)) model = "";
+          const known = await listAdapterModelsWithin(candidate.adapterType);
+          if (known === "timeout") {
+            // A slow lookup falls back to the adapter's default model.
+            logger.warn({ companyId, adapterType: candidate.adapterType }, "adapter model lookup timed out while provisioning a built-in agent");
+            model = "";
+          } else if (known.length > 0 && !known.some((entry) => entry.id === model)) {
+            model = "";
+          }
         }
         return {
           ...input,
@@ -2230,6 +2260,39 @@ export function builtInAgentService(db: Db) {
     return ensured.agent;
   }
 
+  /**
+   * After a staff agent is hired: if the Assistant has never run and still has
+   * an inherited or default configuration, move it onto the company's first
+   * fully configured staff agent's adapter (runtime adapters only, model only).
+   */
+  async function reinheritAssistantAdapter(
+    companyId: string,
+    hired: { adapterType: string; adapterConfig: unknown; metadata: unknown; status: string },
+  ): Promise<Agent | null> {
+    if (readBuiltInAgentMarker(hired.metadata) || hired.status === "pending_approval" || hired.status === "terminated") return null;
+    const definition = requireBuiltInAgentDefinition(ASSISTANT_BUILT_IN_AGENT_KEY);
+    if (!definition.allowedAdapterTypes?.includes(hired.adapterType) || !hasCompleteAdapterConfig(hired.adapterType, hired.adapterConfig)) {
+      return null;
+    }
+    const assistant = await findSingleAgent(companyId, definition);
+    if (!assistant || assistant.status === "pending_approval" || assistant.status === "terminated") return null;
+    const [ran] = await db.select({ id: heartbeatRuns.id }).from(heartbeatRuns)
+      .where(and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.agentId, assistant.id))).limit(1);
+    if (ran) return null;
+    // Managed-instruction keys are server-owned; anything else means a person configured it.
+    const current = isPlainRecord(assistant.adapterConfig) ? assistant.adapterConfig : {};
+    if (Object.keys(current).some((key) => key !== "model" && !key.startsWith("instructions"))) return null;
+    const inherited = await defaultProvisionInput(companyId, definition, {});
+    if (!inherited.adapterType || !definition.allowedAdapterTypes.includes(inherited.adapterType)) return null;
+    const inheritedModel = isPlainRecord(inherited.adapterConfig) ? inherited.adapterConfig.model : undefined;
+    if (inherited.adapterType === assistant.adapterType && inheritedModel === current.model) return null;
+    const { model: _previousModel, ...kept } = current;
+    const nextConfig = { ...kept, ...(typeof inheritedModel === "string" && inheritedModel ? { model: inheritedModel } : {}) };
+    const ensured = await ensure(companyId, ASSISTANT_BUILT_IN_AGENT_KEY, { adapterType: inherited.adapterType, adapterConfig: nextConfig });
+    logger.info({ companyId, agentId: assistant.id, adapterType: inherited.adapterType }, "Assistant re-inherited the first staff agent's adapter");
+    return ensured.agent ?? null;
+  }
+
   async function autoProvisionBundledAgents(companyId: string) {
     const company = await ensureCompany(companyId);
     let autoEnsured = 0;
@@ -2283,6 +2346,7 @@ export function builtInAgentService(db: Db) {
     requireBuiltInAgent,
     autoProvisionBundledAgents,
     ensureAssistant,
+    reinheritAssistantAdapter,
     ensureCompanyDefaultAgentGrants,
     reconcileDefinitionDefaults,
   };

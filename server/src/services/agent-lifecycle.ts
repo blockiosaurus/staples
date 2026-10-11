@@ -1,5 +1,7 @@
 import { logger } from "../middleware/logger.js";
-import type { Db } from "@paperclipai/db";
+import { readBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
+import { agents, type Db } from "@paperclipai/db";
+import { eq } from "drizzle-orm";
 import * as lifecycle from "../modules/agent-lifecycle/index.js";
 import { withAccountingTransaction } from "./accounting-transaction.js";
 import { budgetServiceInTransaction, deliverBudgetEnforcement, policyBlocks, type BudgetServiceHooks } from "./budgets.js";
@@ -43,8 +45,40 @@ export function createAgentLifecycleEffects(hooks: BudgetServiceHooks = {}): lif
   };
 }
 
+/**
+ * A newly active staff agent may be the company's first working adapter; an
+ * Assistant that has never run then moves onto it. Best effort: a hire never
+ * fails because of the Assistant.
+ */
+async function reinheritAssistantAfterHire(db: Db, agent: { id: string; companyId: string; adapterType: string; adapterConfig: unknown; metadata: unknown; status: string } | null | undefined) {
+  if (!agent || readBuiltInAgentMarker(agent.metadata)) return;
+  try {
+    // Imported lazily: the built-in service itself hires through this module.
+    const { builtInAgentService } = await import("./built-in-agents.js");
+    await builtInAgentService(db).reinheritAssistantAdapter(agent.companyId, agent);
+  } catch (error) {
+    logger.warn({ err: error, companyId: agent.companyId, agentId: agent.id }, "Assistant adapter re-inheritance after hire failed");
+  }
+}
+
 export function createAgentLifecycle(db: Db, hooks: BudgetServiceHooks = {}) {
-  return lifecycle.createAgentLifecycle(db, createAgentLifecycleEffects(hooks));
+  const base = lifecycle.createAgentLifecycle(db, createAgentLifecycleEffects(hooks));
+  return {
+    ...base,
+    async requestHire(...args: Parameters<typeof base.requestHire>) {
+      const agent = await base.requestHire(...args);
+      await reinheritAssistantAfterHire(db, agent as Parameters<typeof reinheritAssistantAfterHire>[1]);
+      return agent;
+    },
+    async approveHire(...args: Parameters<typeof base.approveHire>) {
+      const result = await base.approveHire(...args);
+      if (result?.hireApprovedAgentId) {
+        const [approved] = await db.select().from(agents).where(eq(agents.id, result.hireApprovedAgentId));
+        await reinheritAssistantAfterHire(db, approved);
+      }
+      return result;
+    },
+  };
 }
 
 function trackedDriver(driver: lifecycle.LifecycleDriver): lifecycle.LifecycleDriver {

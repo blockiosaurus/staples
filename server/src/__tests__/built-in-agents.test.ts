@@ -41,6 +41,7 @@ import { approvalService } from "../services/approvals.ts";
 import {
   builtInAgentService as createBuiltInAgentService,
   deriveBuiltInAgentStatus,
+  listAdapterModelsWithin,
   listBuiltInAgentDefinitions,
   readBuiltInTextWithFallback,
   reconcileBuiltInAgentsOnStartup,
@@ -49,7 +50,7 @@ import {
 import { readBuiltInAgentMarker, withBuiltInAgentMarker } from "../lib/built-in-agent-metadata.ts";
 import { issueThreadInteractionService } from "../services/issue-thread-interactions.ts";
 import { issueService } from "../services/issues.ts";
-import { isProvisionedAssistant, resolveCompanyAssistantAgentId } from "../services/assistant-identity.ts";
+import { ASSISTANT_RUNTIME_ADAPTER_TYPES, PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "../services/assistant-identity.ts";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -173,6 +174,7 @@ describeEmbeddedPostgres("built-in agents", () => {
     await db.delete(agentConfigRevisions);
     await db.delete(activityLog);
     await db.delete(approvals);
+    await db.delete(heartbeatRuns);
     await db.delete(agents);
     await db.delete(budgetPolicies);
     await db.delete(companies);
@@ -216,9 +218,8 @@ describeEmbeddedPostgres("built-in agents", () => {
       defaultRole: "general",
       defaultTitle: "Assistant",
       defaultAdapterType: "claude_local",
-      allowedAdapterTypes: [
-        "claude_local", "codex_local", "cursor", "gemini_local", "grok_local", "kimi_local", "opencode_local", "pi_local",
-      ],
+      // Only adapters whose default engine delivers the run-scoped MCP tools.
+      allowedAdapterTypes: ["claude_local", "codex_local", "gemini_local", "kimi_local"],
       defaultStatus: "idle",
       defaultManager: null,
       defaultBudgetMonthlyCents: 0,
@@ -341,6 +342,55 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect(again.id).toBe(ensured.id);
     expect(again.adapterType).toBe("codex_local");
     expect(await assistantRows(companyId)).toHaveLength(1);
+  });
+
+  it("keeps the Assistant's runtime adapters separate from the adapters it may propose for hires", () => {
+    expect([...ASSISTANT_RUNTIME_ADAPTER_TYPES]).toEqual(["claude_local", "codex_local", "gemini_local", "kimi_local"]);
+    expect([...PROPOSABLE_HIRE_ADAPTER_TYPES]).toEqual([
+      "claude_local", "codex_local", "cursor", "gemini_local", "grok_local", "kimi_local", "opencode_local", "pi_local",
+    ]);
+  });
+
+  const hire = (companyId: string, adapterType: string, model: string, name = "Staff") => createAgentLifecycle(db).requestHire(companyId, {
+    name, role: "general", status: "idle", adapterType, adapterConfig: { model }, runtimeConfig: {}, permissions: {},
+  });
+
+  it("re-inherits the first fully configured staff agent's adapter onto an Assistant that has never run", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const service = createBuiltInAgentService(db);
+    const before = await service.ensureAssistant(companyId);
+    expect(before.adapterType).toBe("claude_local");
+    await hire(companyId, "codex_local", "gpt-5.4");
+    const [after] = await db.select().from(agents).where(eq(agents.id, before.id));
+    expect(after).toMatchObject({ adapterType: "codex_local", adapterConfig: { model: "gpt-5.4" } });
+  });
+
+  it("does not re-inherit once the Assistant has run, to a non-runtime adapter, or over a person's own configuration", async () => {
+    const ran = await seedCompany({ requireApproval: false });
+    const ranAssistant = await createBuiltInAgentService(db).ensureAssistant(ran);
+    await db.insert(heartbeatRuns).values({ companyId: ran, agentId: ranAssistant.id, status: "succeeded", contextSnapshot: {} });
+    await hire(ran, "codex_local", "gpt-5.4");
+    expect((await db.select().from(agents).where(eq(agents.id, ranAssistant.id)))[0]).toMatchObject({ adapterType: "claude_local" });
+
+    const nonRuntime = await seedCompany({ requireApproval: false });
+    const nonRuntimeAssistant = await createBuiltInAgentService(db).ensureAssistant(nonRuntime);
+    await hire(nonRuntime, "opencode_local", "openai/gpt-5");
+    expect((await db.select().from(agents).where(eq(agents.id, nonRuntimeAssistant.id)))[0]).toMatchObject({ adapterType: "claude_local" });
+
+    const customized = await seedCompany({ requireApproval: false });
+    const customizedAssistant = await createBuiltInAgentService(db).ensureAssistant(customized);
+    await db.update(agents).set({ adapterConfig: { model: "claude-sonnet-4-6", effort: "high" } }).where(eq(agents.id, customizedAssistant.id));
+    await hire(customized, "codex_local", "gpt-5.4");
+    expect((await db.select().from(agents).where(eq(agents.id, customizedAssistant.id)))[0])
+      .toMatchObject({ adapterType: "claude_local", adapterConfig: { model: "claude-sonnet-4-6", effort: "high" } });
+  });
+
+  it("gives up on a slow adapter model lookup and reports a timeout", async () => {
+    const started = Date.now();
+    expect(await listAdapterModelsWithin("codex_local", 20, () => new Promise(() => {}))).toBe("timeout");
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(await listAdapterModelsWithin("codex_local", 1_000, async () => [{ id: "m", label: "M" }])).toEqual([{ id: "m", label: "M" }]);
+    expect(await listAdapterModelsWithin("codex_local", 1_000, async () => { throw new Error("boom"); })).toEqual([]);
   });
 
   it("never adopts a stray marked agent as the Assistant; only ensure removes the marker", async () => {
