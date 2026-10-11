@@ -31,6 +31,10 @@ const CATALOG_KINDS = new Set<CatalogTeamKind>(["bundled", "optional"]);
 const TEAM_SCHEMA = "agentcompanies/v1";
 const LOCAL_PATH_SOURCE_TYPES = new Set(["local_path"]);
 const EXTERNAL_SOURCE_TYPES = new Set(["skills_sh", "github", "url", "agent_package"]);
+/** Staples agent templates live at catalog/optional/staples/<slug>/ with a JSON sidecar. */
+const STAPLES_TEMPLATE_CATEGORY = "staples";
+const STAPLES_TEMPLATE_SIDECAR = "staples.template.json";
+const CRON_FIELD_RANGES: Array<[number, number]> = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 6]];
 
 interface TeamCandidate {
   kind: CatalogTeamKind;
@@ -317,6 +321,12 @@ async function buildCatalogTeam(
     path: task.relativePath,
   }));
   const localSkillSlugs = collectSlugs(graph.skills, "skill", errors);
+  const isStaplesTemplate = candidate.category === STAPLES_TEMPLATE_CATEGORY;
+  if (isStaplesTemplate && candidate.kind !== "optional") {
+    errors.push(`${prefix} Staples agent templates must live under catalog/optional/${STAPLES_TEMPLATE_CATEGORY}/<slug>.`);
+  }
+  const staplesTemplate = await readStaplesTemplateSidecar(candidate.absolutePath, isStaplesTemplate, prefix, errors);
+  validateTaskSchedules(graph.tasks, isStaplesTemplate, prefix, errors);
   const rootAgentSlugs = validateLocalReferences(candidate.absolutePath, parsed.frontmatter, graph, agentSlugs, projectSlugs, errors);
   const requiredSkills = collectRequiredSkills(candidate.absolutePath, parsed.frontmatter, graph, catalogSkills, agentSlugs, localSkillSlugs, errors);
   const envInputs = collectEnvInputs(graph);
@@ -358,7 +368,101 @@ async function buildCatalogTeam(
     trustLevel: deriveTrustLevel(files, sourceRefs),
     compatibility: "compatible",
     contentHash: buildContentHash(files),
+    ...(staplesTemplate ? { staplesTemplate } : {}),
   };
+}
+
+async function readStaplesTemplateSidecar(
+  teamDir: string,
+  isStaplesTemplate: boolean,
+  prefix: string,
+  errors: string[],
+): Promise<Record<string, unknown> | null> {
+  const sidecarPath = path.join(teamDir, STAPLES_TEMPLATE_SIDECAR);
+  if (!existsSync(sidecarPath)) {
+    if (isStaplesTemplate) errors.push(`${prefix} is a Staples agent template and must include ${STAPLES_TEMPLATE_SIDECAR}.`);
+    return null;
+  }
+  if (!isStaplesTemplate) {
+    errors.push(`${prefix}/${STAPLES_TEMPLATE_SIDECAR} is only allowed under catalog/optional/${STAPLES_TEMPLATE_CATEGORY}/<slug>.`);
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await fs.readFile(sidecarPath, "utf8"));
+  } catch (error) {
+    errors.push(`${prefix}/${STAPLES_TEMPLATE_SIDECAR} is not valid JSON: ${errorMessage(error)}`);
+    return null;
+  }
+  if (!isPlainRecord(parsed)) {
+    errors.push(`${prefix}/${STAPLES_TEMPLATE_SIDECAR} must contain a JSON object.`);
+    return null;
+  }
+  return parsed;
+}
+
+/**
+ * TASK.md may declare `schedule` (a 5-field cron string) and `timezone`
+ * ("person" or an IANA zone). Templates must give every recurring task a
+ * cron schedule. A map-valued `schedule` is the legacy portability recurrence
+ * format and is left to the importer outside templates.
+ */
+function validateTaskSchedules(
+  tasks: ParsedTeamFile[],
+  isStaplesTemplate: boolean,
+  prefix: string,
+  errors: string[],
+) {
+  for (const task of tasks) {
+    const label = `${prefix}/${task.relativePath}`;
+    const schedule = task.frontmatter.schedule;
+    const recurring = asBoolean(task.frontmatter.recurring) ?? false;
+    if (schedule === undefined || schedule === null) {
+      if (isStaplesTemplate && recurring) errors.push(`${label} is recurring and must declare a cron schedule.`);
+    } else if (typeof schedule === "string") {
+      const cronError = cronSyntaxError(schedule);
+      if (cronError) errors.push(`${label} schedule "${schedule}" is not a valid 5-field cron expression: ${cronError}.`);
+      if (!recurring) errors.push(`${label} declares a schedule but is not recurring: true.`);
+    } else if (isStaplesTemplate || !isPlainRecord(schedule)) {
+      errors.push(`${label} schedule must be a 5-field cron string.`);
+    }
+
+    const timezone = task.frontmatter.timezone;
+    if (timezone !== undefined && timezone !== null) {
+      if (typeof timezone !== "string" || !isValidTaskTimezone(timezone)) {
+        errors.push(`${label} timezone must be "person" or an IANA time zone.`);
+      }
+    }
+  }
+}
+
+function cronSyntaxError(expression: string): string | null {
+  const fields = expression.trim().split(/\s+/);
+  if (fields.length !== 5) return `expected 5 fields, got ${fields.length}`;
+  for (let index = 0; index < fields.length; index += 1) {
+    const [min, max] = CRON_FIELD_RANGES[index]!;
+    for (const part of fields[index]!.split(",")) {
+      const match = /^(\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/.exec(part);
+      if (!match) return `field ${index + 1} "${fields[index]}" is malformed`;
+      const values = [match[2], match[3]].filter((value): value is string => value !== undefined).map(Number);
+      if (values.some((value) => value < min || value > max)) {
+        return `field ${index + 1} "${fields[index]}" is outside ${min}-${max}`;
+      }
+      if (values.length === 2 && values[0]! > values[1]!) return `field ${index + 1} "${fields[index]}" has an inverted range`;
+      if (match[4] !== undefined && Number(match[4]) === 0) return `field ${index + 1} "${fields[index]}" has a zero step`;
+    }
+  }
+  return null;
+}
+
+function isValidTaskTimezone(timezone: string) {
+  if (timezone === "person") return true;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function collectTeamFiles(

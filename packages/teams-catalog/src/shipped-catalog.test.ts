@@ -17,6 +17,9 @@ const EXPECTED_OPTIONAL_KEYS = [
   "paperclipai/optional/content/content-machine",
 ];
 
+/** Staples agent templates (catalog/optional/staples/<slug>), listed apart from teams. */
+const EXPECTED_STAPLES_TEMPLATE_KEYS: string[] = [];
+
 const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("shipped teams catalog", () => {
@@ -26,12 +29,23 @@ describe("shipped teams catalog", () => {
       .map((team) => team.key)
       .sort();
     const optionalKeys = catalogTeams
-      .filter((team) => team.kind === "optional")
+      .filter((team) => team.kind === "optional" && team.category !== "staples")
       .map((team) => team.key)
       .sort();
 
     expect(bundledKeys).toEqual(EXPECTED_BUNDLED_KEYS);
     expect(optionalKeys).toEqual(EXPECTED_OPTIONAL_KEYS);
+  });
+
+  it("ships exactly the expected Staples agent templates, each with a sidecar", () => {
+    const templates = catalogTeams.filter((team) => team.category === "staples");
+    expect(templates.map((team) => team.key).sort()).toEqual(EXPECTED_STAPLES_TEMPLATE_KEYS);
+    for (const team of templates) {
+      expect(team.kind, team.key).toBe("optional");
+      expect(team.staplesTemplate, team.key).toBeDefined();
+    }
+    const strays = catalogTeams.filter((team) => team.category !== "staples" && team.staplesTemplate !== undefined);
+    expect(strays.map((team) => team.key)).toEqual([]);
   });
 
   it("keeps every shipped team free of executable scripts and external sources in Phase B", () => {
@@ -77,7 +91,9 @@ describe("shipped teams catalog", () => {
   it("exposes a stable manifest header for downstream consumers", () => {
     expect(catalogManifest.schemaVersion).toBe(1);
     expect(catalogManifest.packageName).toBe("@paperclipai/teams-catalog");
-    expect(catalogTeams.length).toBe(EXPECTED_BUNDLED_KEYS.length + EXPECTED_OPTIONAL_KEYS.length);
+    expect(catalogTeams.length).toBe(
+      EXPECTED_BUNDLED_KEYS.length + EXPECTED_OPTIONAL_KEYS.length + EXPECTED_STAPLES_TEMPLATE_KEYS.length,
+    );
   });
 
   it("resolves shipped teams by id, key, and unique slug", () => {

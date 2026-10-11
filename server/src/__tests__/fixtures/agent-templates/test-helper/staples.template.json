@@ -1,0 +1,44 @@
+{
+  "version": "1.2.0",
+  "tagline": "Keeps an eye on the inbox",
+  "icon": "mail",
+  "marketplaceCategory": "communication",
+  "requiredApps": [
+    { "capability": "email", "anyOf": ["gmail", "agentmail"], "why": "Reads and drafts email." },
+    { "capability": "social", "anyOf": ["linkedin"], "why": "Posts updates.", "optional": true }
+  ],
+  "setupQuestions": [
+    {
+      "id": "focus",
+      "prompt": "What should the helper watch for at {{company.name}}?",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "Customer replies"
+    },
+    {
+      "id": "cadence",
+      "prompt": "How often should it report to {{person.name}}?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        { "id": "daily", "label": "Every weekday", "recommended": true },
+        { "id": "weekly", "label": "Once a week" }
+      ]
+    },
+    {
+      "id": "channels",
+      "prompt": "Where should summaries go?",
+      "required": false,
+      "answerMode": "multi_select",
+      "options": [
+        { "id": "email", "label": "Email", "recommended": true },
+        { "id": "chat", "label": "Team chat" }
+      ]
+    }
+  ],
+  "outwardActions": [
+    { "capability": "email", "label": "Send an email", "destructiveLabel": "Delete an email" }
+  ],
+  "recommendedAdapterType": "claude_local",
+  "defaultBudgetMonthlyCents": 2000
+}
