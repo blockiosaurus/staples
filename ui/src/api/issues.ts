@@ -69,15 +69,35 @@ function shortMessage(value: string) {
  * with the person's own session, through the app's api client. Never throws:
  * failures are reported as a `failed` result for the accept call.
  */
+/** One line for the Assistant about what a plan apply created. */
+function planApplySummary(status: number, body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const record = body as { agents?: Record<string, unknown>; tasks?: Record<string, unknown>; pendingAssignments?: unknown[] };
+  const count = (value: unknown) => (value && typeof value === "object" ? Object.keys(value).length : 0);
+  const agents = count(record.agents);
+  const tasks = count(record.tasks);
+  const pending = Array.isArray(record.pendingAssignments) ? record.pendingAssignments.length : 0;
+  const parts = [`${agents} agent${agents === 1 ? "" : "s"}`, `${tasks} task${tasks === 1 ? "" : "s"}`];
+  const waiting = pending ? ` ${pending} task${pending === 1 ? " waits" : "s wait"} for hire approval.` : "";
+  return `${status === 200 ? "Plan was already created" : "Plan created"}: ${parts.join(", ")}.${waiting}`;
+}
+
 export async function executeProposedAction(
-  action: Pick<RequestConfirmationProposedActionPayload, "method" | "path" | "body">,
+  action: Pick<RequestConfirmationProposedActionPayload, "method" | "path" | "body"> & { category?: string },
+  options: { idempotencyKey?: string } = {},
 ): Promise<Omit<ProposedActionAcceptResult, "hash">> {
   try {
     const response = await requestResponse(proposedActionClientPath(action.path), {
       method: action.method,
+      ...(options.idempotencyKey ? { headers: { "Idempotency-Key": options.idempotencyKey } } : {}),
       ...(action.body === null || action.body === undefined ? {} : { body: JSON.stringify(action.body) }),
     });
-    return { status: response.ok ? "executed" : "failed", httpStatus: response.status, message: `HTTP ${response.status}` };
+    let message = `HTTP ${response.status}`;
+    if (response.ok && action.category === "plan") {
+      const summary = planApplySummary(response.status, await response.clone().json().catch(() => null));
+      if (summary) message = shortMessage(summary);
+    }
+    return { status: response.ok ? "executed" : "failed", httpStatus: response.status, message };
   } catch (error) {
     if (error instanceof ApiError) return { status: "failed", httpStatus: error.status, message: shortMessage(error.message) };
     return { status: "failed", message: shortMessage(error instanceof Error ? error.message : "The request could not be sent") };

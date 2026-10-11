@@ -327,7 +327,7 @@ describe("ProposedActionCard", () => {
       brief: { body: "# Mission\n\n## Glossary\nTPS = report", baseRevisionId: null },
       goal: { title: "Publish weekly", description: "One article a week." },
       project: { name: "Weekly articles" },
-      agents: [{ clientKey: "writer", name: "Writer", role: "general", adapterType: "claude_local" }],
+      agents: [{ clientKey: "writer", name: "Writer", role: "general", title: "Staff writer", adapterType: "claude_local", budgetMonthlyCents: 2500 }],
       tasks: [
         { clientKey: "first", title: "Publish the first article", assigneeClientKey: "writer", blockedByClientKeys: ["style", "outline"] },
         { clientKey: "style", title: "Write a style guide", assigneeClientKey: "writer", blockedByClientKeys: [] },
@@ -358,7 +358,10 @@ describe("ProposedActionCard", () => {
       expect(brief.querySelector("h2")?.textContent).toBe("Glossary");
       expect(preview.textContent).toContain("Publish weekly");
       expect(preview.textContent).toContain("Weekly articles");
-      expect(preview.querySelector('[data-testid="proposed-plan-agents"]')?.textContent).toContain("Writer — general (claude_local)");
+      const agentsText = preview.querySelector('[data-testid="proposed-plan-agents"]')?.textContent ?? "";
+      expect(agentsText).toContain("Writer — general (claude_local)");
+      expect(agentsText).toContain("Staff writer");
+      expect(agentsText).toContain("$25.00/month");
       const items = Array.from(preview.querySelectorAll('[data-testid="proposed-plan-tasks"] > li')).map((li) => li.textContent ?? "");
       expect(items).toHaveLength(4);
       // Ordered so blockers come first.
@@ -372,6 +375,49 @@ describe("ProposedActionCard", () => {
       expect(text.indexOf("Collect ideas")).toBeLessThan(text.indexOf(PLAN_PATH));
       expect(host.textContent).toContain("Plan");
       expect(button(host, "Create plan")).toBeTruthy();
+    });
+
+    it("labels new-agent assignees as waiting for hire approval when the company requires it", async () => {
+      fetchMock.mockImplementation(async (url: string) => (url === `/api/companies/${COMPANY}`
+        ? json(200, { id: COMPANY, name: "Acme", requireBoardApprovalForNewAgents: true })
+        : url === `/api/companies/${COMPANY}/agents` ? json(200, []) : json(404, { error: "unexpected" })));
+      const host = await render({ interaction: planProposal(), onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      const first = Array.from(host.querySelectorAll('[data-testid="proposed-plan-tasks"] > li')).map((li) => li.textContent ?? "")
+        .find((t) => t.includes("Publish the first article"))!;
+      expect(first).toContain("Writer (new, after hire approval)");
+    });
+
+    it("runs the plan with the interaction id as its idempotency key and reports a summary", async () => {
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/claim-proposed-action")) return claimed();
+        if (url === PLAN_PATH && init?.method === "POST") {
+          return json(201, { agents: { writer: { id: "a1", status: "idle", approvalId: null } }, tasks: { first: {}, style: {}, outline: {}, ideas: {} }, pendingAssignments: [], brief: null, goal: { id: "g" }, project: { id: "p" } });
+        }
+        return json(200, []);
+      });
+      const accept = vi.fn(async () => undefined);
+      const host = await render({ interaction: planProposal(), onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
+      await click(button(host, "Create plan"));
+      const call = fetchMock.mock.calls.find(([url, init]) => url === PLAN_PATH && (init as RequestInit)?.method === "POST")!;
+      expect(new Headers((call[1] as RequestInit).headers).get("Idempotency-Key")).toBe("interaction-proposed-action");
+      expect(accept).toHaveBeenCalledWith(expect.anything(), undefined, undefined, undefined,
+        { status: "executed", httpStatus: 201, message: "Plan created: 1 agent, 4 tasks.", hash: HASH });
+    });
+
+    it("relays a partial failure's message to the Assistant", async () => {
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/claim-proposed-action")) return claimed();
+        if (url === PLAN_PATH && init?.method === "POST") {
+          return json(422, { error: "Hiring Writer failed: Adapter unavailable. Hired so far: Editor (idle, a1).", code: "plan_partially_applied", partial: { agents: { editor: { id: "a1" } } } });
+        }
+        return json(200, []);
+      });
+      const accept = vi.fn(async () => undefined);
+      const host = await render({ interaction: planProposal(), onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
+      await click(button(host, "Create plan"));
+      expect(accept).toHaveBeenCalledWith(expect.anything(), undefined, undefined, undefined,
+        expect.objectContaining({ status: "failed", httpStatus: 422, message: expect.stringContaining("Hired so far: Editor (idle, a1)") }));
     });
   });
 });

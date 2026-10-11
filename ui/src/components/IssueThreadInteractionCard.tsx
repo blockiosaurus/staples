@@ -30,7 +30,7 @@ import {
   type SuggestedTaskDraft,
   type SuggestedTaskTreeNode,
 } from "../lib/issue-thread-interactions";
-import { cn, formatDateTime, formatShortDate } from "../lib/utils";
+import { cn, formatCents, formatDateTime, formatShortDate } from "../lib/utils";
 import { InteractionPreparationNotice } from "./InteractionPreparationNotice";
 import { InteractionAudienceLine } from "./InteractionAudienceLine";
 import { MarkdownBody, type MarkdownExternalReferenceMap } from "./MarkdownBody";
@@ -57,6 +57,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { companyBriefApi } from "../api/companyBrief";
 import { agentsApi } from "../api/agents";
+import { companiesApi } from "../api/companies";
 import { applyPlanSchema, planTaskCreationOrder, type ApplyPlan } from "@paperclipai/shared";
 import { queryKeys } from "../lib/queryKeys";
 import { buildLineDiff } from "../lib/line-diff";
@@ -1988,6 +1989,13 @@ function ProposedPlanPreview({ path, body }: { path: string; body: unknown }) {
     queryFn: () => agentsApi.list(companyId!),
     enabled: Boolean(companyId) && needsAgents,
   });
+  // New hires wait for approval when the company requires it; so do their tasks.
+  const company = useQuery({
+    queryKey: queryKeys.companies.detail(companyId ?? ""),
+    queryFn: () => companiesApi.get(companyId!),
+    enabled: Boolean(companyId) && Boolean(plan?.agents.length),
+  });
+  const hiresNeedApproval = Boolean(company.data?.requireBoardApprovalForNewAgents);
   if (!plan) return null;
   let ordered = plan.tasks;
   try { ordered = planTaskCreationOrder(plan.tasks); } catch { /* the server refuses it; show as written */ }
@@ -1995,7 +2003,7 @@ function ProposedPlanPreview({ path, body }: { path: string; body: unknown }) {
   const newAgentByKey = new Map(plan.agents.map((agent) => [agent.clientKey, agent] as const));
   const existingName = (id: string) => agents.data?.find((agent) => agent.id === id)?.name ?? "Existing agent";
   const assignee = (task: ApplyPlan["tasks"][number]) => task.assigneeClientKey
-    ? `${newAgentByKey.get(task.assigneeClientKey)?.name ?? task.assigneeClientKey} (new)`
+    ? `${newAgentByKey.get(task.assigneeClientKey)?.name ?? task.assigneeClientKey} (${hiresNeedApproval ? "new, after hire approval" : "new"})`
     : task.assigneeAgentId ? existingName(task.assigneeAgentId) : "Unassigned";
   return (
     <div data-testid="proposed-plan-preview" className="mt-3 space-y-3 rounded-md border border-border p-3">
@@ -2022,11 +2030,13 @@ function ProposedPlanPreview({ path, body }: { path: string; body: unknown }) {
         </PlanPreviewSection>
       ) : null}
       {plan.agents.length ? (
-        <PlanPreviewSection label="New agents">
+        <PlanPreviewSection label={hiresNeedApproval ? "New agents (hiring needs approval)" : "New agents"}>
           <ul data-testid="proposed-plan-agents" className="list-disc space-y-0.5 pl-5">
             {plan.agents.map((agent) => (
               <li key={agent.clientKey}>
                 {agent.name} — {agent.role} (<span className="font-mono text-xs">{agent.adapterType}</span>)
+                {agent.title ? <span className="text-muted-foreground"> · {agent.title}</span> : null}
+                {agent.budgetMonthlyCents !== undefined ? <span className="text-muted-foreground"> · budget {formatCents(agent.budgetMonthlyCents)}/month</span> : null}
                 {agent.reportsToClientKey ? <span className="text-muted-foreground"> · reports to {newAgentByKey.get(agent.reportsToClientKey)?.name ?? agent.reportsToClientKey}</span> : null}
               </li>
             ))}
@@ -2145,7 +2155,9 @@ function ProposedActionCard({
           return;
         }
       }
-      const result = await executeProposedAction(action);
+      // A plan carries this card's id as its idempotency key, so running it
+      // again (another tab, or after a stale claim) never creates it twice.
+      const result = await executeProposedAction(action, action.category === "plan" ? { idempotencyKey: interaction.id } : {});
       setLocalResult(result);
       try {
         await onAcceptInteraction?.(interaction, undefined, undefined, undefined, { ...result, hash: action.hash });
