@@ -195,12 +195,12 @@ describe("Assistant page and dock", () => {
       .toContain("Hi — I'm your Assistant. What do you want to build?");
     const chips = [...container.querySelectorAll<HTMLButtonElement>('[data-testid="assistant-opening"] button')];
     expect(chips.map((chip) => chip.textContent)).toEqual([
-      "A marketing team for my product",
-      "Research and write a weekly newsletter",
-      "Triage and fix bugs in my repo",
+      "An assistant for my inbox",
+      "A weekly newsletter",
+      "A landing page for my idea",
     ]);
     await act(async () => chips[1]!.click());
-    expect(mocks.fill).toHaveBeenCalledWith("Research and write a weekly newsletter");
+    expect(mocks.fill).toHaveBeenCalledWith("A weekly newsletter");
     // Nothing is sent: the bubble is not a message.
     expect(mocks.chatEnsure).not.toHaveBeenCalled();
   });

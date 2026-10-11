@@ -1,6 +1,6 @@
 ---
 name: staples-plan
-description: Turn a finished interview into a plan (brief, goal, project, agent roles, 3 to 12 starter tasks with blocking order) and propose it for the person to confirm in one card. Use right after staples-interview ends with a confirmed understanding, or to turn an agreed idea into a team and tasks.
+description: Turn a finished interview into a plan (brief, goal, project, agent roles, 0 to 12 starter tasks with blocking order) and propose it for the person to confirm in one card. Use right after staples-interview ends with a confirmed understanding, or to turn an agreed idea into a team and tasks.
 ---
 
 # Plan
@@ -32,6 +32,8 @@ Use the company's glossary words everywhere in the plan.
 - `role`: one of `cto`, `cmo`, `cfo`, `security`, `engineer`, `designer`, `pm`, `qa`, `devops`, `researcher`, `general`. **Never `ceo`**: CEO-level hires are done by the person on the Agents page.
 - `adapterType`: must be one of the proposable local adapters: `claude_local`, `codex_local`, `cursor`, `gemini_local`, `grok_local`, `kimi_local`, `opencode_local` or `pi_local`. Reuse the one the company's existing agents use when it is in that list. In a new company (no staff agents yet), recommend the Assistant's own adapter: `paperclip_connection` returns it as `assistant.adapterType`, and hires on that adapter get the model connection the person already set up for you. Otherwise ask the person which of these to use, with that recommendation.
 - Optional `budgetMonthlyCents` if a budget was agreed, and `reportsToClientKey` when one new agent reports to another.
+
+**Prefer a template.** If a role matches a hireable template (`staples_list_templates`), do not design that agent: read it with `staples_get_template`, ask its setup questions, and use `clientKey`, `templateRef` and `templateAnswers` only (name, role, title and capabilities are optional and default from the template; adapterType defaults from the Assistant). Never write instructions for a templated hire. A templated agent brings its own starter tasks and routines, so a plan of only templated hires may have no tasks.
 
 No other fields. Do not put instructions, secrets, commands or credentials in a hire.
 

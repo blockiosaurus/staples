@@ -3,9 +3,9 @@ import { Button } from "@/components/ui/button";
 
 export const ASSISTANT_OPENING_MESSAGE = "Hi — I'm your Assistant. What do you want to build?";
 export const ASSISTANT_OPENING_SUGGESTIONS = [
-  "A marketing team for my product",
-  "Research and write a weekly newsletter",
-  "Triage and fix bugs in my repo",
+  "An assistant for my inbox",
+  "A weekly newsletter",
+  "A landing page for my idea",
 ] as const;
 
 /**

@@ -8,7 +8,7 @@ import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { publicMcpCapabilities } from "./public-mcp/capabilities.js";
-import { planTemplateSummariesFor } from "./plan-templates.js";
+import { defaultAgentTemplates, planTemplateContext, planTemplateSummariesFor } from "./plan-templates.js";
 import { APPROVAL_DECISION_PATH, PROPOSABLE_AGENT_ROLES, ProposedActionError, pinBriefProposalBody, pinPlanProposalBody, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
 import { assistantHireDefaults, planHireInheritsConnection } from "./plans.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
@@ -22,6 +22,7 @@ export const ASSISTANT_READ_TOOL_NAMES = [
   "paperclip_read_task", "paperclip_list_deliverables", "paperclip_read_document", "paperclip_list_document_revisions",
   "paperclip_pending_approvals", "paperclip_get_agent", "paperclip_get_project", "paperclip_list_skills",
   "paperclip_get_skill", "staples_company_signals", "staples_briefing_inputs", "staples_get_briefing", "staples_get_company_brief",
+  "staples_list_templates", "staples_get_template",
 ] as const;
 
 /** Low-risk writes. Governed actions (finish, block, delete, configure, approvals) are not exposed. */
@@ -317,8 +318,9 @@ function assistantCapabilities(db: Db): Capability[] {
     {
       name: PROPOSE_PLAN_TOOL, write: true,
       description: [
-        "Propose a whole starter plan for this person to confirm in one card: optionally the company brief (the whole new brief), a goal and a project, new agents, and 1 to 25 tasks. Nothing is created until they click Create plan; their browser then applies it with their own session and you are woken with the result.",
+        "Propose a whole starter plan for this person to confirm in one card: optionally the company brief (the whole new brief), a goal and a project, new agents, and 0 to 25 tasks. Nothing is created until they click Create plan; their browser then applies it with their own session and you are woken with the result.",
         "Agents and tasks refer to each other by clientKey (lowercase letters, digits and dashes). A task's assignee is assigneeClientKey (a new agent in this plan) or assigneeAgentId (an existing staff agent, never the Assistant), or none. parentClientKey and blockedByClientKeys refer to other tasks in the plan and must not form a cycle.",
+        "A hire that matches a template (staples_list_templates) is a templated agent: give it clientKey, templateRef and templateAnswers (the answers to the template's setup questions, keyed by question id); name, role, title and capabilities are optional and come from the template. Never write instructions for a templated hire. A templated agent may have no tasks: its template adds its own starter tasks and routines.",
         `New agents: role one of ${PROPOSABLE_AGENT_ROLES.join(", ")} (never ceo); adapterType one of ${PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}; no other settings. If the company requires approval for new agents, their tasks are created unassigned in the backlog and linked to the hire approval.`,
         `brief.baseRevisionId is the revisionId from staples_get_company_brief, or null when there is no brief. The whole plan must serialize to at most ${PROPOSED_PLAN_BODY_MAX_BYTES} bytes.`,
       ].join(" "),
@@ -329,6 +331,21 @@ function assistantCapabilities(db: Db): Capability[] {
       }).strict(),
       // Dispatched in createAssistantTools: it needs the run's conversation, not just the principal.
       run: async () => { throw new McpCapabilityError("Tool is unavailable to the Assistant."); },
+    },
+    {
+      name: "staples_list_templates",
+      description: "List the hireable agent templates (ready-made agents such as an email secretary or a bookkeeper): ref, name, summary, the apps each needs and its outward actions. Check it when the person wants a hire that might match one, then read the match with staples_get_template.",
+      schema: z.object(companyField).strict(),
+      run: async () => ({ templates: await defaultAgentTemplates().list() }),
+    },
+    {
+      name: "staples_get_template",
+      description: "Read one agent template by ref: its description and setupQuestions (each with a recommendation) with this person's and company's names filled in. Ask the setup questions with staples_ask_questions, then propose a plan whose agent carries templateRef and templateAnswers.",
+      schema: z.object({ ...companyField, ref: z.string().trim().min(1).max(200) }).strict(),
+      run: async (p, a) => {
+        const ctx = await planTemplateContext(db, p.company.id, p.actor.userId ?? null);
+        return { template: await defaultAgentTemplates().get(String(a.ref), { companyName: ctx.companyName, personName: ctx.personName }) };
+      },
     },
     {
       name: "staples_get_company_brief",

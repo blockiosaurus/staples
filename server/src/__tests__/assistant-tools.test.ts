@@ -37,6 +37,33 @@ function tools(dispatch: ApiDispatch, db: Db = fakeDb()) {
   return createAssistantTools(db, { dispatch, origin: "https://staples.example/" });
 }
 
+describe("assistant template tools", () => {
+  it("lists non-preview templates and reads one with the person's and company's names resolved", async () => {
+    const t = tools(vi.fn<ApiDispatch>(), { select: () => ({ from: () => ({ where: async () => [{ name: "Acme" }] }) }) } as unknown as Db);
+    expect(ASSISTANT_READ_TOOL_NAMES).toEqual(expect.arrayContaining(["staples_list_templates", "staples_get_template"]));
+    expect(t.definitions(false).map((d) => d.name)).toEqual(expect.arrayContaining(["staples_list_templates", "staples_get_template"]));
+    const listed = await t.call(context("viewer"), "staples_list_templates", {});
+    expect(listed.isError).toBeUndefined();
+    const templates = (listed.structuredContent as { templates: Array<{ ref: string; preview?: boolean }> }).templates;
+    expect(templates.length).toBeGreaterThan(0);
+    expect(templates.every((x) => x.ref.startsWith("staples/") && x.preview !== true)).toBe(true);
+    const read = await t.call(context(), "staples_get_template", { ref: templates[0]!.ref });
+    expect(read.isError).toBeUndefined();
+    const detail = (read.structuredContent as { template: { ref: string; setupQuestions: unknown[] } }).template;
+    expect(detail.ref).toBe(templates[0]!.ref);
+    expect(JSON.stringify(detail)).not.toMatch(/\{\{(person|company)\./);
+    const missing = await t.call(context(), "staples_get_template", { ref: "staples/does-not-exist" });
+    expect(missing.isError).toBe(true);
+  });
+
+  it("describes templated hires and optional tasks on the plan tool", () => {
+    const plan = tools(vi.fn<ApiDispatch>()).definitions(true).find((d) => d.name === "staples_propose_plan")!;
+    expect(plan.description).toMatch(/0 to 25 tasks/);
+    expect(plan.description).toMatch(/templateRef/);
+    expect(plan.description).toMatch(/templateAnswers/);
+  });
+});
+
 describe("assistant tools", () => {
   it("dispatches as a board actor for the run's person, attributed to the run", async () => {
     const seen: Array<Request["actor"]> = [];
