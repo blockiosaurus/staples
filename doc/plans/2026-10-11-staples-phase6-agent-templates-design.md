@@ -227,3 +227,39 @@ hidden from the marketplace and the Assistant until it is.
 Third-party publishing, reviews and revenue share; template updates/upgrade
 flow beyond recording the version; multi-agent team templates; hosted
 inference and billing.
+
+## Revisions after code research (2026-10-11)
+
+Verified locations: `.superpowers/sdd/phase6-research.md`.
+
+1. **Location.** Templates live at `packages/teams-catalog/catalog/optional/staples/<slug>/`
+   (the catalog builder only discovers `bundled|optional/<category>/<slug>`).
+2. **Staples metadata sidecar.** The catalog's mini-YAML frontmatter parser
+   cannot express lists of objects, so the `staples:` block moves to a typed
+   JSON sidecar `staples.template.json` next to TEAM.md (same fields as §1).
+   TEAM.md keeps only core spec frontmatter.
+3. **Connecting services.** The server cannot raise a connection-request card
+   without an agent run. Instead, apply creates a first starter task
+   "Connect <service>" per missing required app, assigned to the new agent,
+   whose instructions tell it to call `connection_request` on its first run
+   (the existing agent-initiated flow, which wakes it after connect). The
+   plan card and the template detail sheet also list required apps with
+   "Connect" deep links to `/apps`.
+4. **Access rules.** Trust rules cannot be created directly and tool-access
+   selectors do not match app slugs. Install seeds a per-agent
+   `require_approval` rule for `write` and `destructive` risk (priority 50).
+   Outward categories are keyed by required-app capability; autopilot for a
+   category creates an `allow` rule scoped to that agent, the connection that
+   satisfied the capability, and `write` risk only. Destructive risk always
+   requires approval. A category becomes toggleable once its service is
+   connected.
+5. **Gmail cannot send.** Gmail sending is blocked platform-wide, so the
+   Email secretary drafts replies in Gmail for the person to send; with
+   AgentMail it can send (approval first, then autopilot).
+6. **Skills before hire.** The hire route requires `desiredSkills` to exist in
+   the company library, so apply imports the template's vendored skills (and
+   installs referenced skills-catalog skills) before hiring.
+7. **Routines.** Our apply code reads `schedule`/`timezone` from TASK.md
+   directly and creates the routine plus a schedule trigger. Routines for a
+   hire awaiting board approval are created paused and resume when it is
+   approved.
