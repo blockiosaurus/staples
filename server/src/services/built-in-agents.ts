@@ -1,4 +1,5 @@
-import { createAgentLifecycle } from "./agent-lifecycle.js";
+import { createAgentLifecycle, createAgentLifecycleEffects, scheduleAgentLifecycle } from "./agent-lifecycle.js";
+import { updateAgentConfiguration } from "../modules/agent-lifecycle/adapters/configuration.js";
 import { ASSISTANT_RUNTIME_ADAPTER_TYPES } from "./assistant-identity.js";
 import fs from "node:fs/promises";
 import { readFileSync } from "node:fs";
@@ -2340,7 +2341,11 @@ export function builtInAgentService(db: Db) {
     const inheritedAdapterType = inherited.adapterType;
     const inheritedModel = isPlainRecord(inherited.adapterConfig) ? inherited.adapterConfig.model : undefined;
     // Re-check and write under a row lock so a concurrent first run or edit cannot be clobbered.
-    const wrote = await db.transaction(async (tx) => {
+    // The write goes through the lifecycle configuration path (revision, secret
+    // normalization, and invalidation of an in-flight preparing/verifying/resuming
+    // operation so the new adapter is the one that gets verified).
+    const effects = createAgentLifecycleEffects();
+    const wrote = await effects.transaction(db, companyId, async (tx, publications) => {
       const [locked] = await tx.select().from(agents)
         .where(and(eq(agents.companyId, companyId), eq(agents.id, assistant.id))).for("update");
       if (!locked || locked.status === "pending_approval" || locked.status === "terminated") return false;
@@ -2353,12 +2358,13 @@ export function builtInAgentService(db: Db) {
       if (inheritedAdapterType === locked.adapterType && inheritedModel === current.model) return false;
       const { model: _previousModel, ...kept } = current;
       const nextConfig = { ...kept, ...(typeof inheritedModel === "string" && inheritedModel ? { model: inheritedModel } : {}) };
-      await tx.update(agents)
-        .set({ adapterType: inheritedAdapterType, adapterConfig: nextConfig, updatedAt: new Date() })
-        .where(eq(agents.id, locked.id));
+      await updateAgentConfiguration(tx, effects, locked.id, { adapterType: inheritedAdapterType, adapterConfig: nextConfig },
+        { recordRevision: { createdByAgentId: null, createdByUserId: null, source: "assistant_reinherit" }, allowBuiltInAgentMetadata: true },
+        publications);
       return true;
     });
     if (!wrote) return null;
+    scheduleAgentLifecycle(db, assistant.id);
     logger.info({ companyId, agentId: assistant.id, adapterType: inheritedAdapterType }, "Assistant re-inherited the first staff agent's adapter");
     return (await agentSvc.getById(assistant.id)) as Agent | null;
   }

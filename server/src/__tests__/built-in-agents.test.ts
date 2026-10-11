@@ -419,6 +419,28 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect(after).toMatchObject({ adapterType: "codex_local", adapterConfig: { model: "gpt-5.4" } });
   });
 
+  it("re-inherits through the configuration path while the Assistant is still being verified", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const before = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    // Verification failed (e.g. no model connected): the Assistant waits in verifying with an error.
+    await db.update(agents).set({ lifecycleState: "verifying", lifecycleError: "The lifecycle step failed. Retry the operation." })
+      .where(eq(agents.id, before.id));
+    const [pending] = await db.select().from(agents).where(eq(agents.id, before.id));
+    await hire(companyId, "codex_local", "gpt-5.4");
+    const [after] = await db.select().from(agents).where(eq(agents.id, before.id));
+    // The configuration path invalidates the in-flight verification so the new adapter is verified.
+    expect(after).toMatchObject({
+      adapterType: "codex_local",
+      adapterConfig: { model: "gpt-5.4" },
+      lifecycleState: "verifying",
+      lifecycleError: null,
+      lifecycleVersion: pending!.lifecycleVersion + 1,
+    });
+    expect(after!.lifecycleOperation?.id).not.toBe(pending!.lifecycleOperation?.id);
+    const revisions = await db.select().from(agentConfigRevisions).where(eq(agentConfigRevisions.agentId, before.id));
+    expect(revisions.some((revision) => revision.source === "assistant_reinherit")).toBe(true);
+  });
+
   it("does not re-inherit once the Assistant has run, to a non-runtime adapter, or over a person's own configuration", async () => {
     const ran = await seedCompany({ requireApproval: false });
     const ranAssistant = await createBuiltInAgentService(db).ensureAssistant(ran);
