@@ -152,11 +152,33 @@ describe("validateAgentTemplatePackage", () => {
 
   it("rejects an outward action whose capability is not a required app", () => {
     const files = editSidecar(readFixtureFiles(), (sidecar) => {
-      sidecar.outwardActions.push({ capability: "payments", label: "Charge a card" });
+      sidecar.outwardActions.push({ capability: "payments", label: "Charge a card", toolPatterns: ["*charge*"] });
     });
     expect(validate(files)).toEqual([
       expect.stringContaining('outward action capability "payments" does not match a requiredApps capability'),
     ]);
+  });
+
+  it("requires tool patterns on outward actions and keeps read-only templates free of them", () => {
+    const missing = editSidecar(readFixtureFiles(), (sidecar) => {
+      delete sidecar.outwardActions[0].toolPatterns;
+    });
+    expect(validate(missing)).toEqual([expect.stringContaining("outwardActions.0.toolPatterns")]);
+    for (const pattern of ["*", "**", "send email", "*send*;drop", "x".repeat(81)]) {
+      const bad = editSidecar(readFixtureFiles(), (sidecar) => {
+        sidecar.outwardActions[0].toolPatterns = [pattern];
+      });
+      expect(validate(bad), pattern).toEqual([expect.stringContaining("outwardActions.0.toolPatterns.0")]);
+    }
+    const readOnly = editSidecar(readFixtureFiles(), (sidecar) => {
+      sidecar.readOnly = true;
+    });
+    expect(validate(readOnly)).toEqual([expect.stringContaining("a readOnly template cannot declare outwardActions")]);
+    const readOnlyClean = editSidecar(readFixtureFiles(), (sidecar) => {
+      sidecar.readOnly = true;
+      sidecar.outwardActions = [];
+    });
+    expect(validate(readOnlyClean)).toEqual([]);
   });
 
   it("rejects a multi_select question with no recommended option", () => {
@@ -292,7 +314,8 @@ describe("agentTemplatesService", () => {
       { title: "Introduce yourself", description: "Say hello to Dana and confirm you will watch for Refund requests." },
     ]);
     expect(rendered.requiredApps.map((app) => app.capability)).toEqual(["email", "social"]);
-    expect(rendered.outwardActions).toEqual([{ capability: "email", label: "Send an email", destructiveLabel: "Delete an email" }]);
+    expect(rendered.outwardActions).toEqual([{ capability: "email", label: "Send an email", destructiveLabel: "Delete an email", toolPatterns: ["*send*"] }]);
+    expect(rendered.readOnly).toBe(false);
     expect(rendered.defaultBudgetMonthlyCents).toBe(2000);
     expect(rendered.recommendedAdapterType).toBe("claude_local");
   });

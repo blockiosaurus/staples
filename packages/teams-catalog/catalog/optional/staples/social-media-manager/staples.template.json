@@ -51,7 +51,7 @@
     }
   ],
   "outwardActions": [
-    { "capability": "social", "label": "Posting" }
+    { "capability": "social", "label": "Posting", "toolPatterns": ["*post*", "*publish*", "*share*", "*tweet*", "*schedule*", "*reply*", "*comment*"] }
   ],
   "defaultBudgetMonthlyCents": 2500
 }

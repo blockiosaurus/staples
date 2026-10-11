@@ -50,6 +50,12 @@ export interface AgentTemplateOutwardAction {
   capability: string;
   label: string;
   destructiveLabel?: string;
+  /**
+   * Case-insensitive globs (`*` only) over tool names that perform this
+   * action, e.g. "*send*". Install asks first for write-risk tools matching
+   * any of them.
+   */
+  toolPatterns: string[];
 }
 
 /**
@@ -77,6 +83,11 @@ export interface AgentTemplateSidecar {
   recommendedAdapterType?: string;
   defaultBudgetMonthlyCents?: number;
   preview?: boolean;
+  /**
+   * The agent never changes anything in connected services. Install blocks
+   * every non-read tool call for it (outwardActions must be empty).
+   */
+  readOnly?: boolean;
   /** Recurring-task cron chosen by a single_select answer, keyed by TASK.md slug. */
   scheduleByAnswer?: Record<string, AgentTemplateScheduleByAnswer>;
 }
@@ -125,6 +136,7 @@ export interface RenderedAgentTemplate {
   outwardActions: AgentTemplateOutwardAction[];
   defaultBudgetMonthlyCents: number | null;
   recommendedAdapterType: string | null;
+  readOnly: boolean;
 }
 
 export type AgentTemplateAnswers = Record<string, string | string[]>;

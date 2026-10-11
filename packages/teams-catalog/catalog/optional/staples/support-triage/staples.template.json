@@ -44,7 +44,7 @@
     }
   ],
   "outwardActions": [
-    { "capability": "inbox", "label": "Replying to customers" }
+    { "capability": "inbox", "label": "Replying to customers", "toolPatterns": ["*send*", "*reply*", "*forward*", "*post*"] }
   ],
   "defaultBudgetMonthlyCents": 4000
 }

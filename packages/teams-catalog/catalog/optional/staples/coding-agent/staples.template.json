@@ -47,7 +47,8 @@
     {
       "capability": "code",
       "label": "Merging and pushing to the default branch",
-      "destructiveLabel": "Deleting branches or closing issues"
+      "destructiveLabel": "Deleting branches or closing issues",
+      "toolPatterns": ["*merge*", "*push*", "*create_or_update_file*", "*update_issue*", "*close*"]
     }
   ],
   "defaultBudgetMonthlyCents": 6000

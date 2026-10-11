@@ -54,8 +54,8 @@
     }
   ],
   "outwardActions": [
-    { "capability": "social", "label": "Publishing posts" },
-    { "capability": "cms", "label": "Publishing to your site" }
+    { "capability": "social", "label": "Publishing posts", "toolPatterns": ["*post*", "*publish*", "*share*", "*tweet*", "*schedule*"] },
+    { "capability": "cms", "label": "Publishing to your site", "toolPatterns": ["*publish*"] }
   ],
   "defaultBudgetMonthlyCents": 2500
 }

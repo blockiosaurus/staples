@@ -37,7 +37,7 @@
     }
   ],
   "outwardActions": [
-    { "capability": "email", "label": "Send an email", "destructiveLabel": "Delete an email" }
+    { "capability": "email", "label": "Send an email", "destructiveLabel": "Delete an email", "toolPatterns": ["*send*"] }
   ],
   "recommendedAdapterType": "claude_local",
   "defaultBudgetMonthlyCents": 2000

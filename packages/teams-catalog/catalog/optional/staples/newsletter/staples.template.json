@@ -76,7 +76,8 @@
   "outwardActions": [
     {
       "capability": "newsletter",
-      "label": "Sending to your list"
+      "label": "Sending to your list",
+      "toolPatterns": ["*send*", "*schedule*", "*publish*"]
     }
   ],
   "defaultBudgetMonthlyCents": 2000,

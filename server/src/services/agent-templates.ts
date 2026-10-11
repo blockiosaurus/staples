@@ -664,9 +664,10 @@ export function agentTemplatesService(deps: AgentTemplatesServiceDeps = {}) {
           description: substitute(task.body, values),
         })),
         requiredApps: sidecar.requiredApps.map((app) => ({ ...app, anyOf: [...app.anyOf] })),
-        outwardActions: sidecar.outwardActions.map((action) => ({ ...action })),
+        outwardActions: sidecar.outwardActions.map((action) => ({ ...action, toolPatterns: [...action.toolPatterns] })),
         defaultBudgetMonthlyCents: sidecar.defaultBudgetMonthlyCents ?? null,
         recommendedAdapterType: sidecar.recommendedAdapterType ?? null,
+        readOnly: sidecar.readOnly === true,
       };
     },
   };

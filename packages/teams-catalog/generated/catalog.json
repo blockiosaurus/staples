@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@paperclipai/teams-catalog",
   "packageVersion": "0.1.0",
-  "generatedAt": "2026-10-11T16:52:43.628Z",
+  "generatedAt": "2026-10-11T17:02:45.399Z",
   "teams": [
     {
       "id": "paperclipai:bundled:company-defaults:core-exec-team",
@@ -578,13 +578,13 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 1735,
-          "sha256": "1efda97d6a9879a886344d92928879875281591f8c87e66fe4e2ce9748cf6eb3"
+          "sizeBytes": 1755,
+          "sha256": "72c53745a82bfe646a96a4cd58f9a0cdd7cb42282709b1ca7fc2fdb5899d2e2e"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:22cf758195be1c2be3bdae9c9cf9c206ed217ce30dedf4381e6192f9b17aa538",
+      "contentHash": "sha256:46934ffad43379ca3872adac89e33eea29ec1f7c573320fb9d9c3c3b6ea0e37f",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Read-only weekly summaries of your revenue and spending",
@@ -642,6 +642,7 @@
           }
         ],
         "outwardActions": [],
+        "readOnly": true,
         "defaultBudgetMonthlyCents": 1500,
         "scheduleByAnswer": {
           "weekly-revenue-and-spend-summary": {
@@ -799,13 +800,13 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2084,
-          "sha256": "0138f44040ca285990f351e4a930e409accce7fb541ffead1f814dfe3b57747a"
+          "sizeBytes": 2185,
+          "sha256": "da8c34606854fb20d860783f4164e8ce3be39e017f05efe444067a443b5a357b"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:efbfff5e31ad9a34846eda071f8d55802a3917f3f89e6dc0339a9bc11ce14475",
+      "contentHash": "sha256:c03df5f06c3bdee4a3d14b5253a0232430babeea4ec6cfd614f0351d4b004846",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Triages GitHub issues, fixes bugs and opens pull requests for review",
@@ -870,7 +871,14 @@
           {
             "capability": "code",
             "label": "Merging and pushing to the default branch",
-            "destructiveLabel": "Deleting branches or closing issues"
+            "destructiveLabel": "Deleting branches or closing issues",
+            "toolPatterns": [
+              "*merge*",
+              "*push*",
+              "*create_or_update_file*",
+              "*update_issue*",
+              "*close*"
+            ]
           }
         ],
         "defaultBudgetMonthlyCents": 6000
@@ -991,13 +999,13 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2307,
-          "sha256": "2a759fba4b44ce94e50240df26a9616ee386e1ecca7e713e817f51f774d823d5"
+          "sizeBytes": 2415,
+          "sha256": "5c7b35aef40032cd6153d8d5e51e506616f2a3a284a738e0ca4e281786357ecf"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:9a2b58d629bbcce08bc7e82ecafadcb6353318e7b54b66d83788a68fee81ef64",
+      "contentHash": "sha256:f32b9e7f7b241ee5b02eb75aa8e70a8324d39a6ab2902c6271db67d8d8b70760",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Plans, writes and publishes your posts on a steady schedule",
@@ -1089,11 +1097,21 @@
         "outwardActions": [
           {
             "capability": "social",
-            "label": "Publishing posts"
+            "label": "Publishing posts",
+            "toolPatterns": [
+              "*post*",
+              "*publish*",
+              "*share*",
+              "*tweet*",
+              "*schedule*"
+            ]
           },
           {
             "capability": "cms",
-            "label": "Publishing to your site"
+            "label": "Publishing to your site",
+            "toolPatterns": [
+              "*publish*"
+            ]
           }
         ],
         "defaultBudgetMonthlyCents": 2500
@@ -1214,13 +1232,13 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2444,
-          "sha256": "66a3ae13680b1af62ccaf40f0b7bb7aa8222eafe19b693ab48165f48f49085e5"
+          "sizeBytes": 2502,
+          "sha256": "84c25f4c73939a5bbe623b1c4e7c302b85a6198a9a75dc50ca331d166b231659"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:c1eb922cbdb507df75e0adc9d69bd9037fec7e9e9a8bc6fe31c2d17c1966ddce",
+      "contentHash": "sha256:c024567ab373655bfdb435d53905579f5b2fcc9ebfaee74579176d40f4076cd3",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Sorts your inbox, drafts replies and sends a daily digest",
@@ -1299,7 +1317,12 @@
           {
             "capability": "email",
             "label": "Sending email",
-            "destructiveLabel": "Deleting email"
+            "destructiveLabel": "Deleting email",
+            "toolPatterns": [
+              "*send*",
+              "*reply*",
+              "*forward*"
+            ]
           }
         ],
         "defaultBudgetMonthlyCents": 3000,
@@ -1430,13 +1453,13 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2396,
-          "sha256": "ad69a3ab2167248b2547e9114836e57d1b5bfe1eeb9956675d0f420592052f9f"
+          "sizeBytes": 2457,
+          "sha256": "cf630305d0d533448a0ac6ebe3d95eb0c2870c288d005c2b9ec551da8c2827ab"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:4d050718510a4c33d32cff13fe7bf627f67d7d10105d9c2d39f6116b7b31acc2",
+      "contentHash": "sha256:3cd15b1023f7eb5ac2276649399c8e6367822a33c1b192d26fd1a3e2d54d10e2",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Researches, writes and schedules your newsletter on time",
@@ -1515,7 +1538,12 @@
         "outwardActions": [
           {
             "capability": "newsletter",
-            "label": "Sending to your list"
+            "label": "Sending to your list",
+            "toolPatterns": [
+              "*send*",
+              "*schedule*",
+              "*publish*"
+            ]
           }
         ],
         "defaultBudgetMonthlyCents": 2000,
@@ -1841,13 +1869,13 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2262,
-          "sha256": "ab165d7f3432ad93714187f95074f0c75dd0efc5f7c4e812fc2ce8833ee18946"
+          "sizeBytes": 2363,
+          "sha256": "e6a1e533d2d3792d785827ea1af1eff281b7743165dfb333dded2548ab47a9b9"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:7ae05b4de0365604c530dc54e85cbcd3ae1fe101b278632f86cd0c4282c8926b",
+      "contentHash": "sha256:975dabccdfa323ba063bbddf474e5f03783e9cb4415145bf3fa296f982d2ed26",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Plans your social posts each week and keeps an eye on replies",
@@ -1941,7 +1969,16 @@
         "outwardActions": [
           {
             "capability": "social",
-            "label": "Posting"
+            "label": "Posting",
+            "toolPatterns": [
+              "*post*",
+              "*publish*",
+              "*share*",
+              "*tweet*",
+              "*schedule*",
+              "*reply*",
+              "*comment*"
+            ]
           }
         ],
         "defaultBudgetMonthlyCents": 2500
@@ -2056,13 +2093,13 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2039,
-          "sha256": "255fc1b58708c84698d0939ad53c267f64617d273e7e6800f53845d0d1e1111a"
+          "sizeBytes": 2101,
+          "sha256": "58df93f32695988c4cac556946628c29947c01ee688d3ba0063fcb573867381d"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:4c510c871cc75b81df4120dd7150d6fa057fd3d03253c8d21873ed2f29a49530",
+      "contentHash": "sha256:ea3051337b0da0b677711e2556ae07b7c60cebdc00749df93d25d55253a6ab42",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Sorts customer messages, drafts answers and escalates problems",
@@ -2128,7 +2165,13 @@
         "outwardActions": [
           {
             "capability": "inbox",
-            "label": "Replying to customers"
+            "label": "Replying to customers",
+            "toolPatterns": [
+              "*send*",
+              "*reply*",
+              "*forward*",
+              "*post*"
+            ]
           }
         ],
         "defaultBudgetMonthlyCents": 4000
@@ -2243,13 +2286,13 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2022,
-          "sha256": "ce56f26f78e93235420dfcf93f806ba9f3a137ee10068e61d55d2738b8d3a521"
+          "sizeBytes": 2101,
+          "sha256": "6eeeeaac2bef59f2c826cd1b324445832cf86c5766aa81ac8ea737aa0ef92d11"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:05265fa418a9bbf8dd46d1a4dc568165d9e25765f21071cbba0800ebe8c85665",
+      "contentHash": "sha256:7b122d948ee23d7630d4cbfdb9cef21b9fbeb6e71ecd467f9ae97ae01050d9fb",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Builds a simple website, shares previews and checks it every week",
@@ -2320,7 +2363,14 @@
         "outwardActions": [
           {
             "capability": "hosting",
-            "label": "Publishing to your live site"
+            "label": "Publishing to your live site",
+            "toolPatterns": [
+              "*deploy*",
+              "*publish*",
+              "*promote*",
+              "*alias*",
+              "*domain*"
+            ]
           }
         ],
         "defaultBudgetMonthlyCents": 3000

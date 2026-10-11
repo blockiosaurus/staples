@@ -143,7 +143,9 @@ describe("shipped Staples agent templates", () => {
 
       for (const action of rendered.outwardActions) {
         expect(rendered.requiredApps.map((app) => app.capability), label).toContain(action.capability);
+        expect(action.toolPatterns.length, label).toBeGreaterThan(0);
       }
+      if (rendered.readOnly) expect(rendered.outwardActions, label).toEqual([]);
     }
   });
 
@@ -156,7 +158,7 @@ describe("shipped Staples agent templates", () => {
     expect(text).toContain("With AgentMail");
     expect(rendered.agent.instructionsMarkdown).toContain("Call them: Dana Smith");
     expect(rendered.outwardActions).toEqual([
-      { capability: "email", label: "Sending email", destructiveLabel: "Deleting email" },
+      { capability: "email", label: "Sending email", destructiveLabel: "Deleting email", toolPatterns: ["*send*", "*reply*", "*forward*"] },
     ]);
     expect(rendered.routines.map((routine) => [routine.title, routine.cronExpression])).toEqual([
       ["Daily digest", "0 17 * * 1-5"],
@@ -212,6 +214,7 @@ describe("shipped Staples agent templates", () => {
   it("keeps the bookkeeper strictly read-only", async () => {
     const rendered = await renderRecommended("staples/bookkeeper");
     expect(rendered.outwardActions).toEqual([]);
+    expect(rendered.readOnly).toBe(true);
     const text = rendered.agent.instructionsMarkdown;
     expect(text).toContain("You are strictly read-only");
     for (const word of ["charges", "refunds", "payouts", "transfers", "invoices"]) expect(text).toContain(word);
@@ -251,6 +254,7 @@ describe("shipped Staples agent templates", () => {
         capability: "code",
         label: "Merging and pushing to the default branch",
         destructiveLabel: "Deleting branches or closing issues",
+        toolPatterns: ["*merge*", "*push*", "*create_or_update_file*", "*update_issue*", "*close*"],
       },
     ]);
   });
@@ -262,7 +266,10 @@ describe("shipped Staples agent templates", () => {
     expect(text).toContain("Preview deploys go to preview URLs only");
     expect(text).toContain("Never change DNS, domains, plans, billing");
     expect(text).toContain("Web address: use the free host address for now");
-    expect(rendered.outwardActions).toEqual([{ capability: "hosting", label: "Publishing to your live site" }]);
+    expect(rendered.outwardActions).toEqual([{
+      capability: "hosting", label: "Publishing to your live site",
+      toolPatterns: ["*deploy*", "*publish*", "*promote*", "*alias*", "*domain*"],
+    }]);
     expect(rendered.starterTasks.map((task) => task.title)).toEqual([
       "Build a one-page landing site and share a preview link",
     ]);

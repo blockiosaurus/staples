@@ -76,7 +76,8 @@
     {
       "capability": "email",
       "label": "Sending email",
-      "destructiveLabel": "Deleting email"
+      "destructiveLabel": "Deleting email",
+      "toolPatterns": ["*send*", "*reply*", "*forward*"]
     }
   ],
   "defaultBudgetMonthlyCents": 3000,

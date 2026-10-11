@@ -22,6 +22,13 @@ const SEMVER_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const CAPABILITY_PATTERN = /^[a-z][a-z0-9_-]*$/;
+/**
+ * Tool-name globs for an outward action: letters, digits, `_`, `-`, `.`, `:`
+ * and `*` (any run of characters). Matched case-insensitively against the
+ * whole tool name. At least one non-`*` character, so a pattern never
+ * matches every tool by accident.
+ */
+export const AGENT_TEMPLATE_TOOL_PATTERN = /^(?=.*[A-Za-z0-9])[A-Za-z0-9_.:*-]{1,80}$/;
 /** Question ids are used in `{{answers.<id>}}` placeholders. */
 export const AGENT_TEMPLATE_QUESTION_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
 
@@ -39,6 +46,16 @@ export const agentTemplateOutwardActionSchema = z
     capability: z.string().regex(CAPABILITY_PATTERN, "capability must be a lowercase identifier"),
     label: z.string().trim().min(1).max(200),
     destructiveLabel: z.string().trim().min(1).max(200).optional(),
+    /**
+     * Globs over tool names that perform this outward action (send, publish,
+     * deploy...). Install seeds an "ask first" rule for write-risk tools of
+     * the agent matching any of them; other writes (drafts, labels) are not
+     * gated by the template.
+     */
+    toolPatterns: z
+      .array(z.string().regex(AGENT_TEMPLATE_TOOL_PATTERN, "tool patterns use letters, digits, _ - . : and * only"))
+      .min(1)
+      .max(20),
   })
   .strict();
 
@@ -74,6 +91,7 @@ export const agentTemplateSidecarSchema = z
     recommendedAdapterType: z.string().trim().min(1).max(100).optional(),
     defaultBudgetMonthlyCents: z.number().int().min(0).optional(),
     preview: z.boolean().optional(),
+    readOnly: z.boolean().optional(),
     scheduleByAnswer: z
       .record(
         z.string().regex(SLUG_PATTERN, "task slugs must be lowercase URL slugs"),
@@ -143,6 +161,9 @@ export const agentTemplateSidecarSchema = z
           ctx.addIssue({ code: "custom", message: `scheduleByAnswer for "${taskSlug}" names unknown option "${optionId}"`, path: [...path, "cron", optionId] });
         }
       }
+    }
+    if (value.readOnly === true && value.outwardActions.length > 0) {
+      ctx.addIssue({ code: "custom", message: "a readOnly template cannot declare outwardActions", path: ["outwardActions"] });
     }
     const outwardCapabilities = value.outwardActions.map((action) => action.capability);
     if (new Set(outwardCapabilities).size !== outwardCapabilities.length) {
