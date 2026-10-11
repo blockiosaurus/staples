@@ -402,8 +402,31 @@ const TOOL_NAME_PATTERN_MAX_LENGTH = 120;
  */
 export function toolNamePatternMatches(pattern: string, name: string): boolean {
   if (!pattern || pattern.length > TOOL_NAME_PATTERN_MAX_LENGTH || !/[^*]/.test(pattern)) return false;
-  const source = pattern.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*");
-  return new RegExp(`^${source}$`, "i").test(name);
+  // Greedy two-pointer wildcard match (no regular expression, no exponential
+  // backtracking): on a mismatch, retry from the last `*`, letting it absorb
+  // one more character. Worst case is pattern length x name length.
+  const p = pattern.toLowerCase();
+  const n = name.toLowerCase();
+  let pi = 0;
+  let ni = 0;
+  let star = -1;
+  let starNi = 0;
+  while (ni < n.length) {
+    if (pi < p.length && p[pi] === "*") {
+      star = pi++;
+      starNi = ni;
+    } else if (pi < p.length && p[pi] === n[ni]) {
+      pi++;
+      ni++;
+    } else if (star >= 0) {
+      pi = star + 1;
+      ni = ++starNi;
+    } else {
+      return false;
+    }
+  }
+  while (pi < p.length && p[pi] === "*") pi++;
+  return pi === p.length;
 }
 
 /** `toolNamePatterns`: absent or empty means no restriction; otherwise any pattern matching any name. */

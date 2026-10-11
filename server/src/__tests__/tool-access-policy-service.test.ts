@@ -28,7 +28,8 @@ import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
-import { toolAccessPolicyService } from "../services/tool-access-policy.js";
+import { toolAccessPolicyService, toolNamePatternMatches } from "../services/tool-access-policy.js";
+import { createToolPolicySchema, toolAccessSelectorSchema, updateToolPolicySchema } from "@paperclipai/shared";
 import { toolAccessService } from "../services/tool-access.js";
 import { createToolGatewayService, ToolGatewayHttpError } from "../services/tool-gateway.js";
 
@@ -148,6 +149,40 @@ async function createApprovedToolAction(input: {
     .returning();
   return { decisionInput, invocation: recorded.invocation, actionRequest: updated };
 }
+
+describe("tool-name glob matching", () => {
+  it("matches case-insensitive whole names with * as the only wildcard", () => {
+    expect(toolNamePatternMatches("*send*", "gmail_SEND_email")).toBe(true);
+    expect(toolNamePatternMatches("send*", "resend")).toBe(false);
+    expect(toolNamePatternMatches("*send", "send")).toBe(true);
+    expect(toolNamePatternMatches("a*b*c", "aXXbYYc")).toBe(true);
+    expect(toolNamePatternMatches("a*b*c", "aXXbYYcd")).toBe(false);
+    expect(toolNamePatternMatches("send.e*", "sendXemail")).toBe(false);
+    expect(toolNamePatternMatches("**", "anything")).toBe(false);
+    expect(toolNamePatternMatches("x".repeat(121), "x".repeat(121))).toBe(false);
+  });
+
+  it("runs in linear-ish time on pathological patterns (no regex backtracking)", () => {
+    const started = performance.now();
+    for (const length of [18, 60, 240]) {
+      expect(toolNamePatternMatches("*a*a*a*a*a*a*a*a*a*a*a*a*b", "a".repeat(length))).toBe(false);
+      expect(toolNamePatternMatches(`${"*a".repeat(59)}*b`, "a".repeat(length))).toBe(false);
+    }
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+
+  it("validates toolNamePatterns on policy selectors and trust-rule selectors", () => {
+    const base = { name: "P", policyType: "require_approval" as const };
+    expect(createToolPolicySchema.safeParse({ ...base, selectors: { toolNamePatterns: ["*send*"] } }).success).toBe(true);
+    for (const toolNamePatterns of [["*"], ["x".repeat(121)], Array.from({ length: 51 }, (_, i) => `*t${i}*`), "*send*", [42]]) {
+      expect(createToolPolicySchema.safeParse({ ...base, selectors: { toolNamePatterns } }).success, JSON.stringify(toolNamePatterns).slice(0, 40)).toBe(false);
+    }
+    expect(updateToolPolicySchema.safeParse({ selectors: { toolNamePatterns: ["*"] } }).success).toBe(false);
+    // The typed selector keeps the patterns instead of stripping them.
+    expect(toolAccessSelectorSchema.parse({ toolNamePatterns: ["*send*"] })).toEqual({ toolNamePatterns: ["*send*"] });
+    expect(toolAccessSelectorSchema.safeParse({ toolNamePatterns: ["*"] }).success).toBe(false);
+  });
+});
 
 describeEmbeddedPostgres("tool access policy service", () => {
   let db!: ReturnType<typeof createDb>;
