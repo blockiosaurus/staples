@@ -113,7 +113,14 @@ import {
 } from "./helpers";
 import { PropertyPicker } from "./property-picker";
 import { PropertyChip, PropertyRow, PropertySection } from "./primitives";
-import { MoreFieldsToggle, isSectionHidden, useMoreFieldsExpanded } from "./more-fields";
+import {
+  MoreFieldsToggle,
+  executionHasContent as executionHasContentFn,
+  isSectionHidden,
+  relationshipsHaveContent as relationshipsHaveContentFn,
+  useMoreFieldsExpanded,
+  workspaceHasContent as workspaceHasContentFn,
+} from "./more-fields";
 import {
   buildWorkspaceSelectionUpdate,
   currentWorkspaceSelection,
@@ -2347,19 +2354,35 @@ export function IssueProperties({
     workspacePickerEligible || hasWorkspaceRuntimeControls || issue.currentExecutionWorkspace?.branchName
       || issue.currentExecutionWorkspace?.cwd || issue.executionWorkspaceId,
   );
-  const relationshipsHaveContent = Boolean(
-    issue.parentId || (issue.blockedBy ?? []).length > 0 || blockingIssues.length > 0 || childIssues.length > 0
-      || relatedTasks.length > 0 || pullRequests.length > 0 || workProductsError
-      || (remainingExternalObjects?.length ?? 0) > 0 || externalObjectsLoading || externalObjectsError,
-  );
-  const executionHasContent = Boolean(
-    !policyAvailable || reviewPolicyBadge || reviewerValues.length > 0 || approverValues.length > 0
-      || executionPolicy?.monitor || issue.watchdog,
-  );
-  const workspaceHasContent = Boolean(
-    hasWorkspaceOverride || issue.executionWorkspaceId || issue.currentExecutionWorkspace?.branchName
-      || issue.currentExecutionWorkspace?.cwd || hasWorkspaceRuntimeControls,
-  );
+  const relationshipsHaveContent = relationshipsHaveContentFn({
+    parentId: issue.parentId,
+    blockedByCount: (issue.blockedBy ?? []).length,
+    blockingCount: blockingIssues.length,
+    childCount: childIssues.length,
+    relatedTaskCount: relatedTasks.length,
+    pullRequestCount: pullRequests.length,
+    workProductsError,
+    externalObjectCount: remainingExternalObjects?.length ?? 0,
+    externalObjectsLoading,
+    externalObjectsError,
+  });
+  const executionHasContent = executionHasContentFn({
+    policyAvailable,
+    hasReviewPolicyBadge: Boolean(reviewPolicyBadge),
+    reviewerCount: reviewerValues.length,
+    approverCount: approverValues.length,
+    hasMonitor: Boolean(executionPolicy?.monitor || issue.executionState?.monitor || issue.monitorNextCheckAt),
+    hasWatchdog: Boolean(issue.watchdog),
+    currentExecutionLabel,
+    showScheduledRetryRow: Boolean(showScheduledRetryRow),
+  });
+  const workspaceHasContent = workspaceHasContentFn({
+    hasWorkspaceOverride,
+    executionWorkspaceId: issue.executionWorkspaceId,
+    branchName: issue.currentExecutionWorkspace?.branchName,
+    cwd: issue.currentExecutionWorkspace?.cwd,
+    hasRuntimeControls: hasWorkspaceRuntimeControls,
+  });
   const relationshipsHidden = isSectionHidden(relationshipsHaveContent, moreFieldsExpanded);
   const executionHidden = isSectionHidden(executionHasContent, moreFieldsExpanded);
   const workspaceHidden = isSectionHidden(workspaceHasContent, moreFieldsExpanded);

@@ -28,14 +28,14 @@ function writeExpanded(companyId: string | null | undefined, expanded: boolean) 
 
 /** Per-person, per-company "More fields" expanded state. Defaults to collapsed. */
 export function useMoreFieldsExpanded(companyId: string | null | undefined) {
-  const [expanded, setExpanded] = useState(() => readExpanded(companyId));
+  const [state, setState] = useState(() => ({ companyId, expanded: readExpanded(companyId) }));
+  // Re-sync when the company changes.
+  const expanded = state.companyId === companyId ? state.expanded : readExpanded(companyId);
   const toggle = useCallback(() => {
-    setExpanded((current) => {
-      const next = !current;
-      writeExpanded(companyId, next);
-      return next;
-    });
-  }, [companyId]);
+    const next = !expanded;
+    writeExpanded(companyId, next);
+    setState({ companyId, expanded: next });
+  }, [companyId, expanded]);
   return [expanded, toggle] as const;
 }
 
@@ -46,6 +46,54 @@ export function useMoreFieldsExpanded(companyId: string | null | undefined) {
  */
 export function isSectionHidden(hasContent: boolean, expanded: boolean) {
   return !hasContent && !expanded;
+}
+
+export function relationshipsHaveContent(input: {
+  parentId?: string | null;
+  blockedByCount: number;
+  blockingCount: number;
+  childCount: number;
+  relatedTaskCount: number;
+  pullRequestCount: number;
+  workProductsError?: boolean;
+  externalObjectCount: number;
+  externalObjectsLoading?: boolean;
+  externalObjectsError?: boolean;
+}): boolean {
+  return Boolean(
+    input.parentId || input.blockedByCount > 0 || input.blockingCount > 0 || input.childCount > 0
+      || input.relatedTaskCount > 0 || input.pullRequestCount > 0 || input.workProductsError
+      || input.externalObjectCount > 0 || input.externalObjectsLoading || input.externalObjectsError,
+  );
+}
+
+export function executionHasContent(input: {
+  policyAvailable: boolean;
+  hasReviewPolicyBadge: boolean;
+  reviewerCount: number;
+  approverCount: number;
+  hasMonitor: boolean;
+  hasWatchdog: boolean;
+  currentExecutionLabel?: string | null;
+  showScheduledRetryRow?: boolean;
+}): boolean {
+  return Boolean(
+    !input.policyAvailable || input.hasReviewPolicyBadge || input.reviewerCount > 0 || input.approverCount > 0
+      || input.hasMonitor || input.hasWatchdog || input.currentExecutionLabel || input.showScheduledRetryRow,
+  );
+}
+
+export function workspaceHasContent(input: {
+  hasWorkspaceOverride: boolean;
+  executionWorkspaceId?: string | null;
+  branchName?: string | null;
+  cwd?: string | null;
+  hasRuntimeControls: boolean;
+}): boolean {
+  return Boolean(
+    input.hasWorkspaceOverride || input.executionWorkspaceId || input.branchName || input.cwd
+      || input.hasRuntimeControls,
+  );
 }
 
 export function MoreFieldsToggle({
@@ -71,7 +119,7 @@ export function MoreFieldsToggle({
         className={cn("h-3 w-3 shrink-0 transition-transform", expanded && "rotate-90")}
         aria-hidden
       />
-      More fields
+      {expanded ? "Fewer fields" : "More fields"}
     </button>
   );
 }

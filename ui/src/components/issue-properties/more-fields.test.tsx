@@ -5,6 +5,9 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MoreFieldsToggle,
+  executionHasContent,
+  relationshipsHaveContent,
+  workspaceHasContent,
   isSectionHidden,
   moreFieldsStorageKey,
   useMoreFieldsExpanded,
@@ -107,5 +110,51 @@ describe("issue properties More fields disclosure", () => {
     await act(async () => root.unmount());
     getSpy.mockRestore();
     setSpy.mockRestore();
+  });
+
+  it("toggle label flips to Fewer fields when expanded", async () => {
+    const root = createRoot(container);
+    await act(async () => root.render(<Harness companyId="c1" />));
+    const button = container.querySelector("button") as HTMLButtonElement;
+    await act(async () => button.click());
+    expect(button.textContent).toContain("Fewer fields");
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => root.unmount());
+  });
+});
+
+describe("section content predicates", () => {
+  const rel = { blockedByCount: 0, blockingCount: 0, childCount: 0, relatedTaskCount: 0, pullRequestCount: 0, externalObjectCount: 0 };
+  const exe = { policyAvailable: true, hasReviewPolicyBadge: false, reviewerCount: 0, approverCount: 0, hasMonitor: false, hasWatchdog: false };
+  const ws = { hasWorkspaceOverride: false, hasRuntimeControls: false };
+
+  it("Relationships", () => {
+    expect(relationshipsHaveContent(rel)).toBe(false);
+    expect(relationshipsHaveContent({ ...rel, blockedByCount: 1 })).toBe(true);
+    expect(relationshipsHaveContent({ ...rel, blockingCount: 1 })).toBe(true);
+    expect(relationshipsHaveContent({ ...rel, parentId: "p" })).toBe(true);
+    expect(relationshipsHaveContent({ ...rel, childCount: 1 })).toBe(true);
+    expect(relationshipsHaveContent({ ...rel, relatedTaskCount: 1 })).toBe(true);
+    expect(relationshipsHaveContent({ ...rel, pullRequestCount: 1 })).toBe(true);
+  });
+
+  it("Execution", () => {
+    expect(executionHasContent(exe)).toBe(false);
+    expect(executionHasContent({ ...exe, reviewerCount: 1 })).toBe(true);
+    expect(executionHasContent({ ...exe, approverCount: 1 })).toBe(true);
+    expect(executionHasContent({ ...exe, hasWatchdog: true })).toBe(true);
+    expect(executionHasContent({ ...exe, currentExecutionLabel: "Running" })).toBe(true);
+    expect(executionHasContent({ ...exe, showScheduledRetryRow: true })).toBe(true);
+    expect(executionHasContent({ ...exe, hasMonitor: true })).toBe(true);
+    expect(executionHasContent({ ...exe, policyAvailable: false })).toBe(true);
+  });
+
+  it("Workspace", () => {
+    expect(workspaceHasContent(ws)).toBe(false);
+    expect(workspaceHasContent({ ...ws, hasWorkspaceOverride: true })).toBe(true);
+    expect(workspaceHasContent({ ...ws, executionWorkspaceId: "w" })).toBe(true);
+    expect(workspaceHasContent({ ...ws, branchName: "b" })).toBe(true);
+    expect(workspaceHasContent({ ...ws, cwd: "/x" })).toBe(true);
+    expect(workspaceHasContent({ ...ws, hasRuntimeControls: true })).toBe(true);
   });
 });
