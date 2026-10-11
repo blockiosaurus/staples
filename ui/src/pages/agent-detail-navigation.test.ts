@@ -3,6 +3,7 @@ import {
   AGENT_ADVANCED_STORAGE_KEY,
   AGENT_DETAIL_NAVIGATION,
   agentActiveViewFromPath,
+  agentChannelCount,
   agentAdvancedNavigation,
   agentPrimaryNavigation,
   isAgentAdvancedActive,
@@ -55,6 +56,9 @@ describe("agent detail navigation", () => {
   it("parses the active view from a pathname", () => {
     expect(agentActiveViewFromPath("/agents/a/permissions")).toBe("permissions");
     expect(agentActiveViewFromPath("/agents/a/keys")).toBe("api-keys");
+    expect(agentActiveViewFromPath("/TES/agents/test-agent/permissions")).toBe("permissions");
+    expect(agentActiveViewFromPath("/TES/agents/test-agent/keys")).toBe("api-keys");
+    expect(agentActiveViewFromPath("/TES/agents/test-agent")).toBeNull();
     expect(agentActiveViewFromPath("/agents/a")).toBeNull();
     expect(agentActiveViewFromPath("/activity")).toBeNull();
   });
@@ -100,5 +104,18 @@ describe("agent detail navigation", () => {
     const broken = { getItem: () => { throw new Error("x"); }, setItem: () => { throw new Error("x"); } };
     expect(readAgentAdvancedOpen(broken)).toBe(false);
     expect(() => writeAgentAdvancedOpen(true, broken)).not.toThrow();
+  });
+
+  it("counts only visible, non-archived endpoints for the agent", () => {
+    const eps = [
+      { assignedAgentId: "a", status: "active", provider: "agentmail" },
+      { assignedAgentId: "a", status: "active", provider: "slack" },
+      { assignedAgentId: "a", status: "archived", provider: "agentmail" },
+      { assignedAgentId: "b", status: "active", provider: "agentmail" },
+    ];
+    expect(agentChannelCount(eps, "a", () => true)).toBe(3 - 1);
+    expect(agentChannelCount(eps, "a", (p) => p === "agentmail")).toBe(1);
+    expect(agentChannelCount(eps, "a", () => false)).toBe(0);
+    expect(agentChannelCount([], "a", () => true)).toBe(0);
   });
 });

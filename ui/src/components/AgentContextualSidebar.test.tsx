@@ -97,7 +97,7 @@ describe("AgentContextualSidebar", () => {
     expect(unknown).toContain('href="/agents/codexcoder/api-keys"');
     const nonEmpty = render("/agents/codexcoder/runtime", (c) => {
       c.setQueryData(queryKeys.chatEndpoints.list("company-1"), [
-        { id: "e1", assignedAgentId: "agent-1", status: "active", provider: "slack" },
+        { id: "e1", assignedAgentId: "agent-1", status: "active", provider: "agentmail" },
       ]);
       c.setQueryData(queryKeys.agents.keys("agent-1"), [{ id: "k1" }]);
     });
@@ -110,6 +110,40 @@ describe("AgentContextualSidebar", () => {
       c.setQueryData(queryKeys.chatEndpoints.list("company-1"), [
         { id: "e1", assignedAgentId: "other", status: "active", provider: "slack" },
         { id: "e2", assignedAgentId: "agent-1", status: "archived", provider: "slack" },
+      ]);
+    });
+    expect(markup).not.toContain('href="/agents/codexcoder/channels"');
+  });
+
+  it("opens Advanced on company-prefixed deep links", () => {
+    const markup = render("/TES/agents/codexcoder/permissions");
+    expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain("Permissions / Trust");
+    expect(render("/TES/activity/runs?agentId=agent-1")).toContain('aria-expanded="true"');
+  });
+
+  it("renders the forced-open toggle as non-interactive and the normal toggle as interactive", () => {
+    const forced = render("/TES/agents/codexcoder/permissions");
+    expect(forced).toContain('aria-disabled="true"');
+    const normal = render("/agents/codexcoder/overview");
+    expect(normal).not.toContain("aria-disabled");
+  });
+
+  it.each([false, true])("keeps Channels for default email regardless of the chat setting (%s)", (enabled) => {
+    const markup = render("/agents/codexcoder/runtime", (c) => {
+      c.setQueryData(queryKeys.instance.experimentalSettings, { enableChatConnectors: enabled });
+      c.setQueryData(queryKeys.chatEndpoints.list("company-1"), [
+        { id: "e1", assignedAgentId: "agent-1", status: "active", provider: "agentmail" },
+      ]);
+    });
+    expect(markup).toContain('href="/agents/codexcoder/channels"');
+  });
+
+  it("hides Channels when only chat-provider endpoints exist and chat is disabled", () => {
+    const markup = render("/agents/codexcoder/runtime", (c) => {
+      c.setQueryData(queryKeys.instance.experimentalSettings, { enableChatConnectors: false });
+      c.setQueryData(queryKeys.chatEndpoints.list("company-1"), [
+        { id: "e1", assignedAgentId: "agent-1", status: "active", provider: "slack" },
       ]);
     });
     expect(markup).not.toContain('href="/agents/codexcoder/channels"');

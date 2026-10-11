@@ -93,9 +93,34 @@ export function agentAdvancedNavigation() {
 
 /** Active local view from a pathname like /agents/:ref/:view; null when not an agent-detail path. */
 export function agentActiveViewFromPath(pathname: string): AgentLocalDetailView | null {
-  const match = /^\/agents\/[^/]+\/([^/]+)/.exec(pathname);
+  const match = /^(?:\/[^/]+)?\/agents\/[^/]+\/([^/]+)/.exec(pathname);
   if (!match) return null;
   return parseAgentDetailView(match[1]!);
+}
+
+export type AgentChannelEndpoint = {
+  assignedAgentId?: string | null;
+  status?: string | null;
+  provider?: string | null;
+};
+
+/** Non-archived, visible channel endpoints assigned to the agent; shared by the sidebar count and the Channels panel. */
+export function agentChannelEndpoints<T extends AgentChannelEndpoint>(
+  endpoints: ReadonlyArray<T>,
+  agentId: string,
+  isVisible: (provider: string | null | undefined) => boolean,
+): T[] {
+  return endpoints.filter(
+    (e) => e.assignedAgentId === agentId && e.status !== "archived" && isVisible(e.provider),
+  );
+}
+
+export function agentChannelCount(
+  endpoints: ReadonlyArray<AgentChannelEndpoint>,
+  agentId: string,
+  isVisible: (provider: string | null | undefined) => boolean,
+): number {
+  return agentChannelEndpoints(endpoints, agentId, isVisible).length;
 }
 
 /** True when the active view or the scoped Audit routes live inside Advanced. */

@@ -21,12 +21,14 @@ import { agentsApi } from "@/api/agents";
 import { chatEndpointsApi } from "@/api/chatEndpoints";
 import { useCompany } from "@/context/CompanyContext";
 import { queryKeys } from "@/lib/queryKeys";
+import { chatProviderVisible, useChatConnectorsEnabled } from "@/hooks/useChatConnectorsEnabled";
 import { ContextualSidebarFrame } from "./ContextualSidebarFrame";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { contextualSidebarStyles } from "./contextual-sidebar-styles";
 import {
   agentActiveViewFromPath,
   agentAdvancedNavigation,
+  agentChannelCount,
   agentDetailHref,
   agentPrimaryNavigation,
   isAgentAdvancedActive,
@@ -82,13 +84,14 @@ export function AgentContextualSidebar({
   const location = useLocation();
   const activeView = agentActiveViewFromPath(location.pathname);
   const auditActive =
-    /^\/activity/.test(location.pathname) &&
+    /^(?:\/[^/]+)?\/activity/.test(location.pathname) &&
     Boolean(resolvedId) &&
     new URLSearchParams(location.search).get("agentId") === resolvedId;
   const advancedActive = isAgentAdvancedActive({ activeView, auditActive });
   const [storedOpen, setStoredOpen] = useState(() => readAgentAdvancedOpen());
   const advancedOpen = resolveAgentAdvancedOpen({ storedOpen, advancedActive });
 
+  const { enabled: chatEnabled, githubEnabled } = useChatConnectorsEnabled();
   const { data: endpoints } = useQuery({
     queryKey: queryKeys.chatEndpoints.list(selectedCompanyId ?? ""),
     queryFn: () => chatEndpointsApi.list(selectedCompanyId!),
@@ -101,12 +104,14 @@ export function AgentContextualSidebar({
   });
   const counts = {
     channels: endpoints
-      ? endpoints.filter((e) => e.assignedAgentId === resolvedId && e.status !== "archived").length
+      ? agentChannelCount(endpoints, resolvedId ?? "", (provider) =>
+          chatProviderVisible(provider, chatEnabled, githubEnabled))
       : undefined,
     apiKeys: keys ? keys.length : undefined,
   };
 
   const toggleAdvanced = () => {
+    if (advancedActive) return;
     const next = !advancedOpen;
     setStoredOpen(next);
     writeAgentAdvancedOpen(next);
@@ -161,13 +166,14 @@ export function AgentContextualSidebar({
             type="button"
             aria-expanded={advancedOpen}
             aria-controls={advancedId}
-            onClick={toggleAdvanced}
+            aria-disabled={advancedActive || undefined}
+            onClick={advancedActive ? undefined : toggleAdvanced}
             className={`${contextualSidebarStyles.sectionLabel} flex w-full items-center gap-1 text-left hover:text-foreground`}
           >
             <ChevronRight className={advancedOpen ? "size-3 rotate-90" : "size-3"} aria-hidden />
             Advanced
           </button>
-          <div id={advancedId} hidden={!advancedOpen}>
+          <div id={advancedId}>
             {advancedOpen && (
               <>
                 {advancedSections.map((section) => renderSection(section))}
