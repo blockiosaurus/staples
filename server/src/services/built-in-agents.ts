@@ -371,7 +371,7 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
     inheritCompanyAdapterType: true,
     defaultSkillKeys: ASSISTANT_DEFAULT_SKILL_KEYS,
     bundle: {
-      stockVersion: "2026-10-11g",
+      stockVersion: "2026-10-11h",
       instructions: {
         entryFile: "AGENTS.md",
         files: {

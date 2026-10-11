@@ -20,7 +20,7 @@ export const ASSISTANT_READ_TOOL_NAMES = [
   "paperclip_connection", "paperclip_list_agents", "paperclip_list_projects", "paperclip_search_tasks",
   "paperclip_read_task", "paperclip_list_deliverables", "paperclip_read_document", "paperclip_list_document_revisions",
   "paperclip_pending_approvals", "paperclip_get_agent", "paperclip_get_project", "paperclip_list_skills",
-  "paperclip_get_skill", "staples_company_signals", "staples_briefing_inputs", "staples_get_company_brief",
+  "paperclip_get_skill", "staples_company_signals", "staples_briefing_inputs", "staples_get_briefing", "staples_get_company_brief",
 ] as const;
 
 /** Low-risk writes. Governed actions (finish, block, delete, configure, approvals) are not exposed. */
@@ -249,6 +249,12 @@ function assistantCapabilities(db: Db): Capability[] {
           blockedTasks: rows(blocked).slice(0, BRIEFING_CAP).map((v) => pick(v, taskFields)),
         };
       },
+    },
+    {
+      name: "staples_get_briefing",
+      description: "Read this person's Home briefing: the ranked items waiting on them (questions, confirmations, approvals, blocked work, budget), each with a title, why it matters now, a link and a recommendation when one is stored on the item. Computed for the acting person only. Use it for \"what needs me\", \"what's going on\", \"catch me up\".",
+      schema: z.object(companyField).strict(),
+      run: async (p, _a, api) => ({ briefing: await api(p, "GET", `/companies/${pathId(p.company.id)}/briefing`) }),
     },
     {
       name: "staples_answer_question", write: true,

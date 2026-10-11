@@ -150,6 +150,22 @@ describe("assistant tools", () => {
     expect(propose.description).toMatch(/company brief/i);
   });
 
+  it("reads the briefing as the acting person through the briefing route, company-scoped", async () => {
+    const briefing = { items: [{ id: "i1", title: "Approve hire" }] };
+    const seen: Array<Request["actor"]> = [];
+    const dispatch = vi.fn<ApiDispatch>(async (principal) => { seen.push(principal.actor); return briefing; });
+    const t = tools(dispatch);
+    expect(ASSISTANT_READ_TOOL_NAMES).toContain("staples_get_briefing");
+    expect(t.definitions(false).map((d) => d.name)).toContain("staples_get_briefing");
+    const read = await t.call(context("viewer"), "staples_get_briefing", {});
+    expect(read.isError).toBeUndefined();
+    expect(read.structuredContent).toEqual({ briefing });
+    expect(dispatch).toHaveBeenCalledWith(expect.anything(), "GET", `/companies/${companyId}/briefing`);
+    expect(seen[0]).toMatchObject({ type: "board", userId: "person-1", companyIds: [companyId] });
+    const other = await t.call(context(), "staples_get_briefing", { companyId: "99999999-9999-4999-8999-999999999999" });
+    expect(other).toMatchObject({ isError: true });
+  });
+
   it("exposes read tools only to viewers and refuses their writes", async () => {
     const dispatch = vi.fn<ApiDispatch>(async () => ({}));
     const t = tools(dispatch);
