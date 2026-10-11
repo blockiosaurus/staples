@@ -629,6 +629,11 @@ export const queryKeys = {
   signals: (companyId: string) => ["company-signals", companyId] as const,
   companyBrief: (companyId: string) => ["company-brief", companyId] as const,
   briefing: (companyId: string) => ["briefing", companyId] as const,
+  agentTemplates: {
+    list: (companyId: string) => ["agent-templates", companyId] as const,
+    detail: (companyId: string, slug: string) => ["agent-templates", companyId, slug] as const,
+  },
+  agentAutopilot: (agentId: string) => ["agent-autopilot", agentId] as const,
   uiPreferences: (companyId: string, userId: string) =>
     ["ui-preferences", companyId, userId] as const,
   primaryAgent: {

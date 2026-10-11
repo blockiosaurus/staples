@@ -68,7 +68,7 @@ describe("resolveSurface", () => {
   });
 
   it("shows only home, assistant, tasks, agents for a fresh company", () => {
-    expect(visibleIds(ctx(), prefs())).toEqual(["nav.home", "nav.assistant", "nav.tasks", "nav.agents"]);
+    expect(visibleIds(ctx(), prefs())).toEqual(["nav.home", "nav.assistant", "nav.tasks", "nav.agents", "nav.hire"]);
   });
 
   it("puts the core Home surface first in the top group", () => {
@@ -153,6 +153,7 @@ describe("resolveSurface", () => {
       "nav.assistant",
       "nav.tasks",
       "nav.agents",
+      "nav.hire",
     ]);
     expect(states.some((s) => s.shouldPersistReveal)).toBe(false);
   });
@@ -191,6 +192,26 @@ describe("surfaceForPath", () => {
     expect(surfaceForPath(SURFACE_REGISTRY, "/audit")?.id).toBe("nav.audit");
   });
 
+  it("adds a core Hire an agent surface after Agents in the org group", () => {
+    const ids = SURFACE_REGISTRY.map((surface) => surface.id);
+    expect(ids.indexOf("nav.hire")).toBe(ids.indexOf("nav.agents") + 1);
+    expect(byId("nav.hire")).toMatchObject({
+      label: "Hire an agent",
+      to: "/agents/new",
+      group: "org",
+      tier: "core",
+    });
+    expect(byId("nav.hire").icon.displayName ?? "").toMatch(/UserPlus|user-plus/i);
+    expect(resolveSurface(byId("nav.hire"), ctx({ signals: null }), prefs())).toMatchObject({ visible: true, source: "core" });
+  });
+
+  it("maps the marketplace and the custom form to Hire an agent, other agent paths to Agents", () => {
+    expect(surfaceForPath(SURFACE_REGISTRY, "/agents/new")?.id).toBe("nav.hire");
+    expect(surfaceForPath(SURFACE_REGISTRY, "/agents/new/custom")?.id).toBe("nav.hire");
+    expect(surfaceForPath(SURFACE_REGISTRY, "/agents/all")?.id).toBe("nav.agents");
+    expect(surfaceForPath(SURFACE_REGISTRY, "/agents/newsletter-bot")?.id).toBe("nav.agents");
+  });
+
   it("maps approvals to Decisions", () => {
     expect(surfaceForPath(SURFACE_REGISTRY, "/approvals/pending")?.id).toBe("nav.decisions");
   });
@@ -217,7 +238,7 @@ describe("renderableSurfaces", () => {
       }),
     );
     const ids = (ready: boolean) => renderableSurfaces(states, ready).map((s) => s.surface.id);
-    expect(ids(false)).toEqual(["nav.home", "nav.assistant", "nav.tasks", "nav.projects", "nav.goals", "nav.agents"]);
+    expect(ids(false)).toEqual(["nav.home", "nav.assistant", "nav.tasks", "nav.projects", "nav.goals", "nav.agents", "nav.hire"]);
     expect(ids(true)).toEqual(expect.arrayContaining(["nav.chat", "nav.cases", "nav.decisions"]));
   });
 });

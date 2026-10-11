@@ -7,7 +7,8 @@ export function NewAgent() {
   useEffect(() => {
     setBreadcrumbs([
       { label: "Agents", href: "/agents" },
-      { label: "New agent" },
+      { label: "Hire an agent", href: "/agents/new" },
+      { label: "Build your own" },
     ]);
   }, [setBreadcrumbs]);
   return <NewAgentSetup />;

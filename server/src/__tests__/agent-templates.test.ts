@@ -272,6 +272,7 @@ describe("agentTemplatesService", () => {
           { title: "Weekly review", schedule: "0 16 * * 5", timezone: "America/New_York" },
         ],
         defaultBudgetMonthlyCents: 2000,
+        readOnly: false,
       },
     ]);
   });

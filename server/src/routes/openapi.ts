@@ -1381,6 +1381,8 @@ const browserUseOperations = [
 ] as const;
 
 const BOARD_ONLY_OPERATIONS = new Set([
+  "GET /api/companies/{companyId}/agent-templates",
+  "GET /api/companies/{companyId}/agent-templates/{slug}",
   "GET /api/agents/{agentId}/autopilot",
   "PUT /api/agents/{agentId}/autopilot/{capability}",
   "GET /api/companies/{companyId}/decision-model",
@@ -5963,6 +5965,26 @@ registry.registerPath({
   description: "Board members except viewers. Pass baseRevisionId (the revision you edited) to get a 409 instead of overwriting someone else's change. Logged as company.brief_updated.",
   request: { params: z.object({ companyId: z.string().uuid() }), body: jsonBody(updateCompanyBriefSchema) },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 409: r.conflict },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/agent-templates",
+  tags: ["agents"],
+  summary: "List hireable agent templates",
+  description: "The Hire an agent marketplace: card data for every Staples agent template (name, tagline, icon, marketplace category, the apps it needs, what it asks before doing, its recurring routines with cron and time zone, default monthly budget, whether it is read-only). Preview templates are hidden. Board members of the company only; agents cannot read it. Hiring goes through the Assistant's plans.",
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/agent-templates/{slug}",
+  tags: ["agents"],
+  summary: "Get a hireable agent template",
+  description: "One template's card data plus its description (markdown) and setup questions, with {{company.name}} and {{person.name}} resolved for this company and the requesting person. Board members of the company only. Unknown and preview templates are a 404.",
+  request: { params: z.object({ companyId: z.string().uuid(), slug: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
 });
 
 registry.registerPath({

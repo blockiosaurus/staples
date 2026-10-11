@@ -100,7 +100,7 @@ describe("useSurfaces / SurfaceTracker", () => {
   it("treats failed signals with no data as unknown", async () => {
     mocks.signals.mockReturnValue({ signals: null, loaded: false, failed: true });
     await mount();
-    expect(observed.visible.map((s) => s.surface.id)).toEqual(["nav.home", "nav.assistant", "nav.tasks", "nav.agents"]);
+    expect(observed.visible.map((s) => s.surface.id)).toEqual(["nav.home", "nav.assistant", "nav.tasks", "nav.agents", "nav.hire"]);
   });
 
   it("exposes preference load failures", async () => {

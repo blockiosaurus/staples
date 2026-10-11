@@ -540,7 +540,7 @@ function Setup({
       appearanceDraft.clear();
       setScreen("saved");
       navigate(
-        `/agents/new?${new URLSearchParams({ name: response.agent.name, adapterType, runnerProvider, createdAgentId: response.agent.id })}`,
+        `/agents/new/custom?${new URLSearchParams({ name: response.agent.name, adapterType, runnerProvider, createdAgentId: response.agent.id })}`,
         { replace: true },
       );
       cache.setQueryData(
@@ -596,7 +596,7 @@ function Setup({
         initialAdapter={adapterType}
         onClose={() => navigate("/agents/all")}
         onContinue={(basics) =>
-          navigate(`/agents/new?${new URLSearchParams(basics)}`, {
+          navigate(`/agents/new/custom?${new URLSearchParams(basics)}`, {
             replace: true,
           })
         }

@@ -23,7 +23,7 @@ function NewAgentDialogContent({ companyId, onClose }: { companyId: string | nul
       onInvite={companyId ? () => setInvite(true) : undefined}
       onContinue={(basics) => {
         onClose();
-        navigate(`/agents/new?${new URLSearchParams(basics)}`);
+        navigate(`/agents/new/custom?${new URLSearchParams(basics)}`);
       }}
     />
   );

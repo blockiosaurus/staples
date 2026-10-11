@@ -1194,6 +1194,7 @@ describe("Layout", () => {
     for (const pathname of [
       "/PAP/agents/all",
       "/PAP/agents/new",
+      "/PAP/agents/new/custom",
       "/PAP/routines",
     ]) {
       currentPathname = pathname;

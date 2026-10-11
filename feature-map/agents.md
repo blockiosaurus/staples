@@ -16,7 +16,7 @@ Implementation: [hiring](../ui/src/pages/NewAgent.tsx), [configuration](../ui/sr
 
 ### `hire-agent`
 
-Use New agent from the roster or `/agents/new`.
+Use New agent from the roster, or Hire an agent (`/agents/new`) to pick a ready-made agent the Assistant sets up; the custom form is `/agents/new/custom`.
 
 ### `agent-configuration`
 

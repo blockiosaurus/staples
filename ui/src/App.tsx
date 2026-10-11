@@ -89,6 +89,7 @@ import { PluginSettings } from "./pages/PluginSettings";
 import { AdapterManager } from "./pages/AdapterManager";
 import { PluginPage } from "./pages/PluginPage";
 import { NewAgent } from "./pages/NewAgent";
+import { MarketplacePage } from "./staples/marketplace/MarketplacePage";
 import { AuthPage } from "./pages/Auth";
 import { BoardClaimPage } from "./pages/BoardClaim";
 import { AssistantConnection } from "./pages/apps/AssistantConnection";
@@ -252,7 +253,8 @@ function boardRoutes(combinedInboxTasksEnabled: boolean) {
           element={<Agents />}
         />
       ))}
-      <Route path="agents/new" element={<NewAgent />} />
+      <Route path="agents/new" element={<MarketplacePage />} />
+      <Route path="agents/new/custom" element={<NewAgent />} />
       <Route path="agents/:agentId" element={<AgentDetail />} />
       <Route path="agents/:agentId/:tab" element={<AgentDetail />} />
       <Route path="agents/:agentId/runs/:runId" element={<AgentDetail />} />
@@ -641,6 +643,7 @@ export function App() {
             <Route key={tab} path={`agents/${tab}`} element={<UnprefixedBoardRedirect />} />
           ))}
           <Route path="agents/new" element={<UnprefixedBoardRedirect />} />
+          <Route path="agents/new/custom" element={<UnprefixedBoardRedirect />} />
           <Route path="agents/:agentId" element={<UnprefixedBoardRedirect />} />
           <Route path="agents/:agentId/:tab" element={<UnprefixedBoardRedirect />} />
           <Route path="agents/:agentId/runs/:runId" element={<UnprefixedBoardRedirect />} />

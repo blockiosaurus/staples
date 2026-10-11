@@ -29,7 +29,7 @@ describe("currentPageContext", () => {
     expect(currentPageContext({ pathname, companyPrefix: "PAP" })?.entity).toEqual(entity);
   });
 
-  it.each(["/PAP/issues", "/PAP/issues/all", "/PAP/agents/all", "/PAP/agents/new", "/PAP/approvals/pending", "/PAP/skills/studio", "/PAP/dashboard"])(
+  it.each(["/PAP/issues", "/PAP/issues/all", "/PAP/agents/all", "/PAP/agents/new", "/PAP/agents/new/custom", "/PAP/approvals/pending", "/PAP/skills/studio", "/PAP/dashboard"])(
     "has no entity on list or non-entity page %s",
     (pathname) => {
       const context = currentPageContext({ pathname, companyPrefix: "PAP" });

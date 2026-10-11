@@ -101,7 +101,7 @@ test("new OpenRouter agents use the visible binding and provider model catalog",
     tested = route.request().postDataJSON();
     await route.fulfill({ json: { status: "pass", checks: [], testedAt: new Date().toISOString() } });
   });
-  await page.goto(`/${prefix}/agents/new?name=OpenRouter+binding+regression&adapterType=opencode_local`);
+  await page.goto(`/${prefix}/agents/new/custom?name=OpenRouter+binding+regression&adapterType=opencode_local`);
   await expect(page.getByText("Existing authentication — not managed by Connections", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Responsible user’s connection/ })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Select model (required)", exact: true }).click();

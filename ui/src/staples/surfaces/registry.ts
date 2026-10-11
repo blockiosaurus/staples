@@ -18,6 +18,7 @@ import {
   Sparkles,
   Target,
   Unplug,
+  UserPlus,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -218,6 +219,17 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     to: "/agents",
     matchRoots: ["agents", "org"],
     icon: Users,
+    group: "org",
+    tier: "core",
+  },
+  {
+    // Core: every company has an Assistant to hand the hire to (nav.assistant is core too).
+    id: "nav.hire",
+    label: "Hire an agent",
+    to: "/agents/new",
+    matchRoots: [],
+    matchPaths: ["agents/new"],
+    icon: UserPlus,
     group: "org",
     tier: "core",
   },

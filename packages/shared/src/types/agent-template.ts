@@ -114,6 +114,8 @@ export interface AgentTemplateSummary {
   /** `timezone` is "person" or an IANA zone, as written in TASK.md. */
   routines: { title: string; schedule: string; timezone: string }[];
   defaultBudgetMonthlyCents: number | null;
+  /** The agent never changes anything in connected services (sidecar `readOnly`). */
+  readOnly: boolean;
 }
 
 export interface AgentTemplateDetail extends AgentTemplateSummary {

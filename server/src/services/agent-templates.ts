@@ -517,6 +517,7 @@ function summarize(template: LoadedTemplate): AgentTemplateSummary {
       timezone: asString(task.frontmatter.timezone) ?? "UTC",
     })),
     defaultBudgetMonthlyCents: sidecar.defaultBudgetMonthlyCents ?? null,
+    readOnly: sidecar.readOnly === true,
   };
 }
 

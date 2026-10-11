@@ -233,7 +233,7 @@ export async function runConnectionFlow(input: ConnectionFlowInput) {
   const { page, api, execution, evidence, settings, company, environment, config } = input;
   const { harness, mode } = connectionCell(execution);
   const agentName = `Connection QA ${input.nonce}`;
-  const agentURL = `${api.origin}/${company.issuePrefix}/agents/new?${new URLSearchParams({ name: agentName, adapterType: execution.profile.adapterType, runnerProvider: harness.id })}`;
+  const agentURL = `${api.origin}/${company.issuePrefix}/agents/new/custom?${new URLSearchParams({ name: agentName, adapterType: execution.profile.adapterType, runnerProvider: harness.id })}`;
   const connection = await createConnectionThroughUi(input, agentURL);
   await expect(page.getByRole("heading", { name: "Configure your agent", exact: true })).toBeVisible({ timeout: 120_000 });
   const environmentSelect = page.getByRole("combobox", { name: "Environment", exact: true });
