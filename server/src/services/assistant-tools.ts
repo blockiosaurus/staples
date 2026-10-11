@@ -8,6 +8,7 @@ import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { publicMcpCapabilities } from "./public-mcp/capabilities.js";
+import { planTemplateSummariesFor } from "./plan-templates.js";
 import { APPROVAL_DECISION_PATH, PROPOSABLE_AGENT_ROLES, ProposedActionError, pinBriefProposalBody, pinPlanProposalBody, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
 import { assistantHireDefaults, planHireInheritsConnection } from "./plans.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
@@ -448,19 +449,21 @@ async function proposeAction(db: Db, context: AssistantToolContext, args: Record
     ({ category } = await validateGovernedAction(db, { method, path, body, staleCheckPath: staleCheck?.path ?? null }, context.companyId));
     // Brief proposals (and a plan's brief) replace a specific revision; the server pins it.
     if (category === "brief") body = await pinBriefProposalBody(db, context.companyId, body);
-    if (category === "plan") body = await pinPlanProposalBody(db, context.companyId, body);
+    if (category === "plan") body = await pinPlanProposalBody(db, context.companyId, body, { userId: context.userId });
     hash = proposedActionHash({ method, path, body });
   } catch (error) {
     if (error instanceof ProposedActionError) throw new McpCapabilityError(error.message);
     throw error;
   }
   const planHireConnections = category === "plan" ? await planHireConnectionsFor(db, context.companyId, body) : [];
+  const planTemplateSummaries = category === "plan" ? await planTemplateSummariesFor(body) : [];
   const approvalContext = category === "approval" ? await approvalDecisionContext(db, context.companyId, path) : null;
   const proposedAction = {
     version: 1 as const, method: method as (typeof PROPOSED_ACTION_METHODS)[number], path, body, summary, category, hash,
     ...(staleCheck ? { staleCheck: { path: staleCheck.path, field: "updatedAt" as const, expected: staleCheck.expected } } : {}),
     ...(approvalContext ? { context: approvalContext } : {}),
     ...(planHireConnections.length ? { planHireConnections } : {}),
+    ...(planTemplateSummaries.length ? { planTemplateSummaries } : {}),
   };
   const interaction = await issueThreadInteractionService(db).create(issue, {
     kind: "request_confirmation",

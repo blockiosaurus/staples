@@ -871,7 +871,13 @@ describe("openapi routes", () => {
     const apply = spec.paths["/api/companies/{companyId}/plans/apply"].post;
     expect(apply.security).toEqual([{BoardSessionAuth: []}]);
     expect(apply["x-paperclip-authorization"]).toEqual({actor: "board", sessionBound: true});
-    expect(apply.requestBody.content["application/json"].schema.required).toEqual(["tasks"]);
+    // Tasks may be left out when an agent uses a template (it brings its own starter tasks).
+    const body = apply.requestBody.content["application/json"].schema;
+    expect(body.required ?? []).not.toContain("tasks");
+    expect(body.properties.agents.items.properties).toHaveProperty("templateRef");
+    expect(body.properties.agents.items.properties).toHaveProperty("templateAnswers");
+    expect(apply.parameters.map((parameter: {name: string; in: string}) => `${parameter.in}:${parameter.name}`))
+      .toEqual(expect.arrayContaining(["header:Idempotency-Key", "header:X-Staples-Timezone"]));
     expect(apply.responses["201"]).toBeDefined();
     expect(apply.responses["200"].description).toMatch(/Already applied/);
     expect(apply.description).toMatch(/Idempotency-Key/);

@@ -1242,6 +1242,7 @@ export type {
   RequestConfirmationSecretProposalPayload,
   RequestConfirmationProposedActionPayload,
   ProposedActionContext,
+  PlanTemplateSummary,
   RequestConfirmationProposedActionResult,
   ProposedActionMethod,
   ProposedActionCategory,
@@ -1784,7 +1785,10 @@ export {
   type UpdateCompanyBrief,
 } from "./validators/company-brief.js";
 export {
+  applyPlanAgentSchema,
   applyPlanSchema,
+  PLAN_TEMPLATE_ANSWERS_MAX_KEYS,
+  PLAN_TEMPLATE_REF_PATTERN,
   planAgentCreationOrder,
   planStructureErrors,
   planTaskCreationOrder,

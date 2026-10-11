@@ -1417,6 +1417,24 @@ export interface RequestConfirmationProposedActionPayload {
    * connection. `provider` is the AI provider key, or null for a connection pool.
    */
   planHireConnections?: Array<{ clientKey: string; provider: string | null }>;
+  /**
+   * Plan proposals only. Server-computed display data, not hashed and never
+   * read by apply: one line per templated hire. `needs` holds one entry per
+   * required (non-optional) capability, e.g. "AgentMail or Gmail";
+   * `asksBefore` the outward-action labels.
+   */
+  planTemplateSummaries?: PlanTemplateSummary[];
+}
+
+export interface PlanTemplateSummary {
+  clientKey: string;
+  ref: string;
+  /** The template's name, e.g. "Email secretary". */
+  name: string;
+  needs: string[];
+  asksBefore: string[];
+  routineCount: number;
+  budgetMonthlyCents: number | null;
 }
 
 /** What the server read from the approval a proposal decides on, shown as "From the approval". */

@@ -1672,6 +1672,15 @@ export const requestConfirmationProposedActionPayloadSchema = z.object({
     clientKey: z.string().max(200),
     provider: z.string().max(40).nullable(),
   })).max(100).optional(),
+  planTemplateSummaries: z.array(z.object({
+    clientKey: z.string().max(200),
+    ref: z.string().max(200),
+    name: z.string().max(200),
+    needs: z.array(z.string().max(400)).max(20),
+    asksBefore: z.array(z.string().max(200)).max(20),
+    routineCount: z.number().int().min(0).max(100),
+    budgetMonthlyCents: z.number().int().min(0).nullable(),
+  })).max(8).optional(),
 }).superRefine((value, ctx) => {
   const max = proposedActionBodyMaxBytes(value.category);
   const bytes = proposedActionBodyBytes(value.body);

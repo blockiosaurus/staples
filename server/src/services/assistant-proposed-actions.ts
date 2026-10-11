@@ -4,6 +4,15 @@ import { agents, approvals, companySecrets, issues, toolConnections, type Db } f
 import { PROPOSABLE_HIRE_ADAPTER_TYPES, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { companyBriefService } from "./company-brief.js";
 import {
+  assistantAdapterType,
+  planTemplateContext,
+  planTemplateErrorMessage,
+  renderPlanTemplates,
+  withTemplateDefaults,
+  type AgentTemplatesService,
+  type PlanTemplates,
+} from "./plan-templates.js";
+import {
   AGENT_ROLES,
   COMPANY_BRIEF_MAX_CHARS,
   applyPlanSchema,
@@ -168,16 +177,25 @@ function assertSafeAgentCreate(body: unknown) {
  * violation as a sentence, or null. Shared by the governed allowlist (at
  * proposal and claim) and by POST /plans/apply itself.
  */
-export function planRuleViolation(plan: ApplyPlan): string | null {
+export function planRuleViolation(plan: ApplyPlan, options: { resolved?: boolean } = {}): string | null {
   for (const agent of plan.agents) {
-    const role = agent.role.trim().toLowerCase();
-    if (PRIVILEGED_AGENT_ROLES.includes(role)) {
-      return `Agent ${agent.clientKey}: hiring a CEO-level agent must be done in the Agents page.`;
+    // A templated agent may leave role and adapterType to its template until
+    // the server fills them in (at proposal and again at apply, `resolved`).
+    if (agent.role === undefined || agent.adapterType === undefined || agent.name === undefined) {
+      if (options.resolved || !agent.templateRef) {
+        return `Agent ${agent.clientKey}: name, role and adapterType are required.`;
+      }
     }
-    if (!PROPOSABLE_AGENT_ROLES.includes(agent.role)) {
-      return `Agent ${agent.clientKey}: role must be one of ${PROPOSABLE_AGENT_ROLES.join(", ")}.`;
+    if (agent.role !== undefined) {
+      const role = agent.role.trim().toLowerCase();
+      if (PRIVILEGED_AGENT_ROLES.includes(role)) {
+        return `Agent ${agent.clientKey}: hiring a CEO-level agent must be done in the Agents page.`;
+      }
+      if (!PROPOSABLE_AGENT_ROLES.includes(agent.role)) {
+        return `Agent ${agent.clientKey}: role must be one of ${PROPOSABLE_AGENT_ROLES.join(", ")}.`;
+      }
     }
-    if (!(PROPOSABLE_HIRE_ADAPTER_TYPES as readonly string[]).includes(agent.adapterType)) {
+    if (agent.adapterType !== undefined && !(PROPOSABLE_HIRE_ADAPTER_TYPES as readonly string[]).includes(agent.adapterType)) {
       return `Agent ${agent.clientKey}: adapterType must be one of ${PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}. ${AGENT_SETTINGS_HINT}`;
     }
   }
@@ -358,19 +376,61 @@ export const PLAN_BRIEF_CHANGED_MESSAGE = "The brief changed since the Assistant
  * server sets brief.baseRevisionId to the current revision (null when there
  * is none). A different non-null base from the Assistant means it read an
  * older brief; a missing or null base while a brief exists means it never
- * read it, and is refused too. Plans without a brief are returned unchanged.
+ * read it, and is refused too.
+ *
+ * Templated agents are rendered with their answers for the run's person and
+ * company (invalid answers or an unknown template refuse the proposal), the
+ * template version is pinned (an Assistant-supplied version must be the
+ * current one), and the hire fields the template supplies are filled in so
+ * the card shows exactly what apply will hire.
  */
-export async function pinPlanProposalBody(db: Db, companyId: string, body: unknown): Promise<unknown> {
-  const record = body as Record<string, unknown>;
+export async function pinPlanProposalBody(
+  db: Db, companyId: string, body: unknown,
+  options: { userId?: string | null; templates?: AgentTemplatesService } = {},
+): Promise<unknown> {
+  let record = body as Record<string, unknown>;
   const brief = record?.brief as Record<string, unknown> | undefined;
-  if (!brief) return body;
-  const current = await currentBriefRevisionId(db, companyId);
-  const proposed = typeof brief.baseRevisionId === "string" ? brief.baseRevisionId : null;
-  if (!proposed && current) throw new ProposedActionError(BRIEF_BASE_REQUIRED_MESSAGE);
-  if (proposed && proposed !== current) {
-    throw new ProposedActionError("The brief changed since you read it. Read it again with staples_get_company_brief and redo the plan's brief.");
+  if (brief) {
+    const current = await currentBriefRevisionId(db, companyId);
+    const proposed = typeof brief.baseRevisionId === "string" ? brief.baseRevisionId : null;
+    if (!proposed && current) throw new ProposedActionError(BRIEF_BASE_REQUIRED_MESSAGE);
+    if (proposed && proposed !== current) {
+      throw new ProposedActionError("The brief changed since you read it. Read it again with staples_get_company_brief and redo the plan's brief.");
+    }
+    record = { ...record, brief: { ...brief, baseRevisionId: current } };
   }
-  return { ...record, brief: { ...brief, baseRevisionId: current } };
+  const plan = parseProposablePlan(record);
+  if (!plan.agents.some((agent) => agent.templateRef)) return record;
+  const ctx = await planTemplateContext(db, companyId, options.userId ?? null);
+  const rendered: PlanTemplates = new Map();
+  for (const agent of plan.agents) {
+    if (!agent.templateRef) continue;
+    try {
+      const one = await renderPlanTemplates({ ...plan, agents: [agent] }, ctx, options.templates);
+      rendered.set(agent.clientKey, one.get(agent.clientKey)!);
+    } catch (error) {
+      const message = planTemplateErrorMessage(agent.clientKey, agent.templateRef, error);
+      if (message) throw new ProposedActionError(message);
+      throw error;
+    }
+  }
+  const filled = withTemplateDefaults(plan, rendered, { fallbackAdapterType: await assistantAdapterType(db, companyId), pinVersion: true });
+  const violation = planRuleViolation(filled, { resolved: true });
+  if (violation) throw new ProposedActionError(violation);
+  // Keep the body as proposed (key order, untouched fields), with the templated agents filled in.
+  const byKey = new Map(filled.agents.map((agent) => [agent.clientKey, agent] as const));
+  const agentsIn = Array.isArray(record.agents) ? record.agents as Array<Record<string, unknown>> : [];
+  return {
+    ...record,
+    agents: agentsIn.map((agent) => {
+      const resolved = byKey.get(String(agent.clientKey));
+      return resolved?.templateRef ? stripUndefined({ ...agent, ...resolved }) : agent;
+    }),
+  };
+}
+
+function stripUndefined(value: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
 /** True when a stored plan proposal's brief (if any) still replaces the current brief. */

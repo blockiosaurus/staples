@@ -787,6 +787,7 @@ export type {
   RequestConfirmationSecretProposalPayload,
   RequestConfirmationProposedActionPayload,
   ProposedActionContext,
+  PlanTemplateSummary,
   RequestConfirmationProposedActionResult,
   ProposedActionMethod,
   ProposedActionCategory,

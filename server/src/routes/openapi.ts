@@ -341,6 +341,7 @@ type OpenApiPathRegistration = {
   request?: {
     params?: z.ZodTypeAny;
     query?: z.ZodTypeAny;
+    headers?: z.ZodTypeAny;
     body?: {
       content: Record<string, { schema: unknown }>;
       required?: boolean;
@@ -602,7 +603,7 @@ function normalizeResponses(responses: Record<string, OpenApiResponse> = {}) {
 
 function parametersFromSchema(
   schema: z.ZodTypeAny,
-  location: "path" | "query",
+  location: "path" | "query" | "header",
 ) {
   const objectSchema = unwrapSchema(schema);
   if (zodTypeName(objectSchema) !== "object") return [];
@@ -646,6 +647,12 @@ class OpenAPIRegistry {
         normalizedOperation.parameters = [
           ...((normalizedOperation.parameters as unknown[]) ?? []),
           ...parametersFromSchema(request.query, "query"),
+        ];
+      }
+      if (request?.headers) {
+        normalizedOperation.parameters = [
+          ...((normalizedOperation.parameters as unknown[]) ?? []),
+          ...parametersFromSchema(request.headers, "header"),
         ];
       }
       if (request?.body) {
@@ -5960,9 +5967,10 @@ registry.registerPath({
   path: "/api/companies/{companyId}/plans/apply",
   tags: ["companies"],
   summary: "Apply a starter plan",
-  description: "The person, in their own interactive board session (never an agent, the Assistant run, an MCP connection or a board API key; viewers are read-only), creates an optional brief, goal and project, new agents and 1 to 25 tasks in one step. Usually run by the browser after the person confirms an Assistant plan proposal. References, cycles, roles (never ceo), adapters (local CLI adapters only), assignees (in this company, never the Assistant) and the brief base revision are checked before anything is created. Agents are hired through the agent-hire path (approvals apply; tasks for a hire awaiting approval are created unassigned in the backlog and linked to the approval); everything else is written in one transaction afterwards. If that fails after a hire, the response names the agents that were created. A retry with the same idempotency key (Idempotency-Key header or body idempotencyKey) reuses agents already hired and, once applied, returns the stored result with 200; the same key with a different plan is a 409. Logged as plan.applied.",
+  description: "The person, in their own interactive board session (never an agent, the Assistant run, an MCP connection or a board API key; viewers are read-only), creates an optional brief, goal and project, new agents and up to 25 tasks in one step (at least one task unless an agent uses a templateRef). Usually run by the browser after the person confirms an Assistant plan proposal. References, cycles, roles (never ceo), adapters (local CLI adapters only), assignees (in this company, never the Assistant) and the brief base revision are checked before anything is created. Agents are hired through the agent-hire path (approvals apply; tasks for a hire awaiting approval are created unassigned in the backlog and linked to the approval); everything else is written in one transaction afterwards. If that fails after a hire, the response names the agents that were created. A retry with the same idempotency key (Idempotency-Key header or body idempotencyKey) reuses agents already hired and, once applied, returns the stored result with 200; the same key with a different plan is a 409. A templated agent (templateRef staples/<slug>, setup templateAnswers, templateVersion pinned at proposal) is installed from its Staples agent template at that pinned version: its skills are added to the company library, it is hired with the rendered instructions, guarded by server-seeded access rules (ask first for outward and destructive tools, or block every write for a read-only template), and given its routines (paused and unassigned while the hire awaits approval) and starter tasks, after a Connect task for each required service the company has not connected. The optional X-Staples-Timezone header (IANA zone) sets the time zone those routines run on (default UTC). Logged as plan.applied, with routine.created and tool_policy.created for template installs.",
   request: {
     params: z.object({ companyId: z.string().uuid() }),
+    headers: z.object({ "Idempotency-Key": z.string().optional(), "X-Staples-Timezone": z.string().optional() }),
     body: jsonBody(applyPlanSchema),
   },
   responses: {
@@ -5971,7 +5979,7 @@ registry.registerPath({
     400: r.badRequest,
     401: r.unauthorized,
     403: r.forbidden,
-    409: { description: "The company brief changed since the plan's base revision, the idempotency key was used for a different plan, or the plan is being applied right now" },
+    409: { description: "The company brief changed since the plan's base revision, a templated agent's pinned template version is no longer current, the idempotency key was used for a different plan, or the plan is being applied right now" },
     422: { description: "The plan is invalid or not allowed, or a hire failed (code plan_partially_applied names agents already created)" },
   },
 });

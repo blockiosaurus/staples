@@ -20,8 +20,17 @@ import {
   issues,
   projectGoals,
   projects,
+  companySkills,
+  routines,
+  routineTriggers,
+  toolApplications,
+  toolCatalogEntries,
+  toolConnections,
+  toolPolicies,
+  toolProfileBindings,
+  toolProfiles,
 } from "@paperclipai/db";
-import { ASSISTANT_BUILT_IN_AGENT_KEY } from "@paperclipai/shared";
+import { ASSISTANT_BUILT_IN_AGENT_KEY, type AgentTemplateAnswers, type PaperclipQuestionSetQuestion } from "@paperclipai/shared";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { errorHandler } from "../middleware/index.js";
 import { withBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
@@ -34,6 +43,11 @@ import { claimPlanApplication, planHash, takeOverPlanApplication } from "../serv
 import { applyPlanSchema } from "@paperclipai/shared";
 import { aiConnectionService } from "../services/ai-connections.js";
 import { planHireConnectionsFor } from "../services/assistant-tools.js";
+import { agentTemplatesService } from "../services/agent-templates.js";
+import { agentInstructionsService } from "../services/agent-instructions.js";
+import { approvalService } from "../services/approvals.js";
+import { teamsCatalogService } from "../services/teams-catalog.js";
+import { toolAccessPolicyService } from "../services/tool-access-policy.js";
 
 const support = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = support.supported ? describe : describe.skip;
@@ -699,4 +713,317 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
     const [failed] = await db.select().from(activityLog).where(and(eq(activityLog.companyId, s.companyId), eq(activityLog.action, "plan.apply_failed")));
     expect(failed!.details).toMatchObject({ createdAgents: { editor: { id: response.body.partial.agents.editor.id } } });
   }, 60_000);
+  describe("agent templates", () => {
+    const templates = agentTemplatesService();
+    function recommended(questions: PaperclipQuestionSetQuestion[]): AgentTemplateAnswers {
+      const answers: AgentTemplateAnswers = {};
+      for (const question of questions) {
+        const picks = (question.options ?? []).filter((option) => option.recommended).map((option) => option.id);
+        if (question.answerMode === "text") answers[question.id] = question.initialText ?? "";
+        else if (question.answerMode === "multi_select") answers[question.id] = picks;
+        else answers[question.id] = picks[0] ?? "";
+      }
+      return answers;
+    }
+    async function templatedAgent(clientKey: string, ref: string, extra: Record<string, unknown> = {}) {
+      const detail = await templates.get(ref, { companyName: "Plan Co", personName: "Pat" });
+      return { clientKey, templateRef: ref, templateVersion: detail.version, templateAnswers: recommended(detail.setupQuestions), adapterType: "claude_local", ...extra };
+    }
+    const apply = (app: express.Express, companyId: string, body: unknown, key?: string) => {
+      let req = request(app).post(`/api/companies/${companyId}/plans/apply`).set("Origin", ORIGIN).set("X-Staples-Timezone", "Europe/Berlin");
+      if (key) req = req.set("Idempotency-Key", key);
+      return req.send(body);
+    };
+    async function templatePolicies(agentId: string) {
+      return (await db.select().from(toolPolicies)).filter((row) =>
+        (row.selectors as Record<string, unknown>).agentId === agentId && (row.config as Record<string, unknown> | null)?.source === "agent_template");
+    }
+    /** A connected tool the agent may call (company-wide allow profile), with catalog entries by name and risk. */
+    async function toolFixture(companyId: string, tools: Array<[string, "read" | "write" | "destructive"]>) {
+      const [application] = await db.insert(toolApplications).values({
+        companyId, applicationKey: `fixture-${randomUUID()}`, name: `Fixture ${randomUUID()}`, type: "mcp_http", status: "active",
+      }).returning();
+      const [connection] = await db.insert(toolConnections).values({
+        companyId, applicationId: application!.id, name: `Connection ${randomUUID()}`, uid: `test/${randomUUID()}`,
+        transport: "mcp_remote", status: "active", enabled: true, config: { url: "https://example.invalid/mcp" },
+      }).returning();
+      const entries = new Map<string, string>();
+      for (const [name, riskLevel] of tools) {
+        const [entry] = await db.insert(toolCatalogEntries).values({
+          companyId, applicationId: application!.id, connectionId: connection!.id, name, toolName: name, riskLevel,
+          versionHash: randomUUID(), schemaHash: randomUUID(),
+        }).returning();
+        entries.set(name, entry!.id);
+      }
+      const [profile] = await db.insert(toolProfiles).values({ companyId, profileKey: `profile-${randomUUID()}`, name: "All tools", defaultAction: "allow" }).returning();
+      await db.insert(toolProfileBindings).values({ companyId, profileId: profile!.id, targetType: "company", targetId: companyId });
+      return (agentId: string, toolName: string) => toolAccessPolicyService(db).decide({
+        companyId, actor: { actorType: "agent", actorId: agentId, agentId },
+        request: { connectionId: connection!.id, catalogEntryId: entries.get(toolName)!, toolName },
+      });
+    }
+
+    it("installs a coding agent: instructions, catalog and vendored skills, routines with schedules, connect and starter tasks, guard rules and its record", async () => {
+      const s = await seed();
+      const { app, wakeup } = buildApp(sessionActor(s));
+      const plan = { agents: [await templatedAgent("dev", "staples/coding-agent")], tasks: [] };
+      const response = await apply(app, s.companyId, plan);
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      const result = response.body;
+      expect(result.agents.dev).toMatchObject({ templateRef: "staples/coding-agent", approvalId: null });
+      const [dev] = await db.select().from(agents).where(eq(agents.id, result.agents.dev.id));
+      const rendered = await templates.render("staples/coding-agent", null, plan.agents[0]!.templateAnswers, { companyName: dev!.name ? `Plan Co` : "", personName: "Pat", personTimezone: "Europe/Berlin" });
+      expect(dev).toMatchObject({ name: rendered.agent.name, role: "engineer", adapterType: "claude_local", budgetMonthlyCents: 6000 });
+
+      // Instructions: the rendered AGENTS.md, with the person's name filled in.
+      const instructions = await agentInstructionsService(db).readFile(dev!, "AGENTS.md");
+      expect(instructions.content).toContain("Never push to the default branch");
+      expect(instructions.content).toContain("Pat");
+      expect(instructions.content).not.toMatch(/\{\{/);
+
+      // Skills: catalog skills installed from the skills catalog, vendored skills imported, all attached.
+      const skillRows = await db.select().from(companySkills).where(eq(companySkills.companyId, s.companyId));
+      const keys = skillRows.map((row) => row.key);
+      for (const key of [
+        "paperclipai/bundled/software-development/github-pr-workflow",
+        "paperclipai/bundled/paperclip-operations/issue-triage",
+        "paperclipai/bundled/quality/qa-acceptance",
+      ]) expect(keys).toContain(key);
+      const vendored = skillRows.filter((row) => ["github-issue-sorting", "repo-health-check"].includes(row.slug));
+      expect(vendored).toHaveLength(2);
+      const desired = ((dev!.adapterConfig as Record<string, any>).paperclipSkillSync?.desiredSkills ?? []) as Array<string | { key: string }>;
+      const desiredKeys = desired.map((entry) => (typeof entry === "string" ? entry : entry.key));
+      for (const key of ["paperclipai/bundled/software-development/github-pr-workflow", "paperclipai/bundled/paperclip-operations/issue-triage",
+        "paperclipai/bundled/quality/qa-acceptance", ...vendored.map((row) => row.key)]) {
+        expect(desiredKeys).toContain(key);
+      }
+
+      // Routines: active, assigned, one schedule trigger each on the person's time zone.
+      const routineRows = await db.select().from(routines).where(eq(routines.companyId, s.companyId));
+      expect(routineRows.map((row) => row.title).sort()).toEqual(rendered.routines.map((routine) => routine.title).sort());
+      expect(result.routines.map((routine: { id: string }) => routine.id).sort()).toEqual(routineRows.map((row) => row.id).sort());
+      for (const row of routineRows) {
+        expect(row).toMatchObject({ assigneeAgentId: dev!.id, status: "active" });
+        const triggers = await db.select().from(routineTriggers).where(eq(routineTriggers.routineId, row.id));
+        const expected = rendered.routines.find((routine) => routine.title === row.title)!;
+        expect(triggers).toHaveLength(1);
+        expect(triggers[0]).toMatchObject({ kind: "schedule", cronExpression: expected.cronExpression, timezone: "Europe/Berlin", enabled: true });
+        expect(triggers[0]!.nextRunAt).toBeTruthy();
+      }
+
+      // Tasks: "Connect GitHub" first, the starter task blocked by it, both assigned.
+      const connect = result.tasks["dev~connect-code"];
+      const starter = result.tasks["dev~starter-1"];
+      expect(connect).toMatchObject({ assigneeAgentId: dev!.id, status: "todo" });
+      expect(starter).toMatchObject({ assigneeAgentId: dev!.id });
+      const [connectRow] = await db.select().from(issues).where(eq(issues.id, connect.id));
+      expect(connectRow!.title).toBe("Connect GitHub");
+      expect(connectRow!.description).toContain("connection_request");
+      expect(connectRow!.description).toContain("`github`");
+      const blockers = await db.select().from(issueRelations).where(eq(issueRelations.relatedIssueId, starter.id));
+      expect(blockers.map((row) => row.issueId)).toEqual([connect.id]);
+      const woken = wakeup.mock.calls.map((call) => ((call as unknown[])[1] as { payload: { issueId: string } }).payload.issueId);
+      expect(woken).toContain(connect.id);
+
+      // Access rules: ask first for destructive calls and for outward writes; drafts and other writes are untouched.
+      const rules = await templatePolicies(dev!.id);
+      expect(rules.map((rule) => [(rule.config as Record<string, unknown>).templateRule, rule.policyType, rule.priority]).sort())
+        .toEqual([["destructive", "require_approval", 50], ["outward", "require_approval", 50]]);
+      const decide = await toolFixture(s.companyId, [
+        ["merge_pull_request", "write"], ["create_branch", "write"], ["delete_branch", "destructive"], ["get_issue", "read"],
+      ]);
+      await expect(decide(dev!.id, "merge_pull_request")).resolves.toMatchObject({ decision: "require_approval" });
+      await expect(decide(dev!.id, "delete_branch")).resolves.toMatchObject({ decision: "require_approval" });
+      await expect(decide(dev!.id, "create_branch")).resolves.toMatchObject({ decision: "allow" });
+      await expect(decide(dev!.id, "get_issue")).resolves.toMatchObject({ decision: "allow" });
+      // Other agents are not affected by this agent's rules.
+      await expect(decide(s.staffId, "merge_pull_request")).resolves.toMatchObject({ decision: "allow" });
+
+      // The template record, server-written.
+      expect((dev!.metadata as Record<string, any>).staplesTemplate).toMatchObject({
+        ref: "staples/coding-agent", version: rendered.version, readOnly: false,
+        outwardActions: [expect.objectContaining({ capability: "code", toolPatterns: expect.arrayContaining(["*merge*"]) })],
+        requiredApps: [expect.objectContaining({ capability: "code", anyOf: ["github"] })],
+      });
+
+      // Activity: routines and rules.
+      const actions = (await db.select().from(activityLog).where(eq(activityLog.companyId, s.companyId))).map((row) => row.action);
+      expect(actions.filter((action) => action === "routine.created")).toHaveLength(routineRows.length);
+      expect(actions.filter((action) => action === "tool_policy.created")).toHaveLength(2);
+
+      // Template agents are hires, not installed catalog teams.
+      expect(await teamsCatalogService(db).listInstalledCatalogTeams(s.companyId)).toEqual([]);
+    }, 180_000);
+
+    it("re-applying, or retrying after a partial failure, creates no duplicate skills, rules or routines", async () => {
+      const s = await seed();
+      let calls = 0;
+      let failSecond = true;
+      const built = buildApp(sessionActor(s), {
+        hireAgent: async (actor, companyId, body, origin) => {
+          calls += 1;
+          if (failSecond && calls === 2) return { statusCode: 422, json: { error: "Adapter unavailable" } };
+          return injectApiRequest(built.api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin });
+        },
+      });
+      const plan = {
+        agents: [await templatedAgent("dev", "staples/coding-agent"), await templatedAgent("research", "staples/researcher")],
+        tasks: [{ clientKey: "kickoff", title: "Kick off", assigneeClientKey: "dev" }],
+      };
+      const first = await apply(built.app, s.companyId, plan, "interaction-templates");
+      expect(first.status).toBe(422);
+      expect(first.body.code).toBe("plan_partially_applied");
+      const devId = first.body.partial.agents.dev.id as string;
+      // The hired agent is guarded straight away, before the rest of the plan exists.
+      expect(await templatePolicies(devId)).toHaveLength(2);
+      expect(await db.select().from(routines).where(eq(routines.companyId, s.companyId))).toHaveLength(0);
+      const skillsAfterFirst = (await db.select().from(companySkills).where(eq(companySkills.companyId, s.companyId))).length;
+
+      failSecond = false;
+      const retried = await apply(built.app, s.companyId, plan, "interaction-templates");
+      expect(retried.status, JSON.stringify(retried.body)).toBe(201);
+      expect(retried.body.agents.dev.id).toBe(devId);
+      expect(await templatePolicies(devId)).toHaveLength(2);
+      expect(await templatePolicies(retried.body.agents.research.id)).toHaveLength(1);
+      const routineCount = (await db.select().from(routines).where(eq(routines.companyId, s.companyId))).length;
+      expect(routineCount).toBe(retried.body.routines.length);
+      // Both agents' skills went in before their hires on the first attempt; the retry adds none.
+      const skillsAfterRetry = await db.select().from(companySkills).where(eq(companySkills.companyId, s.companyId));
+      expect(skillsAfterRetry.length).toBe(skillsAfterFirst);
+      const researchSlugs = (await templates.render("staples/researcher", null, plan.agents[1]!.templateAnswers, { companyName: "", personName: "", personTimezone: "UTC" }))
+        .vendoredSkills.map((skill) => skill.slug);
+      for (const slug of researchSlugs) expect(skillsAfterRetry.filter((row) => row.slug === slug)).toHaveLength(1);
+
+      const replayed = await apply(built.app, s.companyId, plan, "interaction-templates");
+      expect(replayed.status).toBe(200);
+      expect(replayed.body).toEqual(retried.body);
+      expect(await db.select().from(routines).where(eq(routines.companyId, s.companyId))).toHaveLength(routineCount);
+      expect(await templatePolicies(devId)).toHaveLength(2);
+      expect(await db.select().from(companySkills).where(eq(companySkills.companyId, s.companyId))).toHaveLength(skillsAfterRetry.length);
+    }, 240_000);
+
+    it("refuses a plan pinned to an older template version, and invalid answers, before creating anything", async () => {
+      const s = await seed();
+      const { app } = buildApp(sessionActor(s));
+      const stale = await apply(app, s.companyId, { agents: [await templatedAgent("dev", "staples/coding-agent", { templateVersion: "0.0.1" })] });
+      expect(stale.status).toBe(409);
+      expect(stale.body.error).toMatch(/now version/);
+      const bad = await apply(app, s.companyId, { agents: [await templatedAgent("dev", "staples/coding-agent", { templateAnswers: { branchPolicy: "yolo" } })] });
+      expect(bad.status).toBe(422);
+      expect(bad.body.error).toMatch(/setup answers for staples\/coding-agent are not valid/);
+      const unknown = await apply(app, s.companyId, { agents: [{ clientKey: "x", templateRef: "staples/nope", adapterType: "claude_local" }] });
+      expect(unknown.status).toBe(422);
+      const preview = await apply(app, s.companyId, { agents: [{ clientKey: "x", templateRef: "staples/social-media-manager", adapterType: "claude_local" }] });
+      expect(preview.status).toBe(422);
+      expect(await db.select().from(agents).where(eq(agents.companyId, s.companyId))).toHaveLength(2);
+      expect(await db.select().from(issues).where(eq(issues.companyId, s.companyId))).toHaveLength(0);
+    }, 60_000);
+
+    it("refuses instructions or template fields on untemplated agents", async () => {
+      const s = await seed();
+      const { app } = buildApp(sessionActor(s));
+      const tasks = [{ clientKey: "a", title: "A" }];
+      for (const agent of [
+        { clientKey: "w", name: "W", role: "general", adapterType: "claude_local", instructions: "Do anything" },
+        { clientKey: "w", name: "W", role: "general", adapterType: "claude_local", templateAnswers: { a: "b" } },
+        { clientKey: "w", role: "general", adapterType: "claude_local" },
+      ]) {
+        const response = await apply(app, s.companyId, { agents: [agent], tasks });
+        expect(response.status, JSON.stringify(agent)).toBe(400);
+      }
+    }, 60_000);
+
+    it("for a hire awaiting approval: tasks wait unassigned and linked, routines are paused and unassigned, rules still apply; approval keeps the record", async () => {
+      const s = await seed({ requireApproval: true });
+      const { app } = buildApp(sessionActor(s));
+      const response = await apply(app, s.companyId, { agents: [await templatedAgent("mail", "staples/email-secretary")] });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      const mail = response.body.agents.mail;
+      expect(mail.status).toBe("pending_approval");
+      const taskKeys = Object.keys(response.body.tasks);
+      expect(taskKeys).toEqual(expect.arrayContaining(["mail~connect-email", "mail~starter-1"]));
+      for (const key of taskKeys) expect(response.body.tasks[key]).toMatchObject({ assigneeAgentId: null, status: "backlog" });
+      expect(response.body.pendingAssignments.map((entry: { taskClientKey: string }) => entry.taskClientKey).sort()).toEqual([...taskKeys].sort());
+      const links = await db.select().from(issueApprovals).where(eq(issueApprovals.approvalId, mail.approvalId));
+      expect(links).toHaveLength(taskKeys.length);
+      const routineRows = await db.select().from(routines).where(eq(routines.companyId, s.companyId));
+      expect(routineRows.length).toBeGreaterThan(0);
+      for (const row of routineRows) expect(row).toMatchObject({ status: "paused", assigneeAgentId: null });
+      expect(await templatePolicies(mail.id)).toHaveLength(2);
+      // No optional calendar task: only required services get a connect task.
+      expect(taskKeys).not.toContain("mail~connect-calendar");
+
+      await approvalService(db).approve(mail.approvalId, s.userId);
+      const [approved] = await db.select().from(agents).where(eq(agents.id, mail.id));
+      expect(approved!.status).not.toBe("pending_approval");
+      expect((approved!.metadata as Record<string, any>).staplesTemplate).toMatchObject({ ref: "staples/email-secretary" });
+    }, 120_000);
+
+    it("blocks every write for a read-only template", async () => {
+      const s = await seed();
+      const { app } = buildApp(sessionActor(s));
+      const response = await apply(app, s.companyId, { agents: [await templatedAgent("books", "staples/bookkeeper")] });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      const books = response.body.agents.books.id as string;
+      const rules = await templatePolicies(books);
+      expect(rules.map((rule) => [rule.policyType, (rule.config as Record<string, unknown>).templateRule])).toEqual([["block", "read_only"]]);
+      const decide = await toolFixture(s.companyId, [["create_refund", "write"], ["create_payment_link", "write"], ["delete_customer", "destructive"], ["list_charges", "read"]]);
+      await expect(decide(books, "create_refund")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
+      await expect(decide(books, "create_payment_link")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
+      await expect(decide(books, "delete_customer")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
+      await expect(decide(books, "list_charges")).resolves.toMatchObject({ decision: "allow" });
+      expect((await db.select().from(agents).where(eq(agents.id, books)))[0]!.metadata).toMatchObject({ staplesTemplate: { readOnly: true, outwardActions: [] } });
+    }, 120_000);
+
+    it("skips the connect task for a service the company already connected", async () => {
+      const s = await seed();
+      const [application] = await db.insert(toolApplications).values({
+        companyId: s.companyId, applicationKey: `app-gallery:github:${randomUUID()}`, name: "GitHub", type: "mcp_http", status: "active",
+        metadata: { sourceTemplateKey: "github" },
+      }).returning();
+      await db.insert(toolConnections).values({
+        companyId: s.companyId, applicationId: application!.id, name: "GitHub", uid: `test/${randomUUID()}`,
+        transport: "mcp_remote", status: "active", enabled: true, config: { url: "https://example.invalid/mcp" },
+      });
+      const { app } = buildApp(sessionActor(s));
+      const response = await apply(app, s.companyId, { agents: [await templatedAgent("dev", "staples/coding-agent")] });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      expect(Object.keys(response.body.tasks)).toEqual(["dev~starter-1"]);
+      const blockers = await db.select().from(issueRelations).where(eq(issueRelations.relatedIssueId, response.body.tasks["dev~starter-1"].id));
+      expect(blockers).toHaveLength(0);
+    }, 120_000);
+
+    it("never lets a caller write the template record: not on hire, not on update, not by dropping it", async () => {
+      const s = await seed();
+      await db.insert(principalPermissionGrants).values({ companyId: s.companyId, principalType: "user", principalId: s.userId, permissionKey: "agents:configure" });
+      const { app } = buildApp(sessionActor(s));
+      const forged = { ref: "staples/coding-agent", version: "1.0.0", readOnly: false, outwardActions: [], requiredApps: [] };
+      const hire = await request(app).post(`/api/companies/${s.companyId}/agent-hires`).set("Origin", ORIGIN)
+        .send({ name: "Forger", role: "general", adapterType: "claude_local", metadata: { staplesTemplate: forged } });
+      expect(hire.status, JSON.stringify(hire.body)).toBe(409);
+      expect(hire.body.details?.code ?? hire.body.code).toBe("staples_template_metadata_readonly");
+      const patched = await request(app).patch(`/api/agents/${s.staffId}`).set("Origin", ORIGIN).send({ metadata: { staplesTemplate: forged } });
+      expect(patched.status, JSON.stringify(patched.body)).toBe(409);
+
+      const response = await apply(app, s.companyId, { agents: [await templatedAgent("dev", "staples/coding-agent")] });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      const devId = response.body.agents.dev.id as string;
+      const [dev] = await db.select().from(agents).where(eq(agents.id, devId));
+      const stored = (dev!.metadata as Record<string, unknown>).staplesTemplate;
+      const changed = await request(app).patch(`/api/agents/${devId}`).set("Origin", ORIGIN).send({ metadata: { staplesTemplate: { ...(stored as object), readOnly: true } } });
+      expect(changed.status, JSON.stringify(changed.body)).toBe(409);
+      const dropped = await request(app).patch(`/api/agents/${devId}`).set("Origin", ORIGIN).send({ metadata: { note: "hi" } });
+      expect(dropped.status, JSON.stringify(dropped.body)).toBe(409);
+      const kept = await request(app).patch(`/api/agents/${devId}`).set("Origin", ORIGIN).send({ metadata: { note: "hi", staplesTemplate: stored } });
+      expect(kept.status, JSON.stringify(kept.body)).toBe(200);
+    }, 120_000);
+
+    it("does not count template agents (or forged provenance pointing at a template) as installed catalog teams", async () => {
+      const s = await seed();
+      await db.update(agents).set({
+        metadata: { paperclip: { catalogTeam: { catalogId: "paperclipai:optional:staples:coding-agent", catalogKey: "paperclipai/optional/staples/coding-agent" } } },
+      }).where(eq(agents.id, s.staffId));
+      expect(await teamsCatalogService(db).listInstalledCatalogTeams(s.companyId)).toEqual([]);
+    }, 60_000);
+  });
 });

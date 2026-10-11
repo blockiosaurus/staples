@@ -9,6 +9,7 @@ import { authorizationDeniedDetails } from "../services/authorization.js";
 import { heartbeatService } from "../services/heartbeat.js";
 import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "../services/issue-assignment-wakeup.js";
 import { applyPlan, PlanPartiallyAppliedError, type PlanHireAgent } from "../services/plans.js";
+import { normalizePersonTimezone } from "../services/plan-templates.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 import { trustedBoardMutationOrigin } from "../middleware/board-mutation-guard.js";
 import { canInstallSharedAiConnectionForNewAgent } from "./ai-connections.js";
@@ -64,11 +65,13 @@ export function planRoutes(db: Db, options: PlanRoutesOptions) {
     const userId = req.actor.userId;
     const origin = trustedBoardMutationOrigin(req);
     const activityBase = { companyId, actorType: actor.actorType, actorId: actor.actorId, agentId: actor.agentId, runId: actor.runId };
+    // The browser's time zone: routines from agent templates run on it (not part of the plan's identity).
+    const personTimezone = normalizePersonTimezone(req.header("x-staples-timezone"));
 
     let applied: Awaited<ReturnType<typeof applyPlan>>;
     try {
       applied = await applyPlan(db, {
-        companyId, plan, userId, idempotencyKey,
+        companyId, plan, userId, idempotencyKey, personTimezone,
         hireAgent: (body) => options.hireAgent(req.actor, companyId, body, origin),
         canInstallSharedConnection: (binding) => canInstallSharedAiConnectionForNewAgent(db, req, companyId, binding),
         // The same check as assigning a task in the app (POST /issues), for every assignee.
@@ -112,6 +115,13 @@ export function planRoutes(db: Db, options: PlanRoutesOptions) {
         details: { title: task.title, identifier: task.identifier, source: "plan" },
       });
     }
+    for (const routine of applied.routines) {
+      await logActivity(db, {
+        ...activityBase, action: "routine.created", entityType: "routine", entityId: routine.id,
+        details: { title: routine.title, assigneeAgentId: routine.assigneeAgentId, source: "plan" },
+      });
+    }
+
     await logActivity(db, {
       ...activityBase, action: "plan.applied", entityType: "company", entityId: companyId,
       details: {
@@ -121,6 +131,7 @@ export function planRoutes(db: Db, options: PlanRoutesOptions) {
         agents: result.agents,
         tasks: Object.fromEntries(Object.entries(result.tasks).map(([key, task]) => [key, task.id])),
         pendingAssignments: result.pendingAssignments,
+        routines: (result.routines ?? []).map((routine) => routine.id),
         idempotencyKey,
       },
     });

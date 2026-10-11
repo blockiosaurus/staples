@@ -3,6 +3,8 @@ import { and, desc, eq, gt, isNull, lt, or } from "drizzle-orm";
 import { agents, planApplications, toolConnectionInstalls, type Db } from "@paperclipai/db";
 import {
   aiRuntimeConnectionBindingSchema,
+  createRoutineSchema,
+  createRoutineTriggerSchema,
   planAgentCreationOrder,
   planStructureErrors,
   planTaskCreationOrder,
@@ -12,6 +14,7 @@ import {
 } from "@paperclipai/shared";
 import { conflict, HttpError, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
+import { logActivity } from "./activity-log.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
 import { resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { canonicalJson, currentBriefRevisionId, planExistingAssigneeViolation, planRuleViolation } from "./assistant-proposed-actions.js";
@@ -19,7 +22,22 @@ import { writeCompanyBrief } from "./company-brief.js";
 import { getDefaultCompanyGoal, goalService } from "./goals.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
+import {
+  assistantAdapterType,
+  connectedAppSlugs,
+  ensureTemplateAgentSetup,
+  ensureTemplateSkills,
+  planTemplateContext,
+  planTemplateErrorMessage,
+  renderPlanTemplates,
+  routineSafeText,
+  templateTaskSpecs,
+  withTemplateDefaults,
+  type AgentTemplatesService,
+  type PlanTemplates,
+} from "./plan-templates.js";
 import { projectService } from "./projects.js";
+import { routineService } from "./routines.js";
 
 /**
  * Hires one agent through the real agent-hire route (POST
@@ -48,7 +66,12 @@ export type AppliedPlan = {
   briefChanged: boolean;
   goal: { id: string; title: string; level: string } | null;
   project: { id: string; name: string } | null;
+  /** Plan tasks and templated agents' tasks created now. */
   tasks: Array<{ clientKey: string; id: string; identifier: string | null; title: string; status: string; assigneeAgentId: string | null }>;
+  /** Template routines created now (for activity). */
+  routines: NonNullable<ApplyPlanResult["routines"]>;
+  /** Access rules templates seeded now (for activity). */
+  templatePolicies: Array<{ id: string; name: string; policyType: string; priority: number; agentId: string }>;
 };
 
 /**
@@ -82,8 +105,8 @@ export async function assistantHireDefaults(db: Db, companyId: string): Promise<
 }
 
 /** Whether a planned agent would inherit the Assistant's model connection. */
-export function planHireInheritsConnection(agent: { adapterType: string }, assistant: AssistantHireDefaults | null) {
-  return Boolean(assistant && assistant.aiConnection && assistant.adapterType === agent.adapterType);
+export function planHireInheritsConnection(agent: { adapterType?: string }, assistant: AssistantHireDefaults | null) {
+  return Boolean(assistant && assistant.aiConnection && agent.adapterType && assistant.adapterType === agent.adapterType);
 }
 
 /**
@@ -96,8 +119,14 @@ export function planHireBody(
   reportsTo: string | undefined,
   assistant: AssistantHireDefaults | null,
   withConnection = true,
+  template?: { instructionsMarkdown: string; desiredSkills: string[] },
 ): Record<string, unknown> {
   const body: Record<string, unknown> = { name: agent.name, role: agent.role, adapterType: agent.adapterType };
+  if (template) {
+    // A template's instructions and skills ride on the hire like any app hire's.
+    body.instructionsBundle = { entryFile: "AGENTS.md", files: { "AGENTS.md": template.instructionsMarkdown } };
+    body.desiredSkills = template.desiredSkills;
+  }
   if (agent.title !== undefined) body.title = agent.title;
   if (agent.capabilities !== undefined) body.capabilities = agent.capabilities;
   if (agent.budgetMonthlyCents !== undefined) body.budgetMonthlyCents = agent.budgetMonthlyCents;
@@ -177,7 +206,7 @@ function describeHired(plan: ApplyPlan, hired: HiredAgents) {
 export async function validatePlanForApply(db: Db, companyId: string, plan: ApplyPlan, assertCanAssign: PlanAssertCanAssign) {
   const structure = planStructureErrors(plan);
   if (structure.length) throw unprocessable(`The plan is not consistent: ${structure.slice(0, 5).join(" ")}`);
-  const violation = planRuleViolation(plan) ?? await planExistingAssigneeViolation(db, plan, companyId);
+  const violation = planRuleViolation(plan, { resolved: true }) ?? await planExistingAssigneeViolation(db, plan, companyId);
   if (violation) throw unprocessable(violation);
   for (const agentId of new Set(plan.tasks.map((task) => task.assigneeAgentId).filter((id): id is string => Boolean(id)))) {
     await assertAssignableAgent(db, companyId, agentId, { kind: "work" });
@@ -353,8 +382,34 @@ async function reusableHires(db: Db, companyId: string, recorded: HiredAgents): 
 function replay(row: ApplicationRow): AppliedPlan {
   return {
     result: row.result as unknown as ApplyPlanResult,
-    replayed: true, briefChanged: false, goal: null, project: null, tasks: [],
+    replayed: true, briefChanged: false, goal: null, project: null, tasks: [], routines: [], templatePolicies: [],
   };
+}
+
+/**
+ * Render a plan's templated agents for apply (at their pinned versions) and
+ * fill the hire fields their templates supply. Throws before anything is
+ * created: 409 when a pinned version is no longer current, 422 for an
+ * unavailable template or answers that no longer validate.
+ */
+async function preparePlanTemplates(db: Db, companyId: string, plan: ApplyPlan, input: {
+  userId: string | null; personTimezone?: string | null; templates?: AgentTemplatesService;
+}): Promise<{ plan: ApplyPlan; templates: PlanTemplates }> {
+  if (!plan.agents.some((agent) => agent.templateRef)) return { plan, templates: new Map() };
+  const ctx = await planTemplateContext(db, companyId, input.userId, input.personTimezone);
+  const templates: PlanTemplates = new Map();
+  for (const agent of plan.agents) {
+    if (!agent.templateRef) continue;
+    try {
+      const one = await renderPlanTemplates({ ...plan, agents: [agent] }, ctx, input.templates);
+      templates.set(agent.clientKey, one.get(agent.clientKey)!);
+    } catch (error) {
+      const message = planTemplateErrorMessage(agent.clientKey, agent.templateRef, error);
+      if (!message) throw error;
+      throw error instanceof HttpError && error.status === 409 ? conflict(message) : unprocessable(message);
+    }
+  }
+  return { plan: withTemplateDefaults(plan, templates, { fallbackAdapterType: await assistantAdapterType(db, companyId) }), templates };
 }
 
 /**
@@ -385,10 +440,15 @@ export async function applyPlan(db: Db, input: {
    * (the check agent-hires use). Without it a shared binding is never inherited.
    */
   canInstallSharedConnection?: (binding: Extract<AiRuntimeConnectionBinding, { mode: "shared" }>) => Promise<boolean>;
+  /** The person's IANA time zone (from their browser): template routines run on it. Defaults to UTC. */
+  personTimezone?: string | null;
+  /** Template catalog override (tests). */
+  templates?: AgentTemplatesService;
 }): Promise<AppliedPlan> {
-  const { companyId, plan, userId } = input;
+  const { companyId, userId } = input;
   const key = input.idempotencyKey ?? null;
-  const hash = planHash(plan);
+  // The plan's identity is what was confirmed; template defaults are filled in below.
+  const hash = planHash(input.plan);
 
   if (key) {
     const [existing] = await db.select().from(planApplications)
@@ -398,6 +458,7 @@ export async function applyPlan(db: Db, input: {
     if (existing?.status === "superseded") return replay(await appliedSuccessor(db, existing));
   }
 
+  const { plan, templates } = await preparePlanTemplates(db, companyId, input.plan, input);
   await validatePlanForApply(db, companyId, plan, input.assertCanAssign);
 
   let application: (ApplicationRow & { leaseOwner: string }) | null = null;
@@ -408,6 +469,23 @@ export async function applyPlan(db: Db, input: {
   }
 
   const hired: HiredAgents = application ? await reusableHires(db, companyId, application.agents) : {};
+  const templatePolicies: AppliedPlan["templatePolicies"] = [];
+  let connected: ReadonlySet<string> = new Set();
+  /** Install a templated agent's access rules and record (idempotent; also for agents an earlier attempt hired). */
+  const setUpTemplatedAgent = async (clientKey: string) => {
+    const rendered = templates.get(clientKey);
+    if (!rendered) return;
+    const agentId = hired[clientKey]!.id;
+    for (const policy of await ensureTemplateAgentSetup(db, companyId, agentId, rendered, userId)) {
+      templatePolicies.push({ ...policy, agentId });
+      // Logged as it is created: the rule stays even if a later step fails.
+      await logActivity(db, {
+        companyId, actorType: "user", actorId: userId ?? "board", action: "tool_policy.created",
+        entityType: "tool_policy", entityId: policy.id,
+        details: { name: policy.name, policyType: policy.policyType, priority: policy.priority, agentId, source: "agent_template", templateRef: rendered.ref },
+      });
+    }
+  };
   // Every write during the apply is fenced by the lease owner and renews the lease.
   const holdLease = async () => {
     if (application) await writeLeased(db, application, {});
@@ -442,10 +520,19 @@ export async function applyPlan(db: Db, input: {
       delete assistant.aiConnection;
     }
     for (const agent of planAgentCreationOrder(plan.agents)) {
-      if (hired[agent.clientKey]) continue;
+      if (hired[agent.clientKey]) {
+        await setUpTemplatedAgent(agent.clientKey);
+        continue;
+      }
       // Stop before hiring if a newer request took the plan over.
       await holdLease();
-      const body = planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant);
+      const rendered = templates.get(agent.clientKey);
+      // Template skills must be in the company library before the hire selects them.
+      const template = rendered
+        ? { instructionsMarkdown: rendered.agent.instructionsMarkdown, desiredSkills: await ensureTemplateSkills(db, companyId, rendered) }
+        : undefined;
+      if (rendered) await holdLease();
+      const body = planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant, true, template);
       const hire = async (hireBody: Record<string, unknown>) => {
         try {
           return await input.hireAgent(hireBody);
@@ -460,7 +547,7 @@ export async function applyPlan(db: Db, input: {
       // other failure are final, and the retry's own result is what is reported.
       if (response.statusCode === 422 && isBindingRefusal(response.json) && planHireInheritsConnection(agent, assistant)
         && (assistant!.aiConnection!.mode === "router" || assistant!.aiConnection!.mode === "shared")) {
-        response = await hire(planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant, false));
+        response = await hire(planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant, false, template));
       }
       const json = (response.json ?? {}) as { agent?: { id?: unknown; status?: unknown }; approval?: { id?: unknown } | null };
       if (response.statusCode >= 400 || typeof json.agent?.id !== "string") {
@@ -475,15 +562,24 @@ export async function applyPlan(db: Db, input: {
         id: json.agent.id,
         status: typeof json.agent.status === "string" ? json.agent.status : "idle",
         approvalId: typeof json.approval?.id === "string" ? json.approval.id : null,
+        ...(agent.templateRef ? { templateRef: agent.templateRef } : {}),
       };
       await recordHires();
+      // Guard the new agent before anything else happens.
+      await setUpTemplatedAgent(agent.clientKey);
     }
 
-    // The new agents exist now: check the person may assign them work.
-    for (const clientKey of new Set(plan.tasks.map((task) => task.assigneeClientKey).filter((k): k is string => Boolean(k)))) {
+    // The new agents exist now: check the person may assign them work
+    // (templated agents always get starter tasks and routines).
+    const assigned = new Set([
+      ...plan.tasks.map((task) => task.assigneeClientKey).filter((k): k is string => Boolean(k)),
+      ...templates.keys(),
+    ]);
+    for (const clientKey of assigned) {
       const agent = hired[clientKey]!;
       if (agent.status !== "pending_approval") await input.assertCanAssign(agent.id);
     }
+    if (templates.size) connected = await connectedAppSlugs(db, companyId);
     // Renew right before the transaction; the transaction checks ownership again when it marks the plan applied.
     await holdLease();
   } catch (error) {
@@ -559,6 +655,63 @@ export async function applyPlan(db: Db, input: {
         }
       }
 
+      // Templated agents: "Connect <service>" tasks first, then starter tasks
+      // blocked by them, then routines with their schedules. An agent awaiting
+      // hire approval gets them unassigned (tasks in the backlog, routines
+      // paused), like plan tasks.
+      const routines: AppliedPlan["routines"] = [];
+      const routineSvc = templates.size ? routineService(txDb) : null;
+      const routineActor = { agentId: null, userId, runId: null };
+      for (const agent of planAgentCreationOrder(plan.agents)) {
+        const rendered = templates.get(agent.clientKey);
+        if (!rendered) continue;
+        const hire = hired[agent.clientKey]!;
+        const waitsForApproval = hire.status === "pending_approval";
+        const assigneeAgentId = waitsForApproval ? null : hire.id;
+        for (const spec of templateTaskSpecs(agent.clientKey, agent.name ?? rendered.agent.name, rendered, connected)) {
+          const issue = await issues.create(companyId, {
+            title: spec.title,
+            description: spec.description,
+            status: assigneeAgentId ? "todo" : "backlog",
+            priority: "medium",
+            assigneeAgentId,
+            parentId: null,
+            projectId: project?.id ?? null,
+            goalId: goal?.id ?? null,
+            blockedByIssueIds: spec.blockedByClientKeys.map((blocker) => created.get(blocker)!.id),
+            createdByUserId: userId,
+            actorResponsibleUserId: userId,
+            trustExplicitResponsibleUserId: true,
+          }, tx);
+          created.set(spec.clientKey, {
+            clientKey: spec.clientKey, id: issue.id, identifier: issue.identifier ?? null, title: issue.title,
+            status: issue.status, assigneeAgentId: issue.assigneeAgentId ?? null,
+          });
+          if (waitsForApproval) {
+            pendingAssignments.push({ taskClientKey: spec.clientKey, agentClientKey: agent.clientKey, agentId: hire.id, approvalId: hire.approvalId });
+          }
+        }
+        for (const routine of rendered.routines) {
+          const createdRoutine = await routineSvc!.create(companyId, createRoutineSchema.parse({
+            title: routineSafeText(routine.title).slice(0, 200),
+            description: routineSafeText(routine.description),
+            assigneeAgentId,
+            projectId: project?.id ?? null,
+            goalId: goal?.id ?? null,
+            // Routines cannot be assigned to an agent awaiting approval: paused until the person assigns and resumes them.
+            status: waitsForApproval ? "paused" : "active",
+          }), routineActor);
+          await routineSvc!.createTrigger(createdRoutine.id, createRoutineTriggerSchema.parse({
+            kind: "schedule", label: routineSafeText(routine.title).slice(0, 120),
+            cronExpression: routine.cronExpression, timezone: routine.timezone, enabled: true,
+          }), routineActor);
+          routines.push({
+            id: createdRoutine.id, title: createdRoutine.title, agentClientKey: agent.clientKey,
+            status: createdRoutine.status, assigneeAgentId: createdRoutine.assigneeAgentId ?? null,
+          });
+        }
+      }
+
       const approvalLinks = new Map<string, string[]>();
       for (const pending of pendingAssignments) {
         if (!pending.approvalId) continue;
@@ -578,6 +731,7 @@ export async function applyPlan(db: Db, input: {
           id: task.id, identifier: task.identifier, status: task.status, assigneeAgentId: task.assigneeAgentId,
         }])),
         pendingAssignments,
+        ...(templates.size ? { routines } : {}),
       };
       if (application) {
         // Marked applied in the same transaction that created everything.
@@ -587,7 +741,7 @@ export async function applyPlan(db: Db, input: {
           lastError: null, leaseUntil: null, leaseOwner: null,
         }, false);
       }
-      return { result, replayed: false, briefChanged, goal, project, tasks };
+      return { result, replayed: false, briefChanged, goal, project, tasks, routines, templatePolicies };
     });
   } catch (error) {
     if (error instanceof HttpError && Object.keys(hired).length) {
