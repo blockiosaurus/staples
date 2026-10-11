@@ -159,6 +159,30 @@ describe("validateAgentTemplatePackage", () => {
     ]);
   });
 
+  it("rejects a multi_select question with no recommended option", () => {
+    const files = editSidecar(readFixtureFiles(), (sidecar) => {
+      sidecar.setupQuestions[2].options[0].recommended = false;
+    });
+    expect(validate(files)).toEqual([expect.stringContaining('question "channels" needs a recommendation')]);
+  });
+
+  it("rejects placeholders outside AGENTS.md/TASK.md bodies", () => {
+    const files = readFixtureFiles();
+    files["agents/helper/AGENTS.md"] = files["agents/helper/AGENTS.md"]!
+      .replace("name: Inbox Helper", "name: Helper for {{company.name}}")
+      .replace("title: Inbox Helper", "title: {{answers.focus}} lead")
+      .replace("role: general", "role: \"{{person.name}}\"");
+    files["TEAM.md"] += "\nBuilt for {{company.name}}.\n";
+    files["skills/fixture-notes/SKILL.md"] += "\nNotes for {{person.name}}.\n";
+    expect(validate(files)).toEqual([
+      expect.stringContaining("TEAM.md body cannot contain placeholders"),
+      expect.stringContaining("skills/fixture-notes/SKILL.md cannot contain placeholders"),
+      expect.stringContaining("agents/helper/AGENTS.md name cannot contain placeholders"),
+      expect.stringContaining("agents/helper/AGENTS.md title cannot contain placeholders"),
+      expect.stringContaining("agents/helper/AGENTS.md role cannot contain placeholders"),
+    ]);
+  });
+
   it("rejects skills that are neither vendored nor in the skills catalog", () => {
     const files = readFixtureFiles();
     files["agents/helper/AGENTS.md"] = files["agents/helper/AGENTS.md"]!.replace("  - task-planning", "  - mystery-skill");
@@ -257,6 +281,95 @@ describe("agentTemplatesService", () => {
     expect(badOption.details).toEqual({ errors: ['Answer to "cadence" is not one of its options.'] });
 
     await expectHttpError(svc.render("staples/test-helper", null, { ...ANSWERS, focus: "x".repeat(501) }, CTX), 422);
+  });
+
+  it("caps multi_select answers with a custom answer: dedupe, item count and joined length", async () => {
+    const files = editSidecar(readFixtureFiles(), (sidecar) => {
+      sidecar.setupQuestions[2].customAnswer = { enabled: true, label: "Somewhere else" };
+    });
+    const svc = service({ "test-helper": files });
+
+    const deduped = await svc.render("staples/test-helper", null, { ...ANSWERS, channels: ["email", " email ", "Fax"] }, CTX);
+    expect(deduped.agent.instructionsMarkdown).toContain("Channels: Email, Fax");
+
+    const tooMany = await expectHttpError(
+      svc.render("staples/test-helper", null, { ...ANSWERS, channels: ["email", "chat", "fax", "pager"] }, CTX),
+      422,
+    );
+    expect(tooMany.details).toEqual({ errors: ['Answer to "channels" has more than 3 choices.'] });
+
+    const tooLong = await expectHttpError(
+      svc.render("staples/test-helper", null, { ...ANSWERS, channels: ["email", "chat", "y".repeat(495)] }, CTX),
+      422,
+    );
+    expect(tooLong.details).toEqual({ errors: ['Answer to "channels" is longer than 500 characters.'] });
+  });
+
+  it("treats prototype keys and non-string answers as 422, never a crash", async () => {
+    const files = editSidecar(readFixtureFiles(), (sidecar) => {
+      sidecar.setupQuestions.push({
+        id: "constructor",
+        prompt: "Anything else?",
+        required: false,
+        answerMode: "text",
+        initialText: "Nothing",
+      });
+    });
+    const svc = service({ "test-helper": files });
+
+    // An unanswered question named "constructor" must not pick up Object.prototype.constructor.
+    await expect(svc.render("staples/test-helper", null, ANSWERS, CTX)).resolves.toMatchObject({ version: "1.2.0" });
+
+    const plain = service();
+    const unknown = await expectHttpError(plain.render("staples/test-helper", null, { ...ANSWERS, constructor: "x" } as never, CTX), 422);
+    expect(unknown.details).toEqual({ errors: ['Unknown setup question "constructor".'] });
+
+    const badItems = await expectHttpError(
+      plain.render("staples/test-helper", null, { ...ANSWERS, channels: [1, "email"] } as never, CTX),
+      422,
+    );
+    expect(badItems.details).toEqual({ errors: ['Answer to "channels" must be a list of strings.'] });
+
+    const badText = await expectHttpError(
+      plain.render("staples/test-helper", null, { ...ANSWERS, focus: ["a"] }, CTX),
+      422,
+    );
+    expect(badText.details).toEqual({ errors: ['Answer to "focus" must be a single text value.'] });
+
+    const badNumber = await expectHttpError(
+      plain.render("staples/test-helper", null, { ...ANSWERS, cadence: 5 } as never, CTX),
+      422,
+    );
+    expect(badNumber.details).toEqual({ errors: ['Answer to "cadence" must be a single text value.'] });
+  });
+
+  it("accepts and caps a single_select custom answer", async () => {
+    const files = editSidecar(readFixtureFiles(), (sidecar) => {
+      sidecar.setupQuestions[1].customAnswer = { enabled: true, label: "Other" };
+    });
+    const svc = service({ "test-helper": files });
+
+    const custom = await svc.render("staples/test-helper", null, { ...ANSWERS, cadence: "  Every other Tuesday " }, CTX);
+    expect(custom.agent.instructionsMarkdown).toContain("Report: Every other Tuesday");
+
+    const tooLong = await expectHttpError(
+      svc.render("staples/test-helper", null, { ...ANSWERS, cadence: "z".repeat(501) }, CTX),
+      422,
+    );
+    expect(tooLong.details).toEqual({ errors: ['Answer to "cadence" is longer than 500 characters.'] });
+  });
+
+  it("honours textValidation min and max length on text answers", async () => {
+    const files = editSidecar(readFixtureFiles(), (sidecar) => {
+      sidecar.setupQuestions[0].textValidation = { minLength: 5, maxLength: 20 };
+    });
+    const svc = service({ "test-helper": files });
+
+    await expect(svc.render("staples/test-helper", null, { ...ANSWERS, focus: "Refunds" }, CTX)).resolves.toBeDefined();
+    const short = await expectHttpError(svc.render("staples/test-helper", null, { ...ANSWERS, focus: "abc" }, CTX), 422);
+    expect(short.details).toEqual({ errors: ['Answer to "focus" must be at least 5 characters.'] });
+    const long = await expectHttpError(svc.render("staples/test-helper", null, { ...ANSWERS, focus: "a".repeat(21) }, CTX), 422);
+    expect(long.details).toEqual({ errors: ['Answer to "focus" must be at most 20 characters.'] });
   });
 
   it("pins the version: a mismatch is a 409", async () => {

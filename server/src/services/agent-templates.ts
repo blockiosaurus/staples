@@ -112,6 +112,10 @@ function taskTitle(task: TemplateDoc) {
     ?? slugFromDocPath(task.path);
 }
 
+function hasPlaceholder(text: string) {
+  return /\{\{[^{}]*\}\}/.test(text);
+}
+
 function isRecurring(task: TemplateDoc) {
   return asBoolean(task.frontmatter.recurring) ?? false;
 }
@@ -189,8 +193,19 @@ export function validateAgentTemplatePackage(
   const teamRaw = files[TEAM_FILE];
   if (teamRaw === undefined) {
     errors.push(`${TEAM_FILE} is missing.`);
-  } else if (!parseFrontmatterMarkdown(teamRaw).hasFrontmatter) {
-    errors.push(`${TEAM_FILE} must start with YAML frontmatter.`);
+  } else {
+    const teamDoc = parseFrontmatterMarkdown(teamRaw);
+    if (!teamDoc.hasFrontmatter) errors.push(`${TEAM_FILE} must start with YAML frontmatter.`);
+    if (hasPlaceholder(teamDoc.body)) {
+      errors.push(`${TEAM_FILE} body cannot contain placeholders; it is shown to people as written.`);
+    }
+  }
+
+  // Vendored skills are imported verbatim, so placeholders would never be filled.
+  for (const [filePath, content] of Object.entries(files)) {
+    if (filePath.startsWith("skills/") && hasPlaceholder(content)) {
+      errors.push(`${filePath} cannot contain placeholders; vendored skill files are not rendered.`);
+    }
   }
 
   let sidecar: AgentTemplateSidecar | null = null;
@@ -262,6 +277,12 @@ export function validateAgentTemplatePackage(
     if (!agent.hasFrontmatter) errors.push(`${agent.path} must start with YAML frontmatter.`);
     if (!asString(agent.frontmatter.name)) errors.push(`${agent.path} frontmatter must include name.`);
     collectPlaceholderErrors(agent.path, agent.body, true, questionIds, errors);
+    for (const field of ["name", "title", "role"] as const) {
+      const value = asString(agent.frontmatter[field]);
+      if (value && hasPlaceholder(value)) {
+        errors.push(`${agent.path} ${field} cannot contain placeholders; use them in the body.`);
+      }
+    }
     const skillsValue = agent.frontmatter.skills;
     const skills = skillsValue === undefined ? [] : asStringArray(skillsValue);
     if (!skills) {
@@ -281,7 +302,7 @@ export function validateAgentTemplatePackage(
   for (const task of docsNamed(files, "TASK.md")) {
     if (!task.hasFrontmatter) errors.push(`${task.path} must start with YAML frontmatter.`);
     collectPlaceholderErrors(task.path, task.body, true, questionIds, errors);
-    if (taskTitle(task).includes("{{")) {
+    if (hasPlaceholder(taskTitle(task))) {
       errors.push(`${task.path} name cannot contain placeholders; use them in the body.`);
     }
     const recurring = isRecurring(task);
@@ -364,17 +385,25 @@ function resolveQuestionContext(question: PaperclipQuestionSetQuestion, values: 
 
 function resolveAnswers(questions: PaperclipQuestionSetQuestion[], answers: AgentTemplateAnswers) {
   const errors: string[] = [];
+  const failed = new Set<string>();
   const values = new Map<string, string>();
   const byId = new Map(questions.map((question) => [question.id, question]));
+  const answerRecord: Record<string, unknown> =
+    answers && typeof answers === "object" && !Array.isArray(answers) ? answers : {};
 
-  for (const id of Object.keys(answers)) {
+  for (const id of Object.keys(answerRecord)) {
     if (!byId.has(id)) errors.push(`Unknown setup question "${id}".`);
   }
+
+  const fail = (question: PaperclipQuestionSetQuestion, message: string) => {
+    failed.add(question.id);
+    errors.push(message);
+  };
 
   const freeText = (question: PaperclipQuestionSetQuestion, raw: string): string | null => {
     const text = cleanText(raw);
     if (text.length > AGENT_TEMPLATE_ANSWER_MAX_CHARS) {
-      errors.push(`Answer to "${question.id}" is longer than ${AGENT_TEMPLATE_ANSWER_MAX_CHARS} characters.`);
+      fail(question, `Answer to "${question.id}" is longer than ${AGENT_TEMPLATE_ANSWER_MAX_CHARS} characters.`);
       return null;
     }
     return text;
@@ -384,20 +413,35 @@ function resolveAnswers(questions: PaperclipQuestionSetQuestion[], answers: Agen
     const option = question.options?.find((entry) => entry.id === raw);
     if (option) return option.label;
     if (question.customAnswer?.enabled) return freeText(question, raw);
-    errors.push(`Answer to "${question.id}" is not one of its options.`);
+    fail(question, `Answer to "${question.id}" is not one of its options.`);
     return null;
   };
 
   for (const question of questions) {
-    const raw = answers[question.id];
+    const raw = Object.hasOwn(answerRecord, question.id) ? answerRecord[question.id] : undefined;
     let value = "";
-    if (raw !== undefined) {
+    if (raw !== undefined && raw !== null) {
       if (question.answerMode === "multi_select") {
-        const items = (Array.isArray(raw) ? raw : [raw]).map((item) => cleanText(item)).filter(Boolean);
-        const labels = items.map((item) => choice(question, item)).filter((label): label is string => label !== null && label !== "");
-        value = labels.join(", ");
-      } else if (Array.isArray(raw)) {
-        errors.push(`Answer to "${question.id}" must be a single value.`);
+        const rawItems = Array.isArray(raw) ? raw : [raw];
+        if (rawItems.some((item) => typeof item !== "string")) {
+          fail(question, `Answer to "${question.id}" must be a list of strings.`);
+        } else {
+          const items = Array.from(new Set((rawItems as string[]).map((item) => cleanText(item)).filter(Boolean)));
+          const maxItems = (question.options?.length ?? 0) + (question.customAnswer?.enabled ? 1 : 0);
+          if (items.length > maxItems) {
+            fail(question, `Answer to "${question.id}" has more than ${maxItems} choices.`);
+          } else {
+            const labels = Array.from(new Set(
+              items.map((item) => choice(question, item)).filter((label): label is string => label !== null && label !== ""),
+            ));
+            value = labels.join(", ");
+            if (value.length > AGENT_TEMPLATE_ANSWER_MAX_CHARS) {
+              fail(question, `Answer to "${question.id}" is longer than ${AGENT_TEMPLATE_ANSWER_MAX_CHARS} characters.`);
+            }
+          }
+        }
+      } else if (typeof raw !== "string") {
+        fail(question, `Answer to "${question.id}" must be a single text value.`);
       } else if (question.answerMode === "single_select") {
         const trimmed = cleanText(raw);
         value = trimmed ? (choice(question, trimmed) ?? "") : "";
@@ -405,16 +449,15 @@ function resolveAnswers(questions: PaperclipQuestionSetQuestion[], answers: Agen
         value = freeText(question, raw) ?? "";
         const limits = question.textValidation;
         if (value && limits?.minLength !== undefined && value.length < limits.minLength) {
-          errors.push(`Answer to "${question.id}" must be at least ${limits.minLength} characters.`);
+          fail(question, `Answer to "${question.id}" must be at least ${limits.minLength} characters.`);
         }
         if (value && limits?.maxLength !== undefined && value.length > limits.maxLength) {
-          errors.push(`Answer to "${question.id}" must be at most ${limits.maxLength} characters.`);
+          fail(question, `Answer to "${question.id}" must be at most ${limits.maxLength} characters.`);
         }
       }
     }
-    if (question.required && value === "" && !errors.some((error) => error.includes(`"${question.id}"`))) {
-      errors.push(`Setup question "${question.id}" is required.`);
-    }
+    if (failed.has(question.id)) value = "";
+    else if (question.required && value === "") fail(question, `Setup question "${question.id}" is required.`);
     values.set(`answers.${question.id}`, value);
   }
 
