@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyCompanyPrefix,
   extractCompanyPrefixFromPath,
+  isGlobalPath,
   isBoardPathWithoutPrefix,
   toCompanyRelativePath,
 } from "./company-routes";
@@ -12,6 +13,12 @@ describe("company routes", () => {
     expect(extractCompanyPrefixFromPath(path)).toBeNull();
     expect(applyCompanyPrefix(path, "DOT")).toBe(path);
   });
+  it("keeps the /start page outside company-prefixed routes", () => {
+    expect(isGlobalPath("/start")).toBe(true);
+    expect(extractCompanyPrefixFromPath("/start")).toBeNull();
+    expect(applyCompanyPrefix("/start", "PAP")).toBe("/start");
+  });
+
   it("treats every top-level board section as an unprefixed board path", () => {
     for (const root of ["dashboard", "assistant", "cases", "status", "pipelines", "review-queue", "learnings"]) {
       expect(isBoardPathWithoutPrefix(`/${root}`)).toBe(true);
