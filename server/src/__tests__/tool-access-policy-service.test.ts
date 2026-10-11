@@ -661,6 +661,77 @@ describeEmbeddedPostgres("tool access policy service", () => {
     expect(wildcardPolicy.selectors).toEqual({ toolName: "*send*" });
   });
 
+  it("matches toolNamePatterns as case-insensitive whole-name globs on the tool or upstream name", async () => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { connection, catalogEntry } = await createTool(db, company.id);
+    const profile = await db.insert(toolProfiles).values({
+      companyId: company.id, profileKey: `profile-${randomUUID()}`, name: "All tools", defaultAction: "allow",
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(toolProfileBindings).values({ companyId: company.id, profileId: profile.id, targetType: "agent", targetId: agent.id });
+    const decide = (toolName: string, upstreamToolName?: string) => toolAccessPolicyService(db).decide({
+      companyId: company.id,
+      actor: { actorType: "agent", actorId: agent.id, agentId: agent.id },
+      request: { connectionId: connection.id, catalogEntryId: catalogEntry.id, toolName, ...(upstreamToolName ? { upstreamToolName } : {}) },
+    });
+    const drafts = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Ask before drafts", policyType: "require_approval", priority: 10,
+      selectors: { toolNamePatterns: ["*draft*"] },
+    }).returning().then((rows) => rows[0]!);
+    // send_email does not match *draft*.
+    await expect(decide("send_email")).resolves.toMatchObject({ decision: "allow", reasonCode: "allow_profile" });
+    const sends = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Ask before sends", policyType: "require_approval", priority: 20,
+      selectors: { toolNamePatterns: ["*SEND*"] },
+    }).returning().then((rows) => rows[0]!);
+    await expect(decide("send_email")).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [sends.id] });
+    await expect(decide("mcp.fixture:other", "messages.send")).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [sends.id] });
+    // Dots and other characters are literal: "send.e" does not match "sendXe".
+    await db.update(toolPolicies).set({ selectors: { toolNamePatterns: ["send.e*"] } }).where(eq(toolPolicies.id, sends.id));
+    await expect(decide("sendXemail")).resolves.toMatchObject({ decision: "allow" });
+    await expect(decide("send.email")).resolves.toMatchObject({ decision: "require_approval" });
+    // Malformed selectors never widen a policy to every tool.
+    for (const toolNamePatterns of ["*send*", ["*"], [42]]) {
+      await db.update(toolPolicies).set({ selectors: { toolNamePatterns } }).where(eq(toolPolicies.id, sends.id));
+      await expect(decide("send_email"), JSON.stringify(toolNamePatterns)).resolves.toMatchObject({ decision: "allow" });
+    }
+    expect(drafts.id).toBeTruthy();
+  });
+
+  it("applies an agent-template ask-first rule only to calls something else allows", async () => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { connection, catalogEntry } = await createTool(db, company.id);
+    const input = {
+      companyId: company.id,
+      actor: { actorType: "agent" as const, actorId: agent.id, agentId: agent.id },
+      request: { connectionId: connection.id, catalogEntryId: catalogEntry.id, toolName: "send_email" },
+    };
+    const templateRule = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Template: ask before sending", policyType: "require_approval", priority: 50,
+      selectors: { agentId: agent.id, riskLevels: ["write"], toolNamePatterns: ["*send*"] },
+      config: { source: "agent_template", templateRule: "outward" },
+    }).returning().then((rows) => rows[0]!);
+    // Nothing allows the call: the template rule does not turn a denial into an approval request.
+    await expect(toolAccessPolicyService(db).decide(input)).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_default" });
+    // An explicit grant allows it: the template rule asks first.
+    await db.insert(principalPermissionGrants).values({
+      companyId: company.id, principalType: "agent", principalId: agent.id, permissionKey: "tools:use", scope: {},
+    });
+    await expect(toolAccessPolicyService(db).decide(input)).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [templateRule.id] });
+    await db.delete(principalPermissionGrants);
+    // A later allow policy allows it: the template rule still asks first.
+    await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Allow sends", policyType: "allow", priority: 100, selectors: { agentId: agent.id },
+    });
+    await expect(toolAccessPolicyService(db).decide(input)).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [templateRule.id] });
+    // An explicit block still wins over the template's approval.
+    const block = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Block sends", policyType: "block", priority: 200, selectors: { toolName: "send_email" },
+    }).returning().then((rows) => rows[0]!);
+    await expect(toolAccessPolicyService(db).decide(input)).resolves.toMatchObject({ decision: "deny", matchedPolicyIds: [block.id] });
+  });
+
   it("matches tool name selectors against connected MCP upstream tool names", async () => {
     const company = await createCompany(db);
     const agent = await createAgent(db, company.id);

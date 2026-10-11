@@ -1456,6 +1456,12 @@ export interface ToolAccessSelector {
   catalogEntryIds?: string[];
   toolName?: string;
   toolNames?: string[];
+  /**
+   * Case-insensitive globs over the tool name or upstream tool name; `*` is
+   * the only wildcard. Matches when any pattern matches. Unlike toolName(s),
+   * which are exact.
+   */
+  toolNamePatterns?: string[];
   riskLevel?: ToolRiskLevel;
   riskLevels?: ToolRiskLevel[];
 }

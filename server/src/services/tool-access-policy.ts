@@ -110,6 +110,12 @@ const SENSITIVE_KEY_RE =
   /(^|[_-])(api[_-]?key|authorization|bearer|client[_-]?secret|cookie|credential|jwt|password|private[_-]?key|refresh[_-]?token|secret|session[_-]?token|token)($|[_-])/i;
 const SECRET_VALUE_RE = /\b(sk-[a-z0-9_-]{12,}|ghp_[a-z0-9_]{12,}|xox[baprs]-[a-z0-9-]{12,}|bearer\s+[a-z0-9._-]{12,})\b/i;
 
+/**
+ * `config.source` of the tool policies an agent template seeds at install
+ * (plans/apply). Such a require_approval rule only narrows access.
+ */
+export const AGENT_TEMPLATE_POLICY_SOURCE = "agent_template";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -387,6 +393,31 @@ function asToolRiskLevel(value: unknown): ToolRiskLevel | null {
   return null;
 }
 
+/** Longest tool-name glob honoured; longer (or malformed) patterns never match. */
+const TOOL_NAME_PATTERN_MAX_LENGTH = 120;
+
+/**
+ * Case-insensitive whole-name glob match where `*` is the only wildcard and
+ * every other character is literal. Malformed patterns match nothing.
+ */
+export function toolNamePatternMatches(pattern: string, name: string): boolean {
+  if (!pattern || pattern.length > TOOL_NAME_PATTERN_MAX_LENGTH || !/[^*]/.test(pattern)) return false;
+  const source = pattern.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*");
+  return new RegExp(`^${source}$`, "i").test(name);
+}
+
+/** `toolNamePatterns`: absent or empty means no restriction; otherwise any pattern matching any name. */
+function toolNamePatternsMatch(value: unknown, names: Array<string | null>): boolean {
+  if (value === undefined || value === null) return true;
+  // A present but malformed selector never widens a policy to every tool.
+  if (!Array.isArray(value)) return false;
+  const patterns = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  if (value.length === 0) return true;
+  if (patterns.length === 0) return false;
+  const actual = names.filter((name): name is string => Boolean(name));
+  return patterns.some((pattern) => actual.some((name) => toolNamePatternMatches(pattern.trim(), name)));
+}
+
 function selectorMatches(selector: ToolAccessSelector | Record<string, unknown> | null | undefined, ctx: ToolAccessContext): boolean {
   if (!selector || Object.keys(selector).length === 0) return true;
   const s = selector as Record<string, unknown>;
@@ -415,6 +446,7 @@ function selectorMatches(selector: ToolAccessSelector | Record<string, unknown> 
     match("applicationKey", "applicationKeys", ctx.applicationKey) &&
     match("providerType", "providerTypes", ctx.providerType) &&
     matchAny("toolName", "toolNames", [ctx.toolName, ctx.upstreamToolName]) &&
+    toolNamePatternsMatch(s.toolNamePatterns, [ctx.toolName, ctx.upstreamToolName]) &&
     match("riskLevel", "riskLevels", ctx.riskLevel)
   );
 }
@@ -1454,6 +1486,22 @@ export function toolAccessPolicyService(db: Db) {
         // The connection's Ask first control restricts an existing action grant;
         // it must never grant access to agents outside that connection's profile.
         if (["app_gallery_finish", "connection_intent"].includes(String(policy.config?.source)) && !permittedByProfile) continue;
+        // An agent template's install-time rule only ever narrows access: it
+        // asks first for a call something else would allow, and never turns a
+        // call nothing allows (or an explicit block) into an approval request.
+        if (policy.config?.source === AGENT_TEMPLATE_POLICY_SOURCE) {
+          if (explicitBlock) {
+            return decision("deny", "deny_policy_block", explicitBlock.policy.description ?? "Tool access is blocked by policy.", effectiveProfileIds, [explicitBlock.policy.id], { redactionPlan: redaction.redactionPlan });
+          }
+          const otherwiseAllowed = permittedByProfile
+            || matchingPolicies.some(({ policy: other }) => other.policyType === "allow"
+              || (other.policyType === "trust_rule" && (() => {
+                const rule = trustRuleConfig(other);
+                return Boolean(rule && trustRuleIsActive(other) && argumentFiltersMatch(rule.argumentFilters, ctx));
+              })()))
+            || await explicitGrant(ctx, cache);
+          if (!otherwiseAllowed) continue;
+        }
         if (policy.config?.source === "connection_intent" && explicitBlock) {
           return decision("deny", "deny_policy_block", explicitBlock.policy.description ?? "Tool access is blocked by policy.", effectiveProfileIds, [explicitBlock.policy.id], { redactionPlan: redaction.redactionPlan });
         }
