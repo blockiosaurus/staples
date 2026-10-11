@@ -20,7 +20,11 @@ import type {
   CompanyPortabilityPreviewResult,
   CompanyPortabilitySource,
 } from "@paperclipai/shared";
-import { normalizeAgentUrlKey } from "@paperclipai/shared";
+import {
+  AGENT_TEMPLATE_TEAMS_CATALOG_REJECTION,
+  isAgentTemplateCatalogEntry,
+  normalizeAgentUrlKey,
+} from "@paperclipai/shared";
 import { parseFrontmatterMarkdown } from "@paperclipai/shared/frontmatter";
 import { conflict, forbidden, HttpError, notFound, unprocessable } from "../errors.js";
 import { agentService } from "./agents.js";
@@ -35,6 +39,11 @@ export interface CatalogTeamListQuery {
   kind?: CatalogTeamKind;
   category?: string;
   q?: string;
+  /**
+   * Staples agent templates live in the catalog but are hidden from team
+   * listings; only the agent-templates service sets this.
+   */
+  includeAgentTemplates?: boolean;
 }
 
 export interface CatalogTeamSourcePolicy {
@@ -215,6 +224,7 @@ function searchText(team: CatalogTeam) {
 export async function listCatalogTeams(query: CatalogTeamListQuery = {}): Promise<CatalogTeam[]> {
   const normalizedQuery = query.q?.trim().toLowerCase() ?? "";
   return (await getCatalogTeams())
+    .filter((team) => query.includeAgentTemplates === true || !isAgentTemplateCatalogEntry(team))
     .filter((team) => !query.kind || team.kind === query.kind)
     .filter((team) => !query.category || team.category === query.category)
     .filter((team) => !normalizedQuery || searchText(team).includes(normalizedQuery))
@@ -772,6 +782,7 @@ export function teamsCatalogService(db: Db) {
     options: CatalogTeamImportOptions = {},
   ): Promise<CatalogTeamPreparedSource> {
     const team = await getCatalogTeamOrThrow(catalogRef);
+    if (isAgentTemplateCatalogEntry(team)) throw unprocessable(AGENT_TEMPLATE_TEAMS_CATALOG_REJECTION);
     const warnings: string[] = [];
     const errors: string[] = [];
 

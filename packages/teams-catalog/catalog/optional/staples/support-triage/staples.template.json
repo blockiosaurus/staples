@@ -1,0 +1,50 @@
+{
+  "version": "1.0.0",
+  "tagline": "Sorts customer messages, drafts answers and escalates problems",
+  "icon": "life-buoy",
+  "marketplaceCategory": "communication",
+  "requiredApps": [
+    {
+      "capability": "inbox",
+      "anyOf": ["agentmail", "gmail", "slack"],
+      "why": "Where customer messages arrive. With Gmail, replies are saved as drafts for you to send; with AgentMail or Slack, they can be sent after you approve."
+    }
+  ],
+  "setupQuestions": [
+    {
+      "id": "product",
+      "header": "What you offer",
+      "prompt": "In a few sentences, what do customers buy from you and what do they usually ask about?",
+      "helpText": "Your Company Brief covers the basics. Add the things customers ask about most: delivery, returns, opening hours, how to use the product.",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "Our products and services as described in our Company Brief. Customers mostly ask about orders, delivery, returns and how things work.",
+      "textValidation": { "maxLength": 500 }
+    },
+    {
+      "id": "escalation",
+      "header": "Escalation",
+      "prompt": "Who should handle refunds, complaints and questions the assistant cannot answer?",
+      "helpText": "Name the person. They get a task with a summary and a suggested reply.",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "{{person.name}}",
+      "textValidation": { "maxLength": 200 }
+    },
+    {
+      "id": "tone",
+      "header": "Tone",
+      "prompt": "How should replies to customers sound?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        { "id": "warm", "label": "Warm", "description": "Friendly and reassuring, like a helpful shop assistant.", "recommended": true },
+        { "id": "concise", "label": "Concise", "description": "Polite, short and straight to the answer." }
+      ]
+    }
+  ],
+  "outwardActions": [
+    { "capability": "inbox", "label": "Replying to customers" }
+  ],
+  "defaultBudgetMonthlyCents": 4000
+}

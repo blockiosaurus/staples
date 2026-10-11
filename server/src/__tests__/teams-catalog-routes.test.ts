@@ -160,6 +160,58 @@ describe("teams catalog routes", () => {
     expect(mockCatalogModule.readCatalogTeamFile).toHaveBeenCalledWith("product-engineering", "TEAM.md");
   });
 
+  it("hides Staples agent templates from the catalog list", async () => {
+    mockCatalogModule.listCatalogTeams.mockReturnValue([
+      catalogTeam(),
+      catalogTeam({
+        id: "paperclipai:optional:staples:researcher",
+        key: "paperclipai/optional/staples/researcher",
+        kind: "optional",
+        category: "staples",
+        slug: "researcher",
+        name: "Researcher",
+      }),
+    ]);
+    const app = await createApp({
+      type: "board",
+      userId: "local-board",
+      companyIds: [companyId],
+      source: "local_implicit",
+      isInstanceAdmin: false,
+    });
+
+    const list = await request(app).get("/api/teams/catalog");
+
+    expect(list.status, JSON.stringify(list.body)).toBe(200);
+    expect(list.body.map((team: { key: string }) => team.key)).toEqual([
+      "paperclipai/bundled/software-development/product-engineering",
+    ]);
+  });
+
+  it("rejects previewing or installing a Staples agent template through the teams catalog", async () => {
+    mockCatalogModule.getCatalogTeamOrThrow.mockReturnValue(
+      catalogTeam({ kind: "optional", category: "staples", slug: "researcher", key: "paperclipai/optional/staples/researcher" }),
+    );
+    const app = await createApp({
+      type: "board",
+      userId: "local-board",
+      companyIds: [companyId],
+      source: "local_implicit",
+      isInstanceAdmin: false,
+    });
+
+    const preview = await request(app).post(`/api/companies/${companyId}/teams/catalog/researcher/preview`).send({});
+    const install = await request(app).post(`/api/companies/${companyId}/teams/catalog/researcher/install`).send({});
+
+    for (const res of [preview, install]) {
+      expect(res.status, JSON.stringify(res.body)).toBe(422);
+      expect(res.body.error).toBe("Agent templates are installed through the Assistant.");
+    }
+    expect(mockCatalogModule.getCatalogTeamOrThrow).toHaveBeenCalledWith("researcher");
+    expect(mockTeamsCatalogService.previewCatalogTeamImport).not.toHaveBeenCalled();
+    expect(mockTeamsCatalogService.installCatalogTeam).not.toHaveBeenCalled();
+  });
+
   it("returns server-computed installed-team state for actors with company access", async () => {
     const app = await createApp({
       type: "board",

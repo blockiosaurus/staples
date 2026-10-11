@@ -200,6 +200,29 @@ describe("teamsCatalogService", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
+  it("keeps Staples agent templates out of team listings unless asked for", async () => {
+    const teams = await listCatalogTeams();
+    expect(teams.some((team) => team.category === "staples")).toBe(false);
+    expect(teams.some((team) => team.key === "paperclipai/optional/content/content-machine")).toBe(true);
+
+    const templates = await listCatalogTeams({ category: "staples", includeAgentTemplates: true });
+    expect(templates.map((team) => team.slug)).toContain("researcher");
+    expect(templates.every((team) => team.category === "staples")).toBe(true);
+  });
+
+  it("refuses to preview or install a Staples agent template as a team", async () => {
+    const svc = teamsCatalogService({} as any);
+    const expected = { status: 422, message: "Agent templates are installed through the Assistant." };
+
+    await expect(svc.prepareCatalogTeamSource("company-1", "researcher")).rejects.toMatchObject(expected);
+    await expect(svc.previewCatalogTeamImport("company-1", "paperclipai/optional/staples/researcher")).rejects.toMatchObject(expected);
+    await expect(svc.installCatalogTeam("company-1", "paperclipai:optional:staples:email-secretary")).rejects.toMatchObject(expected);
+
+    expect(mockCompanyPortabilityService.previewImport).not.toHaveBeenCalled();
+    expect(mockCompanyPortabilityService.importBundle).not.toHaveBeenCalled();
+    expect(mockCompanySkillService.installFromCatalog).not.toHaveBeenCalled();
+  });
+
   it("previews through company portability in agent-safe mode", async () => {
     const svc = teamsCatalogService({} as any);
 

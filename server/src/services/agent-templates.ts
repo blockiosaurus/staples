@@ -502,7 +502,8 @@ function summarize(template: LoadedTemplate): AgentTemplateSummary {
 // ---------------------------------------------------------------------------
 
 const defaultCatalogSource: AgentTemplateCatalogSource = {
-  listTeams: () => listCatalogTeams({ kind: "optional", category: AGENT_TEMPLATE_CATALOG_CATEGORY }),
+  listTeams: () =>
+    listCatalogTeams({ kind: "optional", category: AGENT_TEMPLATE_CATALOG_CATEGORY, includeAgentTemplates: true }),
   readFile: async (team, relativePath) => (await readCatalogTeamFile(team.id, relativePath)).content,
 };
 

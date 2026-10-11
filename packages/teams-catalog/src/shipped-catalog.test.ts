@@ -18,7 +18,13 @@ const EXPECTED_OPTIONAL_KEYS = [
 ];
 
 /** Staples agent templates (catalog/optional/staples/<slug>), listed apart from teams. */
-const EXPECTED_STAPLES_TEMPLATE_KEYS: string[] = [];
+const EXPECTED_STAPLES_TEMPLATE_KEYS: string[] = [
+  "paperclipai/optional/staples/content-creator",
+  "paperclipai/optional/staples/email-secretary",
+  "paperclipai/optional/staples/newsletter",
+  "paperclipai/optional/staples/researcher",
+  "paperclipai/optional/staples/support-triage",
+];
 
 const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -116,6 +122,11 @@ describe("shipped teams catalog", () => {
       "product-engineering/senior-coder": { role: "engineer", reportsTo: "cto", skills: ["github-pr-workflow", "doc-maintenance"] },
       "product-design/ux-designer": { role: "designer", reportsTo: null, skills: ["wireframe", "design-critique", "task-planning"] },
       "content-machine/content-lead": { role: "content-strategist", reportsTo: null, skills: ["content-calendar"] },
+      "researcher/researcher": { role: "researcher", reportsTo: null, skills: ["market-brief", "research-sources"] },
+      "content-creator/content-creator": { role: "general", reportsTo: null, skills: ["content-calendar-planning", "post-writing"] },
+      "email-secretary/email-secretary": { role: "general", reportsTo: null, skills: ["inbox-triage", "inbox-digest"] },
+      "newsletter/newsletter-editor": { role: "general", reportsTo: null, skills: ["newsletter-issue", "newsletter-sending"] },
+      "support-triage/support-triage": { role: "general", reportsTo: null, skills: ["support-reply", "support-faq"] },
     };
     const observed: Record<string, unknown> = {};
     for (const team of catalogTeams) {

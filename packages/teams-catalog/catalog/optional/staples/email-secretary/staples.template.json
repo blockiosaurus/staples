@@ -1,0 +1,57 @@
+{
+  "version": "1.0.0",
+  "tagline": "Sorts your inbox, drafts replies and sends a daily digest",
+  "icon": "mail",
+  "marketplaceCategory": "communication",
+  "requiredApps": [
+    {
+      "capability": "email",
+      "anyOf": ["agentmail", "gmail"],
+      "why": "Reads your email and prepares replies. With Gmail, replies are saved as drafts for you to send; with AgentMail, they can be sent after you approve."
+    },
+    {
+      "capability": "calendar",
+      "anyOf": ["google-calendar"],
+      "why": "Checks when you are free if an email asks for a meeting.",
+      "optional": true
+    }
+  ],
+  "setupQuestions": [
+    {
+      "id": "callMe",
+      "header": "Your name",
+      "prompt": "What should your secretary call you?",
+      "helpText": "Used in your digests and to sign drafted replies.",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "{{person.name}}",
+      "textValidation": { "maxLength": 100 }
+    },
+    {
+      "id": "sweepTime",
+      "header": "Morning sweep",
+      "prompt": "When should the morning inbox sweep run?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        { "id": "8am", "label": "8am on weekdays", "description": "Ready when most working days start.", "recommended": true },
+        { "id": "7am", "label": "7am on weekdays", "description": "For early starts." },
+        { "id": "9am", "label": "9am on weekdays", "description": "Catches the early-morning email too." }
+      ]
+    },
+    {
+      "id": "urgent",
+      "header": "Urgent",
+      "prompt": "What counts as urgent for you?",
+      "helpText": "Urgent email is flagged to you straight away instead of waiting for the digest.",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "customers, money, deadlines",
+      "textValidation": { "maxLength": 500 }
+    }
+  ],
+  "outwardActions": [
+    { "capability": "email", "label": "Sending email", "destructiveLabel": "Deleting email" }
+  ],
+  "defaultBudgetMonthlyCents": 3000
+}

@@ -26,6 +26,17 @@ export const AGENT_TEMPLATE_SIDECAR_FILE = "staples.template.json";
 export const AGENT_TEMPLATE_REF_PREFIX = "staples/";
 /** Maximum length of one person-typed setup answer, after trimming. */
 export const AGENT_TEMPLATE_ANSWER_MAX_CHARS = 500;
+/** Error the generic teams catalog returns when asked to preview or install a template. */
+export const AGENT_TEMPLATE_TEAMS_CATALOG_REJECTION = "Agent templates are installed through the Assistant.";
+
+/**
+ * True for a teams-catalog entry that is a Staples agent template. Templates
+ * share the teams catalog's storage but are hidden from its list and cannot be
+ * previewed or installed through it; they install only through plans.
+ */
+export function isAgentTemplateCatalogEntry(entry: { category: string }): boolean {
+  return entry.category === AGENT_TEMPLATE_CATALOG_CATEGORY;
+}
 
 export interface AgentTemplateRequiredApp {
   capability: string;

@@ -1,9 +1,11 @@
 import { Router, type Request } from "express";
 import type { Db } from "@paperclipai/db";
 import {
+  AGENT_TEMPLATE_TEAMS_CATALOG_REJECTION,
   catalogTeamInstallSchema,
   catalogTeamListQuerySchema,
   catalogTeamPreviewSchema,
+  isAgentTemplateCatalogEntry,
 } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
 import { accessService, agentService } from "../services/index.js";
@@ -13,7 +15,7 @@ import {
   readCatalogTeamFile,
   teamsCatalogService,
 } from "../services/teams-catalog.js";
-import { forbidden } from "../errors.js";
+import { forbidden, unprocessable } from "../errors.js";
 import { assertAuthenticated, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 export function teamsCatalogRoutes(db: Db) {
@@ -62,6 +64,13 @@ export function teamsCatalogRoutes(db: Db) {
     throw forbidden("Missing permission: can create agents");
   }
 
+  /** Staples agent templates install only through the Assistant's plans. */
+  async function assertNotAgentTemplate(catalogRef: string) {
+    if (isAgentTemplateCatalogEntry(await getCatalogTeamOrThrow(catalogRef))) {
+      throw unprocessable(AGENT_TEMPLATE_TEAMS_CATALOG_REJECTION);
+    }
+  }
+
   router.get("/teams/catalog", async (req, res) => {
     assertAuthenticated(req);
     const query = catalogTeamListQuerySchema.parse({
@@ -69,7 +78,8 @@ export function teamsCatalogRoutes(db: Db) {
       category: firstQueryString(req.query.category),
       q: firstQueryString(req.query.q),
     });
-    res.json(await listCatalogTeams(query));
+    const teams = await listCatalogTeams(query);
+    res.json(teams.filter((team) => !isAgentTemplateCatalogEntry(team)));
   });
 
   router.get("/teams/catalog/:catalogId/files", async (req, res) => {
@@ -98,6 +108,7 @@ export function teamsCatalogRoutes(db: Db) {
       const companyId = req.params.companyId as string;
       const catalogRef = firstQueryString(req.query.ref) ?? (req.params.catalogId as string);
       assertCompanyAccess(req, companyId);
+      await assertNotAgentTemplate(catalogRef);
       const result = await svc.previewCatalogTeamImport(companyId, catalogRef, {
         ...req.body,
         actor: getActorInfo(req),
@@ -113,6 +124,7 @@ export function teamsCatalogRoutes(db: Db) {
       const companyId = req.params.companyId as string;
       const catalogRef = firstQueryString(req.query.ref) ?? (req.params.catalogId as string);
       await assertCanInstallCatalogTeam(req, companyId);
+      await assertNotAgentTemplate(catalogRef);
       const result = await svc.installCatalogTeam(companyId, catalogRef, {
         ...req.body,
         actor: getActorInfo(req),

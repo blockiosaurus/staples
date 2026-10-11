@@ -1,0 +1,61 @@
+{
+  "version": "1.0.0",
+  "tagline": "Plans, writes and publishes your posts on a steady schedule",
+  "icon": "pen-line",
+  "marketplaceCategory": "content",
+  "requiredApps": [
+    {
+      "capability": "social",
+      "anyOf": ["linkedin", "x"],
+      "why": "Publishes your social posts. Without it, posts are drafted for you to copy and post yourself.",
+      "optional": true
+    },
+    {
+      "capability": "cms",
+      "anyOf": ["webflow"],
+      "why": "Publishes blog articles to your website. Without it, articles are drafted for you to publish yourself.",
+      "optional": true
+    }
+  ],
+  "setupQuestions": [
+    {
+      "id": "audience",
+      "header": "Audience",
+      "prompt": "Who are your posts for?",
+      "helpText": "Describe the people you want to reach, in your own words.",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "People who could become our customers, and the customers we already have",
+      "textValidation": { "maxLength": 500 }
+    },
+    {
+      "id": "tone",
+      "header": "Tone",
+      "prompt": "How should your posts sound?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        { "id": "friendly", "label": "Friendly", "description": "Warm and approachable, like talking to a regular customer.", "recommended": true },
+        { "id": "professional", "label": "Professional", "description": "Clear and polished, like a trusted adviser." },
+        { "id": "playful", "label": "Playful", "description": "Light and fun, with a bit of humour." }
+      ]
+    },
+    {
+      "id": "cadence",
+      "header": "How often",
+      "prompt": "How often should you post?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        { "id": "twice_weekly", "label": "2 posts a week", "description": "Steady and easy to keep up.", "recommended": true },
+        { "id": "weekly", "label": "1 post a week", "description": "A light, regular presence." },
+        { "id": "daily", "label": "Every weekday", "description": "Five posts a week, for fast-moving audiences." }
+      ]
+    }
+  ],
+  "outwardActions": [
+    { "capability": "social", "label": "Publishing posts" },
+    { "capability": "cms", "label": "Publishing to your site" }
+  ],
+  "defaultBudgetMonthlyCents": 2500
+}

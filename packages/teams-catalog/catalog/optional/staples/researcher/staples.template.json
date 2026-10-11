@@ -1,0 +1,43 @@
+{
+  "version": "1.0.0",
+  "tagline": "A weekly brief on your market, competitors and customers",
+  "icon": "search",
+  "marketplaceCategory": "research",
+  "requiredApps": [],
+  "setupQuestions": [
+    {
+      "id": "focus",
+      "header": "Focus",
+      "prompt": "What should the researcher keep an eye on?",
+      "helpText": "Your Company Brief already describes the business. Name the topics, competitors or customer groups that matter most right now.",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "Our market: competitors, what customers want, and trends that could affect our business",
+      "textValidation": { "maxLength": 500 }
+    },
+    {
+      "id": "reportDay",
+      "header": "Report day",
+      "prompt": "Which day should the weekly brief arrive?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        { "id": "monday", "label": "Monday", "description": "Start the week knowing what changed.", "recommended": true },
+        { "id": "friday", "label": "Friday", "description": "Look back on the week before the weekend." }
+      ]
+    },
+    {
+      "id": "depth",
+      "header": "Depth",
+      "prompt": "How detailed should each brief be?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        { "id": "brief", "label": "Brief", "description": "A five-minute read: the top few items and what they mean.", "recommended": true },
+        { "id": "deep_dive", "label": "Deep dive", "description": "A fuller analysis with more background and more sources." }
+      ]
+    }
+  ],
+  "outwardActions": [],
+  "defaultBudgetMonthlyCents": 2000
+}
