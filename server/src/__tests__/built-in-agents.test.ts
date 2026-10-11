@@ -48,6 +48,7 @@ import {
   validateBuiltInAgentDefinitions,
 } from "../services/built-in-agents.ts";
 import { readBuiltInAgentMarker, withBuiltInAgentMarker } from "../lib/built-in-agent-metadata.ts";
+import { companySkillService } from "../services/company-skills.ts";
 import { issueThreadInteractionService } from "../services/issue-thread-interactions.ts";
 import { issueService } from "../services/issues.ts";
 import { ASSISTANT_RUNTIME_ADAPTER_TYPES, PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "../services/assistant-identity.ts";
@@ -329,6 +330,50 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect(result.approval).toBeNull();
     expect(result.state.agent?.status).toBe("idle");
     expect(await db.select().from(approvals).where(eq(approvals.companyId, companyId))).toHaveLength(0);
+  });
+
+  const ASSISTANT_SKILL_KEYS = [
+    "staples-interview", "staples-company-brief", "staples-plan", "staples-questionnaire", "staples-wayfinder",
+  ].map((name) => `paperclipai/paperclip/${name}`);
+  const desiredSkillKeys = (adapterConfig: unknown) =>
+    readPaperclipSkillSyncPreference((adapterConfig ?? {}) as Record<string, unknown>).desiredSkillEntries.map((entry) => entry.key);
+
+  it("imports the five Staples planning skills into every company library as markdown-only bundled skills", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const library = await companySkillService(db).list(companyId);
+    for (const key of ASSISTANT_SKILL_KEYS) {
+      const skill = library.find((entry) => entry.key === key);
+      expect(skill, key).toBeDefined();
+      expect(skill).toMatchObject({ trustLevel: "markdown_only" });
+    }
+    // The notices file is not a skill.
+    expect(library.some((entry) => entry.key.toLowerCase().includes("third_party") || entry.key.toLowerCase().includes("third-party"))).toBe(false);
+  });
+
+  it("gives the Assistant the five Staples planning skills on ensure without dropping its other skills, and not staff agents", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const service = createBuiltInAgentService(db);
+    const ensured = await service.ensure(companyId, "assistant");
+    expect(desiredSkillKeys(ensured.agent!.adapterConfig)).toEqual(expect.arrayContaining(ASSISTANT_SKILL_KEYS));
+
+    // A person's extra skill survives reconcile, and keys are not duplicated.
+    const [row] = await db.select().from(agents).where(eq(agents.id, ensured.agentId!));
+    const config = row.adapterConfig as Record<string, unknown>;
+    const sync = config.paperclipSkillSync as { desiredSkills: unknown[] };
+    await db.update(agents).set({
+      adapterConfig: { ...config, paperclipSkillSync: { ...sync, desiredSkills: [...sync.desiredSkills, "paperclipai/paperclip/para-memory-files"] } },
+    }).where(eq(agents.id, row.id));
+    const again = await service.ensure(companyId, "assistant");
+    const keys = desiredSkillKeys(again.agent!.adapterConfig);
+    expect(keys).toEqual(expect.arrayContaining([...ASSISTANT_SKILL_KEYS, "paperclipai/paperclip/para-memory-files"]));
+    expect(new Set(keys).size).toBe(keys.length);
+
+    const staff = await createAgentLifecycle(db).requestHire(companyId, {
+      name: "Staff", role: "general", status: "idle", adapterType: "claude_local", adapterConfig: { model: "claude-sonnet-4-6" }, runtimeConfig: {}, permissions: {},
+    });
+    await service.autoProvisionBundledAgents(companyId);
+    const [staffRow] = await db.select().from(agents).where(eq(agents.id, staff.id));
+    for (const key of ASSISTANT_SKILL_KEYS) expect(desiredSkillKeys(staffRow.adapterConfig)).not.toContain(key);
   });
 
   it("copies a fully configured company agent's adapter type and model onto the Assistant", async () => {

@@ -69,6 +69,12 @@ export interface BuiltInAgentDefinition {
    * `defaultAdapterType`, and never rewrite an existing row's adapter on ensure.
    */
   inheritCompanyAdapterType?: boolean;
+  /**
+   * Company-library skill keys (bundled root `skills/`) this agent always has
+   * in its desired set. Ensure/reconcile adds any that are missing and never
+   * removes the agent's other skills.
+   */
+  defaultSkillKeys?: readonly string[];
 }
 
 export interface BuiltInAgentState {
@@ -332,6 +338,15 @@ const SUMMARIZER_SKILL = readBuiltInTextWithFallback(
   FALLBACK_SUMMARIZER_SKILL,
 );
 
+/** Planning and interview skills (repo-root `skills/staples-*`) the Assistant always carries. */
+export const ASSISTANT_DEFAULT_SKILL_KEYS = [
+  "paperclipai/paperclip/staples-interview",
+  "paperclipai/paperclip/staples-company-brief",
+  "paperclipai/paperclip/staples-plan",
+  "paperclipai/paperclip/staples-questionnaire",
+  "paperclipai/paperclip/staples-wayfinder",
+] as const;
+
 const DEFINITIONS = validateBuiltInAgentDefinitions([
   {
     key: ASSISTANT_BUILT_IN_AGENT_KEY,
@@ -353,8 +368,9 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
     defaultBudgetMonthlyCents: 0,
     bypassHireApproval: true,
     inheritCompanyAdapterType: true,
+    defaultSkillKeys: ASSISTANT_DEFAULT_SKILL_KEYS,
     bundle: {
-      stockVersion: "2026-10-11c",
+      stockVersion: "2026-10-11d",
       instructions: {
         entryFile: "AGENTS.md",
         files: {
@@ -680,6 +696,7 @@ export function validateBuiltInAgentDefinitions(definitions: BuiltInAgentDefinit
     ...definition,
     featureKeys: [...definition.featureKeys],
     allowedAdapterTypes: definition.allowedAdapterTypes ? [...definition.allowedAdapterTypes] : undefined,
+    defaultSkillKeys: definition.defaultSkillKeys ? [...definition.defaultSkillKeys] : undefined,
     defaultAdapterConfig: definition.defaultAdapterConfig ? { ...definition.defaultAdapterConfig } : undefined,
     bundle: definition.bundle ? {
       ...definition.bundle,
@@ -705,6 +722,7 @@ export function listBuiltInAgentDefinitions() {
     ...definition,
     featureKeys: [...definition.featureKeys],
     allowedAdapterTypes: definition.allowedAdapterTypes ? [...definition.allowedAdapterTypes] : undefined,
+    defaultSkillKeys: definition.defaultSkillKeys ? [...definition.defaultSkillKeys] : undefined,
     defaultAdapterConfig: definition.defaultAdapterConfig ? { ...definition.defaultAdapterConfig } : undefined,
   }));
 }
@@ -1335,6 +1353,27 @@ export function builtInAgentService(db: Db) {
     return updated as Agent;
   }
 
+  /** Add the definition's default skill keys the agent lacks; leaves every other entry alone. */
+  async function syncDefaultSkillKeysToAgent(agent: Agent, definition: BuiltInAgentDefinition) {
+    const defaults = definition.defaultSkillKeys ?? [];
+    if (defaults.length === 0) return agent;
+    const config = (agent.adapterConfig ?? {}) as Record<string, unknown>;
+    const desired = readPaperclipSkillSyncPreference(config).desiredSkillEntries;
+    const present = new Set(desired.map((entry) => entry.key));
+    const missing = defaults.filter((key) => !present.has(key));
+    if (missing.length === 0) return agent;
+    const adapterConfig = writePaperclipSkillSyncPreference(config, [
+      ...desired,
+      ...missing.map((key) => ({ key, versionId: null })),
+    ]);
+    const updated = await agentSvc.update(agent.id, { adapterConfig }, {
+      allowBuiltInAgentMetadata: true,
+      recordRevision: { source: "built-in-agent:default-skills" },
+    });
+    if (!updated) throw notFound("Built-in agent not found");
+    return updated as Agent;
+  }
+
   async function materializeSkill(agent: Agent, definition: BuiltInAgentDefinition, mode: "reconcile" | "reset") {
     const bundle = definition.bundle as BuiltInAgentBundleDefinition & { skill: NonNullable<BuiltInAgentBundleDefinition["skill"]> };
     const stock = stockHash(bundle.skill.files);
@@ -1757,6 +1796,11 @@ export function builtInAgentService(db: Db) {
     results.push(selected.has("instructions")
       ? await materializeInstructions(agent, definition, mode, actor)
       : byKind.get("instructions")!);
+    if (definition.defaultSkillKeys?.length) {
+      const refreshedForSkills = await agentSvc.getById(agent.id) as Agent | null;
+      if (!refreshedForSkills) throw notFound("Built-in agent not found");
+      await syncDefaultSkillKeysToAgent(refreshedForSkills, definition);
+    }
     if (definition.bundle.skill) {
       const refreshedAgent = await agentSvc.getById(agent.id) as Agent | null;
       if (!refreshedAgent) throw notFound("Built-in agent not found");
@@ -2303,9 +2347,9 @@ export function builtInAgentService(db: Db) {
       const [ran] = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns)
         .where(and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.agentId, assistant.id))).limit(1);
       if (ran) return false;
-      // Managed-instruction keys are server-owned; anything else means a person configured it.
+      // Managed-instruction keys and the default skill set are server-owned; anything else means a person configured it.
       const current = isPlainRecord(locked.adapterConfig) ? locked.adapterConfig : {};
-      if (Object.keys(current).some((key) => key !== "model" && !key.startsWith("instructions"))) return false;
+      if (Object.keys(current).some((key) => key !== "model" && key !== "paperclipSkillSync" && !key.startsWith("instructions"))) return false;
       if (inheritedAdapterType === locked.adapterType && inheritedModel === current.model) return false;
       const { model: _previousModel, ...kept } = current;
       const nextConfig = { ...kept, ...(typeof inheritedModel === "string" && inheritedModel ? { model: inheritedModel } : {}) };
