@@ -25,11 +25,13 @@ import { externalObjectIconForCategory } from "../lib/external-objects";
 import { externalObjectStatusIcon } from "../lib/status-colors";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import type { InboxApprovalFilter, InboxCategoryFilter } from "../lib/inbox";
+import { excludeAssistantAgents } from "../lib/assistant-agent";
 import { cn } from "../lib/utils";
 
 type AgentOption = {
   id: string;
   name: string;
+  metadata?: unknown;
 };
 
 type ProjectOption = {
@@ -103,7 +105,7 @@ export function IssueFiltersPopover({
   state,
   onChange,
   activeFilterCount,
-  agents,
+  agents: agentsProp,
   projects,
   labels,
   currentUserId,
@@ -135,6 +137,11 @@ export function IssueFiltersPopover({
   const [assigneeSearch, setAssigneeSearch] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
   const [labelSearch, setLabelSearch] = useState("");
+  // The built-in Assistant is not a staff assignee; keep it out of the picker.
+  const agents = useMemo(
+    () => (agentsProp ? excludeAssistantAgents(agentsProp) : agentsProp),
+    [agentsProp],
+  );
   const visibleAgents = useMemo(
     () => searchIssueFilterOptions(agents, assigneeSearch, (option) => option.name),
     [agents, assigneeSearch],

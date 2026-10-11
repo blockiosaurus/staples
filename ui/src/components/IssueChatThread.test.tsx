@@ -166,6 +166,11 @@ vi.mock("./MarkdownEditor", () => ({
   ),
 }));
 
+vi.mock("@/context/CompanyContext", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/context/CompanyContext")>()),
+  useCompany: () => ({ selectedCompany: null }),
+}));
+
 vi.mock("./InlineEntitySelector", () => ({
   InlineEntitySelector: () => null,
 }));
@@ -5005,6 +5010,122 @@ describe("IssueAssigneePausedNotice", () => {
     expect(container.textContent).toContain("budget hard stop");
     expect(
       container.querySelector('[data-testid="issue-assignee-paused-resume"]'),
+    ).toBeNull();
+
+    act(() => root.unmount());
+  });
+
+  it("explains a first-run lifecycle error with a configuration link instead of Resume", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueAssigneePausedNotice
+            agent={
+              {
+                id: "agent-1",
+                name: "Researcher",
+                urlKey: "researcher",
+                status: "paused",
+                pauseReason: "system",
+                lifecycleState: "preparing",
+                lifecycleError: "Plugin github failed to provision credentials",
+              } as unknown as Agent
+            }
+            onResume={vi.fn()}
+            resuming={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent).toContain(
+      "Researcher couldn't start: Plugin github failed to provision credentials",
+    );
+    expect(container.textContent).not.toContain("is paused");
+    expect(
+      container.querySelector('[data-testid="issue-assignee-paused-resume"]'),
+    ).toBeNull();
+    const configLink = container.querySelector(
+      '[data-testid="issue-assignee-config-link"]',
+    ) as HTMLAnchorElement | null;
+    expect(configLink).not.toBeNull();
+    expect(configLink?.getAttribute("href")).toBe(
+      "/agents/researcher/configuration",
+    );
+
+    act(() => root.unmount());
+  });
+
+  it("shows a setting-up notice while the agent lifecycle is still preparing", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueAssigneePausedNotice
+            agent={
+              {
+                id: "agent-1",
+                name: "Researcher",
+                urlKey: "researcher",
+                status: "idle",
+                lifecycleState: "verifying",
+                lifecycleError: null,
+              } as unknown as Agent
+            }
+            onResume={vi.fn()}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent).toContain("Researcher is still being set up…");
+    expect(
+      container.querySelector('[data-testid="issue-assignee-paused-resume"]'),
+    ).toBeNull();
+    expect(
+      container
+        .querySelector('[data-testid="issue-assignee-config-link"]')
+        ?.getAttribute("href"),
+    ).toBe("/agents/researcher/configuration");
+
+    act(() => root.unmount());
+  });
+
+  it("keeps the plain manual pause notice with Resume and no configuration link", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueAssigneePausedNotice
+            agent={
+              {
+                id: "agent-1",
+                name: "CEO",
+                urlKey: "ceo",
+                status: "paused",
+                pauseReason: "manual",
+                lifecycleState: "paused",
+                lifecycleError: null,
+              } as unknown as Agent
+            }
+            onResume={vi.fn()}
+            resuming={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent).toContain("CEO is paused.");
+    expect(container.textContent).toContain("It was paused manually.");
+    expect(
+      container.querySelector('[data-testid="issue-assignee-paused-resume"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="issue-assignee-config-link"]'),
     ).toBeNull();
 
     act(() => root.unmount());

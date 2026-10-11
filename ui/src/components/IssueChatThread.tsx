@@ -217,7 +217,7 @@ import {
 } from "../lib/transcriptPresentation";
 import { buildAgentMentionHref } from "@paperclipai/shared";
 import { useComposerStop } from "@/hooks/useComposerStop";
-import { cn, formatDateTime, formatShortDate } from "../lib/utils";
+import { agentUrl, cn, formatDateTime, formatShortDate } from "../lib/utils";
 import { liveBlueBadge } from "../lib/status-colors";
 import {
   nextWorkMode,
@@ -797,6 +797,12 @@ class IssueChatErrorBoundary extends Component<
   }
 }
 
+const AGENT_SETUP_LIFECYCLE_STATES: ReadonlySet<string> = new Set([
+  "preparing",
+  "verifying",
+  "resuming",
+]);
+
 export function IssueAssigneePausedNotice({
   agent,
   onResume,
@@ -806,7 +812,55 @@ export function IssueAssigneePausedNotice({
   onResume?: () => Promise<void> | void;
   resuming?: boolean;
 }) {
-  if (!agent || agent.status !== "paused") return null;
+  if (!agent) return null;
+
+  // First-run/lifecycle problems take precedence over a plain pause: resuming
+  // cannot fix a failed or in-flight setup, so point at the configuration page.
+  const lifecycleError = agent.lifecycleError?.trim() || null;
+  const settingUp =
+    !lifecycleError &&
+    agent.lifecycleState !== undefined &&
+    AGENT_SETUP_LIFECYCLE_STATES.has(agent.lifecycleState);
+  if (lifecycleError || settingUp) {
+    return (
+      <div data-testid="issue-assignee-paused-notice" className="mb-3">
+        <InlineBanner
+          tone={lifecycleError ? "danger" : "info"}
+          icon={lifecycleError ? AlertTriangle : Loader2}
+          compact
+          title={
+            lifecycleError ? (
+              <>
+                <span className="font-medium">{agent.name}</span> couldn&apos;t
+                start: {lifecycleError}
+              </>
+            ) : (
+              <>
+                <span className="font-medium">{agent.name}</span> is still being
+                set up…
+              </>
+            )
+          }
+          actions={
+            <Button size="sm" variant="outline" asChild>
+              <Link
+                to={`${agentUrl(agent)}/configuration`}
+                data-testid="issue-assignee-config-link"
+              >
+                Open configuration
+              </Link>
+            </Button>
+          }
+        >
+          {lifecycleError
+            ? "New runs will not start until the agent's setup succeeds."
+            : "New runs will start once setup finishes."}
+        </InlineBanner>
+      </div>
+    );
+  }
+
+  if (agent.status !== "paused") return null;
 
   const pauseDetail =
     agent.pauseReason === "budget"

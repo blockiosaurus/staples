@@ -85,6 +85,33 @@ describe("IssueFiltersPopover", () => {
     expect(popoverContent?.textContent).toContain("Live runs only");
   });
 
+  it("excludes the built-in Assistant from the assignee agent options", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <IssueFiltersPopover
+          presentation="streamlined"
+          state={defaultIssueFilterState}
+          onChange={vi.fn()}
+          activeFilterCount={0}
+          agents={[
+            { id: "agent-1", name: "Agent One" },
+            {
+              id: "assistant-1",
+              name: "Built-in Assistant",
+              metadata: { paperclipBuiltInAgent: { key: "assistant" } },
+            },
+          ]}
+        />,
+      );
+    });
+
+    const popoverContent = container.querySelector("[data-testid='popover-content']");
+    expect(popoverContent?.textContent).toContain("Agent One");
+    expect(popoverContent?.textContent).not.toContain("Built-in Assistant");
+  });
+
   it("hides the Priority filter section while priority UI is off (PAP-411)", () => {
     const root = createRoot(container);
 
