@@ -3,6 +3,7 @@ import express from "express";
 import request from "supertest";
 import { issueRoutes } from "../routes/issues.js";
 import { projectRoutes } from "../routes/projects.js";
+import { agentRoutes } from "../routes/agents.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { logger } from "../middleware/logger.js";
@@ -246,6 +247,29 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(await server.db.select().from(issueComments).where(eq(issueComments.issueId, staffChat!.id))).toEqual([]);
     expect(await server.db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.agentId, f.staffAgentId))).toEqual([]);
     expect(await hasOwnerChatInstructionAuthority(server.db, { companyId: f.companyId, agentId: f.staffAgentId, runId: staffRun!.id, userId })).toBe(false);
+  }, 60_000);
+
+  it("treats an Assistant-run actor like any delegated board channel on agent configuration routes", async () => {
+    const f = await assistantFixture();
+    const app = (source: "assistant_run" | "mcp_oauth") => {
+      const a = express();
+      a.use(express.json());
+      a.use((req, _res, next) => {
+        req.actor = { type: "board", source, userId: f.responsibleUserId!, companyIds: [f.companyId],
+          memberships: [{ companyId: f.companyId, membershipRole: "owner", status: "active" }], isInstanceAdmin: false,
+          ...(source === "assistant_run" ? { assistantRunId: f.runId } : {}) };
+        next();
+      });
+      a.use("/api", agentRoutes(server.db));
+      a.use(errorHandler);
+      return a;
+    };
+    for (const source of ["assistant_run", "mcp_oauth"] as const) {
+      const legacy = await request(app(source)).put(`/api/agents/${f.staffAgentId}/instructions-bundle/file`)
+        .send({ path: "promptTemplate.legacy.md", content: "x" });
+      expect(legacy.status, source + JSON.stringify(legacy.body)).toBe(422);
+      expect(legacy.body.code ?? legacy.body.details?.code, source).toBe("MCP_LEGACY_INSTRUCTIONS_UNVERSIONED");
+    }
   }, 60_000);
 
   it("gives viewers read tools only", async () => {
