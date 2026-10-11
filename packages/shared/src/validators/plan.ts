@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { COMPANY_BRIEF_MAX_CHARS } from "./company-brief.js";
 
 /**
  * A whole starter plan the person confirms in one step: an optional company
@@ -6,7 +7,7 @@ import { z } from "zod";
  * (and the new agents) by client key.
  */
 export const applyPlanSchema = z.object({
-  brief: z.object({ body: z.string().min(1).max(20_000), baseRevisionId: z.string().uuid().nullable() }).optional(),
+  brief: z.object({ body: z.string().min(1).max(COMPANY_BRIEF_MAX_CHARS), baseRevisionId: z.string().uuid().nullable() }).optional(),
   goal: z.object({ title: z.string().min(1).max(200), description: z.string().max(4000).optional() }).optional(),
   project: z.object({ name: z.string().min(1).max(120), description: z.string().max(4000).optional() }).optional(),
   agents: z.array(z.object({

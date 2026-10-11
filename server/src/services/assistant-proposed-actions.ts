@@ -334,10 +334,14 @@ export async function currentBriefRevisionId(db: Db, companyId: string): Promise
  * sets baseRevisionId to the current revision (absent when there is no brief).
  * A different base from the Assistant means it read an older brief.
  */
+/** A brief already exists, so a proposal must say which revision it replaces (never silently pinned). */
+export const BRIEF_BASE_REQUIRED_MESSAGE = "A company brief already exists. Read it with staples_get_company_brief and pass its revisionId as baseRevisionId, keeping what the person did not ask to change.";
+
 export async function pinBriefProposalBody(db: Db, companyId: string, body: unknown): Promise<Record<string, unknown>> {
   const record = { ...(body as Record<string, unknown>) };
   const current = await currentBriefRevisionId(db, companyId);
   const proposed = typeof record.baseRevisionId === "string" ? record.baseRevisionId : null;
+  if (!proposed && current) throw new ProposedActionError(BRIEF_BASE_REQUIRED_MESSAGE);
   if (proposed && proposed !== current) {
     throw new ProposedActionError("The brief changed since you read it. Read it again with staples_get_company_brief and redo the edit.");
   }
@@ -353,7 +357,8 @@ export const PLAN_BRIEF_CHANGED_MESSAGE = "The brief changed since the Assistant
  * Pin a plan's brief to the brief it replaces, like pinBriefProposalBody: the
  * server sets brief.baseRevisionId to the current revision (null when there
  * is none). A different non-null base from the Assistant means it read an
- * older brief. Plans without a brief are returned unchanged.
+ * older brief; a missing or null base while a brief exists means it never
+ * read it, and is refused too. Plans without a brief are returned unchanged.
  */
 export async function pinPlanProposalBody(db: Db, companyId: string, body: unknown): Promise<unknown> {
   const record = body as Record<string, unknown>;
@@ -361,6 +366,7 @@ export async function pinPlanProposalBody(db: Db, companyId: string, body: unkno
   if (!brief) return body;
   const current = await currentBriefRevisionId(db, companyId);
   const proposed = typeof brief.baseRevisionId === "string" ? brief.baseRevisionId : null;
+  if (!proposed && current) throw new ProposedActionError(BRIEF_BASE_REQUIRED_MESSAGE);
   if (proposed && proposed !== current) {
     throw new ProposedActionError("The brief changed since you read it. Read it again with staples_get_company_brief and redo the plan's brief.");
   }

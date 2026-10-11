@@ -218,7 +218,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
   it("rejects new questions without a recommended answer and allows trusted exemptions", async () => {
     const { companyId, issueId } = await seedSourceQuestionFixture({});
     const issue = { id: issueId, companyId };
-    const message = "Each question needs a recommended answer: mark one option recommended: true (single choice), at least one for multiple choice, or set initialText for text questions.";
+    const message = "Each question with options needs a recommended answer: mark exactly one option recommended: true (single choice), or at least one (multiple choice). Text questions are exempt; set initialText to suggest an answer.";
     const unrecommendedSet = {
       schema: "paperclip.question_set.v1" as const,
       questions: [

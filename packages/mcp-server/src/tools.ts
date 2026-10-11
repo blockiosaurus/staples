@@ -564,7 +564,7 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
     ),
     makeTool(
       "paperclipAskUserQuestions",
-      "Create an ask_user_questions interaction on an issue",
+      "Create an ask_user_questions interaction on an issue. Every question needs your recommended answer: mark exactly one option `recommended: true` for a single-choice question, or at least one for multiple choice. For a text question, put your suggested answer in `initialText`. A choice question without a recommendation is rejected with 422 (code question_recommendation_required, listing the question ids).",
       createAskUserQuestionsToolSchema,
       async ({ issueId, ...body }) =>
         client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/interactions`, {

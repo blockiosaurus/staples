@@ -27,7 +27,7 @@ const single = (recommended: Array<boolean | undefined>) => ({
 describe("question recommendations", () => {
   it("states the agent-facing rule", () => {
     expect(QUESTION_RECOMMENDATION_REQUIRED_MESSAGE).toBe(
-      "Each question needs a recommended answer: mark one option recommended: true (single choice), at least one for multiple choice, or set initialText for text questions.",
+      "Each question with options needs a recommended answer: mark exactly one option recommended: true (single choice), or at least one (multiple choice). Text questions are exempt; set initialText to suggest an answer.",
     );
   });
 

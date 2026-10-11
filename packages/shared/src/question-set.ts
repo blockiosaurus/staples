@@ -2,7 +2,7 @@ import type { AskUserQuestionsPayload, PaperclipQuestionSetPayload } from "./typ
 
 /** Agent-facing rejection for a question that carries no recommended answer. */
 export const QUESTION_RECOMMENDATION_REQUIRED_MESSAGE =
-  "Each question needs a recommended answer: mark one option recommended: true (single choice), at least one for multiple choice, or set initialText for text questions.";
+  "Each question with options needs a recommended answer: mark exactly one option recommended: true (single choice), or at least one (multiple choice). Text questions are exempt; set initialText to suggest an answer.";
 
 function syntheticOptionId(existing: readonly string[], preferred: string): string {
   const ids = new Set(existing);

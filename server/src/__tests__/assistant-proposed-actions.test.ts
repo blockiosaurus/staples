@@ -533,8 +533,14 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(createClaim.status).toBe(409);
     expect(createClaim.body.error).toBe("The brief changed since the Assistant proposed this.");
 
-    // A brief exists: the server pins the proposal to its current revision.
-    const revise = await propose({ body: "# Mission\n\n# Glossary" });
+    // A brief exists: a proposal without the revision it replaces is refused (never silently pinned).
+    for (const missing of [{ body: "# Mission\n\n# Glossary" }, { body: "# Mission\n\n# Glossary", baseRevisionId: null }]) {
+      const unpinned = await propose(missing);
+      expect(unpinned.body.result).toMatchObject({ isError: true });
+      expect(unpinned.body.result.content[0].text).toMatch(/already exists.*staples_get_company_brief.*baseRevisionId/);
+    }
+    // With the current revision, the proposal is pinned to it.
+    const revise = await propose({ body: "# Mission\n\n# Glossary", baseRevisionId: current.revisionId });
     expect(revise.body.result.isError, JSON.stringify(revise.body)).toBeUndefined();
     const [reviseRow] = await server.db.select().from(issueThreadInteractions)
       .where(eq(issueThreadInteractions.id, revise.body.result.structuredContent.interaction.id));
@@ -546,13 +552,13 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(stale.body.result.content[0].text).toMatch(/brief changed/i);
 
     // The brief changes after the proposal: the claim is refused.
-    await briefSvc.update(f.companyId, { body: "# Mission v3", baseRevisionId: current.revisionId }, { userId: f.responsibleUserId! });
+    const { brief: v3 } = await briefSvc.update(f.companyId, { body: "# Mission v3", baseRevisionId: current.revisionId }, { userId: f.responsibleUserId! });
     const refused = await claim(revise);
     expect(refused.status).toBe(409);
     expect(refused.body.error).toBe("The brief changed since the Assistant proposed this.");
 
     // Unchanged since proposing: the claim goes through.
-    const fresh = await propose({ body: "# Mission v4" });
+    const fresh = await propose({ body: "# Mission v4", baseRevisionId: v3.revisionId });
     expect((await claim(fresh)).status).toBe(200);
   }, 60_000);
 
@@ -594,8 +600,16 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(refused.body.error).toBe("The brief changed since the Assistant proposed this plan.");
     expect((await claim(plain)).status).toBe(200);
 
-    // A brief exists: the server pins the plan's brief to its current revision.
-    const pinned = await propose(plan({ brief: { body: "# Mission v2", baseRevisionId: null } }));
+    // A brief exists: a plan brief without the revision it replaces is refused.
+    // (The plan schema already requires the field; null is what reaches the pin.)
+    const omitted = await propose(plan({ brief: { body: "# Mission v2" } }));
+    expect(omitted.body.result).toMatchObject({ isError: true });
+    expect(omitted.body.result.content[0].text).toMatch(/baseRevisionId/);
+    const unpinned = await propose(plan({ brief: { body: "# Mission v2", baseRevisionId: null } }));
+    expect(unpinned.body.result).toMatchObject({ isError: true });
+    expect(unpinned.body.result.content[0].text).toMatch(/already exists.*staples_get_company_brief.*baseRevisionId/);
+    // With the current revision, the plan's brief is pinned to it.
+    const pinned = await propose(plan({ brief: { body: "# Mission v2", baseRevisionId: current.revisionId } }));
     expect((await stored(pinned)).proposedAction.body.brief.baseRevisionId).toBe(current.revisionId);
     expect((await claim(pinned)).status).toBe(200);
     const stale = await propose(plan({ brief: { body: "x", baseRevisionId: randomUUID() } }));
