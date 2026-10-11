@@ -58,7 +58,7 @@ import { useQuery } from "@tanstack/react-query";
 import { companyBriefApi } from "../api/companyBrief";
 import { agentsApi } from "../api/agents";
 import { companiesApi } from "../api/companies";
-import { applyPlanSchema, planTaskCreationOrder, type ApplyPlan } from "@paperclipai/shared";
+import { AI_CONNECTION_CAPABILITIES, applyPlanSchema, planTaskCreationOrder, type AiProvider, type ApplyPlan } from "@paperclipai/shared";
 import { queryKeys } from "../lib/queryKeys";
 import { buildLineDiff } from "../lib/line-diff";
 
@@ -1979,7 +1979,7 @@ function PlanPreviewSection({ label, children }: { label: string; children: Reac
  * project, new agents, and the tasks in the order they will be created, with
  * what each waits on and who it is assigned to. The exact request follows.
  */
-function ProposedPlanPreview({ path, body }: { path: string; body: unknown }) {
+function ProposedPlanPreview({ path, body, hireConnections }: { path: string; body: unknown; hireConnections?: Array<{ clientKey: string; provider: string | null }> }) {
   const companyId = PLAN_PROPOSAL_PATH.exec(path)?.[1] ?? null;
   const parsed = applyPlanSchema.safeParse(body);
   const plan: ApplyPlan | null = parsed.success ? parsed.data : null;
@@ -2001,6 +2001,7 @@ function ProposedPlanPreview({ path, body }: { path: string; body: unknown }) {
   try { ordered = planTaskCreationOrder(plan.tasks); } catch { /* the server refuses it; show as written */ }
   const titleByKey = new Map(plan.tasks.map((task) => [task.clientKey, task.title] as const));
   const newAgentByKey = new Map(plan.agents.map((agent) => [agent.clientKey, agent] as const));
+  const connectionByKey = new Map((hireConnections ?? []).map((entry) => [entry.clientKey, entry.provider] as const));
   const existingName = (id: string) => agents.data?.find((agent) => agent.id === id)?.name ?? "Existing agent";
   const assignee = (task: ApplyPlan["tasks"][number]) => task.assigneeClientKey
     ? `${newAgentByKey.get(task.assigneeClientKey)?.name ?? task.assigneeClientKey} (${hiresNeedApproval ? "new, after hire approval" : "new"})`
@@ -2038,6 +2039,9 @@ function ProposedPlanPreview({ path, body }: { path: string; body: unknown }) {
                 {agent.title ? <span className="text-muted-foreground"> · {agent.title}</span> : null}
                 {agent.budgetMonthlyCents !== undefined ? <span className="text-muted-foreground"> · budget {formatCents(agent.budgetMonthlyCents)}/month</span> : null}
                 {agent.reportsToClientKey ? <span className="text-muted-foreground"> · reports to {newAgentByKey.get(agent.reportsToClientKey)?.name ?? agent.reportsToClientKey}</span> : null}
+                {connectionByKey.has(agent.clientKey) ? (
+                  <span data-testid="proposed-plan-agent-connection" className="text-muted-foreground"> · {inheritedConnectionLabel(connectionByKey.get(agent.clientKey) ?? null)}</span>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -2059,6 +2063,12 @@ function ProposedPlanPreview({ path, body }: { path: string; body: unknown }) {
       </PlanPreviewSection>
     </div>
   );
+}
+
+/** "Uses your Claude connection"; a pool binding has no single provider. */
+function inheritedConnectionLabel(provider: string | null) {
+  const name = provider ? AI_CONNECTION_CAPABILITIES[provider as AiProvider]?.name : null;
+  return name ? `Uses your ${name} connection` : "Uses your connection";
 }
 
 /**
@@ -2199,7 +2209,7 @@ function ProposedActionCard({
       </div>
       {action.context ? <ProposedActionContextBlock context={action.context} /> : null}
       {action.category === "brief" ? <ProposedBriefPreview path={action.path} body={action.body} /> : null}
-      {action.category === "plan" ? <ProposedPlanPreview path={action.path} body={action.body} /> : null}
+      {action.category === "plan" ? <ProposedPlanPreview path={action.path} body={action.body} hireConnections={action.planHireConnections} /> : null}
       {/* The exact request comes first, at full prominence: it is what runs. */}
       <div data-testid="proposed-action-request" className="mt-3 space-y-2">
         <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">Request</p>

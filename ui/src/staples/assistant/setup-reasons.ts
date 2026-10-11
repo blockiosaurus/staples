@@ -23,9 +23,16 @@ export function connectionFailureReason(adapterType: string, codes: readonly str
   if (codes.some((code) => /_command_unresolvable$/.test(code))) return `${label} isn't installed on this computer.`;
   if (codes.includes("adapter_engine_unavailable")) {
     // The CLI is installed; only its default (ACP) engine can't run here.
-    return ASSISTANT_CLI_ENGINE_ADAPTER_TYPES.includes(adapterType)
-      ? `${label} is installed, but its default engine needs Node 24.11 or newer. Pick ${label} below to connect it on its CLI engine instead.`
-      : `${label} is installed, but it needs Node 24.11 or newer on this computer to run the Assistant.`;
+    // Node 24.11 is named only when the check says Node is the cause.
+    const cliFallback = ASSISTANT_CLI_ENGINE_ADAPTER_TYPES.includes(adapterType);
+    if (codes.includes("adapter_engine_node_unsupported")) {
+      return cliFallback
+        ? `${label} is installed, but its default engine needs Node 24.11 or newer. Pick ${label} below to connect it on its CLI engine instead.`
+        : `${label} is installed, but it needs Node 24.11 or newer on this computer to run the Assistant.`;
+    }
+    return cliFallback
+      ? `${label} is installed, but its default engine isn't available here. Pick ${label} below to connect it on its CLI engine instead.`
+      : `${label} is installed, but its default engine isn't available here.`;
   }
   if (codes.some((code) => /_usage_limited$/.test(code))) return `${label} has reached its usage limit.`;
   if (codes.some((code) => /_timed_out$|_timeout$/.test(code))) return `${label} didn't answer in time.`;

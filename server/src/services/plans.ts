@@ -53,8 +53,8 @@ export type AppliedPlan = {
 
 /**
  * What a hire on the Assistant's own adapter inherits from it: the model
- * connection the person set up for the Assistant (only a `responsible_user` or
- * `router` binding, which carry no credentials or other identity) and its
+ * connection the person set up for the Assistant (a `responsible_user`, `router` or
+ * `shared` binding; never `delegated`, which is tied to one person's grant) and its
  * engine. Without this, first hires in a new company would not run on the
  * model the person just connected.
  */
@@ -73,7 +73,7 @@ export async function assistantHireDefaults(db: Db, companyId: string): Promise<
   const defaults: AssistantHireDefaults = { adapterType: row.adapterType };
   const runtimeConfig = (row.runtimeConfig ?? {}) as Record<string, unknown>;
   const binding = aiRuntimeConnectionBindingSchema.safeParse(runtimeConfig.aiConnection);
-  if (binding.success && (binding.data.mode === "responsible_user" || binding.data.mode === "router")) {
+  if (binding.success && (binding.data.mode === "responsible_user" || binding.data.mode === "router" || binding.data.mode === "shared")) {
     defaults.aiConnection = binding.data;
   }
   const engine = ((row.adapterConfig ?? {}) as Record<string, unknown>).engine;
@@ -81,11 +81,21 @@ export async function assistantHireDefaults(db: Db, companyId: string): Promise<
   return defaults;
 }
 
-/** The agent-hire body for one planned agent, with the Assistant's model when it shares its adapter. */
+/** Whether a planned agent would inherit the Assistant's model connection. */
+export function planHireInheritsConnection(agent: { adapterType: string }, assistant: AssistantHireDefaults | null) {
+  return Boolean(assistant && assistant.aiConnection && assistant.adapterType === agent.adapterType);
+}
+
+/**
+ * The agent-hire body for one planned agent, with the Assistant's model when it
+ * shares its adapter. `withConnection: false` leaves the connection binding off
+ * (the engine default still applies).
+ */
 export function planHireBody(
   agent: ApplyPlan["agents"][number],
   reportsTo: string | undefined,
   assistant: AssistantHireDefaults | null,
+  withConnection = true,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = { name: agent.name, role: agent.role, adapterType: agent.adapterType };
   if (agent.title !== undefined) body.title = agent.title;
@@ -94,7 +104,7 @@ export function planHireBody(
   if (reportsTo) body.reportsTo = reportsTo;
   if (assistant && assistant.adapterType === agent.adapterType) {
     if (assistant.engine) body.adapterConfig = { engine: assistant.engine };
-    if (assistant.aiConnection) body.runtimeConfig = { aiConnection: assistant.aiConnection };
+    if (withConnection && assistant.aiConnection) body.runtimeConfig = { aiConnection: assistant.aiConnection };
   }
   return body;
 }
@@ -385,11 +395,20 @@ export async function applyPlan(db: Db, input: {
       // Stop before hiring if a newer request took the plan over.
       await holdLease();
       const body = planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant);
-      let response: Awaited<ReturnType<PlanHireAgent>>;
-      try {
-        response = await input.hireAgent(body);
-      } catch (error) {
-        response = { statusCode: 500, json: { error: error instanceof Error ? error.message : "Hire failed" } };
+      const hire = async (hireBody: Record<string, unknown>) => {
+        try {
+          return await input.hireAgent(hireBody);
+        } catch (error) {
+          return { statusCode: 500, json: { error: error instanceof Error ? error.message : "Hire failed" } } as Awaited<ReturnType<PlanHireAgent>>;
+        }
+      };
+      let response = await hire(body);
+      // An inherited router/shared binding that fails validation (422) must not
+      // fail the plan: hire once more without it. Authorization (403) and every
+      // other failure are final, and the retry's own result is what is reported.
+      if (response.statusCode === 422 && planHireInheritsConnection(agent, assistant)
+        && (assistant!.aiConnection!.mode === "router" || assistant!.aiConnection!.mode === "shared")) {
+        response = await hire(planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant, false));
       }
       const json = (response.json ?? {}) as { agent?: { id?: unknown; status?: unknown }; approval?: { id?: unknown } | null };
       if (response.statusCode >= 400 || typeof json.agent?.id !== "string") {

@@ -377,6 +377,24 @@ describe("ProposedActionCard", () => {
       expect(button(host, "Create plan")).toBeTruthy();
     });
 
+    it("lists \"Uses your <provider> connection\" only for hires the server says inherit one", async () => {
+      fetchMock.mockImplementation(async (url: string) => (url === `/api/companies/${COMPANY}/agents`
+        ? json(200, []) : json(404, { error: "unexpected" })));
+      const withConnection = planProposal();
+      withConnection.payload.proposedAction!.planHireConnections = [{ clientKey: "writer", provider: "anthropic" }];
+      const host = await render({ interaction: withConnection, onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(host.querySelector('[data-testid="proposed-plan-agents"]')?.textContent).toContain("Uses your Claude connection");
+    });
+
+    it("says nothing about a connection when the proposal carries none", async () => {
+      fetchMock.mockImplementation(async (url: string) => (url === `/api/companies/${COMPANY}/agents`
+        ? json(200, []) : json(404, { error: "unexpected" })));
+      const host = await render({ interaction: planProposal(), onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(host.querySelector('[data-testid="proposed-plan-agent-connection"]')).toBeNull();
+    });
+
     it("labels new-agent assignees as waiting for hire approval when the company requires it", async () => {
       fetchMock.mockImplementation(async (url: string) => (url === `/api/companies/${COMPANY}`
         ? json(200, { id: COMPANY, name: "Acme", requireBoardApprovalForNewAgents: true })

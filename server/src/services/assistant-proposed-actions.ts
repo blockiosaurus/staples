@@ -329,14 +329,14 @@ export async function currentBriefRevisionId(db: Db, companyId: string): Promise
   return brief ? brief.revisionId : null;
 }
 
+/** A brief already exists, so a proposal must say which revision it replaces (never silently pinned). */
+export const BRIEF_BASE_REQUIRED_MESSAGE = "A company brief already exists. Read it with staples_get_company_brief and pass its revisionId as baseRevisionId, keeping what the person did not ask to change.";
+
 /**
  * Pin a brief proposal to the brief the Assistant is replacing: the server
  * sets baseRevisionId to the current revision (absent when there is no brief).
  * A different base from the Assistant means it read an older brief.
  */
-/** A brief already exists, so a proposal must say which revision it replaces (never silently pinned). */
-export const BRIEF_BASE_REQUIRED_MESSAGE = "A company brief already exists. Read it with staples_get_company_brief and pass its revisionId as baseRevisionId, keeping what the person did not ask to change.";
-
 export async function pinBriefProposalBody(db: Db, companyId: string, body: unknown): Promise<Record<string, unknown>> {
   const record = { ...(body as Record<string, unknown>) };
   const current = await currentBriefRevisionId(db, companyId);

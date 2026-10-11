@@ -25,6 +25,7 @@ describe("claude engine availability", () => {
     expect(diagnostic.checks).toContainEqual(expect.objectContaining({
       code: "adapter_engine_unavailable", level: "error",
     }));
+    expect(diagnostic.checks).toContainEqual(expect.objectContaining({ code: "adapter_engine_node_unsupported" }));
   });
 
   it("does not apply ACP prerequisites to explicitly selected CLI", async () => {
@@ -40,6 +41,9 @@ describe("claude engine availability", () => {
     });
     expect(result.engine).toBe("acp");
     expect(result.unavailableReason).toContain("not available");
+    expect(result.unavailableCause).toBeUndefined();
+    const diagnostic = await testEnvironment({ config: { agentCommand: "/nonexistent/paperclip-test/acp", command: "/nonexistent/paperclip-test/acp" } } as never);
+    expect(diagnostic.checks.map((check) => check.code)).toEqual(["adapter_engine_unavailable"]);
   });
 });
 

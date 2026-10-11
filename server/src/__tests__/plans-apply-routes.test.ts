@@ -32,6 +32,7 @@ import { injectApiRequest } from "../services/public-mcp/capabilities.js";
 import { companyBriefService } from "../services/company-brief.js";
 import { claimPlanApplication, planHash, takeOverPlanApplication } from "../services/plans.js";
 import { applyPlanSchema } from "@paperclipai/shared";
+import { planHireConnectionsFor } from "../services/assistant-tools.js";
 
 const support = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = support.supported ? describe : describe.skip;
@@ -519,6 +520,113 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       expect(second.status, JSON.stringify(second.body)).toBe(201);
       const companyAgents = await db.select().from(agents).where(eq(agents.companyId, s.companyId));
       expect(companyAgents.filter((agent) => agent.name === "Editor")).toHaveLength(1);
+    }, 120_000);
+  });
+
+  describe("inherited Assistant connection", () => {
+    const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
+    const GRANT_ID = "22222222-2222-4222-8222-222222222222";
+    const sharedBinding = { provider: "openai", method: "api_key", mode: "shared", connectionId: CONNECTION_ID, grantId: GRANT_ID };
+
+    async function provisionAssistant(s: Seed, aiConnection: Record<string, unknown>) {
+      await db.update(agents).set({
+        adapterType: "codex_local",
+        adapterConfig: { engine: "cli" },
+        runtimeConfig: { aiConnection },
+        metadata: withBuiltInAgentMarker({}, { key: ASSISTANT_BUILT_IN_AGENT_KEY, featureKeys: [] }),
+      }).where(eq(agents.id, s.assistantId));
+      await db.insert(builtInManagedResources).values({
+        companyId: s.companyId, bundleKey: ASSISTANT_BUILT_IN_AGENT_KEY, resourceKind: "instructions", resourceKey: "AGENTS.md",
+        resourceId: s.assistantId, stockVersion: "test", stockHash: "test",
+      });
+    }
+
+    const onePlan = { agents: [{ clientKey: "editor", name: "Editor", role: "pm", adapterType: "codex_local" }], tasks: [{ clientKey: "t", title: "Write the style guide", assigneeClientKey: "editor" }] };
+
+    function recordingApp(s: Seed, failWith?: number) {
+      const bodies: Array<Record<string, unknown>> = [];
+      const built = buildApp(sessionActor(s), {
+        hireAgent: async (actor, companyId, body, origin) => {
+          bodies.push(body as Record<string, unknown>);
+          if (failWith && bodies.length === 1) return { statusCode: failWith, json: { error: "Binding refused" } };
+          return injectApiRequest(built.api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin });
+        },
+      });
+      return { ...built, bodies };
+    }
+
+    it("hands a shared Assistant connection to hires on its adapter", async () => {
+      const s = await seed();
+      await provisionAssistant(s, sharedBinding);
+      const { app, bodies } = recordingApp(s, 422);
+      // The first attempt is refused so only the body is inspected here.
+      await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send(onePlan);
+      expect((bodies[0]!.runtimeConfig as Record<string, unknown>).aiConnection).toEqual(sharedBinding);
+    }, 120_000);
+
+    it("computes the card's per-hire connection list from the Assistant's binding, never from the plan", async () => {
+      const s = await seed();
+      await provisionAssistant(s, sharedBinding);
+      const plan = { ...onePlan, agents: [...onePlan.agents, { clientKey: "writer", name: "Writer", role: "general", adapterType: "claude_local" }] };
+      // Only the hire on the Assistant's adapter inherits.
+      expect(await planHireConnectionsFor(db, s.companyId, plan))
+        .toEqual([{ clientKey: "editor", provider: "openai" }]);
+      await db.update(agents).set({ runtimeConfig: { aiConnection: { ...sharedBinding, mode: "delegated" } } }).where(eq(agents.id, s.assistantId));
+      expect(await planHireConnectionsFor(db, s.companyId, plan)).toEqual([]);
+    }, 120_000);
+
+    it("never hands on a delegated connection", async () => {
+      const s = await seed();
+      await provisionAssistant(s, { ...sharedBinding, mode: "delegated" });
+      const { app, bodies } = recordingApp(s);
+      const response = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send(onePlan);
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]!.runtimeConfig).toBeUndefined();
+    }, 120_000);
+
+    it("retries once without a refused shared binding instead of failing the plan", async () => {
+      const s = await seed();
+      await provisionAssistant(s, sharedBinding);
+      // The real hire route refuses a shared connection that does not exist (422).
+      const { app, bodies } = recordingApp(s);
+      const response = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send(onePlan);
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      expect(bodies).toHaveLength(2);
+      expect((bodies[0]!.runtimeConfig as Record<string, unknown>).aiConnection).toEqual(sharedBinding);
+      expect(bodies[1]!.runtimeConfig).toBeUndefined();
+      expect(bodies[1]!.adapterConfig).toEqual({ engine: "cli" });
+      const [editor] = await db.select().from(agents).where(eq(agents.id, response.body.agents.editor.id));
+      expect((editor!.runtimeConfig as Record<string, unknown>).aiConnection).toBeUndefined();
+    }, 120_000);
+
+    it("reports the retry's own failure when the hire still fails without the binding", async () => {
+      const s = await seed();
+      await provisionAssistant(s, sharedBinding);
+      const bodies: unknown[] = [];
+      const { app } = buildApp(sessionActor(s), {
+        hireAgent: async (_actor, _companyId, body) => { bodies.push(body); return { statusCode: 422, json: { error: bodies.length === 1 ? "Binding refused" : "Adapter unavailable" } }; },
+      });
+      const response = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send(onePlan);
+      expect(response.status).toBe(422);
+      expect(response.body.error).toMatch(/Hiring Editor failed: Adapter unavailable/);
+      expect(bodies).toHaveLength(2);
+    }, 120_000);
+
+    it("does not retry an authorization failure or a responsible-user binding", async () => {
+      const forbiddenRun = await seed();
+      await provisionAssistant(forbiddenRun, sharedBinding);
+      const forbidden = recordingApp(forbiddenRun, 403);
+      const denied = await request(forbidden.app).post(`/api/companies/${forbiddenRun.companyId}/plans/apply`).set("Origin", ORIGIN).send(onePlan);
+      expect(denied.status).toBe(403);
+      expect(forbidden.bodies).toHaveLength(1);
+
+      const personal = await seed();
+      await provisionAssistant(personal, { provider: "openai", method: "api_key", mode: "responsible_user" });
+      const refused = recordingApp(personal, 422);
+      const response = await request(refused.app).post(`/api/companies/${personal.companyId}/plans/apply`).set("Origin", ORIGIN).send(onePlan);
+      expect(response.status).toBe(422);
+      expect(refused.bodies).toHaveLength(1);
     }, 120_000);
   });
 

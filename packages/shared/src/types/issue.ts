@@ -1411,6 +1411,12 @@ export interface RequestConfirmationProposedActionPayload {
   staleCheck?: { path: string; field: "updatedAt"; expected: string };
   /** Server-owned display data read from the database; not hashed. */
   context?: ProposedActionContext;
+  /**
+   * Plan proposals only. Server-computed display data, not hashed and never
+   * read by apply: the planned agents that will inherit the Assistant's model
+   * connection. `provider` is the AI provider key, or null for a connection pool.
+   */
+  planHireConnections?: Array<{ clientKey: string; provider: string | null }>;
 }
 
 /** What the server read from the approval a proposal decides on, shown as "From the approval". */

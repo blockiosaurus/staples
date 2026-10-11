@@ -36,10 +36,14 @@ export interface AssistantLifecycleView {
 
 const SETTING_UP_STATES = new Set(["preparing", "verifying", "resuming"]);
 
+/** Emitted beside `adapter_engine_unavailable` only when the Node version is the cause. */
+export const ENGINE_NODE_UNSUPPORTED_CHECK_CODE = "adapter_engine_node_unsupported";
+
 /** A failed check a person fixes by connecting (or installing) a model. */
 export function isNeedsModelCheck(code: string): boolean {
   return code === ADAPTER_AUTH_MISSING_CHECK_CODE
     || code === "adapter_engine_unavailable"
+    || code === ENGINE_NODE_UNSUPPORTED_CHECK_CODE
     || /_auth_required$/.test(code)
     || /_command_unresolvable$/.test(code);
 }
@@ -71,10 +75,16 @@ function adapterLabel(adapterType: string) {
  * Codex fall back to their CLI engine when connected again; Gemini and Kimi
  * only carry the Assistant's tools on ACP, so they need a newer Node.
  */
-function engineUnavailableReason(adapterType: string, label: string): string {
-  return ASSISTANT_CLI_ENGINE_ADAPTER_TYPES.includes(adapterType)
-    ? `${label} is installed, but its default engine needs Node 24.11 or newer. Pick ${label} below to connect it on its CLI engine instead.`
-    : `${label} is installed, but it needs Node 24.11 or newer on this computer to run the Assistant.`;
+function engineUnavailableReason(adapterType: string, label: string, nodeIsCause: boolean): string {
+  const cliFallback = ASSISTANT_CLI_ENGINE_ADAPTER_TYPES.includes(adapterType);
+  if (nodeIsCause) {
+    return cliFallback
+      ? `${label} is installed, but its default engine needs Node 24.11 or newer. Pick ${label} below to connect it on its CLI engine instead.`
+      : `${label} is installed, but it needs Node 24.11 or newer on this computer to run the Assistant.`;
+  }
+  return cliFallback
+    ? `${label} is installed, but its default engine isn't available here. Pick ${label} below to connect it on its CLI engine instead.`
+    : `${label} is installed, but its default engine isn't available here.`;
 }
 
 /**
@@ -87,7 +97,7 @@ export function harnessFailureReason(adapterType: string, codes: readonly string
     return `${label} isn't signed in on this computer.`;
   }
   if (codes.some((code) => /_command_unresolvable$/.test(code))) return `${label} isn't installed on this computer.`;
-  if (codes.includes("adapter_engine_unavailable")) return engineUnavailableReason(adapterType, label);
+  if (codes.includes("adapter_engine_unavailable")) return engineUnavailableReason(adapterType, label, codes.includes(ENGINE_NODE_UNSUPPORTED_CHECK_CODE));
   if (codes.some((code) => /_usage_limited$/.test(code))) return `${label} has reached its usage limit.`;
   if (codes.some((code) => /_timed_out$|_timeout$/.test(code))) return `${label} didn't answer in time.`;
   return `${label} didn't pass its connection test.`;

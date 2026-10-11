@@ -44,6 +44,8 @@ export interface GeminiEngineSelection {
   engine: GeminiExecutionEngine;
   explicit: boolean;
   unavailableReason?: string;
+  /** Set when the engine is unavailable because Node is too old (not for any other reason). */
+  unavailableCause?: "node_version";
 }
 
 type GeminiEngineResolutionInput =
@@ -74,13 +76,14 @@ export async function resolveGeminiExecutionEngineForRun(
   const selection = normalizeEngine(input.config.engine);
   // Engine availability must never change the agent's execution or permission contract.
   if (selection.engine === "cli") return selection;
-  const unavailable = (reason: string): GeminiEngineSelection => ({
+  const unavailable = (reason: string, cause?: "node_version"): GeminiEngineSelection => ({
     ...selection,
+    ...(cause ? { unavailableCause: cause } : {}),
     unavailableReason: `${reason} Repair the ACP setup, or explicitly set engine=cli to use the CLI engine.`,
   });
 
   const reason = await geminiAcpUnavailableReason(input);
-  return reason ? unavailable(reason) : selection;
+  return reason ? unavailable(reason, reason === nodeVersionUnsupportedReason() ? "node_version" : undefined) : selection;
 }
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {
@@ -353,6 +356,10 @@ function sandboxTargetHasProcessSessionBridge(
   return target?.kind === "remote" && target.transport === "sandbox" && Boolean(target.runner);
 }
 
+function nodeVersionUnsupportedReason(): string {
+  return `Node ${process.version} (${process.execPath}) does not satisfy Gemini ACP's Node >=${MIN_ACP_NODE_VERSION} prerequisite.`;
+}
+
 async function geminiAcpUnavailableReason(
   input: GeminiEngineResolutionInput,
 ): Promise<string | null> {
@@ -367,7 +374,7 @@ async function geminiAcpUnavailableReason(
     return "Gemini ACP supports sandbox remote targets only; this run targets a non-sandbox remote environment.";
   }
   if (!nodeVersionMeetsGeminiAcpMinimum()) {
-    return `Node ${process.version} (${process.execPath}) does not satisfy Gemini ACP's Node >=${MIN_ACP_NODE_VERSION} prerequisite.`;
+    return nodeVersionUnsupportedReason();
   }
   const command = resolveGeminiAcpCommand(input.config);
   if (!(await commandIsResolvable(command, resolveConfigPath(input.config), input))) {

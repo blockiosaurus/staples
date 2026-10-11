@@ -68,6 +68,8 @@ export interface ClaudeEngineSelection {
   engine: ClaudeExecutionEngine;
   explicit: boolean;
   unavailableReason?: string;
+  /** Set when the engine is unavailable because Node is too old (not for any other reason). */
+  unavailableCause?: "node_version";
 }
 
 type ClaudeEngineResolutionInput =
@@ -98,8 +100,9 @@ export async function resolveClaudeExecutionEngineForRun(
   const selection = normalizeEngine(input.config.engine);
   // Engine availability must never change the agent's execution or permission contract.
   if (selection.engine === "cli") return selection;
-  const unavailable = (reason: string): ClaudeEngineSelection => ({
+  const unavailable = (reason: string, cause?: "node_version"): ClaudeEngineSelection => ({
     ...selection,
+    ...(cause ? { unavailableCause: cause } : {}),
     unavailableReason: `${reason} Repair the ACP setup, or explicitly set engine=cli to use the CLI engine.`,
   });
   const filesystemScope = parseLocalProcessFilesystemScope(input.config.filesystemScope);
@@ -109,7 +112,7 @@ export async function resolveClaudeExecutionEngineForRun(
   }
 
   const reason = await claudeAcpUnavailableReason(input);
-  return reason ? unavailable(reason) : selection;
+  return reason ? unavailable(reason, reason === nodeVersionUnsupportedReason() ? "node_version" : undefined) : selection;
 }
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {
@@ -519,6 +522,10 @@ async function resolveClaudeAcpCommandForTarget(
   return resolveClaudeAcpCommand(config);
 }
 
+function nodeVersionUnsupportedReason(): string {
+  return `Node ${process.version} (${process.execPath}) does not satisfy Claude ACP's Node >=${MIN_ACP_NODE_VERSION} prerequisite.`;
+}
+
 async function claudeAcpUnavailableReason(
   input: ClaudeEngineResolutionInput,
 ): Promise<string | null> {
@@ -533,7 +540,7 @@ async function claudeAcpUnavailableReason(
     return "Claude ACP supports sandbox remote targets only; this run targets a non-sandbox remote environment.";
   }
   if (!nodeVersionMeetsClaudeAcpMinimum()) {
-    return `Node ${process.version} (${process.execPath}) does not satisfy Claude ACP's Node >=${MIN_ACP_NODE_VERSION} prerequisite.`;
+    return nodeVersionUnsupportedReason();
   }
   const command = await resolveClaudeAcpCommandForTarget(input.config, target);
   if (!(await commandIsResolvable(command, input))) {

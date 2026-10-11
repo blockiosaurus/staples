@@ -9,6 +9,7 @@ import { captureRunIdentity } from "./run-identity.js";
 import { PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { publicMcpCapabilities } from "./public-mcp/capabilities.js";
 import { APPROVAL_DECISION_PATH, PROPOSABLE_AGENT_ROLES, ProposedActionError, pinBriefProposalBody, pinPlanProposalBody, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
+import { assistantHireDefaults, planHireInheritsConnection } from "./plans.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
 import { logActivity } from "./activity-log.js";
 import { McpApiError, McpCapabilityError, object, pick, rows, taskFields, pathId, type ApiDispatch, type Capability } from "./public-mcp/contracts.js";
@@ -395,6 +396,23 @@ async function approvalDecisionContext(db: Db, companyId: string, path: string):
 }
 
 /**
+ * Which of a plan's new agents will inherit the Assistant's model connection,
+ * for the card only: computed here from the database, never from the Assistant's
+ * input, and not read by apply (which decides for itself when it hires).
+ */
+export async function planHireConnectionsFor(db: Db, companyId: string, body: unknown) {
+  const plan = applyPlanSchema.safeParse(body);
+  if (!plan.success || !plan.data.agents.length) return [];
+  const assistant = await assistantHireDefaults(db, companyId);
+  const binding = assistant?.aiConnection;
+  if (!binding) return [];
+  const provider = "provider" in binding ? binding.provider : null;
+  return plan.data.agents
+    .filter((agent) => planHireInheritsConnection(agent, assistant))
+    .map((agent) => ({ clientKey: agent.clientKey, provider }));
+}
+
+/**
  * Create a governed Confirm card on the run's own Assistant conversation,
  * addressed to the run's person. The interaction is created directly through
  * the service because proposedAction is server-owned and refused on the
@@ -430,11 +448,13 @@ async function proposeAction(db: Db, context: AssistantToolContext, args: Record
     if (error instanceof ProposedActionError) throw new McpCapabilityError(error.message);
     throw error;
   }
+  const planHireConnections = category === "plan" ? await planHireConnectionsFor(db, context.companyId, body) : [];
   const approvalContext = category === "approval" ? await approvalDecisionContext(db, context.companyId, path) : null;
   const proposedAction = {
     version: 1 as const, method: method as (typeof PROPOSED_ACTION_METHODS)[number], path, body, summary, category, hash,
     ...(staleCheck ? { staleCheck: { path: staleCheck.path, field: "updatedAt" as const, expected: staleCheck.expected } } : {}),
     ...(approvalContext ? { context: approvalContext } : {}),
+    ...(planHireConnections.length ? { planHireConnections } : {}),
   };
   const interaction = await issueThreadInteractionService(db).create(issue, {
     kind: "request_confirmation",

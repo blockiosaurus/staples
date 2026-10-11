@@ -1668,6 +1668,10 @@ export const requestConfirmationProposedActionPayloadSchema = z.object({
     })
     .optional(),
   context: proposedActionContextSchema.optional(),
+  planHireConnections: z.array(z.object({
+    clientKey: z.string().max(200),
+    provider: z.string().max(40).nullable(),
+  })).max(100).optional(),
 }).superRefine((value, ctx) => {
   const max = proposedActionBodyMaxBytes(value.category);
   const bytes = proposedActionBodyBytes(value.body);
