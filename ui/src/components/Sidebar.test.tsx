@@ -251,7 +251,7 @@ describe("Sidebar", () => {
           .map((anchor) => anchor.textContent?.trim());
 
         expect(labels(workSection)).toEqual(["Chat", "Tasks", "Projects", "Routines", "Artifacts", "Goals"]);
-        expect(labels(orgSection)).toEqual(["Agents", "Skills", "Connectors", "Costs", "Audit"]);
+        expect(labels(orgSection)).toEqual(["Agents", "Skills", "Connectors", "Company brief", "Costs", "Audit"]);
         expect(orgSection?.querySelector('a[href="/activity/costs"]')?.textContent).toContain("Costs");
         expect(orgSection?.querySelector('a[href="/activity"]')?.textContent).toContain("Audit");
         expect(sections.indexOf(workSection!)).toBeLessThan(sections.indexOf(orgSection!));
