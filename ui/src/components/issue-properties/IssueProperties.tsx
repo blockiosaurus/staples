@@ -113,6 +113,7 @@ import {
 } from "./helpers";
 import { PropertyPicker } from "./property-picker";
 import { PropertyChip, PropertyRow, PropertySection } from "./primitives";
+import { MoreFieldsToggle, isSectionHidden, useMoreFieldsExpanded } from "./more-fields";
 import {
   buildWorkspaceSelectionUpdate,
   currentWorkspaceSelection,
@@ -2337,6 +2338,39 @@ export function IssueProperties({
     </>
   );
 
+  // Progressive disclosure: Relationships / Execution / Workspace render only
+  // when they hold a non-default value; otherwise they fold behind "More fields".
+  // Ambiguous cases (pull requests, related tasks, external objects, review
+  // policy badge, unavailable execution policy) count as content so we fail open.
+  const [moreFieldsExpanded, toggleMoreFields] = useMoreFieldsExpanded(companyId);
+  const workspaceSectionRendered = Boolean(
+    workspacePickerEligible || hasWorkspaceRuntimeControls || issue.currentExecutionWorkspace?.branchName
+      || issue.currentExecutionWorkspace?.cwd || issue.executionWorkspaceId,
+  );
+  const relationshipsHaveContent = Boolean(
+    issue.parentId || (issue.blockedBy ?? []).length > 0 || blockingIssues.length > 0 || childIssues.length > 0
+      || relatedTasks.length > 0 || pullRequests.length > 0 || workProductsError
+      || (remainingExternalObjects?.length ?? 0) > 0 || externalObjectsLoading || externalObjectsError,
+  );
+  const executionHasContent = Boolean(
+    !policyAvailable || reviewPolicyBadge || reviewerValues.length > 0 || approverValues.length > 0
+      || executionPolicy?.monitor || issue.watchdog,
+  );
+  const workspaceHasContent = Boolean(
+    hasWorkspaceOverride || issue.executionWorkspaceId || issue.currentExecutionWorkspace?.branchName
+      || issue.currentExecutionWorkspace?.cwd || hasWorkspaceRuntimeControls,
+  );
+  const relationshipsHidden = isSectionHidden(relationshipsHaveContent, moreFieldsExpanded);
+  const executionHidden = isSectionHidden(executionHasContent, moreFieldsExpanded);
+  const workspaceHidden = isSectionHidden(workspaceHasContent, moreFieldsExpanded);
+  const hasHideableSection = !relationshipsHaveContent || !executionHasContent
+    || (workspaceSectionRendered && !workspaceHasContent);
+  const moreFieldsControls = [
+    "issue-props-relationships",
+    "issue-props-execution",
+    ...(workspaceSectionRendered ? ["issue-props-workspace"] : []),
+  ].join(" ");
+
   const propertiesBody = (
     <div className={cn(streamlinedPropertiesEnabled && "task-detail-properties pl-4")}>
       <PropertySection
@@ -2436,6 +2470,7 @@ export function IssueProperties({
         </PropertyPicker>
       </PropertySection>
 
+      <div id="issue-props-relationships" hidden={relationshipsHidden}>
       <PropertySection title="Relationships" streamlined={streamlinedPropertiesEnabled}>
         <PropertyPicker
           inline={inline}
@@ -2614,7 +2649,9 @@ export function IssueProperties({
           onRetryExternalObjects={onRetryExternalObjects}
         />
       </PropertySection>
+      </div>
 
+      <div id="issue-props-execution" hidden={executionHidden}>
       <PropertySection title="Execution" streamlined={streamlinedPropertiesEnabled}>
         {/* Read-only: agents set the policy, the board does not. */}
         {reviewPolicyBadge ? (
@@ -2734,8 +2771,10 @@ export function IssueProperties({
           {watchdogContent}
         </PropertyPicker>
       </PropertySection>
+      </div>
 
-      {workspacePickerEligible || hasWorkspaceRuntimeControls || issue.currentExecutionWorkspace?.branchName || issue.currentExecutionWorkspace?.cwd || issue.executionWorkspaceId ? (
+      {workspaceSectionRendered ? (
+        <div id="issue-props-workspace" hidden={workspaceHidden}>
         <PropertySection title="Workspace" streamlined={streamlinedPropertiesEnabled}>
           {workspacePickerEligible ? (
             <PropertyPicker
@@ -2903,6 +2942,15 @@ export function IssueProperties({
             </PropertyRow>
           )}
         </PropertySection>
+        </div>
+      ) : null}
+
+      {hasHideableSection ? (
+        <MoreFieldsToggle
+          expanded={moreFieldsExpanded}
+          onToggle={toggleMoreFields}
+          controls={moreFieldsControls}
+        />
       ) : null}
 
       <PropertySection title="About" streamlined={streamlinedPropertiesEnabled}>
