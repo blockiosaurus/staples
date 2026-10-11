@@ -122,12 +122,31 @@ async function applierCanUseShared(
   return canInstall ? canInstall(binding) : false;
 }
 
-/** Codes the hire route gives when a connection binding (not the hire itself) is refused. */
+/**
+ * Codes the hire route gives when a connection binding (not the hire itself) is
+ * refused: `validateManagedAgentBinding` (router pools and `aiConnectionService.select`)
+ * and the shared-connection checks. Transient codes such as `ai_connection_busy`
+ * are deliberately absent, so they never trigger a hire without the binding.
+ */
+const BINDING_REFUSAL_CODES = new Set([
+  "ai_connection_pool_unavailable",
+  "ai_connection_pool_incompatible",
+  "ai_connection_pool_no_eligible_member",
+  "ai_connection_router_disabled",
+  "ai_connection_incompatible",
+  "ai_connection_missing",
+  "ai_connection_unavailable",
+  "ai_connection_default_missing",
+  "ai_connection_responsible_user_missing",
+  "ai_connection_credential_not_shared",
+  "connection_unavailable",
+  "incompatible_connection",
+]);
+
 function isBindingRefusal(json: unknown) {
   const record = json && typeof json === "object" ? json as Record<string, unknown> : {};
   const details = record.details && typeof record.details === "object" ? record.details as Record<string, unknown> : {};
-  const code = String(details.code ?? record.code ?? "");
-  return code.startsWith("ai_connection_") || code === "connection_unavailable" || code === "incompatible_connection";
+  return BINDING_REFUSAL_CODES.has(String(details.code ?? record.code ?? ""));
 }
 
 /** How long one apply holds its idempotency key; a crashed apply frees it after this. */

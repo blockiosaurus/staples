@@ -632,16 +632,19 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
     }, 120_000);
 
     it("does not retry a 422 that is not about the binding", async () => {
-      const s = await seed();
-      const sharedBinding = await ownSharedBinding(s);
-      await provisionAssistant(s, sharedBinding);
-      const bodies: unknown[] = [];
-      const { app } = buildApp(sessionActor(s), {
-        hireAgent: async (_actor, _companyId, body) => { bodies.push(body); return { statusCode: 422, json: { error: "Invalid hire", details: { code: "something_else" } } }; },
-      });
-      const response = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send(onePlan);
-      expect(response.status).toBe(422);
-      expect(bodies).toHaveLength(1);
+      // Transient or unrelated ai_connection_* codes are not binding refusals either.
+      for (const code of ["something_else", "ai_connection_busy", "ai_connection_tested", "ai_connection_pool_task_test_required"]) {
+        const s = await seed();
+        const sharedBinding = await ownSharedBinding(s);
+        await provisionAssistant(s, sharedBinding);
+        const bodies: unknown[] = [];
+        const { app } = buildApp(sessionActor(s), {
+          hireAgent: async (_actor, _companyId, body) => { bodies.push(body); return { statusCode: 422, json: { error: "Invalid hire", details: { code } } }; },
+        });
+        const response = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send(onePlan);
+        expect(response.status, code).toBe(422);
+        expect(bodies, code).toHaveLength(1);
+      }
     }, 120_000);
 
     it("reports the retry's own failure when the hire still fails without the binding", async () => {
