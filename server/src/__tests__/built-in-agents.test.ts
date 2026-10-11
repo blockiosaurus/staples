@@ -328,7 +328,14 @@ describeEmbeddedPostgres("built-in agents", () => {
     const companyId = await seedCompany({ requireApproval: true });
     const result = await createBuiltInAgentService(db).provision(companyId, "assistant");
     expect(result.approval).toBeNull();
-    expect(result.state.agent?.status).toBe("idle");
+    // No hire approval: the agent goes straight into setup (never pending_approval).
+    // Setup is driven by the scheduled lifecycle worker, so wait for it instead of racing it.
+    expect(result.state.agent?.status).not.toBe("pending_approval");
+    await lifecycleWorker.process(result.state.agent!.id);
+    await vi.waitFor(async () => {
+      const [row] = await db.select().from(agents).where(eq(agents.id, result.state.agent!.id));
+      expect(row!.status).toBe("idle");
+    });
     expect(await db.select().from(approvals).where(eq(approvals.companyId, companyId))).toHaveLength(0);
   });
 
@@ -427,16 +434,25 @@ describeEmbeddedPostgres("built-in agents", () => {
       .where(eq(agents.id, before.id));
     const [pending] = await db.select().from(agents).where(eq(agents.id, before.id));
     await hire(companyId, "codex_local", "gpt-5.4");
-    const [after] = await db.select().from(agents).where(eq(agents.id, before.id));
-    // The configuration path invalidates the in-flight verification so the new adapter is verified.
+    // The configuration path invalidates the in-flight verification (new version,
+    // error cleared, fresh operation) and re-inheritance schedules the lifecycle,
+    // so the new adapter is the one verified. The test worker's host step
+    // completes at once, so the scheduled run takes the Assistant to ready; wait
+    // for it rather than racing it.
+    await lifecycleWorker.process(before.id);
+    let after!: typeof agents.$inferSelect;
+    await vi.waitFor(async () => {
+      [after] = await db.select().from(agents).where(eq(agents.id, before.id));
+      expect(after.lifecycleState).toBe("ready");
+    });
     expect(after).toMatchObject({
       adapterType: "codex_local",
       adapterConfig: { model: "gpt-5.4" },
-      lifecycleState: "verifying",
+      lifecycleState: "ready",
       lifecycleError: null,
-      lifecycleVersion: pending!.lifecycleVersion + 1,
     });
-    expect(after!.lifecycleOperation?.id).not.toBe(pending!.lifecycleOperation?.id);
+    // At least the invalidation's bump; the worker's own transitions may add more.
+    expect(after.lifecycleVersion).toBeGreaterThan(pending!.lifecycleVersion);
     const revisions = await db.select().from(agentConfigRevisions).where(eq(agentConfigRevisions.agentId, before.id));
     expect(revisions.some((revision) => revision.source === "assistant_reinherit")).toBe(true);
   });
