@@ -63,23 +63,40 @@ describeEmbeddedPostgres("company brief", () => {
     const svc = companyBriefService(db);
     expect(await svc.get(companyId)).toBeNull();
 
-    const first = await svc.update(companyId, { body: "# Mission\nShip it." }, { userId: "user-1" });
+    const created = await svc.update(companyId, { body: "# Mission\nShip it." }, { userId: "user-1" });
+    const first = created.brief;
+    expect(created.changed).toBe(true);
     expect(first).toMatchObject({ body: "# Mission\nShip it.", revisionNumber: 1 });
     expect(typeof first.revisionId).toBe("string");
     expect(await svc.get(companyId)).toEqual(first);
 
-    const second = await svc.update(companyId, { body: "# Mission\nShip it well.", baseRevisionId: first.revisionId }, { userId: "user-1" });
+    const { brief: second } = await svc.update(companyId, { body: "# Mission\nShip it well.", baseRevisionId: first.revisionId }, { userId: "user-1" });
     expect(second.revisionNumber).toBe(2);
     expect(second.revisionId).not.toBe(first.revisionId);
 
     // Saving the same body again is a no-op, not a new revision.
     const same = await svc.update(companyId, { body: "# Mission\nShip it well.", baseRevisionId: second.revisionId }, { userId: "user-1" });
-    expect(same.revisionId).toBe(second.revisionId);
+    expect(same).toMatchObject({ changed: false, brief: { revisionId: second.revisionId } });
 
     const [link] = await db.select().from(companyDocuments).where(eq(companyDocuments.companyId, companyId));
     expect(link).toMatchObject({ key: "brief" });
     const revisions = await db.select().from(documentRevisions).where(eq(documentRevisions.documentId, link!.documentId));
     expect(revisions.map((r) => r.revisionNumber).sort()).toEqual([1, 2]);
+  });
+
+  it("never lets a writer without the current revision overwrite an existing brief", async () => {
+    const companyId = await company();
+    const svc = companyBriefService(db);
+    // Two people open the empty brief page; both save without a base revision.
+    await svc.update(companyId, { body: "Alice's brief" }, { userId: "alice" });
+    await expect(svc.update(companyId, { body: "Bob's brief" }, { userId: "bob" })).rejects.toMatchObject({ status: 409 });
+    await expect(svc.update(companyId, { body: "Bob's brief", baseRevisionId: null }, { userId: "bob" })).rejects.toMatchObject({ status: 409 });
+    expect((await svc.get(companyId))?.body).toBe("Alice's brief");
+
+    const owner = app(board(companyId));
+    const res = await request(owner).put(`/api/companies/${companyId}/brief`).send({ body: "Carol's brief" });
+    expect(res.status).toBe(409);
+    expect((await svc.get(companyId))?.body).toBe("Alice's brief");
   });
 
   it("serves GET/PUT over the API with conflict, viewer and cross-company checks", async () => {
@@ -102,6 +119,11 @@ describeEmbeddedPostgres("company brief", () => {
     const updated = await request(owner).put(`/api/companies/${companyId}/brief`)
       .send({ body: "Glossary v2", baseRevisionId: created.body.revisionId });
     expect(updated.status).toBe(200);
+    // A no-op save returns the brief but logs nothing.
+    const noop = await request(owner).put(`/api/companies/${companyId}/brief`)
+      .send({ body: "Glossary v2", baseRevisionId: updated.body.revisionId });
+    expect(noop.status).toBe(200);
+    expect(noop.body.revisionId).toBe(updated.body.revisionId);
 
     const stale = await request(owner).put(`/api/companies/${companyId}/brief`)
       .send({ body: "Stale edit", baseRevisionId: created.body.revisionId });
@@ -134,7 +156,8 @@ describeEmbeddedPostgres("company brief", () => {
     expect((await companySignalsService(db).get(companyId)).hasBrief).toBe(false);
     await companyBriefService(db).update(companyId, { body: "   \n" }, { userId: "user-1" });
     expect((await companySignalsService(db).get(companyId)).hasBrief).toBe(false);
-    await companyBriefService(db).update(companyId, { body: "Mission" }, { userId: "user-1" });
+    const blank = await companyBriefService(db).get(companyId);
+    await companyBriefService(db).update(companyId, { body: "Mission", baseRevisionId: blank!.revisionId }, { userId: "user-1" });
     expect((await companySignalsService(db).get(companyId)).hasBrief).toBe(true);
   });
 
@@ -148,22 +171,24 @@ describeEmbeddedPostgres("company brief", () => {
 
     const none = await wake();
     expect(none?.companyBrief).toBeNull();
-    expect(renderPaperclipWakePrompt(none, {})).not.toContain("Company brief:");
+    expect(renderPaperclipWakePrompt(none, {})).not.toContain("## Company brief");
 
-    await companyBriefService(db).update(companyId, { body: "We sell staplers. TPS = report." }, { userId: "user-1" });
+    const { brief } = await companyBriefService(db).update(companyId, { body: "We sell staplers. TPS = report." }, { userId: "user-1" });
     const small = await wake();
-    expect(small?.companyBrief).toEqual({ body: "We sell staplers. TPS = report.", truncated: false });
+    expect(small?.companyBrief).toEqual({
+      body: "We sell staplers. TPS = report.", truncated: false, revisionId: brief.revisionId, revisionNumber: 1, companyId,
+    });
     const prompt = renderPaperclipWakePrompt(small, {});
-    expect(prompt).toContain("Company brief:");
+    expect(prompt).toContain("## Company brief");
     expect(prompt).toContain("We sell staplers. TPS = report.");
 
     const long = "a".repeat(COMPANY_BRIEF_WAKE_EXCERPT_CHARS) + "TAIL";
-    await companyBriefService(db).update(companyId, { body: long }, { userId: "user-1" });
+    await companyBriefService(db).update(companyId, { body: long, baseRevisionId: brief.revisionId }, { userId: "user-1" });
     const big = await wake();
     expect(big?.companyBrief?.truncated).toBe(true);
     expect(big?.companyBrief?.body).toHaveLength(COMPANY_BRIEF_WAKE_EXCERPT_CHARS);
     const bigPrompt = renderPaperclipWakePrompt(big, {});
     expect(bigPrompt).not.toContain("TAIL");
-    expect(bigPrompt).toContain("(truncated — read the full brief at /company/brief)");
+    expect(bigPrompt).toContain(`(truncated — read the full brief at /company/brief or GET /api/companies/${companyId}/brief)`);
   });
 });

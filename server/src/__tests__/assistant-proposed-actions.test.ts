@@ -10,6 +10,7 @@ import { builtInAgentService } from "../services/built-in-agents.js";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import { canonicalJson, matchGovernedRoute, proposedActionHash, ProposedActionError, validateGovernedAction } from "../services/assistant-proposed-actions.js";
 import { issueThreadInteractionService } from "../services/issue-thread-interactions.js";
+import { companyBriefService } from "../services/company-brief.js";
 import { buildHostServices } from "../services/plugin-host-services.js";
 import type { Db } from "@paperclipai/db";
 import { startRunnerApiTestServer } from "./helpers/runner-api-server.js";
@@ -61,6 +62,24 @@ describe("governed body restrictions", () => {
     for (const path of [`/api/companies/${companyId}/agents`, `/api/companies/${companyId}/agent-hires`]) {
       await expect(check("POST", path, body)).rejects.toThrow(message);
     }
+  });
+
+  describe("company brief updates", () => {
+    const path = `/api/companies/${companyId}/brief`;
+    const revisionId = "44444444-4444-4444-8444-444444444444";
+    it.each([
+      [null, /JSON object/],
+      [{ body: 42 }, /body must be text/],
+      [{ body: "x".repeat(20_001) }, /20000/],
+      [{ body: "Mission", title: "x" }, /title/],
+      [{ body: "Mission", baseRevisionId: "nope" }, /baseRevisionId/],
+    ])("refuses brief body %#", async (body, message) => {
+      await expect(check("PUT", path, body)).rejects.toThrow(message);
+    });
+    it("allows the whole brief with or without a base revision, and fits a full-length brief", async () => {
+      await expect(check("PUT", path, { body: "Mission" })).resolves.toMatchObject({ category: "brief" });
+      await expect(check("PUT", path, { body: "é\n".repeat(10_000), baseRevisionId: revisionId })).resolves.toMatchObject({ category: "brief" });
+    });
   });
 
   it("explains where to configure what was refused", async () => {
@@ -192,6 +211,7 @@ describe("governed route allowlist", () => {
     ["DELETE", `/api/tool-connections/${id}/grants/${id}`, "connection"],
     ["DELETE", `/api/companies/${id}/labels/${id}`, "delete"],
     ["DELETE", `/api/issues/${id}/comments/${id}`, "delete"],
+    ["PUT", `/api/companies/${id}/brief`, "brief"],
   ])("allows %s %s as %s", (method, path, category) => {
     expect(matchGovernedRoute(method, path).category).toBe(category);
   });
@@ -200,6 +220,8 @@ describe("governed route allowlist", () => {
     ["GET", `/api/approvals/${id}`],
     ["POST", `/api/issues/${id}/comments`],
     ["PATCH", `/api/agents/${id}`],
+    ["PATCH", `/api/companies/${id}/brief`],
+    ["PUT", `/api/companies/${id}/brief/x`],
     ["DELETE", `/api/companies/${id}`],
     ["POST", `/api/approvals/${id}/approve?force=true`],
     ["POST", `/api/approvals/${id}/approve/`],
@@ -449,6 +471,54 @@ const support = await getEmbeddedPostgresTestSupport();
     const refused = await request(personApp(f, "session")).post(claimUrl).send({ hash });
     expect(refused.status).toBe(409);
     expect(refused.body.error).toBe("The approval changed since the Assistant proposed this.");
+  }, 60_000);
+
+  it("proposes brief changes pinned to the current revision and refuses a claim after the brief changed", async () => {
+    const f = await assistantFixture();
+    const path = `/api/companies/${f.companyId}/brief`;
+    const briefSvc = companyBriefService(server.db);
+    const propose = (body: Record<string, unknown>) =>
+      call(f, "staples_propose_action", { method: "PUT", path, body, summary: "Add the glossary to the brief", category: "brief" });
+    const claim = (result: Awaited<ReturnType<typeof propose>>) => request(personApp(f, "session"))
+      .post(`/api/issues/${f.issueId}/interactions/${result.body.result.structuredContent.interaction.id}/claim-proposed-action`)
+      .send({ hash: result.body.result.structuredContent.proposedAction.hash });
+
+    // No brief yet: the stored call creates it without a base revision.
+    const create = await propose({ body: "# Mission" });
+    expect(create.body.result.isError, JSON.stringify(create.body)).toBeUndefined();
+    const [createRow] = await server.db.select().from(issueThreadInteractions)
+      .where(eq(issueThreadInteractions.id, create.body.result.structuredContent.interaction.id));
+    const createPayload = createRow!.payload as { acceptLabel: string; proposedAction: { body: unknown; category: string } };
+    expect(createPayload.acceptLabel).toBe("Update brief");
+    expect(createPayload.proposedAction).toMatchObject({ category: "brief", body: { body: "# Mission" } });
+
+    // Someone creates the brief before the person confirms: the claim is refused.
+    const { brief: current } = await briefSvc.update(f.companyId, { body: "# Mission (by a person)" }, { userId: f.responsibleUserId! });
+    const createClaim = await claim(create);
+    expect(createClaim.status).toBe(409);
+    expect(createClaim.body.error).toBe("The brief changed since the Assistant proposed this.");
+
+    // A brief exists: the server pins the proposal to its current revision.
+    const revise = await propose({ body: "# Mission\n\n# Glossary" });
+    expect(revise.body.result.isError, JSON.stringify(revise.body)).toBeUndefined();
+    const [reviseRow] = await server.db.select().from(issueThreadInteractions)
+      .where(eq(issueThreadInteractions.id, revise.body.result.structuredContent.interaction.id));
+    expect((reviseRow!.payload as { proposedAction: { body: unknown } }).proposedAction.body)
+      .toEqual({ body: "# Mission\n\n# Glossary", baseRevisionId: current.revisionId });
+    // A stale base from the Assistant is refused at proposal time.
+    const stale = await propose({ body: "x", baseRevisionId: randomUUID() });
+    expect(stale.body.result).toMatchObject({ isError: true });
+    expect(stale.body.result.content[0].text).toMatch(/brief changed/i);
+
+    // The brief changes after the proposal: the claim is refused.
+    await briefSvc.update(f.companyId, { body: "# Mission v3", baseRevisionId: current.revisionId }, { userId: f.responsibleUserId! });
+    const refused = await claim(revise);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe("The brief changed since the Assistant proposed this.");
+
+    // Unchanged since proposing: the claim goes through.
+    const fresh = await propose({ body: "# Mission v4" });
+    expect((await claim(fresh)).status).toBe(200);
   }, 60_000);
 
   it("claims only for the addressee's own session, with the stored hash", async () => {

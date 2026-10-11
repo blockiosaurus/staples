@@ -103,7 +103,7 @@ import {
 } from "@paperclipai/shared";
 import { z } from "zod";
 import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
-import { APPROVAL_CHANGED_MESSAGE, APPROVAL_DECISION_PATH, ProposedActionError, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
+import { APPROVAL_CHANGED_MESSAGE, APPROVAL_DECISION_PATH, BRIEF_CHANGED_MESSAGE, BRIEF_UPDATE_PATH, ProposedActionError, briefProposalIsCurrent, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { authorizationService } from "./authorization.js";
 import { isCloudManagedInstance } from "./cloud-instance.js";
@@ -3360,6 +3360,11 @@ export function issueThreadInteractionService(
           if (typeof recorded !== "string" || !approval || approval.updatedAt.toISOString() !== recorded) {
             throw conflict(APPROVAL_CHANGED_MESSAGE);
           }
+        }
+        // Brief updates are bound to the brief revision the Assistant replaced.
+        if (method === "PUT" && BRIEF_UPDATE_PATH.test(path)
+          && !(await briefProposalIsCurrent(tx as unknown as Db, issue.companyId, body))) {
+          throw conflict(BRIEF_CHANGED_MESSAGE);
         }
         const existing = readProposedActionClaim(current.payload);
         const now = new Date();

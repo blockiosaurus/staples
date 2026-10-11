@@ -2,9 +2,11 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { agents, approvals, companySecrets, issues, toolConnections, type Db } from "@paperclipai/db";
 import { PROPOSABLE_HIRE_ADAPTER_TYPES } from "./assistant-identity.js";
+import { companyBriefService } from "./company-brief.js";
 import {
   AGENT_ROLES,
-  PROPOSED_ACTION_BODY_MAX_BYTES,
+  COMPANY_BRIEF_MAX_CHARS,
+  proposedActionBodyMaxBytes,
   type ProposedActionCategory,
   type ProposedActionMethod,
 } from "@paperclipai/shared";
@@ -38,6 +40,27 @@ export type GovernedRoutePattern = {
   /** Route-specific body rules; throws ProposedActionError. */
   validateBody?: (body: unknown) => void;
 };
+
+const BRIEF_BODY_KEYS = new Set(["body", "baseRevisionId"]);
+const UUID_VALUE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/** The whole new brief, optionally pinned to the revision it replaces. */
+function assertSafeBriefUpdate(body: unknown) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new ProposedActionError("A brief proposal needs a JSON object body: { body, baseRevisionId? }.");
+  }
+  const record = body as Record<string, unknown>;
+  const extra = Object.keys(record).filter((key) => !BRIEF_BODY_KEYS.has(key));
+  if (extra.length) throw new ProposedActionError(`A brief proposal may only carry body and baseRevisionId (not ${extra.join(", ")}).`);
+  if (typeof record.body !== "string") throw new ProposedActionError("body must be text: the whole new brief in markdown.");
+  if (record.body.length > COMPANY_BRIEF_MAX_CHARS) {
+    throw new ProposedActionError(`The brief is limited to ${COMPANY_BRIEF_MAX_CHARS} characters.`);
+  }
+  if (record.baseRevisionId !== undefined && record.baseRevisionId !== null
+    && (typeof record.baseRevisionId !== "string" || !UUID_VALUE.test(record.baseRevisionId))) {
+    throw new ProposedActionError("baseRevisionId must be the revisionId from staples_get_company_brief.");
+  }
+}
 
 /** Upper bound for any budget amount the Assistant may propose, in cents. */
 export const PROPOSED_BUDGET_MAX_CENTS = 10_000_000;
@@ -179,6 +202,8 @@ export const GOVERNED_ROUTE_PATTERNS: readonly GovernedRoutePattern[] = [
   { method: "POST", pattern: re(`/api/companies/${UUID}/budgets/policies`), category: "budget", binding: company(), route: "POST /api/companies/:companyId/budgets/policies", validateBody: (body) => assertBudgetAmounts(body, ["amount", "reservationCents"]) },
   { method: "PATCH", pattern: re(`/api/companies/${UUID}/budgets`), category: "budget", binding: company(), route: "PATCH /api/companies/:companyId/budgets", validateBody: (body) => assertBudgetAmounts(body, ["budgetMonthlyCents"]) },
   { method: "PATCH", pattern: re(`/api/agents/${UUID}/budgets`), category: "budget", binding: entity("agent"), route: "PATCH /api/agents/:agentId/budgets", validateBody: (body) => assertBudgetAmounts(body, ["budgetMonthlyCents"]) },
+  // company-brief.ts
+  { method: "PUT", pattern: re(`/api/companies/${UUID}/brief`), category: "brief", binding: company(), route: "PUT /api/companies/:companyId/brief", validateBody: assertSafeBriefUpdate },
   // secrets.ts
   { method: "POST", pattern: re(`/api/companies/${UUID}/secrets`), category: "secret", binding: company(), route: "POST /api/companies/:companyId/secrets", forbidBodyKeys: ["value"] },
   { method: "PATCH", pattern: re(`/api/secrets/${UUID}`), category: "secret", binding: entity("secret"), route: "PATCH /api/secrets/:id", validateBody: assertSafeSecretUpdate },
@@ -224,6 +249,39 @@ export class ProposedActionError extends Error {}
 /** POST /api/approvals/:id/{approve,reject,request-revision}; group 1 is the approval id. */
 export const APPROVAL_DECISION_PATH = /^\/api\/approvals\/([0-9a-fA-F-]{36})\/(?:approve|reject|request-revision)$/;
 export const APPROVAL_CHANGED_MESSAGE = "The approval changed since the Assistant proposed this.";
+
+/** PUT /api/companies/:companyId/brief; group 1 is the company id. */
+export const BRIEF_UPDATE_PATH = /^\/api\/companies\/([0-9a-fA-F-]{36})\/brief$/;
+export const BRIEF_CHANGED_MESSAGE = "The brief changed since the Assistant proposed this.";
+
+/** The brief's current revision, or null when the company has no brief. */
+export async function currentBriefRevisionId(db: Db, companyId: string): Promise<string | null> {
+  const brief = await companyBriefService(db).get(companyId);
+  return brief ? brief.revisionId : null;
+}
+
+/**
+ * Pin a brief proposal to the brief the Assistant is replacing: the server
+ * sets baseRevisionId to the current revision (absent when there is no brief).
+ * A different base from the Assistant means it read an older brief.
+ */
+export async function pinBriefProposalBody(db: Db, companyId: string, body: unknown): Promise<Record<string, unknown>> {
+  const record = { ...(body as Record<string, unknown>) };
+  const current = await currentBriefRevisionId(db, companyId);
+  const proposed = typeof record.baseRevisionId === "string" ? record.baseRevisionId : null;
+  if (proposed && proposed !== current) {
+    throw new ProposedActionError("The brief changed since you read it. Read it again with staples_get_company_brief and redo the edit.");
+  }
+  delete record.baseRevisionId;
+  return current ? { ...record, baseRevisionId: current } : record;
+}
+
+/** True when the stored brief proposal still replaces the current brief. */
+export async function briefProposalIsCurrent(db: Db, companyId: string, body: unknown): Promise<boolean> {
+  const stored = body && typeof body === "object" ? (body as Record<string, unknown>).baseRevisionId : undefined;
+  const current = await currentBriefRevisionId(db, companyId);
+  return (typeof stored === "string" ? stored : null) === current;
+}
 
 /**
  * Structural path rules applied before pattern matching: a plain `/api/...`
@@ -286,8 +344,9 @@ export async function validateGovernedAction(
 ): Promise<{ category: ProposedActionCategory; route: string }> {
   const route = matchGovernedRoute(input.method, input.path);
   const serialized = JSON.stringify(input.body ?? null);
-  if (Buffer.byteLength(serialized, "utf8") > PROPOSED_ACTION_BODY_MAX_BYTES) {
-    throw new ProposedActionError(`body is larger than ${PROPOSED_ACTION_BODY_MAX_BYTES} bytes.`);
+  const maxBytes = proposedActionBodyMaxBytes(route.category);
+  if (Buffer.byteLength(serialized, "utf8") > maxBytes) {
+    throw new ProposedActionError(`body is larger than ${maxBytes} bytes.`);
   }
   if (route.forbidBodyKeys) {
     const present = [...findKeysDeep(input.body, new Set(route.forbidBodyKeys))];

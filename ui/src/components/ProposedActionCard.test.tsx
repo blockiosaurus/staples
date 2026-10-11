@@ -278,4 +278,45 @@ describe("ProposedActionCard", () => {
     expect(container.querySelector('[data-testid="proposed-action-card"]')).toBeTruthy();
     expect(button(container, "Confirm")).toBeTruthy();
   });
+
+  describe("company brief proposals", () => {
+    const COMPANY = "22222222-2222-4222-8222-222222222222";
+    const BRIEF_PATH = `/api/companies/${COMPANY}/brief`;
+    function briefProposal(body: Record<string, unknown>) {
+      const base = proposal();
+      return {
+        ...base,
+        payload: { ...base.payload, acceptLabel: "Update brief", prompt: "Add the glossary",
+          proposedAction: { ...base.payload.proposedAction!, method: "PUT", path: BRIEF_PATH, body, summary: "Add the glossary", category: "brief" } },
+      } as RequestConfirmationInteraction;
+    }
+    function serveCurrentBrief(current: unknown) {
+      fetchMock.mockImplementation(async (url: string) => (url === BRIEF_PATH ? json(200, current) : json(404, { error: "unexpected" })));
+    }
+
+    it("previews the new brief and the line changes against the current one, above the request", async () => {
+      serveCurrentBrief({ body: "# Mission\nMake staples.\nOld line", revisionId: "r1", revisionNumber: 1, updatedAt: "2026-10-10T00:00:00.000Z" });
+      const host = await render({ interaction: briefProposal({ body: "# Mission\nMake staples.\n\n## Glossary\nTPS = report", baseRevisionId: "r1" }), onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      const preview = host.querySelector('[data-testid="proposed-brief-preview"]')!;
+      expect(preview).toBeTruthy();
+      expect(preview.querySelector("h2")?.textContent).toBe("Glossary");
+      const changes = host.querySelector('[data-testid="proposed-brief-changes"]')!;
+      expect(changes.textContent).toContain("+ TPS = report");
+      expect(changes.textContent).toContain("- Old line");
+      expect(changes.textContent).not.toContain("+ Make staples.");
+      const text = host.textContent!;
+      expect(text.indexOf("TPS = report")).toBeLessThan(text.indexOf(BRIEF_PATH));
+      expect(button(host, "Update brief")).toBeTruthy();
+      expect(host.textContent).toContain("Company brief");
+    });
+
+    it("labels a first brief as new", async () => {
+      serveCurrentBrief(null);
+      const host = await render({ interaction: briefProposal({ body: "# Mission" }), onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(host.querySelector('[data-testid="proposed-brief-preview"]')?.textContent).toContain("New brief");
+      expect(host.querySelector('[data-testid="proposed-brief-changes"]')).toBeNull();
+    });
+  });
 });

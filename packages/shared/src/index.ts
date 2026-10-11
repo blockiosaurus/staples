@@ -2072,6 +2072,8 @@ export {
   PROPOSED_ACTION_METHODS,
   PROPOSED_ACTION_CATEGORIES,
   PROPOSED_ACTION_BODY_MAX_BYTES,
+  PROPOSED_BRIEF_BODY_MAX_BYTES,
+  proposedActionBodyMaxBytes,
   requestCheckboxConfirmationOptionSchema,
   requestCheckboxConfirmationPayloadSchema,
   requestCheckboxConfirmationResultSchema,

@@ -54,6 +54,10 @@ import {
   readProposedActionStaleValue,
   type ProposedActionAcceptResult,
 } from "../api/issues";
+import { useQuery } from "@tanstack/react-query";
+import { companyBriefApi } from "../api/companyBrief";
+import { queryKeys } from "../lib/queryKeys";
+import { buildLineDiff } from "../lib/line-diff";
 
 const OTHER_ANSWER_ID = "__paperclip_other__";
 
@@ -1894,7 +1898,66 @@ const PROPOSED_ACTION_CATEGORY_LABELS: Record<string, string> = {
   outbound: "Outbound",
   delete: "Delete",
   other_governed: "Governed action",
+  brief: "Company brief",
 };
+
+const BRIEF_PROPOSAL_PATH = /^\/api\/companies\/([0-9a-fA-F-]{36})\/brief$/;
+
+/**
+ * A proposed company brief: the new text rendered, plus the line changes
+ * against the brief as it is now (read with the person's own session).
+ */
+function ProposedBriefPreview({ path, body }: { path: string; body: unknown }) {
+  const companyId = BRIEF_PROPOSAL_PATH.exec(path)?.[1] ?? null;
+  const next = body && typeof body === "object" && typeof (body as { body?: unknown }).body === "string"
+    ? (body as { body: string }).body
+    : null;
+  const current = useQuery({
+    queryKey: queryKeys.companyBrief(companyId ?? ""),
+    queryFn: async () => (await companyBriefApi.get(companyId!)) ?? null,
+    enabled: Boolean(companyId),
+  });
+  if (next === null) return null;
+  const isNew = current.isSuccess && current.data === null;
+  // Diffing is quadratic; very long briefs show the new text only.
+  const diffable = (text: string) => text.split("\n").length <= 1500;
+  const changes = current.data && diffable(current.data.body) && diffable(next) ? buildLineDiff(current.data.body, next) : null;
+  const changed = changes?.filter((line) => line.kind !== "context") ?? [];
+  return (
+    <div className="mt-3 space-y-3">
+      <div data-testid="proposed-brief-preview" className="rounded-md border border-border p-3">
+        <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">
+          {isNew ? "New brief" : "Proposed brief"}
+        </p>
+        <div className="mt-2 max-h-80 overflow-auto text-sm">
+          <MarkdownBody>{next}</MarkdownBody>
+        </div>
+      </div>
+      {current.data && changes ? (
+        <div data-testid="proposed-brief-changes" className="rounded-md border border-border p-3">
+          <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">
+            Changes from revision {current.data.revisionNumber}
+          </p>
+          {changed.length ? (
+            <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-xs">
+              {changed.map((line, index) => (
+                <div key={index} className={line.kind === "added" ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}>
+                  {line.kind === "added" ? "+ " : "- "}{line.text}
+                </div>
+              ))}
+            </pre>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">No changes to the current brief.</p>
+          )}
+        </div>
+      ) : current.data ? (
+        <p className="text-xs text-muted-foreground">
+          The brief is too long to compare here. <Link to="/company/brief">Open the current brief</Link>
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * An Assistant-proposed governed API call (`payload.proposedAction`). Nothing
@@ -2031,6 +2094,7 @@ function ProposedActionCard({
         <span data-testid="interaction-status-badge" className={cn("text-xs", failed ? "text-destructive" : "text-muted-foreground")}>{statusLabel}</span>
       </div>
       {action.context ? <ProposedActionContextBlock context={action.context} /> : null}
+      {action.category === "brief" ? <ProposedBriefPreview path={action.path} body={action.body} /> : null}
       {/* The exact request comes first, at full prominence: it is what runs. */}
       <div data-testid="proposed-action-request" className="mt-3 space-y-2">
         <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">Request</p>
@@ -2068,7 +2132,7 @@ function ProposedActionCard({
             {working === "cancel" ? "Cancelling…" : (interaction.payload.rejectLabel || "Cancel")}
           </Button>
           <Button size="sm" variant={destructive ? "destructive" : "cta"} disabled={!onAcceptInteraction || working !== null} onClick={() => void confirm()}>
-            {working === "confirm" ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Running…</> : staleWarning ? "Confirm anyway" : (interaction.payload.acceptLabel || "Confirm")}
+            {working === "confirm" ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Running…</> : staleWarning ? "Confirm anyway" : (interaction.payload.acceptLabel || (action.category === "brief" ? "Update brief" : "Confirm"))}
           </Button>
         </div>
       ) : null}

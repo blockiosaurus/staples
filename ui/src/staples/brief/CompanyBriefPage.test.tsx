@@ -113,7 +113,7 @@ describe("CompanyBriefPage", () => {
     await type("Glossary");
     await act(async () => saveButton().click());
     await settle();
-    expect(mocks.update).toHaveBeenCalledWith("company-1", { body: "Glossary" });
+    expect(mocks.update).toHaveBeenCalledWith("company-1", { body: "Glossary", baseRevisionId: null });
   });
 
   it("explains a conflict and a read-only refusal instead of overwriting", async () => {

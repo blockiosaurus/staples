@@ -1595,9 +1595,26 @@ export const PROPOSED_ACTION_CATEGORIES = [
   "outbound",
   "delete",
   "other_governed",
+  "brief",
 ] as const;
 /** Serialized JSON body limit for a proposed action. */
 export const PROPOSED_ACTION_BODY_MAX_BYTES = 20 * 1024;
+/**
+ * Company brief proposals carry the whole brief (up to 20,000 characters),
+ * which can serialize past the general limit once escaped or multi-byte.
+ */
+export const PROPOSED_BRIEF_BODY_MAX_BYTES = 96 * 1024;
+export function proposedActionBodyMaxBytes(category: string | null | undefined): number {
+  return category === "brief" ? PROPOSED_BRIEF_BODY_MAX_BYTES : PROPOSED_ACTION_BODY_MAX_BYTES;
+}
+function proposedActionBodyBytes(value: unknown): number | null {
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? null : new TextEncoder().encode(serialized).length;
+  } catch {
+    return null;
+  }
+}
 
 const proposedActionPathSchema = z
   .string()
@@ -1627,19 +1644,7 @@ export const requestConfirmationProposedActionPayloadSchema = z.object({
   version: z.literal(1),
   method: z.enum(PROPOSED_ACTION_METHODS),
   path: proposedActionPathSchema,
-  body: z
-    .unknown()
-    .refine((value) => {
-      try {
-        const serialized = JSON.stringify(value);
-        return (
-          serialized !== undefined &&
-          new TextEncoder().encode(serialized).length <= PROPOSED_ACTION_BODY_MAX_BYTES
-        );
-      } catch {
-        return false;
-      }
-    }, `body must be JSON no larger than ${PROPOSED_ACTION_BODY_MAX_BYTES} bytes`),
+  body: z.unknown(),
   summary: z.string().trim().min(1).max(500),
   category: z.enum(PROPOSED_ACTION_CATEGORIES),
   hash: z.string().regex(/^[a-f0-9]{64}$/, "hash must be a sha256 hex digest"),
@@ -1651,6 +1656,12 @@ export const requestConfirmationProposedActionPayloadSchema = z.object({
     })
     .optional(),
   context: proposedActionContextSchema.optional(),
+}).superRefine((value, ctx) => {
+  const max = proposedActionBodyMaxBytes(value.category);
+  const bytes = proposedActionBodyBytes(value.body);
+  if (bytes === null || bytes > max) {
+    ctx.addIssue({ code: "custom", path: ["body"], message: `body must be JSON no larger than ${max} bytes` });
+  }
 });
 
 export const requestConfirmationPayloadSchema = z.object({

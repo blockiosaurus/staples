@@ -51,7 +51,9 @@ export function CompanyBriefPage() {
 
   const save = useMutation({
     mutationFn: (body: string) =>
-      companyBriefApi.update(companyId, { body, ...(base?.revisionId ? { baseRevisionId: base.revisionId } : {}) }),
+      // Always send the revision this draft replaces (null for a new brief) so
+      // a save never overwrites a brief this page has not seen.
+      companyBriefApi.update(companyId, { body, baseRevisionId: base?.revisionId ?? null }),
     onSuccess: (saved) => {
       setBase(saved);
       setDraft(saved.body);
@@ -94,7 +96,7 @@ export function CompanyBriefPage() {
         <p className="text-sm text-muted-foreground">
           Your mission, glossary and key decisions. Every agent reads the first{" "}
           {COMPANY_BRIEF_WAKE_EXCERPT_CHARS.toLocaleString()} characters each time it starts work, so keep the most
-          important context at the top. The Assistant can update it for you too.
+          important context at the top. The Assistant can propose changes for you to confirm.
         </p>
       </div>
 

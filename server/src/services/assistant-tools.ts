@@ -7,7 +7,7 @@ import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { publicMcpCapabilities } from "./public-mcp/capabilities.js";
-import { APPROVAL_DECISION_PATH, ProposedActionError, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
+import { APPROVAL_DECISION_PATH, ProposedActionError, pinBriefProposalBody, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
 import { logActivity } from "./activity-log.js";
 import { McpApiError, McpCapabilityError, object, pick, rows, taskFields, pathId, type ApiDispatch, type Capability } from "./public-mcp/contracts.js";
@@ -24,7 +24,7 @@ export const ASSISTANT_READ_TOOL_NAMES = [
 /** Low-risk writes. Governed actions (finish, block, delete, configure, approvals) are not exposed. */
 export const ASSISTANT_WRITE_TOOL_NAMES = [
   "paperclip_create_task", "paperclip_add_comment", "paperclip_update_task", "staples_answer_question", "staples_pin_surface",
-  "staples_propose_action", "staples_update_company_brief",
+  "staples_propose_action",
 ] as const;
 
 /** `paperclip_update_task` may only touch these fields. */
@@ -254,6 +254,7 @@ function assistantCapabilities(db: Db): Capability[] {
       name: PROPOSE_ACTION_TOOL, write: true,
       description: [
         "Propose one exact governed API call for this person to confirm. Nothing runs until they click Confirm on the card in this conversation; their browser then performs the call with their own session and you are woken with the result.",
+        `Changing the company brief is governed too: propose PUT /api/companies/<companyId>/brief with category brief and body { body: <the whole new brief in markdown, at most ${COMPANY_BRIEF_MAX_CHARS} characters>, baseRevisionId: <revisionId from staples_get_company_brief> }. Batch edits: one proposal per topic, not per sentence.`,
         "Only governed actions are allowed: approval approve/reject/request-revision, agent hire/create/pause/resume/terminate (adapterType is required; CEO-level hires are done in the Agents page), budget policy and budget updates, secret create/update/delete (never include secret values; an update may only change name, description or status), revoking a connection, grant or delegation (DELETE with body null), and DELETE with body null under this company or one of its tasks (removing tool policies, the skill policy, issue approval links, watchdogs or skill files is not proposable). Creating or changing connections is not proposable: point the person to the Connectors page to set them up.",
         "The path must start with /api/ and refer to this company. category is derived from the path. Optionally pass staleCheck { path, field: \"updatedAt\", expected } with a GET path whose updatedAt must be unchanged when the person confirms.",
       ].join(" "),
@@ -271,23 +272,9 @@ function assistantCapabilities(db: Db): Capability[] {
     },
     {
       name: "staples_get_company_brief",
-      description: "Read the company brief (mission, glossary, key decisions) that every agent sees. Returns null when there is none. Read it before editing so you can pass its revisionId as baseRevisionId.",
+      description: "Read the company brief (mission, glossary, key decisions) that every agent sees. Returns null when there is none. Read it before proposing a change so your proposal starts from the current text.",
       schema: z.object(companyField).strict(),
       run: async (p, _a, api) => ({ brief: await api(p, "GET", `/companies/${pathId(p.company.id)}/brief`) }),
-    },
-    {
-      name: "staples_update_company_brief", write: true,
-      description: `Replace the company brief with new markdown (at most ${COMPANY_BRIEF_MAX_CHARS} characters) as this person. Every agent sees it on its next wake. Send the whole brief, not a diff, and only content the person asked for or agreed to. Pass baseRevisionId from staples_get_company_brief; a conflict means someone else changed it, so read it again.`,
-      schema: z.object({
-        ...companyField,
-        body: z.string().max(COMPANY_BRIEF_MAX_CHARS),
-        baseRevisionId: z.uuid().optional(),
-      }).strict(),
-      run: async (p, a, api) => ({
-        brief: await api(p, "PUT", `/companies/${pathId(p.company.id)}/brief`, {
-          body: a.body, ...(a.baseRevisionId ? { baseRevisionId: a.baseRevisionId } : {}),
-        }),
-      }),
     },
     {
       name: "staples_pin_surface", write: true,
@@ -374,13 +361,15 @@ async function proposeAction(db: Db, context: AssistantToolContext, args: Record
   }
   const method = String(args.method);
   const path = String(args.path);
-  const body = args.body === undefined ? null : args.body;
+  let body = args.body === undefined ? null : args.body;
   const summary = String(args.summary).trim();
   const staleCheck = args.staleCheck as { path: string; field: "updatedAt"; expected: string } | undefined;
   let category: Awaited<ReturnType<typeof validateGovernedAction>>["category"];
   let hash: string;
   try {
     ({ category } = await validateGovernedAction(db, { method, path, body, staleCheckPath: staleCheck?.path ?? null }, context.companyId));
+    // Brief proposals replace a specific revision; the server pins it.
+    if (category === "brief") body = await pinBriefProposalBody(db, context.companyId, body);
     hash = proposedActionHash({ method, path, body });
   } catch (error) {
     if (error instanceof ProposedActionError) throw new McpCapabilityError(error.message);
@@ -401,7 +390,7 @@ async function proposeAction(db: Db, context: AssistantToolContext, args: Record
     idempotencyKey: `assistant-proposed-action:${context.runId}:${hash}`,
     title: summary.slice(0, 240),
     payload: {
-      version: 1, prompt: summary, acceptLabel: "Confirm", rejectLabel: "Cancel",
+      version: 1, prompt: summary, acceptLabel: category === "brief" ? "Update brief" : "Confirm", rejectLabel: "Cancel",
       detailsMarkdown: proposedActionDetailsMarkdown({ method, path, body }),
       supersedeOnUserComment: false,
       proposedAction,

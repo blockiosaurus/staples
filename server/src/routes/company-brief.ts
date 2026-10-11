@@ -26,21 +26,23 @@ export function companyBriefRoutes(db: Db) {
     assertBoard(req);
     assertCompanyAccess(req, companyId);
     const actor = getActorInfo(req);
-    const brief = await svc.update(companyId, req.body, {
+    const { brief, changed } = await svc.update(companyId, req.body, {
       userId: actor.actorType === "user" ? actor.actorId : null,
       runId: actor.runId,
     });
-    await logActivity(db, {
-      companyId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "company.brief_updated",
-      entityType: "company",
-      entityId: companyId,
-      details: { revisionId: brief.revisionId, revisionNumber: brief.revisionNumber, length: brief.body.length },
-    });
+    if (changed) {
+      await logActivity(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "company.brief_updated",
+        entityType: "company",
+        entityId: companyId,
+        details: { revisionId: brief.revisionId, revisionNumber: brief.revisionNumber, length: brief.body.length },
+      });
+    }
     res.json(brief);
   });
 

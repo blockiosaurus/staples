@@ -11,7 +11,13 @@ type Executor = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];
 type BriefActor = { userId?: string | null; agentId?: string | null; runId?: string | null };
 
 /** What every agent's wake carries: the start of the brief, flagged when cut. */
-export type CompanyBriefExcerpt = { body: string; truncated: boolean };
+export type CompanyBriefExcerpt = {
+  body: string;
+  truncated: boolean;
+  revisionId: string | null;
+  revisionNumber: number;
+  companyId: string;
+};
 
 async function loadBrief(executor: Executor, companyId: string, lock = false) {
   const query = executor
@@ -38,10 +44,19 @@ function toBrief(row: { body: string; revisionId: string | null; revisionNumber:
   };
 }
 
-export function excerptCompanyBrief(body: string | null | undefined): CompanyBriefExcerpt | null {
-  if (!body || !body.trim()) return null;
-  const truncated = body.length > COMPANY_BRIEF_WAKE_EXCERPT_CHARS;
-  return { body: truncated ? body.slice(0, COMPANY_BRIEF_WAKE_EXCERPT_CHARS) : body, truncated };
+export function excerptCompanyBrief(
+  companyId: string,
+  row: { body: string; revisionId: string | null; revisionNumber: number } | null | undefined,
+): CompanyBriefExcerpt | null {
+  if (!row || !row.body.trim()) return null;
+  const truncated = row.body.length > COMPANY_BRIEF_WAKE_EXCERPT_CHARS;
+  return {
+    body: truncated ? row.body.slice(0, COMPANY_BRIEF_WAKE_EXCERPT_CHARS) : row.body,
+    truncated,
+    revisionId: row.revisionId,
+    revisionNumber: row.revisionNumber,
+    companyId,
+  };
 }
 
 export function companyBriefService(db: Db) {
@@ -54,21 +69,27 @@ export function companyBriefService(db: Db) {
     /** The capped excerpt for wake payloads; null when there is no brief or it is blank. */
     wakeExcerpt: async (companyId: string): Promise<CompanyBriefExcerpt | null> => {
       const row = await loadBrief(db, companyId);
-      return excerptCompanyBrief(row?.body);
+      return excerptCompanyBrief(companyId, row);
     },
 
     /**
      * Create or revise the brief. Writes for one company are serialized on the
      * company row; a baseRevisionId that is not the latest revision is a 409.
      */
-    update: async (companyId: string, input: UpdateCompanyBrief, actor: BriefActor): Promise<CompanyBrief> =>
+    update: async (
+      companyId: string,
+      input: UpdateCompanyBrief,
+      actor: BriefActor,
+    ): Promise<{ brief: CompanyBrief; changed: boolean }> =>
       db.transaction(async (tx) => {
         const [company] = await tx.select({ id: companies.id }).from(companies)
           .where(eq(companies.id, companyId)).for("update");
         if (!company) throw notFound("Company not found");
         const existing = await loadBrief(tx, companyId, true);
         const baseRevisionId = input.baseRevisionId ?? null;
-        if (baseRevisionId && baseRevisionId !== existing?.revisionId) {
+        // Creating needs no base; revising needs the exact latest revision, so a
+        // writer who never saw the current brief cannot overwrite it.
+        if (existing ? baseRevisionId !== existing.revisionId : baseRevisionId !== null) {
           throw conflict("The company brief was changed by someone else. Reload it and try again.", {
             currentRevisionId: existing?.revisionId ?? null,
           });
@@ -80,7 +101,7 @@ export function companyBriefService(db: Db) {
         };
 
         if (existing) {
-          if (existing.body === input.body) return toBrief(existing);
+          if (existing.body === input.body) return { brief: toBrief(existing), changed: false };
           const revisionNumber = existing.revisionNumber + 1;
           const [revision] = await tx.insert(documentRevisions).values({
             companyId, documentId: existing.documentId, revisionNumber, title: BRIEF_TITLE, format: "markdown",
@@ -91,7 +112,7 @@ export function companyBriefService(db: Db) {
             updatedByAgentId: actor.agentId ?? null, updatedByUserId: actor.userId ?? null, updatedAt: now,
           }).where(eq(documents.id, existing.documentId));
           await tx.update(companyDocuments).set({ updatedAt: now }).where(eq(companyDocuments.documentId, existing.documentId));
-          return toBrief({ body: input.body, revisionId: revision!.id, revisionNumber, updatedAt: now });
+          return { brief: toBrief({ body: input.body, revisionId: revision!.id, revisionNumber, updatedAt: now }), changed: true };
         }
 
         const [document] = await tx.insert(documents).values({
@@ -107,7 +128,7 @@ export function companyBriefService(db: Db) {
         await tx.insert(companyDocuments).values({
           companyId, documentId: document!.id, key: COMPANY_BRIEF_DOCUMENT_KEY, createdAt: now, updatedAt: now,
         });
-        return toBrief({ body: input.body, revisionId: revision!.id, revisionNumber: 1, updatedAt: now });
+        return { brief: toBrief({ body: input.body, revisionId: revision!.id, revisionNumber: 1, updatedAt: now }), changed: true };
       }),
   };
 }
