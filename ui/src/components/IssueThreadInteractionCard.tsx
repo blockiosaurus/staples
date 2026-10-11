@@ -56,6 +56,8 @@ import {
 } from "../api/issues";
 import { useQuery } from "@tanstack/react-query";
 import { companyBriefApi } from "../api/companyBrief";
+import { agentsApi } from "../api/agents";
+import { applyPlanSchema, planTaskCreationOrder, type ApplyPlan } from "@paperclipai/shared";
 import { queryKeys } from "../lib/queryKeys";
 import { buildLineDiff } from "../lib/line-diff";
 
@@ -1899,6 +1901,7 @@ const PROPOSED_ACTION_CATEGORY_LABELS: Record<string, string> = {
   delete: "Delete",
   other_governed: "Governed action",
   brief: "Company brief",
+  plan: "Plan",
 };
 
 const BRIEF_PROPOSAL_PATH = /^\/api\/companies\/([0-9a-fA-F-]{36})\/brief$/;
@@ -1955,6 +1958,95 @@ function ProposedBriefPreview({ path, body }: { path: string; body: unknown }) {
           The brief is too long to compare here. <Link to="/company/brief">Open the current brief</Link>
         </p>
       ) : null}
+    </div>
+  );
+}
+
+const PLAN_PROPOSAL_PATH = /^\/api\/companies\/([0-9a-fA-F-]{36})\/plans\/apply$/;
+
+function PlanPreviewSection({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">{label}</p>
+      <div className="mt-1 text-sm text-foreground">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * A proposed starter plan, readable at a glance: the brief (collapsed), goal,
+ * project, new agents, and the tasks in the order they will be created, with
+ * what each waits on and who it is assigned to. The exact request follows.
+ */
+function ProposedPlanPreview({ path, body }: { path: string; body: unknown }) {
+  const companyId = PLAN_PROPOSAL_PATH.exec(path)?.[1] ?? null;
+  const parsed = applyPlanSchema.safeParse(body);
+  const plan: ApplyPlan | null = parsed.success ? parsed.data : null;
+  const needsAgents = Boolean(plan?.tasks.some((task) => task.assigneeAgentId));
+  const agents = useQuery({
+    queryKey: queryKeys.agents.list(companyId ?? ""),
+    queryFn: () => agentsApi.list(companyId!),
+    enabled: Boolean(companyId) && needsAgents,
+  });
+  if (!plan) return null;
+  let ordered = plan.tasks;
+  try { ordered = planTaskCreationOrder(plan.tasks); } catch { /* the server refuses it; show as written */ }
+  const titleByKey = new Map(plan.tasks.map((task) => [task.clientKey, task.title] as const));
+  const newAgentByKey = new Map(plan.agents.map((agent) => [agent.clientKey, agent] as const));
+  const existingName = (id: string) => agents.data?.find((agent) => agent.id === id)?.name ?? "Existing agent";
+  const assignee = (task: ApplyPlan["tasks"][number]) => task.assigneeClientKey
+    ? `${newAgentByKey.get(task.assigneeClientKey)?.name ?? task.assigneeClientKey} (new)`
+    : task.assigneeAgentId ? existingName(task.assigneeAgentId) : "Unassigned";
+  return (
+    <div data-testid="proposed-plan-preview" className="mt-3 space-y-3 rounded-md border border-border p-3">
+      {plan.brief ? (
+        <details data-testid="proposed-plan-brief" className="text-sm">
+          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">
+            {plan.brief.baseRevisionId ? "Brief (replaces the current brief)" : "Brief"}
+          </summary>
+          <div className="mt-2 max-h-80 overflow-auto">
+            <MarkdownBody>{plan.brief.body}</MarkdownBody>
+          </div>
+        </details>
+      ) : null}
+      {plan.goal ? (
+        <PlanPreviewSection label="Goal">
+          <p className="font-medium">{plan.goal.title}</p>
+          {plan.goal.description ? <p className="text-muted-foreground">{plan.goal.description}</p> : null}
+        </PlanPreviewSection>
+      ) : null}
+      {plan.project ? (
+        <PlanPreviewSection label="Project">
+          <p className="font-medium">{plan.project.name}</p>
+          {plan.project.description ? <p className="text-muted-foreground">{plan.project.description}</p> : null}
+        </PlanPreviewSection>
+      ) : null}
+      {plan.agents.length ? (
+        <PlanPreviewSection label="New agents">
+          <ul data-testid="proposed-plan-agents" className="list-disc space-y-0.5 pl-5">
+            {plan.agents.map((agent) => (
+              <li key={agent.clientKey}>
+                {agent.name} — {agent.role} (<span className="font-mono text-xs">{agent.adapterType}</span>)
+                {agent.reportsToClientKey ? <span className="text-muted-foreground"> · reports to {newAgentByKey.get(agent.reportsToClientKey)?.name ?? agent.reportsToClientKey}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </PlanPreviewSection>
+      ) : null}
+      <PlanPreviewSection label={`Tasks (${plan.tasks.length})`}>
+        <ol data-testid="proposed-plan-tasks" className="list-decimal space-y-1 pl-5">
+          {ordered.map((task) => (
+            <li key={task.clientKey}>
+              <span className="font-medium">{task.title}</span>
+              <span className="text-muted-foreground">
+                {" · "}{assignee(task)}
+                {task.parentClientKey ? ` · under: ${titleByKey.get(task.parentClientKey) ?? task.parentClientKey}` : ""}
+                {task.blockedByClientKeys.length ? ` · after: ${task.blockedByClientKeys.map((key) => titleByKey.get(key) ?? key).join(", ")}` : ""}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </PlanPreviewSection>
     </div>
   );
 }
@@ -2095,6 +2187,7 @@ function ProposedActionCard({
       </div>
       {action.context ? <ProposedActionContextBlock context={action.context} /> : null}
       {action.category === "brief" ? <ProposedBriefPreview path={action.path} body={action.body} /> : null}
+      {action.category === "plan" ? <ProposedPlanPreview path={action.path} body={action.body} /> : null}
       {/* The exact request comes first, at full prominence: it is what runs. */}
       <div data-testid="proposed-action-request" className="mt-3 space-y-2">
         <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">Request</p>
@@ -2132,7 +2225,7 @@ function ProposedActionCard({
             {working === "cancel" ? "Cancelling…" : (interaction.payload.rejectLabel || "Cancel")}
           </Button>
           <Button size="sm" variant={destructive ? "destructive" : "cta"} disabled={!onAcceptInteraction || working !== null} onClick={() => void confirm()}>
-            {working === "confirm" ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Running…</> : staleWarning ? "Confirm anyway" : (interaction.payload.acceptLabel || (action.category === "brief" ? "Update brief" : "Confirm"))}
+            {working === "confirm" ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Running…</> : staleWarning ? "Confirm anyway" : (interaction.payload.acceptLabel || (action.category === "brief" ? "Update brief" : action.category === "plan" ? "Create plan" : "Confirm"))}
           </Button>
         </div>
       ) : null}

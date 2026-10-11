@@ -319,4 +319,59 @@ describe("ProposedActionCard", () => {
       expect(host.querySelector('[data-testid="proposed-brief-changes"]')).toBeNull();
     });
   });
+  describe("plan proposals", () => {
+    const COMPANY = "22222222-2222-4222-8222-222222222222";
+    const PLAN_PATH = `/api/companies/${COMPANY}/plans/apply`;
+    const RILEY = "33333333-3333-4333-8333-333333333333";
+    const plan = {
+      brief: { body: "# Mission\n\n## Glossary\nTPS = report", baseRevisionId: null },
+      goal: { title: "Publish weekly", description: "One article a week." },
+      project: { name: "Weekly articles" },
+      agents: [{ clientKey: "writer", name: "Writer", role: "general", adapterType: "claude_local" }],
+      tasks: [
+        { clientKey: "first", title: "Publish the first article", assigneeClientKey: "writer", blockedByClientKeys: ["style", "outline"] },
+        { clientKey: "style", title: "Write a style guide", assigneeClientKey: "writer", blockedByClientKeys: [] },
+        { clientKey: "outline", title: "Outline it", assigneeAgentId: RILEY, blockedByClientKeys: [] },
+        { clientKey: "ideas", title: "Collect ideas", blockedByClientKeys: [] },
+      ],
+    };
+    function planProposal() {
+      const base = proposal();
+      return {
+        ...base,
+        payload: { ...base.payload, acceptLabel: "Create plan", prompt: "Set up a writer",
+          proposedAction: { ...base.payload.proposedAction!, method: "POST", path: PLAN_PATH, body: plan, summary: "Set up a writer", category: "plan" } },
+      } as RequestConfirmationInteraction;
+    }
+
+    it("previews brief (collapsed), goal, project, agents and ordered tasks above the request, and confirms with Create plan", async () => {
+      fetchMock.mockImplementation(async (url: string) => (url === `/api/companies/${COMPANY}/agents`
+        ? json(200, [{ id: RILEY, name: "Riley", role: "engineer" }])
+        : json(404, { error: "unexpected" })));
+      const host = await render({ interaction: planProposal(), onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      const preview = host.querySelector('[data-testid="proposed-plan-preview"]')!;
+      expect(preview).toBeTruthy();
+      const brief = preview.querySelector('details[data-testid="proposed-plan-brief"]') as HTMLDetailsElement;
+      expect(brief).toBeTruthy();
+      expect(brief.open).toBe(false);
+      expect(brief.querySelector("h2")?.textContent).toBe("Glossary");
+      expect(preview.textContent).toContain("Publish weekly");
+      expect(preview.textContent).toContain("Weekly articles");
+      expect(preview.querySelector('[data-testid="proposed-plan-agents"]')?.textContent).toContain("Writer — general (claude_local)");
+      const items = Array.from(preview.querySelectorAll('[data-testid="proposed-plan-tasks"] > li')).map((li) => li.textContent ?? "");
+      expect(items).toHaveLength(4);
+      // Ordered so blockers come first.
+      expect(items.findIndex((t) => t.includes("Write a style guide"))).toBeLessThan(items.findIndex((t) => t.includes("Publish the first article")));
+      const first = items.find((t) => t.includes("Publish the first article"))!;
+      expect(first).toContain("after: Write a style guide, Outline it");
+      expect(first).toContain("Writer (new)");
+      expect(items.find((t) => t.includes("Outline it"))).toContain("Riley");
+      expect(items.find((t) => t.includes("Collect ideas"))).toContain("Unassigned");
+      const text = host.textContent!;
+      expect(text.indexOf("Collect ideas")).toBeLessThan(text.indexOf(PLAN_PATH));
+      expect(host.textContent).toContain("Plan");
+      expect(button(host, "Create plan")).toBeTruthy();
+    });
+  });
 });
