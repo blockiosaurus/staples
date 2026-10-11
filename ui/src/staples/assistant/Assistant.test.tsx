@@ -39,7 +39,9 @@ vi.mock("@/context/CompanyContext", () => ({
 vi.mock("@/context/SidebarContext", () => ({ useSidebar: () => ({ isMobile: mocks.isMobile }) }));
 vi.mock("@/api/assistant", () => ({ assistantApi: { get: mocks.assistantGet } }));
 vi.mock("./AssistantSetupCard", () => ({
-  AssistantSetupCard: ({ setup }: { setup: { state: string } }) => <div data-testid="setup-card">Setup: {setup.state}</div>,
+  AssistantSetupCard: ({ setup, canConfigure }: { setup: { state: string }; canConfigure: boolean }) => (
+    <div data-testid="setup-card" data-can-configure={String(canConfigure)}>Setup: {setup.state}</div>
+  ),
 }));
 vi.mock("@/components/CompanySwitcher", () => ({ CompanySwitcher: () => <div>Company switcher</div> }));
 vi.mock("@/components/SidebarAccountMenu", () => ({ SidebarAccountMenu: () => <div>Account menu</div> }));
@@ -206,10 +208,28 @@ describe("Assistant page and dock", () => {
     mocks.assistantGet.mockResolvedValue({ agent: ASSISTANT, conversationIssueId: "conv-1", setup: { state: "needs_model", adapterType: "claude_local" } });
     await render(<AssistantPage />);
     expect(container.querySelector('[data-testid="setup-card"]')?.textContent).toBe("Setup: needs_model");
+    expect(container.querySelector('[data-testid="setup-card"]')?.getAttribute("data-can-configure")).toBe("true");
     expect(container.querySelector('[data-testid="stub-composer"]')).toBeNull();
     // Suggestions wait for a model too.
     const chip = container.querySelector<HTMLButtonElement>('[data-testid="assistant-opening"] button');
     expect(chip?.disabled).toBe(true);
+  });
+
+  it("passes the viewer restriction to the setup card", async () => {
+    mocks.location.pathname = "/PAP/assistant";
+    mocks.assistantGet.mockResolvedValue({ agent: ASSISTANT, conversationIssueId: "conv-1", canConfigure: false,
+      setup: { state: "needs_model", adapterType: "claude_local" } });
+    await render(<AssistantPage />);
+    expect(container.querySelector('[data-testid="setup-card"]')?.getAttribute("data-can-configure")).toBe("false");
+  });
+
+  it("keeps the same setup card element across unrelated renders", async () => {
+    mocks.location.pathname = "/PAP/assistant";
+    mocks.assistantGet.mockResolvedValue({ agent: ASSISTANT, conversationIssueId: "conv-1", setup: { state: "needs_model", adapterType: "claude_local" } });
+    await render(<AssistantPage />);
+    const cards = mocks.surfaceProps.map((props) => props.conversation.composerReplacement).filter(Boolean);
+    expect(cards.length).toBeGreaterThan(1);
+    expect(new Set(cards).size).toBe(1);
   });
 
   it("polls while the Assistant is starting and swaps the card for the composer once ready", async () => {

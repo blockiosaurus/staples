@@ -1,0 +1,32 @@
+import { ADAPTER_AUTH_MISSING_CHECK_CODE, type AdapterEnvironmentTestResult } from "@paperclipai/shared";
+
+export const ASSISTANT_ADAPTER_LABELS: Record<string, string> = {
+  claude_local: "Claude",
+  codex_local: "Codex",
+  gemini_local: "Gemini",
+  kimi_local: "Kimi",
+};
+
+/**
+ * Fixed copy for a failed connection test, from check codes only (check
+ * messages can carry provider details). Mirrors the server's
+ * `harnessFailureReason`.
+ */
+export function connectionFailureReason(adapterType: string, codes: readonly string[]): string {
+  const label = ASSISTANT_ADAPTER_LABELS[adapterType] ?? "The model";
+  if (codes.some((code) => code === ADAPTER_AUTH_MISSING_CHECK_CODE || /_auth_required$/.test(code))) {
+    return `${label} isn't signed in on this computer.`;
+  }
+  if (codes.some((code) => /_command_unresolvable$/.test(code))) return `${label} isn't installed on this computer.`;
+  if (codes.includes("adapter_engine_unavailable")) return `${label}'s engine isn't available on this computer.`;
+  if (codes.some((code) => /_usage_limited$/.test(code))) return `${label} has reached its usage limit.`;
+  if (codes.some((code) => /_timed_out$|_timeout$/.test(code))) return `${label} didn't answer in time.`;
+  return `${label} didn't pass its connection test.`;
+}
+
+/** A full connection test passed: no failure and a successful hello probe. */
+export function connectionTestPassed(result: AdapterEnvironmentTestResult): boolean {
+  return result.status !== "fail"
+    && !result.checks.some((check) => check.code === ADAPTER_AUTH_MISSING_CHECK_CODE || /_auth_required$/.test(check.code))
+    && result.checks.some((check) => /hello_probe_(passed|succeeded)$/.test(check.code));
+}

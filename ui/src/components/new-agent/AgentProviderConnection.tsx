@@ -43,6 +43,7 @@ export function AgentProviderConnection({
   onConnected,
   onDraftChanged,
   onBack,
+  hideBack = false,
   testConnection,
   testError,
   managedAccount,
@@ -56,6 +57,8 @@ export function AgentProviderConnection({
   onConnected: (connection: ProviderConnection) => void;
   onDraftChanged?: () => void;
   onBack: () => void;
+  /** The host renders its own way back: omit the footer's Back button. */
+  hideBack?: boolean;
   testConnection: (connection: ProviderConnection) => Promise<boolean>;
   testError?: string | null;
   advancedConnection?: { content: ReactNode; value?: AiConnectionBinding };
@@ -425,7 +428,7 @@ export function AgentProviderConnection({
         <p role="alert" className="mt-4 text-sm text-destructive">Could not prepare sign-in. Reload this page to try again.</p>
       )}
       <FooterNav
-        onBack={() => {
+        onBack={hideBack ? undefined : () => {
           if (opened && !advancedConnection) cancel();
           else onBack();
         }}

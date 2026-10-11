@@ -244,11 +244,19 @@ function LayoutShell({ sidebarSections }: { sidebarSections?: ReactNode }) {
   const stageZeroRoot = companyPathSegments[0]?.toLowerCase();
   const stageZeroExempt = !companyPrefix || hasUnknownCompanyPrefix
     || ["company", "companies", "u"].includes(stageZeroRoot ?? "");
-  const stageZeroShell: "pending" | "stage_zero" | null = !selectedCompanyId || stageZeroExempt || signalsFailed
-    ? null
+  const decidedShell: "stage_zero" | "normal" | null = !selectedCompanyId || stageZeroExempt || signalsFailed
+    ? "normal"
     : !signalsLoaded
-      ? "pending"
-      : signals?.agents === 0 ? "stage_zero" : null;
+      ? null
+      : signals?.agents === 0 ? "stage_zero" : "normal";
+  // While another company's signals load, keep whichever shell is showing; only
+  // block (spinner) when nothing is known yet.
+  const lastShell = useRef<"stage_zero" | "normal" | null>(null);
+  if (decidedShell) lastShell.current = decidedShell;
+  const shownShell = decidedShell ?? lastShell.current;
+  const stageZeroShell: "pending" | "stage_zero" | null = stageZeroExempt
+    ? null
+    : shownShell === null ? "pending" : shownShell === "stage_zero" ? "stage_zero" : null;
   const { data: health } = useQuery({
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),

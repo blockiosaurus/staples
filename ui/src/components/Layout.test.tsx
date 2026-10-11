@@ -400,6 +400,35 @@ describe("Layout", () => {
       await act(async () => root.unmount());
     });
 
+    it("keeps the previous shell while another company's signals load", async () => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const root = createRoot(container);
+      const draw = async () => {
+        await act(async () => {
+          root.render(
+            <QueryClientProvider client={queryClient}>
+              <Layout />
+            </QueryClientProvider>,
+          );
+        });
+        await flushReact();
+      };
+      mockSignalsState.value = { signals: { agents: 3 }, loaded: true, failed: false };
+      await draw();
+      expect(container.textContent).toContain("Main company nav");
+      mockSignalsState.value = { signals: null, loaded: false, failed: false };
+      await draw();
+      expect(container.querySelector("[data-testid='layout-signals-loading']")).toBeNull();
+      expect(container.textContent).toContain("Main company nav");
+      mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+      await draw();
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).not.toBeNull();
+      mockSignalsState.value = { signals: null, loaded: false, failed: false };
+      await draw();
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).not.toBeNull();
+      await act(async () => root.unmount());
+    });
+
     it("falls back to the normal shell when signals fail to load", async () => {
       mockSignalsState.value = { signals: null, loaded: false, failed: true };
       const root = await renderLayout();

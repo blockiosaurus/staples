@@ -1,14 +1,14 @@
-import { useState, type ReactNode } from "react";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Loader2, RotateCw } from "lucide-react";
+import { Fragment, useRef, useState, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Loader2, RefreshCw, RotateCw } from "lucide-react";
 import type { AdapterEnvironmentTestResult } from "@paperclipai/shared";
 import { AdapterMark } from "@/components/AdapterMark";
 import { AgentProviderConnection, type ProviderConnection } from "@/components/new-agent/AgentProviderConnection";
 import { Button } from "@/components/ui/button";
 import { agentsApi } from "@/api/agents";
 import {
-  ASSISTANT_RUNTIME_ADAPTER_TYPES,
   assistantApi,
+  type AssistantAdapterAvailability,
   type AssistantRuntimeAdapterType,
   type AssistantSetup,
   type AssistantSummary,
@@ -16,50 +16,28 @@ import {
 import { queryKeys } from "@/lib/queryKeys";
 import { testAgentSetup } from "@/lib/test-agent-setup";
 import { cn } from "@/lib/utils";
+import { ASSISTANT_ADAPTER_LABELS, connectionFailureReason, connectionTestPassed } from "./setup-reasons";
 
-const LABELS: Record<AssistantRuntimeAdapterType, string> = {
-  claude_local: "Claude",
-  codex_local: "Codex",
-  gemini_local: "Gemini",
-  kimi_local: "Kimi",
-};
-
-/** Adapters whose CLI engine still gives the Assistant its tools (server: ASSISTANT_CLI_ENGINE_ADAPTER_TYPES). */
-const CLI_ENGINE_TYPES: readonly string[] = ["claude_local", "codex_local"];
 /** Adapters with a login/API-key flow in AgentProviderConnection. */
 const PROVIDER_CONNECTION_TYPES = ["claude_local", "codex_local"] as const;
 type ProviderConnectionType = (typeof PROVIDER_CONNECTION_TYPES)[number];
+/** Adapters whose CLI engine still gives the Assistant its tools (server: ASSISTANT_CLI_ENGINE_ADAPTER_TYPES). */
+const CLI_ENGINE_TYPES: readonly string[] = ["claude_local", "codex_local"];
 
-export interface AssistantAdapterProbe {
-  installed: boolean;
-  /** The ACP prerequisites are missing, so this adapter runs on its CLI engine. */
-  acpUnavailable: boolean;
-  /** A short reason when it is not installed. */
-  detail: string | null;
-}
+const label = (adapterType: string) => ASSISTANT_ADAPTER_LABELS[adapterType] ?? adapterType;
+const codesOf = (result: AdapterEnvironmentTestResult) => result.checks.map((check) => check.code);
 
-function hasCheck(result: AdapterEnvironmentTestResult, test: (code: string) => boolean) {
-  return result.checks.some((check) => test(check.code));
-}
-
-/** Whether the host can run an adapter, using its environment test (CLI engine when ACP is missing). */
-export async function probeAssistantAdapter(companyId: string, adapterType: AssistantRuntimeAdapterType): Promise<AssistantAdapterProbe> {
-  let result = await agentsApi.testEnvironment(companyId, adapterType, { adapterConfig: {} });
-  let acpUnavailable = false;
-  if (hasCheck(result, (code) => code === "adapter_engine_unavailable") && CLI_ENGINE_TYPES.includes(adapterType)) {
-    acpUnavailable = true;
-    result = await agentsApi.testEnvironment(companyId, adapterType, { adapterConfig: { engine: "cli" } });
-  }
-  const installed = !hasCheck(result, (code) => /_command_unresolvable$/.test(code) || code === "adapter_engine_unavailable");
-  const problem = result.checks.find((check) => check.level === "error");
-  return { installed, acpUnavailable, detail: installed ? null : problem?.message ?? null };
-}
-
-function blockingCheckMessage(result: AdapterEnvironmentTestResult) {
+/** Renders `code` spans from the server's fixed hint copy. */
+function HintText({ text }: { text: string }) {
   return (
-    result.checks.find((check) => check.level === "error")
-    ?? result.checks.find((check) => check.code.includes("hello_probe") && check.level === "warn")
-  )?.message ?? null;
+    <>
+      {text.split(/(`[^`]+`)/).map((part, index) =>
+        part.startsWith("`") && part.endsWith("`")
+          ? <code key={index} className="rounded bg-muted px-1 font-mono text-[0.85em]">{part.slice(1, -1)}</code>
+          : <Fragment key={index}>{part}</Fragment>,
+      )}
+    </>
+  );
 }
 
 function SetupFrame({ children, className }: { children: ReactNode; className?: string }) {
@@ -77,21 +55,25 @@ function SetupFrame({ children, className }: { children: ReactNode; className?: 
 /**
  * Shown in the Assistant conversation instead of the composer until the
  * Assistant can answer: connect a model, wait for it to start, or retry.
+ * Viewers only see what is wrong and who can fix it.
  */
 export function AssistantSetupCard({
   companyId,
   agentId,
   setup,
+  canConfigure = true,
 }: {
   companyId: string;
   agentId: string;
   setup: AssistantSetup;
+  canConfigure?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   const summaryKey = queryKeys.assistant.detail(companyId);
 
+  if (setup.state === "ready") return null;
   if (setup.state === "starting") {
     return (
       <SetupFrame>
@@ -103,45 +85,71 @@ export function AssistantSetupCard({
     );
   }
 
-  if (setup.state === "error") {
-    const retry = async () => {
-      setRetrying(true);
-      setRetryError(null);
-      try {
-        await agentsApi.retryLifecycle(agentId, companyId);
-        await queryClient.invalidateQueries({ queryKey: summaryKey });
-      } catch (cause) {
-        setRetryError(cause instanceof Error ? cause.message : "Could not retry.");
-      } finally {
-        setRetrying(false);
-      }
-    };
+  const reason = setup.reason ? <p className="text-muted-foreground">{setup.reason}</p> : null;
+  if (!canConfigure) {
     return (
       <SetupFrame>
-        <div role="alert" className="flex flex-col items-start gap-2">
-          <p className="font-medium text-foreground">The Assistant couldn't start.</p>
-          {setup.message ? <p className="text-muted-foreground">{setup.message}</p> : null}
-          {retryError ? <p className="text-destructive">{retryError}</p> : null}
-          <Button type="button" variant="outline" size="sm" disabled={retrying} onClick={() => void retry()}>
-            {retrying ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCw className="size-3.5" />}
-            Retry
-          </Button>
+        <div role="status" className="flex flex-col gap-1">
+          <p className="font-medium text-foreground">
+            {setup.state === "needs_model" ? "The Assistant needs a model." : setup.message ?? "The Assistant couldn't start."}
+          </p>
+          {reason}
+          <p className="text-muted-foreground">Ask an owner to connect a model.</p>
         </div>
       </SetupFrame>
     );
   }
 
-  if (setup.state !== "needs_model") return null;
+  const connect = (
+    <ConnectModel
+      companyId={companyId}
+      onConfigured={(result) => {
+        queryClient.setQueryData<AssistantSummary>(summaryKey, (current) =>
+          current ? { ...current, agent: { ...current.agent, ...result.agent }, setup: result.setup } : current);
+        void queryClient.invalidateQueries({ queryKey: summaryKey });
+      }}
+    />
+  );
+
+  if (setup.state === "needs_model") {
+    return (
+      <SetupFrame>
+        <div className="flex flex-col gap-3">
+          {reason}
+          {connect}
+        </div>
+      </SetupFrame>
+    );
+  }
+
+  const retry = async () => {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      await agentsApi.retryLifecycle(agentId, companyId);
+      await queryClient.invalidateQueries({ queryKey: summaryKey });
+    } catch (cause) {
+      setRetryError(cause instanceof Error ? cause.message : "Could not retry.");
+    } finally {
+      setRetrying(false);
+    }
+  };
+  // A failed connection test comes with a fixed-copy reason: offer to connect a model too.
+  const harnessFailure = Boolean(setup.reason);
   return (
     <SetupFrame>
-      <ConnectModel
-        companyId={companyId}
-        onConfigured={(result) => {
-          queryClient.setQueryData<AssistantSummary>(summaryKey, (current) =>
-            current ? { ...current, agent: { ...current.agent, ...result.agent }, setup: result.setup } : current);
-          void queryClient.invalidateQueries({ queryKey: summaryKey });
-        }}
-      />
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col items-start gap-2">
+          <p className="font-medium text-foreground">{setup.message ?? "The Assistant couldn't start."}</p>
+          {reason}
+          {retryError ? <p role="alert" className="text-destructive">{retryError}</p> : null}
+          <Button type="button" variant="outline" size="sm" disabled={retrying} onClick={() => void retry()}>
+            {retrying ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCw className="size-3.5" />}
+            Retry
+          </Button>
+        </div>
+        {harnessFailure ? connect : null}
+      </div>
     </SetupFrame>
   );
 }
@@ -155,28 +163,35 @@ function ConnectModel({
 }) {
   const [selected, setSelected] = useState<AssistantRuntimeAdapterType | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
-  const probes = useQueries({
-    queries: ASSISTANT_RUNTIME_ADAPTER_TYPES.map((adapterType) => ({
-      queryKey: ["assistant", "adapter-probe", companyId, adapterType] as const,
-      queryFn: () => probeAssistantAdapter(companyId, adapterType),
-      staleTime: Infinity,
-      retry: false,
-    })),
+  // Set when the chosen adapter's full test found the ACP engine unavailable. A
+  // ref: AgentProviderConnection calls onConnected from the closure that ran the test.
+  const engineOverride = useRef<"cli" | null>(null);
+  const adapters = useQuery({
+    queryKey: ["assistant", "adapters", companyId] as const,
+    queryFn: () => assistantApi.adapters(companyId),
+    retry: false,
   });
-  const probeFor = (adapterType: AssistantRuntimeAdapterType) =>
-    probes[ASSISTANT_RUNTIME_ADAPTER_TYPES.indexOf(adapterType)];
+  const entry = (adapterType: string): AssistantAdapterAvailability | undefined =>
+    adapters.data?.adapters.find((item) => item.adapterType === adapterType);
+  const engineFor = (adapterType: AssistantRuntimeAdapterType) =>
+    engineOverride.current ?? entry(adapterType)?.engine ?? null;
 
-  const engineConfig = (adapterType: AssistantRuntimeAdapterType) =>
-    probeFor(adapterType)?.data?.acpUnavailable ? { engine: "cli" as const } : {};
+  const choose = (adapterType: AssistantRuntimeAdapterType | null) => {
+    setSelected(adapterType);
+    engineOverride.current = null;
+    setError(null);
+    setTestError(null);
+  };
 
-  async function submit(adapterType: AssistantRuntimeAdapterType, connection?: ProviderConnection) {
+  async function submit(adapterType: AssistantRuntimeAdapterType, connection?: ProviderConnection, engine = engineFor(adapterType)) {
     setSubmitting(true);
     setError(null);
     try {
       const env = connection?.env && Object.keys(connection.env).length > 0 ? connection.env : undefined;
-      const adapterConfig = { ...engineConfig(adapterType), ...(env ? { env } : {}) };
+      const adapterConfig = { ...(engine ? { engine } : {}), ...(env ? { env } : {}) };
       const result = await assistantApi.setup(companyId, {
         adapterType,
         ...(Object.keys(adapterConfig).length > 0 ? { adapterConfig } : {}),
@@ -191,21 +206,63 @@ function ConnectModel({
     }
   }
 
+  /**
+   * The full test (hello probe), for the chosen adapter only. Retries on the
+   * CLI engine when the ACP engine is unavailable and that engine carries the
+   * Assistant's tools. Returns the engine that passed, or null on failure.
+   */
+  async function fullTest(
+    adapterType: AssistantRuntimeAdapterType,
+    run: (engine: "cli" | null) => Promise<AdapterEnvironmentTestResult>,
+  ): Promise<{ passed: boolean; engine: "cli" | null; codes: string[] }> {
+    let engine = engineFor(adapterType);
+    let result = await run(engine);
+    if (!engine && CLI_ENGINE_TYPES.includes(adapterType) && codesOf(result).includes("adapter_engine_unavailable")) {
+      engine = "cli";
+      engineOverride.current = "cli";
+      result = await run(engine);
+    }
+    return { passed: connectionTestPassed(result), engine, codes: codesOf(result) };
+  }
+
   async function testConnection(adapterType: ProviderConnectionType, connection: ProviderConnection) {
     setTestError(null);
-    const result = await testAgentSetup({
+    const outcome = await fullTest(adapterType, (engine) => testAgentSetup({
       companyId,
       adapterType,
       providerAdapter: adapterType,
-      adapterConfig: { ...engineConfig(adapterType), env: connection.env },
+      adapterConfig: { ...(engine ? { engine } : {}), env: connection.env },
       aiConnection: connection.aiConnection,
       testCredentials: connection.credentials,
       environmentId: null,
-    });
-    const passed = result.status !== "fail" && result.checks.some((check) => /hello_probe_(passed|succeeded)$/.test(check.code));
-    if (!passed) setTestError(blockingCheckMessage(result));
-    return passed;
+    }));
+    if (!outcome.passed) setTestError(connectionFailureReason(adapterType, outcome.codes));
+    return outcome.passed;
   }
+
+  async function checkAndUse(adapterType: AssistantRuntimeAdapterType) {
+    setChecking(true);
+    setError(null);
+    try {
+      const outcome = await fullTest(adapterType, (engine) =>
+        agentsApi.testEnvironment(companyId, adapterType, { adapterConfig: engine ? { engine } : {} }));
+      if (!outcome.passed) {
+        setError(connectionFailureReason(adapterType, outcome.codes));
+        return;
+      }
+      await submit(adapterType, undefined, outcome.engine);
+    } catch {
+      setError(`Couldn't test ${label(adapterType)}. Check again.`);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  const chooseAnother = (
+    <Button type="button" variant="ghost" size="sm" className="self-start" disabled={submitting || checking} onClick={() => choose(null)}>
+      <ArrowLeft className="size-3.5" /> Choose another model
+    </Button>
+  );
 
   if (selected && (PROVIDER_CONNECTION_TYPES as readonly string[]).includes(selected)) {
     const adapterType = selected as ProviderConnectionType;
@@ -217,7 +274,8 @@ function ConnectModel({
           environmentId={null}
           canLogin={false}
           localEnvironment
-          onBack={() => setSelected(null)}
+          hideBack
+          onBack={() => choose(null)}
           testConnection={(connection) => testConnection(adapterType, connection)}
           testError={testError}
           onConnected={(connection) => void submit(adapterType, connection)}
@@ -228,56 +286,75 @@ function ConnectModel({
           </p>
         ) : null}
         {error ? <p role="alert" className="text-destructive">{error}</p> : null}
-        <Button type="button" variant="ghost" size="sm" className="self-start" onClick={() => setSelected(null)}>
-          <ArrowLeft className="size-3.5" /> Choose another model
-        </Button>
+        {chooseAnother}
       </div>
     );
   }
 
   if (selected) {
+    const hint = entry(selected)?.hint;
+    const busy = submitting || checking;
     return (
       <div className="flex flex-col items-start gap-3">
         <p className="text-foreground">
-          The Assistant will use {LABELS[selected]} with the sign-in already set up on this computer.
+          The Assistant will use {label(selected)} with the sign-in already set up on this computer.
         </p>
-        <div className="flex gap-2">
-          <Button type="button" size="sm" disabled={submitting} onClick={() => void submit(selected)}>
-            {submitting ? <Loader2 className="size-3.5 animate-spin" /> : null}
-            Use {LABELS[selected]}
-          </Button>
-          <Button type="button" variant="ghost" size="sm" disabled={submitting} onClick={() => setSelected(null)}>
-            Back
+        {hint ? <p className="text-muted-foreground"><HintText text={hint} /></p> : null}
+        {error ? <p role="alert" className="text-destructive">{error}</p> : null}
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" size="sm" disabled={busy} onClick={() => void checkAndUse(selected)}>
+            {busy ? <Loader2 className="size-3.5 animate-spin" /> : error ? <RefreshCw className="size-3.5" /> : null}
+            {error ? "Check again" : `Use ${label(selected)}`}
           </Button>
         </div>
-        {error ? <p role="alert" className="text-destructive">{error}</p> : null}
+        {chooseAnother}
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-3">
-      <div>
-        <p className="font-medium text-foreground">Connect a model to start</p>
-        <p className="text-muted-foreground">The Assistant runs on an AI model installed on this computer. Choose one to connect.</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="font-medium text-foreground">Connect a model to start</p>
+          <p className="text-muted-foreground">The Assistant runs on an AI model installed on this computer. Choose one to connect.</p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={adapters.isFetching}
+          onClick={() => void adapters.refetch()}
+        >
+          <RefreshCw className={cn("size-3.5", adapters.isFetching && "animate-spin")} /> Check again
+        </Button>
       </div>
+      {adapters.isError ? <p role="alert" className="text-destructive">Couldn't check which models are installed.</p> : null}
       <ul className="grid gap-2 sm:grid-cols-2">
-        {ASSISTANT_RUNTIME_ADAPTER_TYPES.map((adapterType) => {
-          const probe = probeFor(adapterType);
-          const status = probe?.isPending ? "Checking…" : probe?.isError ? "Couldn't check" : probe?.data?.installed ? "Installed" : "Not installed";
-          const available = probe?.data?.installed === true;
+        {(["claude_local", "codex_local", "gemini_local", "kimi_local"] as const).map((adapterType) => {
+          const item = entry(adapterType);
+          const status = adapters.isPending ? "Checking…"
+            : !item ? "Couldn't check"
+            : !item.installed ? "Not installed"
+            : !item.available ? "Unavailable"
+            : item.signedIn ? "Signed in"
+            : "Installed";
           return (
             <li key={adapterType}>
               <button
                 type="button"
-                disabled={!available}
-                onClick={() => setSelected(adapterType)}
-                title={probe?.data?.detail ?? undefined}
-                className="flex w-full items-center gap-3 rounded-lg border border-border px-3 py-2 text-left transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
+                disabled={!item?.available}
+                onClick={() => choose(adapterType)}
+                className="flex w-full flex-col gap-1 rounded-lg border border-border px-3 py-2 text-left transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
               >
-                <AdapterMark type={adapterType} className="size-5" />
-                <span className="min-w-0 flex-1 font-medium">{LABELS[adapterType]}</span>
-                <span className={cn("text-xs", available ? "text-foreground" : "text-muted-foreground")}>{status}</span>
+                <span className="flex w-full items-center gap-3">
+                  <AdapterMark type={adapterType} className="size-5" />
+                  <span className="min-w-0 flex-1 font-medium">{label(adapterType)}</span>
+                  <span className={cn("text-xs", item?.available ? "text-foreground" : "text-muted-foreground")}>{status}</span>
+                </span>
+                {item?.hint ? (
+                  <span className="text-xs text-muted-foreground"><HintText text={item.hint} /></span>
+                ) : null}
               </button>
             </li>
           );

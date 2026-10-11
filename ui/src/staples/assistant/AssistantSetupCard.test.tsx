@@ -13,7 +13,9 @@ const mocks = vi.hoisted(() => ({
   testEnvironment: vi.fn(),
   retryLifecycle: vi.fn(),
   setup: vi.fn(),
+  adapters: vi.fn(),
   testAgentSetup: vi.fn(),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   connectionProps: [] as Array<Record<string, any>>,
 }));
 
@@ -22,21 +24,27 @@ vi.mock("@/api/agents", () => ({
 }));
 vi.mock("@/api/assistant", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/assistant")>()),
-  assistantApi: { setup: mocks.setup },
+  assistantApi: { setup: mocks.setup, adapters: mocks.adapters },
 }));
 vi.mock("@/lib/test-agent-setup", () => ({ testAgentSetup: mocks.testAgentSetup }));
 vi.mock("@/components/AdapterMark", () => ({ AdapterMark: () => null }));
 vi.mock("@/components/new-agent/AgentProviderConnection", () => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   AgentProviderConnection: (props: Record<string, any>) => {
     mocks.connectionProps.push(props);
     return <div data-testid="provider-connection">Connect {props.adapterType}</div>;
   },
 }));
 
-const check = (code: string, level = "info") => ({ code, level, message: code });
 const result = (status: string, codes: Array<[string, string?]>) => ({
-  adapterType: "x", status, testedAt: "", checks: codes.map(([code, level]) => check(code, level)),
+  adapterType: "x", status, testedAt: "", checks: codes.map(([code, level = "info"]) => ({ code, level, message: `raw ${code}` })),
 });
+const ADAPTERS = [
+  { adapterType: "claude_local", installed: true, available: true, engine: "cli", signedIn: null },
+  { adapterType: "codex_local", installed: false, available: false, engine: null, signedIn: null, hint: "Not installed: install the codex CLI, then check again." },
+  { adapterType: "gemini_local", installed: true, available: true, engine: null, signedIn: null, hint: "Sign in needed: run `gemini` in a terminal once and log in, then check again." },
+  { adapterType: "kimi_local", installed: true, available: false, engine: null, signedIn: null, hint: "Needs Node 24.11 or newer on this computer." },
+];
 
 describe("AssistantSetupCard", () => {
   let container: HTMLDivElement;
@@ -50,20 +58,13 @@ describe("AssistantSetupCard", () => {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mocks.connectionProps.length = 0;
     mocks.retryLifecycle.mockReset().mockResolvedValue({});
+    mocks.adapters.mockReset().mockResolvedValue({ adapters: ADAPTERS });
     mocks.setup.mockReset().mockResolvedValue({
       agent: { id: "assistant-1", name: "Assistant", urlKey: "assistant", adapterType: "claude_local", status: "paused" },
       setup: { state: "starting", adapterType: "claude_local" },
     });
     mocks.testAgentSetup.mockReset();
-    mocks.testEnvironment.mockReset().mockImplementation(async (_companyId: string, type: string, data: { adapterConfig: Record<string, unknown> }) => {
-      if (type === "claude_local") {
-        return data.adapterConfig.engine === "cli"
-          ? result("warn", [["claude_command_resolvable"], ["claude_hello_probe_auth_required", "warn"]])
-          : result("fail", [["adapter_engine_unavailable", "error"]]);
-      }
-      if (type === "gemini_local") return result("pass", [["gemini_command_resolvable"], ["gemini_hello_probe_passed"]]);
-      return result("fail", [[`${type.replace("_local", "")}_command_unresolvable`, "error"]]);
-    });
+    mocks.testEnvironment.mockReset();
   });
 
   afterEach(() => {
@@ -76,11 +77,15 @@ describe("AssistantSetupCard", () => {
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     }
   }
-  async function render(setup: { state: "ready" | "starting" | "needs_model" | "error"; message?: string }) {
+  async function render(
+    setup: { state: "ready" | "starting" | "needs_model" | "error"; message?: string; reason?: string },
+    canConfigure = true,
+  ) {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <AssistantSetupCard companyId="company-1" agentId="assistant-1" setup={{ adapterType: "claude_local", ...setup }} />
+          <AssistantSetupCard companyId="company-1" agentId="assistant-1" canConfigure={canConfigure}
+            setup={{ adapterType: "claude_local", ...setup }} />
         </QueryClientProvider>,
       );
     });
@@ -89,27 +94,40 @@ describe("AssistantSetupCard", () => {
   const button = (text: string) =>
     [...container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(text));
 
-  it("lists only the runtime adapters, probing each and marking what is installed", async () => {
+  it("lists the runtime adapters from cheap detection, with sign-in hints and no model calls", async () => {
     await render({ state: "needs_model" });
-    expect(mocks.testEnvironment.mock.calls.map((call) => call[1]).sort()).toEqual(
-      ["claude_local", "claude_local", "codex_local", "gemini_local", "kimi_local"],
-    );
-    // Claude's ACP lane is missing on this host: it is re-probed on the CLI engine.
-    expect(mocks.testEnvironment).toHaveBeenCalledWith("company-1", "claude_local", { adapterConfig: { engine: "cli" } });
+    expect(mocks.adapters).toHaveBeenCalledWith("company-1");
+    expect(mocks.testEnvironment).not.toHaveBeenCalled();
+    expect(mocks.testAgentSetup).not.toHaveBeenCalled();
     expect(button("Claude")?.textContent).toContain("Installed");
     expect(button("Claude")?.disabled).toBe(false);
-    expect(button("Gemini")?.textContent).toContain("Installed");
     expect(button("Codex")?.textContent).toContain("Not installed");
     expect(button("Codex")?.disabled).toBe(true);
     expect(button("Kimi")?.disabled).toBe(true);
+    expect(container.textContent).toContain("Sign in needed: run gemini in a terminal once and log in");
+    expect(container.querySelector("code")?.textContent).toBe("gemini");
   });
 
-  it("connects Claude through AgentProviderConnection and configures the Assistant on the CLI engine", async () => {
+  it("checks again on request", async () => {
+    await render({ state: "needs_model" });
+    await act(async () => button("Check again")!.click());
+    await settle();
+    expect(mocks.adapters).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the code-derived reason when setup needs a model", async () => {
+    await render({ state: "needs_model", reason: "Claude isn't signed in on this computer." });
+    expect(container.textContent).toContain("Claude isn't signed in on this computer.");
+  });
+
+  it("connects Claude with one back control, probing only the chosen adapter on the detected engine", async () => {
     await render({ state: "needs_model" });
     await act(async () => button("Claude")!.click());
-    expect(container.querySelector('[data-testid="provider-connection"]')).not.toBeNull();
     const props = mocks.connectionProps.at(-1)!;
     expect(props.adapterType).toBe("claude_local");
+    expect(props.hideBack).toBe(true);
+    expect(container.querySelectorAll("button").length).toBe(1);
+    expect(button("Choose another model")).toBeDefined();
 
     mocks.testAgentSetup.mockResolvedValue(result("pass", [["claude_hello_probe_passed"]]));
     const connection = { env: {}, aiConnection: { provider: "anthropic", method: "subscription", mode: "responsible_user" } };
@@ -117,28 +135,50 @@ describe("AssistantSetupCard", () => {
     expect(mocks.testAgentSetup).toHaveBeenCalledWith(expect.objectContaining({
       adapterType: "claude_local", adapterConfig: { engine: "cli", env: {} }, aiConnection: connection.aiConnection,
     }));
-
     await act(async () => props.onConnected(connection));
     await settle();
     expect(mocks.setup).toHaveBeenCalledWith("company-1", {
-      adapterType: "claude_local",
-      adapterConfig: { engine: "cli" },
-      aiConnection: connection.aiConnection,
+      adapterType: "claude_local", adapterConfig: { engine: "cli" }, aiConnection: connection.aiConnection,
     });
   });
 
-  it("reports a failed connection test without configuring", async () => {
+  it("falls back to the CLI engine when the chosen adapter's ACP engine is unavailable", async () => {
+    mocks.adapters.mockResolvedValue({ adapters: [{ ...ADAPTERS[0], engine: null }, ...ADAPTERS.slice(1)] });
+    await render({ state: "needs_model" });
+    await act(async () => button("Claude")!.click());
+    mocks.testAgentSetup
+      .mockResolvedValueOnce(result("fail", [["adapter_engine_unavailable", "error"]]))
+      .mockResolvedValueOnce(result("pass", [["claude_hello_probe_passed"]]));
+    await expect(mocks.connectionProps.at(-1)!.testConnection({ env: {} })).resolves.toBe(true);
+    expect(mocks.testAgentSetup.mock.calls[1]![0].adapterConfig).toEqual({ engine: "cli", env: {} });
+    await act(async () => mocks.connectionProps.at(-1)!.onConnected({ env: {} }));
+    await settle();
+    expect(mocks.setup).toHaveBeenCalledWith("company-1", { adapterType: "claude_local", adapterConfig: { engine: "cli" } });
+  });
+
+  it("explains a failed test with fixed copy, never the raw check message", async () => {
     await render({ state: "needs_model" });
     await act(async () => button("Claude")!.click());
     mocks.testAgentSetup.mockResolvedValue(result("warn", [["claude_hello_probe_auth_required", "warn"]]));
     await expect(mocks.connectionProps.at(-1)!.testConnection({ env: {} })).resolves.toBe(false);
+    await settle();
+    expect(mocks.connectionProps.at(-1)!.testError).toBe("Claude isn't signed in on this computer.");
     expect(mocks.setup).not.toHaveBeenCalled();
   });
 
-  it("uses an already signed-in CLI adapter directly", async () => {
+  it("tests Gemini fully before using it, and offers Check again when it isn't signed in", async () => {
     await render({ state: "needs_model" });
     await act(async () => button("Gemini")!.click());
+    mocks.testEnvironment.mockResolvedValueOnce(result("warn", [["gemini_hello_probe_auth_required", "warn"]]));
     await act(async () => button("Use Gemini")!.click());
+    await settle();
+    expect(mocks.testEnvironment).toHaveBeenCalledWith("company-1", "gemini_local", { adapterConfig: {} });
+    expect(mocks.setup).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Gemini isn't signed in on this computer.");
+    expect(container.textContent).not.toContain("raw gemini");
+
+    mocks.testEnvironment.mockResolvedValueOnce(result("pass", [["gemini_hello_probe_passed"]]));
+    await act(async () => button("Check again")!.click());
     await settle();
     expect(mocks.setup).toHaveBeenCalledWith("company-1", { adapterType: "gemini_local" });
   });
@@ -146,14 +186,33 @@ describe("AssistantSetupCard", () => {
   it("shows a spinner while starting", async () => {
     await render({ state: "starting" });
     expect(container.querySelector('[role="status"]')?.textContent).toContain("Getting the Assistant ready");
-    expect(mocks.testEnvironment).not.toHaveBeenCalled();
+    expect(mocks.adapters).not.toHaveBeenCalled();
   });
 
-  it("shows the error with a Retry that retries the lifecycle", async () => {
-    await render({ state: "error", message: "The lifecycle step failed. Retry the operation." });
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("The lifecycle step failed");
+  it("offers to connect a model when the connection test failed, with the fixed reason", async () => {
+    await render({ state: "error", message: "The model couldn't be reached. Connect a model to continue.", reason: "Claude didn't answer in time." });
+    expect(container.textContent).toContain("The model couldn't be reached. Connect a model to continue.");
+    expect(container.textContent).toContain("Claude didn't answer in time.");
+    expect(button("Claude")).toBeDefined();
     await act(async () => button("Retry")!.click());
     await settle();
     expect(mocks.retryLifecycle).toHaveBeenCalledWith("assistant-1", "company-1");
+  });
+
+  it("shows other errors with Retry only", async () => {
+    await render({ state: "error", message: "The lifecycle step failed. Retry the operation." });
+    expect(container.textContent).toContain("The lifecycle step failed");
+    expect(mocks.adapters).not.toHaveBeenCalled();
+    expect(button("Retry")).toBeDefined();
+  });
+
+  it("asks viewers to get an owner to connect a model, without probes or actions", async () => {
+    await render({ state: "needs_model", reason: "Claude isn't signed in on this computer." }, false);
+    expect(container.textContent).toContain("Ask an owner to connect a model");
+    expect(container.textContent).toContain("Claude isn't signed in on this computer.");
+    expect(mocks.adapters).not.toHaveBeenCalled();
+    expect(container.querySelectorAll("button")).toHaveLength(0);
+    await render({ state: "error", message: "The lifecycle step failed. Retry the operation." }, false);
+    expect(container.querySelectorAll("button")).toHaveLength(0);
   });
 });

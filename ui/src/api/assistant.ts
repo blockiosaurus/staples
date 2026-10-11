@@ -9,7 +9,19 @@ export interface AssistantSetup {
   /** ready: can answer; starting: being verified; needs_model: connect a model; error: see message. */
   state: "ready" | "starting" | "needs_model" | "error";
   message?: string;
+  /** Fixed copy from the last failed connection test's check codes. */
+  reason?: string;
   adapterType: string;
+}
+
+/** Cheap host detection for one runtime adapter (no model calls). */
+export interface AssistantAdapterAvailability {
+  adapterType: AssistantRuntimeAdapterType;
+  installed: boolean;
+  available: boolean;
+  engine: "cli" | null;
+  signedIn: boolean | null;
+  hint?: string;
 }
 
 export interface AssistantSummary {
@@ -23,6 +35,8 @@ export interface AssistantSummary {
   conversationIssueId: string | null;
   /** Absent from older servers: treat as ready. */
   setup?: AssistantSetup;
+  /** False for viewers: they cannot connect a model. */
+  canConfigure?: boolean;
 }
 
 export interface AssistantSetupRequest {
@@ -35,6 +49,9 @@ export interface AssistantSetupRequest {
 export const assistantApi = {
   /** Ensures the company Assistant exists and returns it with the caller's conversation id. */
   get: (companyId: string) => api.get<AssistantSummary>(`/companies/${companyId}/assistant`),
+  /** The runtime adapters this host can run, from cheap detection. */
+  adapters: (companyId: string) =>
+    api.get<{ adapters: AssistantAdapterAvailability[] }>(`/companies/${companyId}/assistant/adapters`),
   /** Connects a model for the Assistant and restarts its setup. */
   setup: (companyId: string, data: AssistantSetupRequest) =>
     api.post<Pick<AssistantSummary, "agent" | "setup">>(`/companies/${companyId}/assistant/setup`, data),

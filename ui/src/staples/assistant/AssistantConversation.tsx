@@ -61,6 +61,14 @@ export function AssistantConversation({
       : undefined),
     [opening, setupReady],
   );
+  const agentId = assistant.agent?.id ?? null;
+  const canConfigure = assistant.summary?.canConfigure ?? true;
+  const setupCard = useMemo(
+    () => (!setupReady && setup && selectedCompanyId && agentId
+      ? <AssistantSetupCard companyId={selectedCompanyId} agentId={agentId} setup={setup} canConfigure={canConfigure} />
+      : undefined),
+    [setupReady, setup, selectedCompanyId, agentId, canConfigure],
+  );
 
   if (assistant.error) {
     return (
@@ -90,9 +98,7 @@ export function AssistantConversation({
         embedded,
         focusComposerRequest: embedded ? shell?.dockFocusRequest : undefined,
         emptyState,
-        composerReplacement: !setupReady && setup && selectedCompanyId
-          ? <AssistantSetupCard companyId={selectedCompanyId} agentId={assistant.agent.id} setup={setup} />
-          : undefined,
+        composerReplacement: setupCard,
       }}
     />
   );

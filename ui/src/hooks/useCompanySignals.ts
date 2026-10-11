@@ -14,6 +14,8 @@ export function useCompanySignals(companyId: string | null | undefined): {
     enabled: Boolean(companyId),
     // Live activity refreshes signals through a throttle; avoid extra refetches on mount/focus.
     staleTime: 30_000,
+    // The company shell waits on signals at first load: retry once, then fall back.
+    retry: 1,
   });
   return {
     signals: query.data ?? null,

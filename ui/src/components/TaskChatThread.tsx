@@ -3164,7 +3164,8 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                 )}
               </div>
             </div>
-            {assignedAgentForNotice?.status === "paused" ? (
+            {/* A composer replacement (e.g. the Assistant's setup card) already explains why the agent can't answer. */}
+            {assignedAgentForNotice?.status === "paused" && !composerReplacement ? (
               <div className="mx-auto w-full max-w-(--tc-shell-max-w) px-4 pt-2">
                 <IssueAssigneePausedNotice
                   agent={assignedAgentForNotice}

@@ -818,6 +818,17 @@ describe("TaskChatThread draft pass-through", () => {
     expect(loadDraft("assistant-draft")).toBe("Build a newsletter");
   });
 
+  it("lets the composer replacement explain a paused, failed agent instead of the lifecycle banner", () => {
+    const agent = { id: "assistant", name: "Assistant", status: "paused", lifecycleState: "verifying",
+      lifecycleError: "The lifecycle step failed. Retry the operation." } as never;
+    const props = { comments: [], onAdd: async () => {}, currentAssigneeValue: "agent:assistant", agentMap: new Map([["assistant", agent]]) };
+    render(<TaskChatThread {...props} />);
+    expect(container.querySelector('[data-testid="issue-assignee-paused-notice"]')).not.toBeNull();
+    render(<TaskChatThread {...props} composerReplacement={<div data-testid="setup-card">Connect a model</div>} />);
+    expect(container.querySelector('[data-testid="issue-assignee-paused-notice"]')).toBeNull();
+    expect(container.textContent).not.toContain("couldn't start");
+  });
+
   it("renders a composer replacement in place of the composer", () => {
     render(
       <TaskChatThread
