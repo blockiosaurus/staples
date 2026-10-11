@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { agents, authUsers, companies, companySkills, routines, toolApplications, toolConnections, toolPolicies, type Db } from "@paperclipai/db";
 import {
   APP_DEFINITIONS,
@@ -503,16 +503,27 @@ function text(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-/** App slugs of the company's usable (active, enabled, healthy, non-AI) connections. */
-export async function connectedAppSlugs(db: Db, companyId: string): Promise<Set<string>> {
+export interface UsableAppConnection {
+  id: string;
+  appSlug: string;
+  displayName: string;
+}
+
+/**
+ * The company's usable connections (active, enabled, healthy, non-AI) that
+ * come from a known app, oldest first.
+ */
+export async function usableAppConnections(db: Db, companyId: string): Promise<UsableAppConnection[]> {
   const rows = await db.select({
+    id: toolConnections.id, name: toolConnections.name,
     config: toolConnections.config, transportConfig: toolConnections.transportConfig, status: toolConnections.status,
     enabled: toolConnections.enabled, purpose: toolConnections.connectionPurpose, health: toolConnections.healthStatus,
     applicationMetadata: toolApplications.metadata,
   }).from(toolConnections)
     .innerJoin(toolApplications, eq(toolApplications.id, toolConnections.applicationId))
-    .where(eq(toolConnections.companyId, companyId));
-  const slugs = new Set<string>();
+    .where(eq(toolConnections.companyId, companyId))
+    .orderBy(asc(toolConnections.createdAt), asc(toolConnections.id));
+  const usable: UsableAppConnection[] = [];
   for (const row of rows) {
     if (row.status !== "active" || !row.enabled || row.purpose === "ai") continue;
     if (isToolConnectionAttentionHealth(row.health as ToolConnectionHealthStatus)) continue;
@@ -520,9 +531,14 @@ export async function connectedAppSlugs(db: Db, companyId: string): Promise<Set<
       ?? text(metadataRecord(row.transportConfig).sourceTemplateKey)
       ?? text(metadataRecord(row.applicationMetadata).sourceTemplateKey)
       ?? text(metadataRecord(row.applicationMetadata).galleryKey);
-    if (slug) slugs.add(slug);
+    if (slug) usable.push({ id: row.id, appSlug: slug, displayName: text(row.name) ?? appDisplayName(slug) });
   }
-  return slugs;
+  return usable;
+}
+
+/** App slugs of the company's usable (active, enabled, healthy, non-AI) connections. */
+export async function connectedAppSlugs(db: Db, companyId: string): Promise<Set<string>> {
+  return new Set((await usableAppConnections(db, companyId)).map((connection) => connection.appSlug));
 }
 
 export interface TemplateTaskSpec {

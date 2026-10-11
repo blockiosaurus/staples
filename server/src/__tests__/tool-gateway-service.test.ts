@@ -560,6 +560,28 @@ describeEmbeddedPostgres("tool gateway service", () => {
     expect(await db.select().from(toolCallEvents).where(eq(toolCallEvents.reasonCode, "approved_action_executed"))).toHaveLength(0);
   });
 
+  it("does not offer Always allow on an approval asked by an agent template's destructive guard", async () => {
+    // Regression guard: remembering it would always be refused (422).
+    const { company, agent, run } = await createRunFixture(db);
+    const { connection, catalogEntry } = await createRemoteMcpToolFixture(db, company.id);
+    await db.update(toolCatalogEntries).set({ riskLevel: "destructive", isReadOnly: false }).where(eq(toolCatalogEntries.id, catalogEntry.id));
+    const [guard] = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Template: ask before deleting", policyType: "require_approval", priority: 5,
+      selectors: { agentId: agent.id, riskLevels: ["destructive", "high", "critical"] },
+      config: { source: "agent_template", templateRule: "destructive", templateRef: "staples/coding-agent" },
+    }).returning();
+    await db.insert(toolPolicies).values({ companyId: company.id, name: "Allow the connection", policyType: "allow", priority: 10, selectors: { connectionId: connection.id } });
+    const gateway = createTestToolGatewayService(db);
+    const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+    const tool = (await gateway.listToolsForSession(session.token)).find(t => t.connectionId === connection.id)!;
+    await expect(gateway.executeTool({ sessionToken: session.token, tool: tool.name, parameters: {} })).rejects.toMatchObject({ reasonCode: "approval_required" });
+    const [invocation] = await db.select().from(toolInvocations);
+    expect(invocation.matchedPolicyIds).toEqual([guard.id]);
+    const [interaction] = await db.select().from(issueThreadInteractions);
+    expect((interaction.payload as { toolAction: Record<string, unknown> }).toolAction).toMatchObject({ risk: "destructive" });
+    expect((interaction.payload as { toolAction: Record<string, unknown> }).toolAction).not.toHaveProperty("rememberActionScope");
+  });
+
   it("remembers a read action atomically, allows changed arguments, and preserves explicit denials and definition review", async () => {
     const { company, agent, issue, run } = await createRunFixture(db);
     const [project] = await db.insert(projects).values({ companyId: company.id, name: "Reviewed project" }).returning();

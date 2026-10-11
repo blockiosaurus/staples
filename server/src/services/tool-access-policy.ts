@@ -139,6 +139,29 @@ export function agentTemplateGuardKind(policy: { config: unknown }): AgentTempla
   return null;
 }
 
+/**
+ * `config.source` of an agent's Autopilot rule: an `allow` rule (priority
+ * 45, just ahead of the template's outward ask-first rule at 50) scoped to
+ * the agent, one connection, write risk and one outward category's tool-name
+ * patterns. It only removes the ask: an explicit block still wins, and it
+ * allows only a call something else (a profile, grant, allow or trust rule)
+ * would allow. A reorder never renumbers it, so the outward rule cannot be
+ * moved ahead of it.
+ */
+export const AGENT_AUTOPILOT_POLICY_SOURCE = "agent_autopilot";
+
+/** Whether a policy is an agent's Autopilot rule. */
+export function isAgentAutopilotPolicy(policy: { config: unknown }): boolean {
+  const config = policy.config;
+  if (!config || typeof config !== "object" || Array.isArray(config)) return false;
+  return (config as Record<string, unknown>).source === AGENT_AUTOPILOT_POLICY_SOURCE;
+}
+
+/** Template guards and Autopilot rules keep their priority on a reorder. */
+function keepsPriorityOnReorder(policy: { config: unknown }): boolean {
+  return Boolean(agentTemplateGuardKind(policy)) || isAgentAutopilotPolicy(policy);
+}
+
 /** The agent an agent-template policy is scoped to (its `selectors.agentId`). */
 function templatePolicyAgentId(policy: { selectors: unknown }): string | null {
   const selectors = policy.selectors;
@@ -907,10 +930,12 @@ export function toolAccessPolicyService(db: Db) {
       if (missingIds.length > 0) {
         throw unprocessable("All reordered policies must belong to the company", { missingPolicyIds: missingIds });
       }
-      // Agent-template guards apply by type, not priority: they are not part of
-      // the ordering. Their ids are accepted and ignored, and never renumbered.
-      const reorderable = rows.filter((row) => !agentTemplateGuardKind(row));
-      const orderedIds = uniquePolicyIds.filter((id) => !agentTemplateGuardKind(byId.get(id)!));
+      // Agent-template guards apply by type, not priority, and an agent's
+      // Autopilot rule must stay ahead of its template's outward rule: neither
+      // is part of the ordering. Their ids are accepted and ignored, and they
+      // are never renumbered.
+      const reorderable = rows.filter((row) => !keepsPriorityOnReorder(row));
+      const orderedIds = uniquePolicyIds.filter((id) => !keepsPriorityOnReorder(byId.get(id)!));
       if (orderedIds.length !== reorderable.length) {
         throw unprocessable("Reorder must include every non-trust policy for the company", {
           expectedPolicyCount: reorderable.length,
@@ -1514,7 +1539,7 @@ export function toolAccessPolicyService(db: Db) {
     // Template guards are applied by type below, not as ordinary blocks.
     const explicitBlock = matchingPolicies.find(({ policy }) => policy.policyType === "block" && !agentTemplateGuardKind(policy));
     const otherwiseAllowed = async () => permittedByProfile
-      || matchingPolicies.some(({ policy: other }) => !agentTemplateGuardKind(other) && (other.policyType === "allow"
+      || matchingPolicies.some(({ policy: other }) => !agentTemplateGuardKind(other) && !isAgentAutopilotPolicy(other) && (other.policyType === "allow"
         || (other.policyType === "trust_rule" && (() => {
           const rule = trustRuleConfig(other);
           return Boolean(rule && trustRuleIsActive(other) && argumentFiltersMatch(rule.argumentFilters, ctx));
@@ -1639,6 +1664,14 @@ export function toolAccessPolicyService(db: Db) {
         return decision("require_approval", "requires_approval_policy", policy.description ?? "Tool access requires approval.", effectiveProfileIds, [policy.id], { redactionPlan: redaction.redactionPlan, policyExplanation });
       }
       if (policy.policyType === "allow") {
+        // Autopilot only removes the ask: never past an explicit block, and
+        // never for a call nothing else would allow.
+        if (isAgentAutopilotPolicy(policy)) {
+          if (explicitBlock) {
+            return decision("deny", "deny_policy_block", explicitBlock.policy.description ?? "Tool access is blocked by policy.", effectiveProfileIds, [explicitBlock.policy.id], { redactionPlan: redaction.redactionPlan });
+          }
+          if (!await otherwiseAllowed()) continue;
+        }
         return decision("allow", "allow_policy", "Tool access allowed by policy.", effectiveProfileIds, [policy.id], { redactionPlan: redaction.redactionPlan, policyExplanation });
       }
     }

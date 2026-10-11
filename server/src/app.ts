@@ -114,6 +114,7 @@ import { dashboardRoutes } from "./routes/dashboard.js";
 import { companySignalsRoutes } from "./routes/company-signals.js";
 import { companyBriefRoutes } from "./routes/company-brief.js";
 import { planRoutes } from "./routes/plans.js";
+import { agentAutopilotRoutes } from "./routes/agent-autopilot.js";
 import { attentionRoutes } from "./routes/attention.js";
 import { briefingRoutes } from "./routes/briefing.js";
 import { decisionTrainingRoutes } from "./routes/decision-training.js";
@@ -823,6 +824,7 @@ export async function createApp(
     hireAgent: (actor, companyId, body, origin) => injectApiRequest(api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin }),
     pluginWorkerManager: workerManager,
   }));
+  api.use(agentAutopilotRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
   api.use(agentProfileAvatarRoutes(db, opts.storageService));
   api.use(projectToolRoutes(db));

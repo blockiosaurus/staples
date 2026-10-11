@@ -201,6 +201,7 @@ import {
   acceptIssueThreadInteractionSchema,
   claimProposedActionSchema,
   applyPlanSchema,
+  updateAgentAutopilotSchema,
   resolveConfirmationFromCommentSchema,
   rejectIssueThreadInteractionSchema,
   respondIssueThreadInteractionSchema,
@@ -1380,6 +1381,8 @@ const browserUseOperations = [
 ] as const;
 
 const BOARD_ONLY_OPERATIONS = new Set([
+  "GET /api/agents/{agentId}/autopilot",
+  "PUT /api/agents/{agentId}/autopilot/{capability}",
   "GET /api/companies/{companyId}/decision-model",
   "PUT /api/companies/{companyId}/decision-model",
   "POST /api/companies/{companyId}/decision-model/test",
@@ -5960,6 +5963,36 @@ registry.registerPath({
   description: "Board members except viewers. Pass baseRevisionId (the revision you edited) to get a 409 instead of overwriting someone else's change. Logged as company.brief_updated.",
   request: { params: z.object({ companyId: z.string().uuid() }), body: jsonBody(updateCompanyBriefSchema) },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 409: r.conflict },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/agents/{agentId}/autopilot",
+  tags: ["agents"],
+  summary: "Get a templated agent's Autopilot settings",
+  description: "Board users who may read the agent's configuration (agents cannot). One entry per outward category of the agent's Staples template (empty for untemplated and read-only agents): its label, the destructive action that always asks (display only), the company connection satisfying the category's capability, the mode (ask = ask first, the install default; auto = act without asking) and whether it can be toggled (false while no usable connection exists). Another company's agent is a 404.",
+  request: { params: z.object({ agentId: z.string().uuid() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/agents/{agentId}/autopilot/{capability}",
+  tags: ["agents"],
+  summary: "Turn Autopilot on or off for one outward category",
+  description: "Board users who may update the agent's configuration (agent_config:update; viewers and agents cannot). auto creates (idempotently) one allow rule for this agent, the connection satisfying the capability, write risk and the category's tool-name patterns, so those actions run without asking; ask removes it. Destructive actions always ask and cannot be put on Autopilot. Explicit blocks still apply. Logged as agent.autopilot_changed when something changed. Returns the updated category.",
+  request: {
+    params: z.object({ agentId: z.string().uuid(), capability: z.string() }),
+    body: jsonBody(updateAgentAutopilotSchema),
+  },
+  responses: {
+    200: r.ok(),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+    409: { description: "No usable company connection satisfies this category's capability yet (canToggle is false), so Autopilot cannot be turned on" },
+  },
 });
 
 registry.registerPath({

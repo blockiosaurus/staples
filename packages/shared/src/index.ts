@@ -2956,3 +2956,5 @@ export { AGENT_LIFECYCLE_STATES, type AgentLifecycleState, type AgentLifecycleOp
 export type { AgentLifecycleRequest, AgentLifecycleResult } from "./types/agent-lifecycle.js";
 export * from "./types/agent-template.js";
 export * from "./validators/agent-template.js";
+export * from "./types/agent-autopilot.js";
+export * from "./validators/agent-autopilot.js";

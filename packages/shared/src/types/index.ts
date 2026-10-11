@@ -1126,3 +1126,4 @@ export * from "./skill-source.js";
 
 export * from "./agent-lifecycle.js";
 export * from "./agent-template.js";
+export * from "./agent-autopilot.js";

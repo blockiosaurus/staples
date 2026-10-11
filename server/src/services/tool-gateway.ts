@@ -2548,9 +2548,15 @@ export function createToolGatewayService(
                 : input.tool.risk === "destructive"
                   ? "destructive"
                   : "write",
+            // An approval asked by an agent template's destructive guard can
+            // never be remembered (the trust-rule promotion refuses it), so
+            // "Always allow" is not offered for it. Such calls are normally
+            // destructive-rated and take the formal approval path anyway; this
+            // keeps the offer off even if the two risk readings ever differ.
             ...(!formalApprovalId &&
             input.session.agentId &&
-            input.tool.connectionId
+            input.tool.connectionId &&
+            input.policyDecision.policyExplanation?.templateGuard !== "destructive"
               ? {
                   rememberActionScope: `This agent may use this action with different arguments on this connection${input.session.projectId ? " within this project" : ""}.`,
                 }
