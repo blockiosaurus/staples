@@ -68,7 +68,7 @@ export function createLifecycleWorker(store: LifecycleStore, driver: LifecycleDr
       } catch (error) {
         // Known, safe copy only: provider errors can carry credentials or private data.
         const message = (error as { code?: unknown } | null)?.code === "harness_test_failed"
-          ? "The model couldn't be reached. Connect a model to continue."
+          ? "The model didn't pass its connection test. Check the model connection, then retry."
           : "The lifecycle step failed. Retry the operation.";
         if (!await runStep("defer", () => store.defer(agent, owner, message, new Date()))) continue;
         return;

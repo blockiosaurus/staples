@@ -172,6 +172,8 @@ function ConnectModel({
   const adapters = useQuery({
     queryKey: ["assistant", "adapters", companyId] as const,
     queryFn: () => assistantApi.adapters(companyId),
+    // Detection is cheap but not free; "Check again" refetches on demand.
+    staleTime: 30_000,
     retry: false,
   });
   const entry = (adapterType: string): AssistantAdapterAvailability | undefined =>
@@ -297,7 +299,7 @@ function ConnectModel({
     return (
       <div className="flex flex-col items-start gap-3">
         <p className="text-foreground">
-          The Assistant will use {label(selected)} with the sign-in already set up on this computer.
+          The Assistant will use {label(selected)} on this computer. We'll test the connection before using it.
         </p>
         {hint ? <p className="text-muted-foreground"><HintText text={hint} /></p> : null}
         {error ? <p role="alert" className="text-destructive">{error}</p> : null}
@@ -337,7 +339,8 @@ function ConnectModel({
             : !item ? "Couldn't check"
             : !item.installed ? "Not installed"
             : !item.available ? "Unavailable"
-            : item.signedIn ? "Signed in"
+            : item.signedIn === true ? "Signed in"
+            : item.signedIn === false ? "Sign in needed"
             : "Installed";
           return (
             <li key={adapterType}>
@@ -350,7 +353,7 @@ function ConnectModel({
                 <span className="flex w-full items-center gap-3">
                   <AdapterMark type={adapterType} className="size-5" />
                   <span className="min-w-0 flex-1 font-medium">{label(adapterType)}</span>
-                  <span className={cn("text-xs", item?.available ? "text-foreground" : "text-muted-foreground")}>{status}</span>
+                  <span data-testid="adapter-status" className={cn("text-xs", item?.available ? "text-foreground" : "text-muted-foreground")}>{status}</span>
                 </span>
                 {item?.hint ? (
                   <span className="text-xs text-muted-foreground"><HintText text={item.hint} /></span>

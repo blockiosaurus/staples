@@ -42,7 +42,7 @@ const result = (status: string, codes: Array<[string, string?]>) => ({
 const ADAPTERS = [
   { adapterType: "claude_local", installed: true, available: true, engine: "cli", signedIn: null },
   { adapterType: "codex_local", installed: false, available: false, engine: null, signedIn: null, hint: "Not installed: install the codex CLI, then check again." },
-  { adapterType: "gemini_local", installed: true, available: true, engine: null, signedIn: null, hint: "Sign in needed: run `gemini` in a terminal once and log in, then check again." },
+  { adapterType: "gemini_local", installed: true, available: true, engine: null, signedIn: null, hint: "Sign-in not checked — if `gemini` isn't logged in, run it in a terminal once." },
   { adapterType: "kimi_local", installed: true, available: false, engine: null, signedIn: null, hint: "Needs Node 24.11 or newer on this computer." },
 ];
 
@@ -104,8 +104,27 @@ describe("AssistantSetupCard", () => {
     expect(button("Codex")?.textContent).toContain("Not installed");
     expect(button("Codex")?.disabled).toBe(true);
     expect(button("Kimi")?.disabled).toBe(true);
-    expect(container.textContent).toContain("Sign in needed: run gemini in a terminal once and log in");
+    expect(button("Gemini")?.querySelector('[data-testid="adapter-status"]')?.textContent).toBe("Installed");
+    expect(container.textContent).toContain("Sign-in not checked — if gemini isn't logged in, run it in a terminal once.");
     expect(container.querySelector("code")?.textContent).toBe("gemini");
+  });
+
+  it("says sign-in is needed only when detection found no sign-in", async () => {
+    mocks.adapters.mockResolvedValue({ adapters: ADAPTERS.map((item) => item.adapterType === "gemini_local"
+      ? { ...item, signedIn: false, hint: "Sign in needed: run `gemini` in a terminal once and log in, then check again." }
+      : item.adapterType === "claude_local" ? { ...item, signedIn: true } : item) });
+    await render({ state: "needs_model" });
+    const status = (text: string) => button(text)?.querySelector('[data-testid="adapter-status"]')?.textContent;
+    expect(status("Gemini")).toBe("Sign in needed");
+    expect(status("Claude")).toBe("Signed in");
+    expect(status("Kimi")).toBe("Unavailable");
+  });
+
+  it("reuses the adapter list for 30 seconds", async () => {
+    await render({ state: "needs_model" });
+    await render({ state: "starting" });
+    await render({ state: "needs_model" });
+    expect(mocks.adapters).toHaveBeenCalledTimes(1);
   });
 
   it("checks again on request", async () => {
@@ -169,6 +188,9 @@ describe("AssistantSetupCard", () => {
   it("tests Gemini fully before using it, and offers Check again when it isn't signed in", async () => {
     await render({ state: "needs_model" });
     await act(async () => button("Gemini")!.click());
+    // Sign-in is tested, not assumed.
+    expect(container.textContent).not.toContain("sign-in already set up");
+    expect(container.textContent).toContain("We'll test the connection before using it.");
     mocks.testEnvironment.mockResolvedValueOnce(result("warn", [["gemini_hello_probe_auth_required", "warn"]]));
     await act(async () => button("Use Gemini")!.click());
     await settle();

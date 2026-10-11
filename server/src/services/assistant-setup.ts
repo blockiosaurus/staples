@@ -216,24 +216,25 @@ export async function assistantAdapterAvailability(deps: {
     if (!available) {
       return { adapterType, installed, available, engine, signedIn: null, hint: "Needs Node 24.11 or newer on this computer." };
     }
+    let signedIn: boolean | null = null;
     if (adapterType === "claude_local") {
-      // The connect step handles Claude sign-in; only a stored login is detectable here.
+      // Only a stored login is detectable; a CLI keychain login is not (null).
       const signal = await deps.authSignal(adapterType).catch(() => "unknown" as const);
-      return { adapterType, installed, available, engine, signedIn: signal === "present" ? true : null };
-    }
-    if (adapterType === "codex_local") {
+      signedIn = signal === "present" ? true : null;
+    } else if (adapterType === "codex_local") {
       const signal = await deps.authSignal(adapterType).catch(() => "unknown" as const);
-      const signedIn = signal === "present" ? true : signal === "absent" ? false : null;
-      return {
-        adapterType, installed, available, engine, signedIn,
-        ...(signedIn ? {} : { hint: "Sign in needed: run `codex login` in a terminal once, or connect an API key." }),
-      };
+      signedIn = signal === "present" ? true : signal === "absent" ? false : null;
+    } else if (adapterType === "gemini_local") {
+      signedIn = await deps.geminiCredentialsPresent().catch(() => false) ? true : null;
     }
-    const signedIn = adapterType === "gemini_local" && await deps.geminiCredentialsPresent().catch(() => false) ? true : null;
-    return {
-      adapterType, installed, available, engine, signedIn,
-      ...(signedIn ? {} : { hint: `Sign in needed: run \`${command}\` in a terminal once and log in, then check again.` }),
-    };
+    // "Sign in needed" only when detection found no sign-in; unknown is not a claim either way.
+    const hint = signedIn === true ? undefined
+      : signedIn === false
+        ? adapterType === "codex_local"
+          ? "Sign in needed: run `codex login` in a terminal once, or connect an API key."
+          : `Sign in needed: run \`${command}\` in a terminal once and log in, then check again.`
+        : `Sign-in not checked — if \`${command}\` isn't logged in, run it in a terminal once.`;
+    return { adapterType, installed, available, engine, signedIn, ...(hint ? { hint } : {}) };
   }));
 }
 

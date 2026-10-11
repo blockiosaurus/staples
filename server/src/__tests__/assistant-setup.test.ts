@@ -108,7 +108,8 @@ describe("assistantAdapterAvailability", () => {
     const d = deps();
     const result = await assistantAdapterAvailability(d);
     expect(result).toEqual([
-      { adapterType: "claude_local", installed: true, available: true, engine: "cli", signedIn: null },
+      { adapterType: "claude_local", installed: true, available: true, engine: "cli", signedIn: null,
+        hint: "Sign-in not checked — if `claude` isn't logged in, run it in a terminal once." },
       { adapterType: "codex_local", installed: true, available: true, engine: "cli", signedIn: false,
         hint: "Sign in needed: run `codex login` in a terminal once, or connect an API key." },
       { adapterType: "gemini_local", installed: true, available: false, engine: null, signedIn: null,
@@ -129,10 +130,12 @@ describe("assistantAdapterAvailability", () => {
       { adapterType: "claude_local", installed: true, available: true, engine: null, signedIn: true });
     expect(result.find((entry) => entry.adapterType === "gemini_local")).toEqual({
       adapterType: "gemini_local", installed: true, available: true, engine: null, signedIn: null,
-      hint: "Sign in needed: run `gemini` in a terminal once and log in, then check again.",
+      hint: "Sign-in not checked — if `gemini` isn't logged in, run it in a terminal once.",
     });
     expect(result.find((entry) => entry.adapterType === "kimi_local")).toMatchObject({ available: true, signedIn: null,
-      hint: "Sign in needed: run `kimi` in a terminal once and log in, then check again." });
+      hint: "Sign-in not checked — if `kimi` isn't logged in, run it in a terminal once." });
+    expect(result.find((entry) => entry.adapterType === "codex_local")).toMatchObject({ signedIn: null,
+      hint: "Sign-in not checked — if `codex` isn't logged in, run it in a terminal once." });
   });
 
   it("treats found Gemini credentials as signed in", async () => {
