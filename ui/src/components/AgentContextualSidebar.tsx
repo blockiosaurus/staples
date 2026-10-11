@@ -1,8 +1,11 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "react-router-dom";
 import {
   Activity,
   BadgeDollarSign,
   BookOpenText,
+  ChevronRight,
   History,
   KeyRound,
   Library,
@@ -15,14 +18,22 @@ import {
   Wrench,
 } from "lucide-react";
 import { agentsApi } from "@/api/agents";
+import { chatEndpointsApi } from "@/api/chatEndpoints";
 import { useCompany } from "@/context/CompanyContext";
 import { queryKeys } from "@/lib/queryKeys";
 import { ContextualSidebarFrame } from "./ContextualSidebarFrame";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { contextualSidebarStyles } from "./contextual-sidebar-styles";
 import {
-  AGENT_DETAIL_NAVIGATION,
+  agentActiveViewFromPath,
+  agentAdvancedNavigation,
   agentDetailHref,
+  agentPrimaryNavigation,
+  isAgentAdvancedActive,
+  isAgentAdvancedItemHidden,
+  readAgentAdvancedOpen,
+  resolveAgentAdvancedOpen,
+  writeAgentAdvancedOpen,
   agentScopedAuditHref,
   type AgentLocalDetailView,
 } from "@/pages/agent-detail-navigation";
@@ -68,6 +79,68 @@ export function AgentContextualSidebar({
   const resolvedId = agentId ?? resolvedAgent?.id;
   const resolvedName = agentName ?? resolvedAgent?.name ?? "Agent";
 
+  const location = useLocation();
+  const activeView = agentActiveViewFromPath(location.pathname);
+  const auditActive =
+    /^\/activity/.test(location.pathname) &&
+    Boolean(resolvedId) &&
+    new URLSearchParams(location.search).get("agentId") === resolvedId;
+  const advancedActive = isAgentAdvancedActive({ activeView, auditActive });
+  const [storedOpen, setStoredOpen] = useState(() => readAgentAdvancedOpen());
+  const advancedOpen = resolveAgentAdvancedOpen({ storedOpen, advancedActive });
+
+  const { data: endpoints } = useQuery({
+    queryKey: queryKeys.chatEndpoints.list(selectedCompanyId ?? ""),
+    queryFn: () => chatEndpointsApi.list(selectedCompanyId!),
+    enabled: Boolean(selectedCompanyId && resolvedId),
+  });
+  const { data: keys } = useQuery({
+    queryKey: queryKeys.agents.keys(resolvedId ?? ""),
+    queryFn: () => agentsApi.listKeys(resolvedId!, selectedCompanyId ?? undefined),
+    enabled: Boolean(resolvedId),
+  });
+  const counts = {
+    channels: endpoints
+      ? endpoints.filter((e) => e.assignedAgentId === resolvedId && e.status !== "archived").length
+      : undefined,
+    apiKeys: keys ? keys.length : undefined,
+  };
+
+  const toggleAdvanced = () => {
+    const next = !advancedOpen;
+    setStoredOpen(next);
+    writeAgentAdvancedOpen(next);
+  };
+
+  const renderSection = (section: { label: string; items: ReadonlyArray<{ value: AgentLocalDetailView; label: string }> }, first = false) => {
+    const items = section.items.filter((item) => !isAgentAdvancedItemHidden(item.value, counts, activeView));
+    if (items.length === 0) return null;
+    return (
+      <div
+        key={section.label}
+        data-slot="contextual-sidebar-section"
+        className={first ? contextualSidebarStyles.section : "mt-3"}
+      >
+        <p data-slot="contextual-sidebar-section-label" className={contextualSidebarStyles.sectionLabel}>
+          {section.label}
+        </p>
+        <div data-slot="contextual-sidebar-group" className={contextualSidebarStyles.group}>
+          {items.map((item) => (
+            <SidebarNavItem
+              key={item.value}
+              to={agentDetailHref(agentRef, item.value)}
+              label={labels?.[item.value] ?? item.label}
+              icon={localIcons[item.value]}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const advancedSections = agentAdvancedNavigation();
+  const advancedId = "agent-advanced-nav";
+
   return (
     <ContextualSidebarFrame
       surface="agent"
@@ -81,52 +154,41 @@ export function AgentContextualSidebar({
         data-slot="contextual-sidebar-nav"
         className={contextualSidebarStyles.nav}
       >
-        {AGENT_DETAIL_NAVIGATION.map((section) => (
-          <div
-            key={section.label}
-            data-slot="contextual-sidebar-section"
-            className={contextualSidebarStyles.section}
-          >
-            <p
-              data-slot="contextual-sidebar-section-label"
-              className={contextualSidebarStyles.sectionLabel}
-            >
-              {section.label}
-            </p>
-            <div data-slot="contextual-sidebar-group" className={contextualSidebarStyles.group}>
-              {section.items
-                .map((item) => {
-                  const href = agentDetailHref(agentRef, item.value);
-                  return (
-                    <SidebarNavItem
-                      key={item.value}
-                      to={href}
-                      label={labels?.[item.value] ?? item.label}
-                      icon={localIcons[item.value]}
-                    />
-                  );
-                })}
-            </div>
-          </div>
-        ))}
+        {agentPrimaryNavigation().map((section) => renderSection(section, true))}
 
         <div data-slot="contextual-sidebar-section" className={contextualSidebarStyles.section}>
-          <p
-            data-slot="contextual-sidebar-section-label"
-            className={contextualSidebarStyles.sectionLabel}
+          <button
+            type="button"
+            aria-expanded={advancedOpen}
+            aria-controls={advancedId}
+            onClick={toggleAdvanced}
+            className={`${contextualSidebarStyles.sectionLabel} flex w-full items-center gap-1 text-left hover:text-foreground`}
           >
-            Audit
-          </p>
-          <div data-slot="contextual-sidebar-group" className={contextualSidebarStyles.group}>
-            {resolvedId ? auditItems.map((item) => (
-              <SidebarNavItem
-                key={item.section}
-                to={agentScopedAuditHref(resolvedId, item.section)}
-                label={item.label}
-                icon={item.icon}
-              />
-            )) : (
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">Loading audit links…</p>
+            <ChevronRight className={advancedOpen ? "size-3 rotate-90" : "size-3"} aria-hidden />
+            Advanced
+          </button>
+          <div id={advancedId} hidden={!advancedOpen}>
+            {advancedOpen && (
+              <>
+                {advancedSections.map((section) => renderSection(section))}
+                <div data-slot="contextual-sidebar-section" className="mt-3">
+                  <p data-slot="contextual-sidebar-section-label" className={contextualSidebarStyles.sectionLabel}>
+                    Audit
+                  </p>
+                  <div data-slot="contextual-sidebar-group" className={contextualSidebarStyles.group}>
+                    {resolvedId ? auditItems.map((item) => (
+                      <SidebarNavItem
+                        key={item.section}
+                        to={agentScopedAuditHref(resolvedId, item.section)}
+                        label={item.label}
+                        icon={item.icon}
+                      />
+                    )) : (
+                      <p className="px-2 py-1.5 text-xs text-muted-foreground">Loading audit links…</p>
+                    )}
+                  </div>
+                </div>
+              </>
             )}
           </div>
         </div>

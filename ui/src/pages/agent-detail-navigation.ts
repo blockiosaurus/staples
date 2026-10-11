@@ -77,3 +77,76 @@ export function agentScopedAuditHref(agentId: string, section: AuditSection) {
     agentId,
   });
 }
+
+export const AGENT_ADVANCED_STORAGE_KEY = "staples:agent-advanced-open";
+
+/** Navigation groups that always show; everything after them lives under Advanced. */
+export const AGENT_PRIMARY_NAVIGATION_LABELS: ReadonlyArray<string> = ["Agent"];
+
+export function agentPrimaryNavigation() {
+  return AGENT_DETAIL_NAVIGATION.filter((section) => AGENT_PRIMARY_NAVIGATION_LABELS.includes(section.label));
+}
+
+export function agentAdvancedNavigation() {
+  return AGENT_DETAIL_NAVIGATION.filter((section) => !AGENT_PRIMARY_NAVIGATION_LABELS.includes(section.label));
+}
+
+/** Active local view from a pathname like /agents/:ref/:view; null when not an agent-detail path. */
+export function agentActiveViewFromPath(pathname: string): AgentLocalDetailView | null {
+  const match = /^\/agents\/[^/]+\/([^/]+)/.exec(pathname);
+  if (!match) return null;
+  return parseAgentDetailView(match[1]!);
+}
+
+/** True when the active view or the scoped Audit routes live inside Advanced. */
+export function isAgentAdvancedActive(input: {
+  activeView: AgentLocalDetailView | null;
+  auditActive?: boolean;
+}): boolean {
+  if (input.auditActive) return true;
+  if (!input.activeView) return false;
+  return agentAdvancedNavigation().some((section) =>
+    section.items.some((item) => item.value === input.activeView),
+  );
+}
+
+/** Advanced is open when the person opened it before, or the active view is inside it. */
+export function resolveAgentAdvancedOpen(input: { storedOpen: boolean; advancedActive: boolean }): boolean {
+  return input.storedOpen || input.advancedActive;
+}
+
+export type AgentAdvancedCounts = {
+  /** undefined = loading/error/unknown (fail open: keep visible) */
+  channels?: number;
+  apiKeys?: number;
+};
+
+/** Hide Channels / API keys when the agent is known to have none, unless that view is active. */
+export function isAgentAdvancedItemHidden(
+  view: AgentLocalDetailView,
+  counts: AgentAdvancedCounts,
+  activeView: AgentLocalDetailView | null,
+): boolean {
+  if (view === activeView) return false;
+  if (view === "channels") return counts.channels === 0;
+  if (view === "api-keys") return counts.apiKeys === 0;
+  return false;
+}
+
+export function readAgentAdvancedOpen(storage?: Pick<Storage, "getItem">): boolean {
+  try {
+    const store = storage ?? (typeof window !== "undefined" ? window.localStorage : undefined);
+    return store?.getItem(AGENT_ADVANCED_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function writeAgentAdvancedOpen(open: boolean, storage?: Pick<Storage, "setItem">): void {
+  try {
+    const store = storage ?? (typeof window !== "undefined" ? window.localStorage : undefined);
+    store?.setItem(AGENT_ADVANCED_STORAGE_KEY, String(open));
+  } catch {
+    // storage unavailable; the preference simply isn't remembered
+  }
+}
