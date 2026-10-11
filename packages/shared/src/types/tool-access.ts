@@ -1422,6 +1422,7 @@ export type ToolAccessReasonCode =
   | "deny_archived_application"
   | "deny_missing_tool"
   | "deny_policy_block"
+  | "deny_template_read_only"
   | "deny_run_context_mismatch"
   | "deny_missing_agent"
   | "rate_limited";

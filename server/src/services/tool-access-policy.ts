@@ -22,6 +22,7 @@ import {
   toolProfiles,
   toolRateLimitCounters,
 } from "@paperclipai/db";
+import { TOOL_NAME_PATTERN_MAX_LENGTH } from "@paperclipai/shared";
 import type {
   ToolAccessDecision,
   ToolAccessDecisionInput,
@@ -115,6 +116,70 @@ const SECRET_VALUE_RE = /\b(sk-[a-z0-9_-]{12,}|ghp_[a-z0-9_]{12,}|xox[baprs]-[a-
  * (plans/apply). Such a require_approval rule only narrows access.
  */
 export const AGENT_TEMPLATE_POLICY_SOURCE = "agent_template";
+
+/**
+ * Agent-template guard rules (`config.templateRule`). These take precedence
+ * by type, not priority: they are evaluated for the calling agent before the
+ * ordered policies, so no allow rule, trust rule or reorder can get past them.
+ * `read_only_by_name` is a legacy read-only marker and is treated as
+ * `read_only`. The template's `outward` rule is an ordinary ordered policy.
+ */
+export const AGENT_TEMPLATE_GUARD_RULES = ["read_only", "read_only_by_name", "destructive"] as const;
+
+export type AgentTemplateGuardKind = "read_only" | "destructive";
+
+/** The guard kind of an agent-template guard policy, or null for any other policy. */
+export function agentTemplateGuardKind(policy: { config: unknown }): AgentTemplateGuardKind | null {
+  const config = policy.config;
+  if (!config || typeof config !== "object" || Array.isArray(config)) return null;
+  const record = config as Record<string, unknown>;
+  if (record.source !== AGENT_TEMPLATE_POLICY_SOURCE) return null;
+  if (record.templateRule === "destructive") return "destructive";
+  if (record.templateRule === "read_only" || record.templateRule === "read_only_by_name") return "read_only";
+  return null;
+}
+
+/** The agent an agent-template policy is scoped to (its `selectors.agentId`). */
+function templatePolicyAgentId(policy: { selectors: unknown }): string | null {
+  const selectors = policy.selectors;
+  if (!selectors || typeof selectors !== "object" || Array.isArray(selectors)) return null;
+  const agentId = (selectors as Record<string, unknown>).agentId;
+  return typeof agentId === "string" && agentId.length > 0 ? agentId : null;
+}
+
+/** Risk levels a template's destructive guard always asks first for. */
+export const TEMPLATE_DESTRUCTIVE_RISK_LEVELS: readonly ToolRiskLevel[] = ["destructive", "high", "critical"];
+
+/** Verbs a read-only agent's tool name must lead with (see `toolNameIsReadOnlyVerb`). */
+export const READ_ONLY_TOOL_VERBS = [
+  "list", "get", "retrieve", "search", "read", "fetch", "query", "describe", "count", "find", "show", "view", "lookup",
+] as const;
+const READ_ONLY_TOOL_VERB_SET = new Set<string>(READ_ONLY_TOOL_VERBS);
+
+/**
+ * Whether a tool name contains a read verb as a whole word, case-insensitively:
+ * at the start, after a separator or namespace (`_`, `-`, `.`, `/`, `:`...),
+ * or as a camelCase segment. `stripe_list_charges`, `listRefunds` and
+ * `get-invoice` qualify; `stripe_refund`, `refundPayment` and `listing` do not.
+ */
+export function toolNameIsReadOnlyVerb(name: string): boolean {
+  if (!name || name.length > 512) return false;
+  const words = name
+    .split(/[^A-Za-z0-9]+/)
+    .flatMap((part) => part.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+/g) ?? []);
+  return words.some((word) => READ_ONLY_TOOL_VERB_SET.has(word.toLowerCase()));
+}
+
+/**
+ * Allowlist for read-only template agents: the catalog must rate the tool
+ * `read` and every name it is known by must contain a read verb. Anything
+ * else (unknown risk, a write, a misclassified `stripe_create_refund`) is denied.
+ */
+export function readOnlyTemplateAllowsTool(input: { riskLevel: ToolRiskLevel | null; toolName: string | null; upstreamToolName?: string | null }): boolean {
+  if (input.riskLevel !== "read") return false;
+  const names = [input.toolName, input.upstreamToolName ?? null].filter((name): name is string => Boolean(name));
+  return names.length > 0 && names.every(toolNameIsReadOnlyVerb);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -393,14 +458,12 @@ function asToolRiskLevel(value: unknown): ToolRiskLevel | null {
   return null;
 }
 
-/** Longest tool-name glob honoured; longer (or malformed) patterns never match. */
-const TOOL_NAME_PATTERN_MAX_LENGTH = 120;
-
 /**
  * Case-insensitive whole-name glob match where `*` is the only wildcard and
  * every other character is literal. Malformed patterns match nothing.
  */
 export function toolNamePatternMatches(pattern: string, name: string): boolean {
+  // Longer (or malformed) patterns never match; see TOOL_NAME_PATTERN_MAX_LENGTH.
   if (!pattern || pattern.length > TOOL_NAME_PATTERN_MAX_LENGTH || !/[^*]/.test(pattern)) return false;
   // Greedy two-pointer wildcard match (no regular expression, no exponential
   // backtracking): on a mismatch, retry from the last `*`, letting it absorb
@@ -844,15 +907,19 @@ export function toolAccessPolicyService(db: Db) {
       if (missingIds.length > 0) {
         throw unprocessable("All reordered policies must belong to the company", { missingPolicyIds: missingIds });
       }
-      if (uniquePolicyIds.length !== rows.length) {
+      // Agent-template guards apply by type, not priority: they are not part of
+      // the ordering. Their ids are accepted and ignored, and never renumbered.
+      const reorderable = rows.filter((row) => !agentTemplateGuardKind(row));
+      const orderedIds = uniquePolicyIds.filter((id) => !agentTemplateGuardKind(byId.get(id)!));
+      if (orderedIds.length !== reorderable.length) {
         throw unprocessable("Reorder must include every non-trust policy for the company", {
-          expectedPolicyCount: rows.length,
-          receivedPolicyCount: uniquePolicyIds.length,
+          expectedPolicyCount: reorderable.length,
+          receivedPolicyCount: orderedIds.length,
         });
       }
 
       const now = new Date();
-      for (const [index, policyId] of uniquePolicyIds.entries()) {
+      for (const [index, policyId] of orderedIds.entries()) {
         await tx
           .update(toolPolicies)
           .set({ priority: (index + 1) * 100, updatedAt: now })
@@ -1444,8 +1511,56 @@ export function toolAccessPolicyService(db: Db) {
     const matchingPolicies = policies
       .map((policy) => ({ policy, conditionEvaluation: evaluatePolicyConditions(policyConditions(policy), ctx) }))
       .filter(({ policy, conditionEvaluation }) => selectorMatches(policy.selectors, ctx) && conditionEvaluation.matched);
-    const explicitBlock = matchingPolicies.find(({ policy }) => policy.policyType === "block");
+    // Template guards are applied by type below, not as ordinary blocks.
+    const explicitBlock = matchingPolicies.find(({ policy }) => policy.policyType === "block" && !agentTemplateGuardKind(policy));
+    const otherwiseAllowed = async () => permittedByProfile
+      || matchingPolicies.some(({ policy: other }) => !agentTemplateGuardKind(other) && (other.policyType === "allow"
+        || (other.policyType === "trust_rule" && (() => {
+          const rule = trustRuleConfig(other);
+          return Boolean(rule && trustRuleIsActive(other) && argumentFiltersMatch(rule.argumentFilters, ctx));
+        })())))
+      || await explicitGrant(ctx, cache);
+
+    // Agent-template guards apply by type, before (and regardless of) the
+    // ordered policies: priorities, reorders, allow rules and trust rules
+    // cannot get past them.
+    const templateGuards = ctx.agentId
+      ? policies.filter((policy) => agentTemplateGuardKind(policy) && templatePolicyAgentId(policy) === ctx.agentId)
+      : [];
+    const readOnlyGuard = templateGuards.find((policy) => agentTemplateGuardKind(policy) === "read_only");
+    if (readOnlyGuard && !readOnlyTemplateAllowsTool(ctx)) {
+      return decision(
+        "deny",
+        "deny_template_read_only",
+        readOnlyGuard.description ?? "This agent is read-only: it may only call tools that list, get or search.",
+        effectiveProfileIds,
+        [readOnlyGuard.id],
+        { redactionPlan: redaction.redactionPlan, policyExplanation: { policyId: readOnlyGuard.id, policyType: readOnlyGuard.policyType, templateGuard: "read_only" } },
+      );
+    }
+    const destructiveGuard = templateGuards.find((policy) => agentTemplateGuardKind(policy) === "destructive");
+    if (destructiveGuard && ctx.riskLevel && TEMPLATE_DESTRUCTIVE_RISK_LEVELS.includes(ctx.riskLevel)) {
+      if (explicitBlock) {
+        return decision("deny", "deny_policy_block", explicitBlock.policy.description ?? "Tool access is blocked by policy.", effectiveProfileIds, [explicitBlock.policy.id], { redactionPlan: redaction.redactionPlan });
+      }
+      // The guard only narrows access: it asks first for a call something else
+      // would allow. A call nothing allows falls through to the ordinary rules,
+      // which cannot allow it either.
+      if (await otherwiseAllowed()) {
+        return decision(
+          "require_approval",
+          "requires_approval_policy",
+          destructiveGuard.description ?? "Tool access requires approval.",
+          effectiveProfileIds,
+          [destructiveGuard.id],
+          { redactionPlan: redaction.redactionPlan, policyExplanation: { policyId: destructiveGuard.id, policyType: destructiveGuard.policyType, templateGuard: "destructive" } },
+        );
+      }
+    }
+
     for (const { policy, conditionEvaluation } of matchingPolicies) {
+      // Guards were applied above, by type.
+      if (agentTemplateGuardKind(policy)) continue;
       const policyExplanation = {
         policyId: policy.id,
         policyType: policy.policyType,
@@ -1516,14 +1631,7 @@ export function toolAccessPolicyService(db: Db) {
           if (explicitBlock) {
             return decision("deny", "deny_policy_block", explicitBlock.policy.description ?? "Tool access is blocked by policy.", effectiveProfileIds, [explicitBlock.policy.id], { redactionPlan: redaction.redactionPlan });
           }
-          const otherwiseAllowed = permittedByProfile
-            || matchingPolicies.some(({ policy: other }) => other.policyType === "allow"
-              || (other.policyType === "trust_rule" && (() => {
-                const rule = trustRuleConfig(other);
-                return Boolean(rule && trustRuleIsActive(other) && argumentFiltersMatch(rule.argumentFilters, ctx));
-              })()))
-            || await explicitGrant(ctx, cache);
-          if (!otherwiseAllowed) continue;
+          if (!await otherwiseAllowed()) continue;
         }
         if (policy.config?.source === "connection_intent" && explicitBlock) {
           return decision("deny", "deny_policy_block", explicitBlock.policy.description ?? "Tool access is blocked by policy.", effectiveProfileIds, [explicitBlock.policy.id], { redactionPlan: redaction.redactionPlan });
@@ -1889,6 +1997,32 @@ export function toolAccessPolicyService(db: Db) {
     return exact;
   }
 
+  /**
+   * Destructive calls by an agent with a template destructive guard always ask
+   * first, so such an approval can never be remembered as a trust rule.
+   */
+  async function assertNoTemplateDestructiveGuard(
+    companyId: string,
+    invocation: Pick<typeof toolInvocations.$inferSelect, "agentId" | "riskLevel" | "matchedPolicyIds">,
+  ) {
+    if (!invocation.agentId) return;
+    const guards = (await db
+      .select({ id: toolPolicies.id, config: toolPolicies.config, selectors: toolPolicies.selectors })
+      .from(toolPolicies)
+      .where(and(
+        eq(toolPolicies.companyId, companyId),
+        sql`${toolPolicies.config} ->> 'source' = ${AGENT_TEMPLATE_POLICY_SOURCE}`,
+        sql`${toolPolicies.config} ->> 'templateRule' = 'destructive'`,
+      )))
+      .filter((guard) => templatePolicyAgentId(guard) === invocation.agentId);
+    if (guards.length === 0) return;
+    const matchedGuard = guards.some((guard) => (invocation.matchedPolicyIds ?? []).includes(guard.id));
+    const destructive = Boolean(invocation.riskLevel && TEMPLATE_DESTRUCTIVE_RISK_LEVELS.includes(invocation.riskLevel));
+    if (matchedGuard || destructive) {
+      throw unprocessable("This agent's template always asks first before destructive actions; they cannot be remembered as a trust rule");
+    }
+  }
+
   async function createTrustRuleFromActionRequest(input: {
     companyId: string;
     actionRequestId: string;
@@ -1916,6 +2050,7 @@ export function toolAccessPolicyService(db: Db) {
     if (invocation.catalogEntryId && !invocation.catalogVersionHash) {
       throw unprocessable("Trust rule promotion requires a reviewed tool catalog version on the source action request");
     }
+    await assertNoTemplateDestructiveGuard(input.companyId, invocation);
 
     const [issue] = invocation.issueId
       ? await db

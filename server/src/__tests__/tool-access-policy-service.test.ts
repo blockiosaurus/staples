@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
@@ -28,11 +28,15 @@ import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
-import { toolAccessPolicyService, toolNamePatternMatches } from "../services/tool-access-policy.js";
+import {
+  readOnlyTemplateAllowsTool,
+  toolAccessPolicyService,
+  toolNamePatternMatches,
+  toolNameIsReadOnlyVerb,
+} from "../services/tool-access-policy.js";
 import { createToolPolicySchema, toolAccessSelectorSchema, updateToolPolicySchema } from "@paperclipai/shared";
 import { toolAccessService } from "../services/tool-access.js";
 import { createToolGatewayService, ToolGatewayHttpError } from "../services/tool-gateway.js";
-import { READ_ONLY_BLOCKED_TOOL_PATTERNS } from "../services/plan-templates.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -179,14 +183,31 @@ describe("tool-name glob matching", () => {
     expect(performance.now() - started).toBeLessThan(50);
   });
 
-  it("read-only template name patterns block money-moving verbs but not money reads", () => {
-    const blocked = (name: string) => READ_ONLY_BLOCKED_TOOL_PATTERNS.some((pattern) => toolNamePatternMatches(pattern, name));
-    for (const name of ["stripe_create_refund", "stripe_issue_refund", "refund_payment", "stripe_pay_invoice", "transfer_funds", "stripe_update_customer", "STRIPE_CREATE_REFUND"]) {
-      expect(blocked(name), name).toBe(true);
+  it("read-only template allowlist: only read-rated tools named with a read verb", () => {
+    const blocked = [
+      "stripe_refund", "refund", "refundPayment", "refund-payment", "pay_invoice", "pause_subscription",
+      "attach_payment_method", "withdraw_funds", "record_payment", "stripe_create_refund", "STRIPE_CREATE_REFUND",
+      "payInvoice", "resume_subscription", "modify_order", "execute_trade", "submit_form", "apply_coupon",
+      "edit_customer", "add_note", "issue_credit", "listing_publish", "getter",
+    ];
+    for (const name of blocked) {
+      expect(toolNameIsReadOnlyVerb(name), name).toBe(false);
+      expect(readOnlyTemplateAllowsTool({ riskLevel: "read", toolName: name }), name).toBe(false);
     }
-    for (const name of ["stripe_list_charges", "stripe_list_refunds", "stripe_list_payouts", "stripe_get_invoice", "stripe_retrieve_balance"]) {
-      expect(blocked(name), name).toBe(false);
+    const allowed = [
+      "stripe_list_charges", "listRefunds", "get_invoice", "retrieve_balance", "search_customers",
+      "stripe.get-invoice", "mcp__stripe__list_payouts", "LIST_CHARGES", "lookup_customer", "countInvoices",
+    ];
+    for (const name of allowed) {
+      expect(toolNameIsReadOnlyVerb(name), name).toBe(true);
+      expect(readOnlyTemplateAllowsTool({ riskLevel: "read", toolName: name }), name).toBe(true);
     }
+    // A read-verb name is not enough: the catalog must rate the tool read.
+    for (const riskLevel of ["write", "destructive", "medium", "low", null] as const) {
+      expect(readOnlyTemplateAllowsTool({ riskLevel, toolName: "stripe_list_charges" }), String(riskLevel)).toBe(false);
+    }
+    // Every name the call is known by must qualify.
+    expect(readOnlyTemplateAllowsTool({ riskLevel: "read", toolName: "list_charges", upstreamToolName: "create_refund" })).toBe(false);
   });
 
   it("validates toolNamePatterns on policy selectors and trust-rule selectors", () => {
@@ -783,6 +804,104 @@ describeEmbeddedPostgres("tool access policy service", () => {
       companyId: company.id, name: "Block sends", policyType: "block", priority: 200, selectors: { toolName: "send_email" },
     }).returning().then((rows) => rows[0]!);
     await expect(toolAccessPolicyService(db).decide(input)).resolves.toMatchObject({ decision: "deny", matchedPolicyIds: [block.id] });
+  });
+
+  async function seedGuardedAgent(templateRule: "read_only" | "destructive") {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { connection } = await createTool(db, company.id);
+    const profile = await db.insert(toolProfiles).values({
+      companyId: company.id, profileKey: `profile-${randomUUID()}`, name: "All tools", defaultAction: "allow",
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(toolProfileBindings).values({ companyId: company.id, profileId: profile.id, targetType: "agent", targetId: agent.id });
+    const guard = await db.insert(toolPolicies).values({
+      companyId: company.id, name: `Template guard ${templateRule}`,
+      policyType: templateRule === "read_only" ? "block" : "require_approval", priority: 5,
+      selectors: templateRule === "read_only"
+        ? { agentId: agent.id, riskLevels: ["write", "medium", "destructive", "high", "critical"] }
+        : { agentId: agent.id, riskLevels: ["destructive", "high", "critical"] },
+      config: { source: "agent_template", templateRule },
+    }).returning().then((rows) => rows[0]!);
+    // Everything that could otherwise get past a priority-ordered guard.
+    const allow = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Allow everything early", policyType: "allow", priority: 0, selectors: { agentId: agent.id },
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Remembered", policyType: "trust_rule", priority: 1,
+      selectors: { agentId: agent.id }, config: { trustRule: { argumentFilters: { allowAny: true } } },
+    });
+    const decide = (toolName: string, riskLevel: string) => toolAccessPolicyService(db).decide({
+      companyId: company.id,
+      actor: { actorType: "agent", actorId: agent.id, agentId: agent.id },
+      request: { connectionId: connection.id, toolName, riskLevel: riskLevel as never },
+    });
+    return { company, agent, guard, allow, decide };
+  }
+
+  it("applies a read-only template guard by type: allow at priority 0, trust rules and reorders cannot get past it", async () => {
+    const { company, guard, allow, decide } = await seedGuardedAgent("read_only");
+    const check = async () => {
+      for (const name of [
+        "stripe_refund", "refund", "refundPayment", "refund-payment", "pay_invoice", "pause_subscription",
+        "attach_payment_method", "withdraw_funds", "record_payment", "stripe_create_refund",
+      ]) {
+        await expect(decide(name, "read"), name).resolves.toMatchObject({
+          decision: "deny", reasonCode: "deny_template_read_only", matchedPolicyIds: [guard.id],
+        });
+      }
+      for (const [name, risk] of [["stripe_list_charges", "write"], ["get_invoice", "destructive"], ["send_email", "write"]] as const) {
+        await expect(decide(name, risk), `${name}/${risk}`).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_template_read_only" });
+      }
+      for (const name of ["stripe_list_charges", "listRefunds", "get_invoice", "retrieve_balance", "search_customers"]) {
+        await expect(decide(name, "read"), name).resolves.toMatchObject({ decision: "allow" });
+      }
+    };
+    await check();
+    // A reorder puts the allow first and renumbers ordinary policies; the guard keeps its row and still applies.
+    const svc = toolAccessPolicyService(db);
+    const reordered = await svc.reorderPolicies(company.id, { policyIds: [allow.id, guard.id] });
+    expect(reordered.find((row) => row.id === allow.id)?.priority).toBe(100);
+    expect(reordered.find((row) => row.id === guard.id)?.priority).toBe(5);
+    // Leaving the guard out of a reorder is fine too: it is not part of the ordering.
+    await svc.reorderPolicies(company.id, { policyIds: [allow.id] });
+    await check();
+  });
+
+  it("applies a destructive template guard by type: always ask first, never auto-allowed", async () => {
+    const { company, guard, allow, decide } = await seedGuardedAgent("destructive");
+    const check = async () => {
+      for (const risk of ["destructive", "high", "critical"]) {
+        await expect(decide("delete_branch", risk), risk).resolves.toMatchObject({
+          decision: "require_approval", reasonCode: "requires_approval_policy", matchedPolicyIds: [guard.id],
+        });
+      }
+      // Ordinary writes and reads follow the company's own rules (the early allow).
+      await expect(decide("create_branch", "write")).resolves.toMatchObject({ decision: "allow" });
+      await expect(decide("get_issue", "read")).resolves.toMatchObject({ decision: "allow" });
+    };
+    await check();
+    await toolAccessPolicyService(db).reorderPolicies(company.id, { policyIds: [allow.id, guard.id] });
+    await check();
+    // An explicit block still wins.
+    const block = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Block deletes", policyType: "block", priority: 500, selectors: { toolName: "delete_branch" },
+    }).returning().then((rows) => rows[0]!);
+    await expect(decide("delete_branch", "destructive")).resolves.toMatchObject({ decision: "deny", matchedPolicyIds: [block.id] });
+  });
+
+  it("does not apply another agent's template guard", async () => {
+    const { company, decide } = await seedGuardedAgent("read_only");
+    const other = await createAgent(db, company.id);
+    await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Allow other", policyType: "allow", priority: 0, selectors: { agentId: other.id },
+    });
+    const { connection } = await createTool(db, company.id);
+    await expect(toolAccessPolicyService(db).decide({
+      companyId: company.id,
+      actor: { actorType: "agent", actorId: other.id, agentId: other.id },
+      request: { connectionId: connection.id, toolName: "stripe_create_refund", riskLevel: "write" },
+    })).resolves.toMatchObject({ decision: "allow" });
+    await expect(decide("stripe_create_refund", "write")).resolves.toMatchObject({ decision: "deny" });
   });
 
   it("matches tool name selectors against connected MCP upstream tool names", async () => {
@@ -1428,6 +1547,35 @@ describeEmbeddedPostgres("tool access policy service", () => {
     expect(trustConfig.trustRule?.lastHitAt).toEqual(expect.any(String));
     expect(trustEvents.some((event) => event.eventType === "trust_rule_created")).toBe(true);
     expect(trustEvents.some((event) => event.eventType === "trust_rule_used")).toBe(true);
+  });
+
+  it("refuses to remember a destructive action guarded by an agent template", async () => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { connection, catalogEntry } = await createTool(db, company.id);
+    await db.update(toolCatalogEntries).set({ riskLevel: "destructive" }).where(eq(toolCatalogEntries.id, catalogEntry.id));
+    await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Allow agent", policyType: "allow", priority: 0, selectors: { agentId: agent.id },
+    });
+    await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Template: ask before deleting", policyType: "require_approval", priority: 5,
+      selectors: { agentId: agent.id, riskLevels: ["destructive", "high", "critical"] },
+      config: { source: "agent_template", templateRule: "destructive" },
+    });
+    const args = { to: "ops@example.com" };
+    const first = await createApprovedToolAction({
+      db, companyId: company.id, agentId: agent.id, connectionId: connection.id, catalogEntryId: catalogEntry.id, argumentsValue: args, status: "executed",
+    });
+    await createApprovedToolAction({
+      db, companyId: company.id, agentId: agent.id, connectionId: connection.id, catalogEntryId: catalogEntry.id, argumentsValue: args,
+    });
+    await expect(toolAccessPolicyService(db).createTrustRuleFromActionRequest({
+      companyId: company.id,
+      actionRequestId: first.actionRequest.id,
+      body: { approvalThreshold: 2, scope: { includeCatalogEntry: true } },
+    })).rejects.toMatchObject({ status: 422, message: expect.stringContaining("template always asks first") });
+    const trustRules = await db.select().from(toolPolicies).where(and(eq(toolPolicies.companyId, company.id), eq(toolPolicies.policyType, "trust_rule")));
+    expect(trustRules).toHaveLength(0);
   });
 
   it("does not count approved actions outside the final trust-rule agent scope", async () => {
