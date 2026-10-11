@@ -3,7 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { agents, approvals, authUsers, companies, companyMemberships, issueThreadInteractions, issues, type Db } from "@paperclipai/db";
-import { COMPANY_BRIEF_MAX_CHARS, PROPOSED_ACTION_CATEGORIES, PROPOSED_PLAN_BODY_MAX_BYTES, applyPlanSchema, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, createIssueThreadInteractionSchema, isAssistantAgent, paperclipQuestionSchema, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
+import { COMPANY_BRIEF_MAX_CHARS, PROPOSED_ACTION_BODY_MAX_BYTES, PROPOSED_ACTION_CATEGORIES, PROPOSED_BRIEF_BODY_MAX_BYTES, PROPOSED_PLAN_BODY_MAX_BYTES, applyPlanSchema, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, createIssueThreadInteractionSchema, isAssistantAgent, paperclipQuestionSchema, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
@@ -256,14 +256,14 @@ function assistantCapabilities(db: Db): Capability[] {
       description: [
         "Propose one exact governed API call for this person to confirm. Nothing runs until they click Confirm on the card in this conversation; their browser then performs the call with their own session and you are woken with the result.",
         `Changing the company brief is governed too: propose PUT /api/companies/<companyId>/brief with category brief and body { body: <the whole new brief in markdown, at most ${COMPANY_BRIEF_MAX_CHARS} characters>, baseRevisionId: <revisionId from staples_get_company_brief> }. Batch edits: one proposal per topic, not per sentence. To create a whole plan (brief, goal, project, agents and tasks) in one card, use staples_propose_plan instead.`,
-        "Only governed actions are allowed: approval approve/reject/request-revision, agent hire/create/pause/resume/terminate (adapterType is required; CEO-level hires are done in the Agents page), budget policy and budget updates, secret create/update/delete (never include secret values; an update may only change name, description or status), revoking a connection, grant or delegation (DELETE with body null), and DELETE with body null under this company or one of its tasks (removing tool policies, the skill policy, issue approval links, watchdogs or skill files is not proposable). Creating or changing connections is not proposable: point the person to the Connectors page to set them up.",
+        "Only governed actions are allowed: approval approve/reject/request-revision, the company brief (category brief), agent hire/create/pause/resume/terminate (adapterType is required; CEO-level hires are done in the Agents page), budget policy and budget updates, secret create/update/delete (never include secret values; an update may only change name, description or status), revoking a connection, grant or delegation (DELETE with body null), DELETE with body null under this company or one of its tasks (removing tool policies, the skill policy, issue approval links, watchdogs or skill files is not proposable), and a whole starter plan (category plan; propose it with staples_propose_plan). Creating or changing connections is not proposable: point the person to the Connectors page to set them up.",
         "The path must start with /api/ and refer to this company. category is derived from the path. Optionally pass staleCheck { path, field: \"updatedAt\", expected } with a GET path whose updatedAt must be unchanged when the person confirms.",
       ].join(" "),
       schema: z.object({
         ...companyField,
         method: z.enum(PROPOSED_ACTION_METHODS),
         path: z.string().min(5).max(1000).describe("Exact API path including the leading /api/, e.g. /api/approvals/<id>/approve."),
-        body: z.unknown().optional().describe("JSON request body, or null. At most 20KB serialized."),
+        body: z.unknown().optional().describe(`JSON request body, or null. At most ${PROPOSED_ACTION_BODY_MAX_BYTES} bytes serialized (${PROPOSED_BRIEF_BODY_MAX_BYTES} for a brief proposal, ${PROPOSED_PLAN_BODY_MAX_BYTES} for a plan).`),
         summary: z.string().trim().min(1).max(500).describe("One sentence shown on the Confirm card, in plain language."),
         category: z.enum(PROPOSED_ACTION_CATEGORIES).optional().describe("Ignored: the server derives the category from the path."),
         staleCheck: z.object({ path: z.string().min(5).max(1000), field: z.literal("updatedAt"), expected: z.string().trim().min(1).max(100) }).strict().optional(),
