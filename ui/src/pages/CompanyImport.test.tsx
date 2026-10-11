@@ -405,7 +405,7 @@ describe("CompanyImport", () => {
     expect(mockRoutinesApi.update).toHaveBeenCalledWith("routine-1", { status: "active" });
     expect(container.textContent).toContain("activated");
     expect(container.textContent).not.toContain("failed:");
-    expect(findButton((text) => text === "Go to dashboard")).toBeTruthy();
+    expect(findButton((text) => text === "Continue")).toBeTruthy();
   });
 
   it("keeps activating remaining items and surfaces per-item failures", async () => {

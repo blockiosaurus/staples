@@ -184,7 +184,7 @@ describe("CompanySettings archive departure", () => {
     await waitForAssertion(() => {
       expect(mockCompaniesApi.archive).toHaveBeenCalledWith(ARCHIVING_COMPANY.id);
       expect(mockSetSelectedCompanyId).toHaveBeenCalledWith(SIBLING_COMPANY.id);
-      expect(observedPath).toBe("/PAP/dashboard");
+      expect(observedPath).toBe("/PAP/home");
       expect(mockPushToast).toHaveBeenCalledWith(
         expect.objectContaining({
           title: "Old Co is archived",

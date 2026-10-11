@@ -171,7 +171,7 @@ describe("HomePage", () => {
     expect(row("interaction-q")?.textContent).toContain("PAP-12 · Riley");
     expect(row("interaction-q")?.querySelector('a[href="/PAP/issues/PAP-12"]')).not.toBeNull();
     // Inline accept only where the recommendation allows it; approvals only open or ask.
-    expect(buttonIn(row("interaction-q"), "Accept recommendation")).not.toBeNull();
+    expect(buttonIn(row("interaction-q"), "Accept recommendations")).not.toBeNull();
     expect(buttonIn(row("interaction-c"), "Accept recommendation")).not.toBeNull();
     expect(buttonIn(row("approval-1"), "Accept recommendation")).toBeNull();
     expect(row("approval-1")?.textContent).toContain("Open");
@@ -197,7 +197,7 @@ describe("HomePage", () => {
     mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [], inProgress: [], doneRecently: [] }));
     await render();
     expect(container.querySelector('[data-testid="briefing-summary"]')?.textContent).toBe(
-      "Nothing needs you · 0 in progress",
+      "Nothing needs you · Nothing in progress",
     );
     expect(section("Needs you")?.textContent).toContain("Nothing needs you right now.");
     expect(section("In progress")?.textContent).toContain("Nothing running.");
@@ -211,7 +211,7 @@ describe("HomePage", () => {
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     await render();
 
-    await click(buttonIn(row("interaction-q"), "Accept recommendation"));
+    await click(buttonIn(row("interaction-q"), "Accept recommendations"));
     expect(mocks.respond).toHaveBeenCalledWith("issue-12", "interaction-q", {
       answers: [
         { questionId: "q1", optionIds: ["opt-dev"] },
@@ -238,6 +238,27 @@ describe("HomePage", () => {
     );
   });
 
+  it("labels the button by how many answers it accepts", async () => {
+    const single = { ...QUESTION, id: "interaction-single", recommendation: { label: "Developers", inline: true, answers: [{ questionId: "q1", optionIds: ["opt-dev"] }] } };
+    mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [single, QUESTION] }));
+    await render();
+    expect(buttonIn(row("interaction-single"), "Accept recommendation")).not.toBeNull();
+    expect(buttonIn(row("interaction-q"), "Accept recommendations")).not.toBeNull();
+  });
+
+  it("keys optimistic removal by kind and id so same-id items of another kind stay", async () => {
+    const twin = item({ kind: "approval", id: "interaction-c", title: "Same id, different source", href: "/approvals/interaction-c" });
+    mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [CONFIRMATION, twin] }));
+    mocks.accept.mockReturnValue(new Promise(() => {}));
+    await render();
+    const confirmationRow = [...container.querySelectorAll<HTMLElement>('[data-item-id="interaction-c"]')]
+      .find((element) => element.textContent?.includes("Publish the launch post?"))!;
+    await click(buttonIn(confirmationRow, "Accept recommendation"));
+    const remaining = [...container.querySelectorAll('[data-item-id="interaction-c"]')];
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]!.textContent).toContain("Same id, different source");
+  });
+
   it("accepts a confirmation through the accept endpoint", async () => {
     mocks.getBriefing.mockResolvedValue(fixture());
     mocks.accept.mockResolvedValue({});
@@ -253,7 +274,7 @@ describe("HomePage", () => {
     mocks.respond.mockRejectedValue(new ApiError("The question was already answered.", 409, null));
     await render();
 
-    await click(buttonIn(row("interaction-q"), "Accept recommendation"));
+    await click(buttonIn(row("interaction-q"), "Accept recommendations"));
     expect(row("interaction-q")).not.toBeNull();
     expect(row("interaction-q")?.querySelector('[role="alert"]')?.textContent).toContain(
       "The question was already answered.",

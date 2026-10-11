@@ -109,6 +109,19 @@ describe("AssistantSetupCard", () => {
     expect(container.querySelector("code")?.textContent).toBe("gemini");
   });
 
+  it("lays tiles out by the card's own width so the narrow dock stacks them", async () => {
+    await render({ state: "needs_model" });
+    // A container query, not a viewport breakpoint: the dock is narrow on a wide screen.
+    expect(container.querySelector('[data-testid="adapter-picker"]')?.className).toContain("@container");
+    const tiles = container.querySelector('[data-testid="adapter-tiles"]')!;
+    expect(tiles.className).toContain("@md:grid-cols-2");
+    expect(tiles.className).not.toContain("sm:grid-cols-2");
+    // The status never squeezes into the name: it stays whole and wraps below when there is no room.
+    const status = button("Codex")!.querySelector('[data-testid="adapter-status"]')!;
+    expect(status.className).toContain("whitespace-nowrap");
+    expect(status.parentElement?.className).toContain("flex-wrap");
+  });
+
   it("says sign-in is needed only when detection found no sign-in", async () => {
     mocks.adapters.mockResolvedValue({ adapters: ADAPTERS.map((item) => item.adapterType === "gemini_local"
       ? { ...item, signedIn: false, hint: "Sign in needed: run `gemini` in a terminal once and log in, then check again." }

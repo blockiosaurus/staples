@@ -86,6 +86,37 @@ export function companyRelativeHref(href: string | null | undefined, prefix: str
   return href;
 }
 
+/** Collapse whitespace and cut to `max` characters with an ellipsis. */
+export function clipText(value: string, max: number): string {
+  const flat = value.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+}
+
+const TITLE_MAX = 120;
+export const RECOMMENDATION_LABEL_MAX = 60;
+
+/**
+ * The person-facing title of an interaction: what is actually being asked,
+ * rather than the generic attention title. Null when the payload has nothing usable.
+ */
+export function interactionTitle(kind: string, payload: unknown): string | null {
+  const record = readRecord(payload);
+  if (kind === "ask_user_questions") {
+    const questionSet = readRecord(record.questionSet);
+    const setTitle = nonEmptyString(questionSet.title) ?? nonEmptyString(record.title);
+    if (setTitle) return clipText(setTitle, TITLE_MAX);
+    const questions = Array.isArray(questionSet.questions) && questionSet.questions.length > 0
+      ? questionSet.questions
+      : Array.isArray(record.questions) ? record.questions : [];
+    const firstPrompt = nonEmptyString(readRecord(questions[0]).prompt);
+    if (!firstPrompt) return null;
+    const more = questions.length - 1;
+    return `${clipText(firstPrompt, TITLE_MAX)}${more > 0 ? ` (+${more} more)` : ""}`;
+  }
+  const title = nonEmptyString(record.title) ?? nonEmptyString(record.prompt);
+  return title ? clipText(title, TITLE_MAX) : null;
+}
+
 function issuePath(issue: { id: string; identifier: string | null }) {
   return `/issues/${issue.identifier ?? issue.id}`;
 }
@@ -135,7 +166,7 @@ export function askUserQuestionsRecommendation(payload: unknown): BriefingRecomm
   if (derived.every((entry) => entry !== null)) {
     const complete = derived as Array<{ answer: BriefingRecommendationAnswer; label: string }>;
     return {
-      label: complete.length === 1 ? complete[0]!.label : `Accept ${complete.length} recommendations`,
+      label: clipText(complete.map((entry) => entry.label).join(" · "), RECOMMENDATION_LABEL_MAX),
       inline: true,
       answers: complete.map((entry) => entry.answer),
     };
@@ -192,8 +223,14 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         inArray(issueThreadInteractions.id, interactionIds),
       ));
     const interactionById = new Map(interactionRows.map((row) => [row.id, row]));
+    const interactionIssueIds = [...new Set(interactionRows.map((row) => row.issueId))];
+    const issueRows = interactionIssueIds.length === 0 ? [] : await db
+      .select({ id: issues.id, identifier: issues.identifier, title: issues.title })
+      .from(issues)
+      .where(and(eq(issues.companyId, input.companyId), inArray(issues.id, interactionIssueIds)));
+    const issueById = new Map(issueRows.map((row) => [row.id, row]));
 
-    const items = kept.map((item) => toNeedsYouItem(item, prefix, nowIso, interactionById));
+    const items = kept.map((item) => toNeedsYouItem(item, prefix, nowIso, interactionById, issueById));
     return items
       .filter((item): item is BriefingItem => item !== null)
       .sort((a, b) => toTime(b.createdAt) - toTime(a.createdAt));
@@ -204,6 +241,7 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     prefix: string,
     nowIso: string,
     interactionById: Map<string, { id: string; issueId: string; kind: string; payload: unknown }>,
+    issueById: Map<string, { id: string; identifier: string | null; title: string }>,
   ): BriefingItem | null {
     let kind = NEEDS_YOU_KIND_BY_SOURCE[item.sourceKind];
     if (!kind) return null;
@@ -212,11 +250,16 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     let issueId: string | null =
       item.relatedIssue?.id ?? (item.subject.kind === "issue" ? item.subject.id : null) ?? metadataIssueId;
     let recommendation: BriefingRecommendation | undefined;
+    let title = item.subject.title ?? item.whyNow;
+    let subtitle: string | null = null;
 
     if (item.sourceKind === "issue_thread_interaction") {
       const row = interactionById.get(item.subject.id);
       if (!row) return null;
       issueId = row.issueId;
+      title = interactionTitle(row.kind, row.payload) ?? title;
+      const issue = issueById.get(row.issueId);
+      if (issue) subtitle = joinSubtitle(issue.identifier, issue.title);
       if (row.kind === "ask_user_questions") {
         kind = "question";
         recommendation = askUserQuestionsRecommendation(row.payload);
@@ -233,8 +276,8 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     return {
       kind,
       id: item.subject.id,
-      title: item.subject.title ?? item.whyNow,
-      subtitle: joinSubtitle(issueIdentifier, item.originAgentName),
+      title,
+      subtitle: subtitle ?? joinSubtitle(issueIdentifier, item.originAgentName),
       href: companyRelativeHref(item.subject.href, prefix) ?? fallbackHref,
       issueId,
       ...(recommendation ? { recommendation } : {}),

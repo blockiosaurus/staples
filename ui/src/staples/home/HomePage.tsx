@@ -21,6 +21,15 @@ function needsYouSummary(count: number): string {
   return count === 1 ? "1 thing needs you" : `${count} things need you`;
 }
 
+/** Rows are keyed by kind and id: ids from different sources may collide. */
+export function briefingItemKey(item: Pick<BriefingItem, "kind" | "id">): string {
+  return `${item.kind}:${item.id}`;
+}
+
+function inProgressSummary(count: number): string {
+  return count === 0 ? "Nothing in progress" : `${count} in progress`;
+}
+
 function acceptErrorMessage(error: unknown): string {
   const reason = error instanceof Error && error.message ? error.message : "Something went wrong.";
   return `Couldn't accept the recommendation: ${reason} Open it to answer there.`;
@@ -116,16 +125,18 @@ export function HomePage() {
   const accept = useMutation({
     mutationFn: acceptRecommendation,
     onMutate: (item) => {
-      setRemoved((current) => new Set(current).add(item.id));
-      setErrors(({ [item.id]: _cleared, ...rest }) => rest);
+      const key = briefingItemKey(item);
+      setRemoved((current) => new Set(current).add(key));
+      setErrors(({ [key]: _cleared, ...rest }) => rest);
     },
     onError: (error, item) => {
+      const key = briefingItemKey(item);
       setRemoved((current) => {
         const next = new Set(current);
-        next.delete(item.id);
+        next.delete(key);
         return next;
       });
-      setErrors((current) => ({ ...current, [item.id]: acceptErrorMessage(error) }));
+      setErrors((current) => ({ ...current, [key]: acceptErrorMessage(error) }));
     },
     onSuccess: (_result, item) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.briefing(companyId) });
@@ -163,10 +174,10 @@ export function HomePage() {
     return <p className="p-4 text-sm text-muted-foreground">Loading your briefing…</p>;
   }
 
-  const needsYou = briefing.needsYou.filter((item) => !removed.has(item.id));
+  const needsYou = briefing.needsYou.filter((item) => !removed.has(briefingItemKey(item)));
   const hiddenCount = briefing.needsYou.length - needsYou.length;
   const needsYouCount = Math.max(0, briefing.counts.needsYou - hiddenCount);
-  const summary = `${needsYouSummary(needsYouCount)} · ${briefing.counts.inProgress} in progress`;
+  const summary = `${needsYouSummary(needsYouCount)} · ${inProgressSummary(briefing.counts.inProgress)}`;
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4">
@@ -184,10 +195,10 @@ export function HomePage() {
           <ul className="flex flex-col divide-y divide-border">
             {needsYou.map((item) => (
               <BriefingRow
-                key={`${item.kind}:${item.id}`}
+                key={briefingItemKey(item)}
                 item={item}
-                accepting={accept.isPending && accept.variables?.id === item.id}
-                error={errors[item.id] ?? null}
+                accepting={accept.isPending && accept.variables !== undefined && briefingItemKey(accept.variables) === briefingItemKey(item)}
+                error={errors[briefingItemKey(item)] ?? null}
                 onAccept={(target) => accept.mutate(target)}
                 onAsk={askAbout}
               />
@@ -202,7 +213,7 @@ export function HomePage() {
         ) : (
           <ul className="flex flex-col">
             {briefing.inProgress.map((item) => (
-              <BriefingCompactRow key={`${item.kind}:${item.id}`} item={item} />
+              <BriefingCompactRow key={briefingItemKey(item)} item={item} />
             ))}
           </ul>
         )}
@@ -212,7 +223,7 @@ export function HomePage() {
         <Section title="Done recently">
           <ul className="flex flex-col">
             {briefing.doneRecently.map((item) => (
-              <BriefingCompactRow key={`${item.kind}:${item.id}`} item={item} />
+              <BriefingCompactRow key={briefingItemKey(item)} item={item} />
             ))}
           </ul>
         </Section>

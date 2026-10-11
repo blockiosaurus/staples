@@ -123,7 +123,7 @@ export function BriefingRow({
         {inline ? (
           <Button type="button" size="xs" disabled={accepting} onClick={() => onAccept(item)}>
             {accepting ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
-            Accept recommendation
+            {(item.recommendation?.answers?.length ?? 0) > 1 ? "Accept recommendations" : "Accept recommendation"}
           </Button>
         ) : null}
       </div>

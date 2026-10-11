@@ -27,6 +27,8 @@ import {
   askUserQuestionsRecommendation,
   briefingService,
   companyRelativeHref,
+  interactionTitle,
+  RECOMMENDATION_LABEL_MAX,
   requestConfirmationRecommendation,
 } from "../services/briefing.js";
 
@@ -93,7 +95,7 @@ describe("briefing recommendation derivation", () => {
       ],
     };
     expect(askUserQuestionsRecommendation({ version: 1, questions: [], questionSet })).toEqual({
-      label: "Accept 3 recommendations",
+      label: "Staples · Pro · US, EU",
       inline: true,
       answers: [
         { questionId: "name", text: "Staples" },
@@ -106,6 +108,43 @@ describe("briefing recommendation derivation", () => {
       questions: [],
       questionSet: { ...questionSet, questions: [questionSet.questions[0]] },
     })).toEqual({ label: "Staples", inline: true, answers: [{ questionId: "name", text: "Staples" }] });
+  });
+
+  it("clips a long multi-question label to 60 characters", () => {
+    const options = (word: string) => [{ id: word, label: `${word} with a fairly long recommended answer`, recommended: true }];
+    const recommendation = askUserQuestionsRecommendation({
+      version: 1,
+      questions: ["alpha", "beta", "gamma"].map((word) => ({ id: word, prompt: `${word}?`, selectionMode: "single", options: options(word) })),
+    });
+    expect(recommendation?.inline).toBe(true);
+    expect(recommendation?.label.length).toBe(RECOMMENDATION_LABEL_MAX);
+    expect(recommendation?.label.endsWith("…")).toBe(true);
+    expect(recommendation?.label.startsWith("alpha with a fairly long recommended answer · beta")).toBe(true);
+  });
+
+  it("titles interactions by what they actually ask", () => {
+    const question = (id: string, prompt: string) => ({ id, prompt, selectionMode: "single", options: [] });
+    expect(interactionTitle("ask_user_questions", { version: 1, questions: [question("a", "Which team?")] })).toBe("Which team?");
+    expect(interactionTitle("ask_user_questions", {
+      version: 1,
+      questions: [question("a", "Which team?"), question("b", "When?"), question("c", "Budget?")],
+    })).toBe("Which team? (+2 more)");
+    expect(interactionTitle("ask_user_questions", { version: 1, title: "Launch plan", questions: [question("a", "Which team?")] }))
+      .toBe("Launch plan");
+    expect(interactionTitle("ask_user_questions", {
+      version: 1,
+      questions: [],
+      questionSet: { schema: "paperclip.question_set.v1", title: "Setup", questions: [{ id: "x", prompt: "X?", required: true, answerMode: "text" }] },
+    })).toBe("Setup");
+    expect(interactionTitle("ask_user_questions", {
+      version: 1,
+      questions: [],
+      questionSet: { schema: "paperclip.question_set.v1", questions: [{ id: "x", prompt: "Name   the\nproduct?", required: true, answerMode: "text" }] },
+    })).toBe("Name the product?");
+    expect(interactionTitle("request_confirmation", { version: 1, prompt: "Ship the release?" })).toBe("Ship the release?");
+    expect(interactionTitle("request_confirmation", { version: 1, prompt: "x".repeat(300) })?.length).toBe(120);
+    expect(interactionTitle("ask_user_questions", { version: 1, questions: [] })).toBeNull();
+    expect(interactionTitle("request_confirmation", {})).toBeNull();
   });
 
   it("is not inline when any question lacks a recommendation", () => {
@@ -299,15 +338,23 @@ describeEmbeddedPostgres("briefing service", () => {
         status: "pending",
         continuationPolicy: "wake_assignee",
         createdByAgentId: workerId,
-        title: "Which team?",
+        title: "Questions need answers",
         payload: {
           version: 1,
-          questions: [{
-            id: "team",
-            prompt: "Which team?",
-            selectionMode: "single",
-            options: [{ id: "dev", label: "Developers", recommended: true }, { id: "ops", label: "Operations" }],
-          }],
+          questions: [
+            {
+              id: "team",
+              prompt: "Which team?",
+              selectionMode: "single",
+              options: [{ id: "dev", label: "Developers", recommended: true }, { id: "ops", label: "Operations" }],
+            },
+            {
+              id: "when",
+              prompt: "Start this week?",
+              selectionMode: "single",
+              options: [{ id: "yes", label: "Yes", recommended: true }, { id: "no", label: "No" }],
+            },
+          ],
         },
       },
       {
@@ -317,7 +364,7 @@ describeEmbeddedPostgres("briefing service", () => {
         kind: "request_confirmation",
         status: "pending",
         continuationPolicy: "wake_assignee",
-        title: "Ship the release?",
+        title: "Confirmation requested",
         payload: { version: 1, prompt: "Ship the release?", acceptLabel: "Ship it" },
       },
       {
@@ -365,13 +412,20 @@ describeEmbeddedPostgres("briefing service", () => {
     expect(byId.get(approvalId)?.recommendation).toBeUndefined();
     expect(byId.get(questionId)).toMatchObject({
       kind: "question",
-      title: "Which team?",
+      title: "Which team? (+1 more)",
+      subtitle: "BRF-1 · Pick a team",
       issueId: questionIssueId,
       href: `/issues/BRF-1#interaction-${questionId}`,
-      recommendation: { label: "Developers", inline: true, answers: [{ questionId: "team", optionIds: ["dev"] }] },
+      recommendation: {
+        label: "Developers · Yes",
+        inline: true,
+        answers: [{ questionId: "team", optionIds: ["dev"] }, { questionId: "when", optionIds: ["yes"] }],
+      },
     });
     expect(byId.get(confirmId)).toMatchObject({
       kind: "confirmation",
+      title: "Ship the release?",
+      subtitle: "BRF-2 · Ship it",
       issueId: confirmIssueId,
       recommendation: { label: "Ship it", inline: true, accept: true },
     });

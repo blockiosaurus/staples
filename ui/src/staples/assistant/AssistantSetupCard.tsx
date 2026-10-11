@@ -313,9 +313,11 @@ function ConnectModel({
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-2">
-        <div>
+    // A container, not the viewport, decides the tile layout: the same card
+    // renders in the full-width Assistant page and in the narrow dock.
+    <div data-testid="adapter-picker" className="@container flex flex-col gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
           <p className="font-medium text-foreground">Connect a model to start</p>
           <p className="text-muted-foreground">The Assistant runs on an AI model installed on this computer. Choose one to connect.</p>
         </div>
@@ -330,7 +332,7 @@ function ConnectModel({
         </Button>
       </div>
       {adapters.isError ? <p role="alert" className="text-destructive">Couldn't check which models are installed.</p> : null}
-      <ul className="grid gap-2 sm:grid-cols-2">
+      <ul data-testid="adapter-tiles" className="grid gap-2 @md:grid-cols-2">
         {(["claude_local", "codex_local", "gemini_local", "kimi_local"] as const).map((adapterType) => {
           const item = entry(adapterType);
           const status = adapters.isPending ? "Checking…"
@@ -348,10 +350,13 @@ function ConnectModel({
                 onClick={() => choose(adapterType)}
                 className="flex w-full flex-col gap-1 rounded-lg border border-border px-3 py-2 text-left transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
               >
-                <span className="flex w-full items-center gap-3">
-                  <AdapterMark type={adapterType} className="size-5" />
-                  <span className="min-w-0 flex-1 font-medium">{label(adapterType)}</span>
-                  <span data-testid="adapter-status" className={cn("text-xs", item?.available ? "text-foreground" : "text-muted-foreground")}>{status}</span>
+                {/* Name and status share a line when there is room; otherwise the status wraps below the name. */}
+                <span className="flex w-full flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="flex flex-auto items-center gap-3">
+                    <AdapterMark type={adapterType} className="size-5 shrink-0" />
+                    <span className="font-medium">{label(adapterType)}</span>
+                  </span>
+                  <span data-testid="adapter-status" className={cn("whitespace-nowrap text-xs", item?.available ? "text-foreground" : "text-muted-foreground")}>{status}</span>
                 </span>
                 {item?.hint ? (
                   <span className="text-xs text-muted-foreground"><HintText text={item.hint} /></span>

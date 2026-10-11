@@ -467,7 +467,7 @@ export function ProjectDetail() {
       const name = updatedProject?.name ?? project?.name ?? "Project";
       if (archived) {
         pushToast({ title: `"${name}" has been archived`, tone: "success" });
-        navigate("/dashboard");
+        navigate("/home");
       } else {
         pushToast({ title: `"${name}" has been unarchived`, tone: "success" });
       }
