@@ -403,6 +403,13 @@ export interface TemplateAccessRule {
   policyType: "block" | "require_approval";
   priority: number;
   selectors: Record<string, unknown>;
+  /** Extra `config` fields beside source/templateRule/templateRef. */
+  config?: Record<string, unknown>;
+}
+
+/** The union of a template's destructive tool-name patterns (asked first by name). */
+export function templateDestructiveToolPatterns(rendered: Pick<RenderedAgentTemplate, "outwardActions">): string[] {
+  return [...new Set(rendered.outwardActions.flatMap((action) => action.destructiveToolPatterns ?? []))];
 }
 
 /**
@@ -429,6 +436,8 @@ export function templateAccessRules(agent: { id: string; name: string }, rendere
     name: label("ask before deleting"),
     description: `Ask first before ${agent.name} deletes or destroys anything.`,
     selectors: { agentId: agent.id, riskLevels: [...DESTRUCTIVE_RISK_LEVELS] },
+    // Also asked first by name, whatever the tool's risk rating (see agentTemplateGuardKind).
+    config: { destructiveToolPatterns: templateDestructiveToolPatterns(rendered) },
   }];
   const patterns = [...new Set(rendered.outwardActions.flatMap((action) => action.toolPatterns))];
   if (patterns.length) {
@@ -449,7 +458,11 @@ export function staplesTemplateRecord(rendered: RenderedAgentTemplate) {
     ref: rendered.ref,
     version: rendered.version,
     readOnly: rendered.readOnly,
-    outwardActions: rendered.outwardActions.map((action) => ({ ...action, toolPatterns: [...action.toolPatterns] })),
+    outwardActions: rendered.outwardActions.map((action) => ({
+      ...action,
+      toolPatterns: [...action.toolPatterns],
+      ...(action.destructiveToolPatterns ? { destructiveToolPatterns: [...action.destructiveToolPatterns] } : {}),
+    })),
     requiredApps: rendered.requiredApps.map((app) => ({ ...app, anyOf: [...app.anyOf] })),
   };
 }
@@ -466,21 +479,29 @@ export async function ensureTemplateAgentSetup(
     .where(and(eq(agents.id, agentId), eq(agents.companyId, companyId)));
   if (!agent) throw unprocessable("The hired agent was not found");
   const created: Array<{ id: string; name: string; policyType: string; priority: number }> = [];
-  const existing = await db.select({ config: toolPolicies.config }).from(toolPolicies).where(and(
+  const existing = await db.select({ id: toolPolicies.id, config: toolPolicies.config }).from(toolPolicies).where(and(
     eq(toolPolicies.companyId, companyId),
     sql`${toolPolicies.config} ->> 'source' = ${AGENT_TEMPLATE_POLICY_SOURCE}`,
     sql`${toolPolicies.selectors} ->> 'agentId' = ${agentId}`,
   ));
   const seeded = new Set(existing.map((row) => String(metadataRecord(row.config).templateRule ?? "")));
   for (const rule of templateAccessRules(agent, rendered)) {
-    if (seeded.has(rule.kind)) continue;
+    if (seeded.has(rule.kind)) {
+      // Keep a seeded rule's extra config (e.g. destructive tool patterns) current.
+      const row = existing.find((candidate) => metadataRecord(candidate.config).templateRule === rule.kind)!;
+      const config = { ...metadataRecord(row.config), ...(rule.config ?? {}) };
+      if (rule.config && !isDeepStrictEqual(config, metadataRecord(row.config))) {
+        await db.update(toolPolicies).set({ config, updatedAt: new Date() }).where(eq(toolPolicies.id, row.id));
+      }
+      continue;
+    }
     // Inserted directly (like the gallery's Ask first rules): the generic policy
     // API keeps config for rate limits only, and these rules are server-owned.
     const now = new Date();
     const [policy] = await db.insert(toolPolicies).values({
       companyId, name: rule.name, description: rule.description, policyType: rule.policyType, priority: rule.priority, enabled: true,
       selectors: rule.selectors,
-      config: { source: AGENT_TEMPLATE_POLICY_SOURCE, templateRule: rule.kind, templateRef: rendered.ref },
+      config: { ...(rule.config ?? {}), source: AGENT_TEMPLATE_POLICY_SOURCE, templateRule: rule.kind, templateRef: rendered.ref },
       createdByUserId: userId, createdAt: now, updatedAt: now,
     }).returning();
     created.push({ id: policy!.id, name: policy!.name, policyType: policy!.policyType, priority: policy!.priority });

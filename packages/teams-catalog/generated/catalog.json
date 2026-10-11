@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@paperclipai/teams-catalog",
   "packageVersion": "0.1.0",
-  "generatedAt": "2026-10-11T17:02:45.399Z",
+  "generatedAt": "2026-10-11T21:30:31.146Z",
   "teams": [
     {
       "id": "paperclipai:bundled:company-defaults:core-exec-team",
@@ -800,15 +800,15 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2185,
-          "sha256": "da8c34606854fb20d860783f4164e8ce3be39e017f05efe444067a443b5a357b"
+          "sizeBytes": 2232,
+          "sha256": "07fec67ae2f16410d7511ab61af5476b61b1c0431e7c288478c993244039a182"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:c03df5f06c3bdee4a3d14b5253a0232430babeea4ec6cfd614f0351d4b004846",
+      "contentHash": "sha256:3216606c1b5814accef1b21faf741ecd811fde851762b122630608b74d16022d",
       "staplesTemplate": {
-        "version": "1.0.0",
+        "version": "1.0.1",
         "tagline": "Triages GitHub issues, fixes bugs and opens pull requests for review",
         "icon": "code",
         "marketplaceCategory": "engineering",
@@ -875,9 +875,12 @@
             "toolPatterns": [
               "*merge*",
               "*push*",
-              "*create_or_update_file*",
-              "*update_issue*",
-              "*close*"
+              "*create_or_update_file*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*",
+              "*close*",
+              "*update_issue*"
             ]
           }
         ],
@@ -1232,15 +1235,15 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2502,
-          "sha256": "84c25f4c73939a5bbe623b1c4e7c302b85a6198a9a75dc50ca331d166b231659"
+          "sizeBytes": 2560,
+          "sha256": "3142c9201dda39b0013b84002797be92d9a2dddf14be2013ff3a3143b404f7aa"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:c024567ab373655bfdb435d53905579f5b2fcc9ebfaee74579176d40f4076cd3",
+      "contentHash": "sha256:5135b4b9d90987458a813315d246b045906997d740cbe4e72973ff1e9881eb28",
       "staplesTemplate": {
-        "version": "1.0.0",
+        "version": "1.0.1",
         "tagline": "Sorts your inbox, drafts replies and sends a daily digest",
         "icon": "mail",
         "marketplaceCategory": "communication",
@@ -1322,6 +1325,10 @@
               "*send*",
               "*reply*",
               "*forward*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*",
+              "*trash*"
             ]
           }
         ],

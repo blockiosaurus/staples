@@ -1,7 +1,8 @@
 /**
  * Autopilot: per templated agent and outward category, whether the agent asks
  * before acting ("ask", the default from install) or acts on its own ("auto").
- * Destructive actions always ask; they are never part of Autopilot.
+ * Autopilot covers routine (write) actions only: destructive actions, and
+ * the category's destructive tool names, always ask.
  */
 export const AGENT_AUTOPILOT_MODES = ["ask", "auto"] as const;
 export type AgentAutopilotMode = (typeof AGENT_AUTOPILOT_MODES)[number];
@@ -14,8 +15,14 @@ export interface AgentAutopilotCategory {
   destructiveLabel: string | null;
   /** The company connection satisfying the capability for this agent, if any. */
   connection: { id: string; appSlug: string; displayName: string } | null;
-  /** "auto" when the agent's Autopilot rule for this category exists. */
+  /**
+   * "auto" only when the agent's Autopilot marker for this category is
+   * enabled, is for the connection shown and matches the category's current
+   * patterns; otherwise "ask".
+   */
   mode: AgentAutopilotMode;
+  /** A marker exists but does not apply as shown (switched off, another connection, older patterns). */
+  stale: boolean;
   /** False while no usable connection satisfies the capability. */
   canToggle: boolean;
 }

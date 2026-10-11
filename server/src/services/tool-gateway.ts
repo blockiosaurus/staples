@@ -2550,9 +2550,9 @@ export function createToolGatewayService(
                   : "write",
             // An approval asked by an agent template's destructive guard can
             // never be remembered (the trust-rule promotion refuses it), so
-            // "Always allow" is not offered for it. Such calls are normally
-            // destructive-rated and take the formal approval path anyway; this
-            // keeps the offer off even if the two risk readings ever differ.
+            // "Always allow" is not offered for it. This matters for calls the
+            // guard asks for by name (e.g. a write-rated close_issue), which
+            // do not take the formal (destructive) approval path.
             ...(!formalApprovalId &&
             input.session.agentId &&
             input.tool.connectionId &&

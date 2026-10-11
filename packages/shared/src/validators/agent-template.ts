@@ -56,8 +56,24 @@ export const agentTemplateOutwardActionSchema = z
       .array(z.string().regex(AGENT_TEMPLATE_TOOL_PATTERN, "tool patterns use letters, digits, _ - . : and * only"))
       .min(1)
       .max(20),
+    /**
+     * Globs over tool names that perform this category's destructive action
+     * (the one `destructiveLabel` names), e.g. "*close*". The template's
+     * destructive guard always asks first for them, whatever their risk
+     * rating, and Autopilot never covers them. Requires `destructiveLabel`.
+     */
+    destructiveToolPatterns: z
+      .array(z.string().regex(AGENT_TEMPLATE_TOOL_PATTERN, "tool patterns use letters, digits, _ - . : and * only"))
+      .min(1)
+      .max(20)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.destructiveToolPatterns && !value.destructiveLabel) {
+      ctx.addIssue({ code: "custom", message: "destructiveToolPatterns needs a destructiveLabel", path: ["destructiveToolPatterns"] });
+    }
+  });
 
 /**
  * Every setup question carries a recommendation: single_select marks exactly

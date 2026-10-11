@@ -85,7 +85,10 @@ describeEmbeddedPostgres("agent Autopilot", () => {
    * connection's own Ask first rules for every write (as the gallery seeds
    * them) and a company-wide allow profile. Returns a decide helper.
    */
-  async function connection(companyId: string, slug: string, tools: Array<[string, "read" | "write" | "destructive"]>) {
+  async function connection(
+    companyId: string, slug: string, tools: Array<[string, "read" | "write" | "destructive"]>,
+    options: { explicitAskFirst?: string[] } = {},
+  ) {
     const [application] = await db.insert(toolApplications).values({
       companyId, applicationKey: `app-gallery:${slug}:${randomUUID()}`, name: `${slug} ${randomUUID().slice(0, 6)}`, type: "mcp_http", status: "active", metadata: { sourceTemplateKey: slug },
     }).returning();
@@ -103,7 +106,12 @@ describeEmbeddedPostgres("agent Autopilot", () => {
       if (riskLevel !== "read") {
         await db.insert(toolPolicies).values({
           companyId, name: `Ask first: ${name} ${randomUUID().slice(0, 6)}`, policyType: "require_approval", priority: 50, enabled: true,
-          selectors: { catalogEntryId: entry!.id }, config: { source: "app_gallery_finish", connectionId: row!.id, catalogEntryId: entry!.id },
+          selectors: { catalogEntryId: entry!.id },
+          // Setup's seeded default, unless a person turned Ask first on later (explicit: no marker).
+          config: {
+            source: "app_gallery_finish", connectionId: row!.id, catalogEntryId: entry!.id,
+            ...(options.explicitAskFirst?.includes(name) ? {} : { defaultAskFirst: true }),
+          },
         });
       }
     }
@@ -112,9 +120,10 @@ describeEmbeddedPostgres("agent Autopilot", () => {
       const [profile] = await db.insert(toolProfiles).values({ companyId, profileKey: `profile-${randomUUID()}`, name: "All tools", defaultAction: "allow" }).returning();
       await db.insert(toolProfileBindings).values({ companyId, profileId: profile!.id, targetType: "company", targetId: companyId });
     }
-    const decide = (agentId: string, toolName: string) => toolAccessPolicyService(db).decide({
+    const decide = (agentId: string, toolName: string, consumeRateLimit = false) => toolAccessPolicyService(db).decide({
       companyId, actor: { actorType: "agent", actorId: agentId, agentId },
       request: { connectionId: row!.id, catalogEntryId: entries.get(toolName)!, toolName },
+      consumeRateLimit,
     });
     return { id: row!.id, decide };
   }
@@ -151,8 +160,8 @@ describeEmbeddedPostgres("agent Autopilot", () => {
     const response = await request(app(boardActor(s))).get(`/api/agents/${creator}/autopilot`);
     expect(response.status, JSON.stringify(response.body)).toBe(200);
     expect(response.body.categories).toEqual([
-      { capability: "social", label: "Publishing posts", destructiveLabel: null, connection: { id: expect.any(String), appSlug: "x", displayName: "x connection" }, mode: "ask", canToggle: true },
-      { capability: "cms", label: "Publishing to your site", destructiveLabel: null, connection: null, mode: "ask", canToggle: false },
+      { capability: "social", label: "Publishing posts", destructiveLabel: null, connection: { id: expect.any(String), appSlug: "x", displayName: "x connection" }, mode: "ask", stale: false, canToggle: true },
+      { capability: "cms", label: "Publishing to your site", destructiveLabel: null, connection: null, mode: "ask", stale: false, canToggle: false },
     ]);
     // Without a connection, auto is refused (409) and nothing is created.
     const refused = await put(boardActor(s), creator, "cms", "auto");
@@ -162,12 +171,13 @@ describeEmbeddedPostgres("agent Autopilot", () => {
     expect((await put(boardActor(s), creator, "payments", "auto")).status).toBe(404);
   }, 60_000);
 
-  it("auto lets the category's writes on that connection run without asking; other writes, destructive calls and other agents still ask", async () => {
+  it("auto lifts only the template's outward ask and the connection's seeded Ask first for the category's routine writes", async () => {
     const s = await seed();
     const dev = await templatedAgent(s, "staples/coding-agent");
     const github = await connection(s.companyId, "github", [
-      ["merge_pull_request", "write"], ["create_branch", "write"], ["delete_branch", "destructive"], ["get_issue", "read"],
-    ]);
+      ["merge_pull_request", "write"], ["push_files", "write"], ["create_branch", "write"], ["close_issue", "write"],
+      ["update_issue", "write"], ["delete_branch", "destructive"], ["get_issue", "read"],
+    ], { explicitAskFirst: ["push_files"] });
     const otherGithub = await connection(s.companyId, "github", [["merge_pull_request", "write"]]);
 
     await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "require_approval" });
@@ -175,61 +185,105 @@ describeEmbeddedPostgres("agent Autopilot", () => {
     const listed = await request(app(boardActor(s))).get(`/api/agents/${dev}/autopilot`);
     expect(listed.body.categories).toEqual([expect.objectContaining({
       capability: "code", label: "Merging and pushing to the default branch", destructiveLabel: "Deleting branches or closing issues",
-      connection: expect.objectContaining({ id: github.id, appSlug: "github" }), mode: "ask", canToggle: true,
+      connection: expect.objectContaining({ id: github.id, appSlug: "github" }), mode: "ask", stale: false, canToggle: true,
     })]);
 
     const on = await put(boardActor(s), dev, "code", "auto");
     expect(on.status, JSON.stringify(on.body)).toBe(200);
-    expect(on.body).toMatchObject({ capability: "code", mode: "auto", canToggle: true, connection: { id: github.id } });
+    expect(on.body).toMatchObject({ capability: "code", mode: "auto", stale: false, canToggle: true, connection: { id: github.id } });
     const rows = await autopilotRows(dev);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ policyType: "allow", priority: 45, enabled: true });
+    expect(rows[0]).toMatchObject({ policyType: "allow", enabled: true });
     expect(rows[0]!.selectors).toEqual({
-      agentId: dev, connectionId: github.id, riskLevels: ["write"],
-      toolNamePatterns: ["*merge*", "*push*", "*create_or_update_file*", "*update_issue*", "*close*"],
+      agentId: dev, connectionId: github.id, riskLevels: ["write"], toolNamePatterns: ["*merge*", "*push*", "*create_or_update_file*"],
     });
-    expect(rows[0]!.config).toEqual({ source: AGENT_AUTOPILOT_POLICY_SOURCE, capability: "code" });
+    expect(rows[0]!.config).toEqual({ source: AGENT_AUTOPILOT_POLICY_SOURCE, capability: "code", excludedToolPatterns: ["*delete*", "*close*", "*update_issue*"] });
+    expect(rows[0]!.description).toContain("routine (write) actions");
 
     // Idempotent: a second auto changes nothing and logs nothing.
-    const again = await put(boardActor(s), dev, "code", "auto");
-    expect(again.status).toBe(200);
+    expect((await put(boardActor(s), dev, "code", "auto")).status).toBe(200);
     expect((await autopilotRows(dev)).map((row) => row.id)).toEqual([rows[0]!.id]);
     const changes = () => db.select().from(activityLog).where(and(eq(activityLog.companyId, s.companyId), eq(activityLog.action, "agent.autopilot_changed")));
     expect(await changes()).toHaveLength(1);
     expect((await changes())[0]).toMatchObject({ entityType: "agent", entityId: dev, actorType: "user", actorId: s.userId });
     expect((await changes())[0]!.details).toMatchObject({ capability: "code", mode: "auto", connectionId: github.id });
 
-    const listedOn = await request(app(boardActor(s))).get(`/api/agents/${dev}/autopilot`);
-    expect(listedOn.body.categories[0]).toMatchObject({ mode: "auto" });
-
-    await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "allow", reasonCode: "allow_policy", matchedPolicyIds: [rows[0]!.id] });
-    // A write outside the category's patterns still follows the connection's own rules.
+    // The category's routine write runs; the agent's own access (the allow profile) allows it.
+    await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "allow", reasonCode: "allow_profile" });
+    // A person's explicit Ask first on the connection still applies.
+    await expect(github.decide(dev, "push_files")).resolves.toMatchObject({ decision: "require_approval" });
+    // A write outside the category's patterns still follows the connection's rules.
     await expect(github.decide(dev, "create_branch")).resolves.toMatchObject({ decision: "require_approval" });
-    // Destructive calls still ask (the template's destructive guard).
+    // The category's destructive tool names always ask, even rated write (template guard, by name).
+    for (const tool of ["close_issue", "update_issue"]) {
+      await expect(github.decide(dev, tool), tool).resolves.toMatchObject({ decision: "require_approval", policyExplanation: { templateGuard: "destructive" } });
+    }
     await expect(github.decide(dev, "delete_branch")).resolves.toMatchObject({ decision: "require_approval", policyExplanation: { templateGuard: "destructive" } });
     await expect(github.decide(dev, "get_issue")).resolves.toMatchObject({ decision: "allow" });
     // Only on that connection, and only for this agent.
     await expect(otherGithub.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "require_approval" });
     await expect(github.decide(s.staffId, "merge_pull_request")).resolves.toMatchObject({ decision: "require_approval" });
 
-    // An explicit block still wins over Autopilot.
-    const [block] = await db.insert(toolPolicies).values({
-      companyId: s.companyId, name: "Never merge", policyType: "block", priority: 300, enabled: true, selectors: { toolName: "merge_pull_request" },
-    }).returning();
-    await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
-    await db.delete(toolPolicies).where(eq(toolPolicies.id, block!.id));
-
-    // ask removes the rule; idempotent.
+    // ask removes the marker; idempotent.
     const off = await put(boardActor(s), dev, "code", "ask");
     expect(off.status).toBe(200);
-    expect(off.body).toMatchObject({ mode: "ask", canToggle: true });
+    expect(off.body).toMatchObject({ mode: "ask", stale: false, canToggle: true });
     expect(await autopilotRows(dev)).toHaveLength(0);
     expect((await put(boardActor(s), dev, "code", "ask")).status).toBe(200);
     expect(await changes()).toHaveLength(2);
     await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "require_approval" });
   }, 60_000);
 
-  it("never allows a call nothing else allows", async () => {
+  it("admin ask-first rules, rate limits and blocks still apply under Autopilot, and a reorder changes none of it", async () => {
+    const s = await seed();
+    const dev = await templatedAgent(s, "staples/coding-agent");
+    const github = await connection(s.companyId, "github", [["merge_pull_request", "write"], ["push_files", "write"]]);
+    expect((await put(boardActor(s), dev, "code", "auto")).status).toBe(200);
+    const [marker] = await autopilotRows(dev);
+    const policies = toolAccessPolicyService(db);
+
+    const [adminAsk] = await db.insert(toolPolicies).values({
+      companyId: s.companyId, name: "Admin: ask before merging", policyType: "require_approval", priority: 100, enabled: true,
+      selectors: { toolName: "merge_pull_request" },
+    }).returning();
+    const [limit] = await db.insert(toolPolicies).values({
+      companyId: s.companyId, name: "Admin: one push an hour", policyType: "rate_limit", priority: 100, enabled: true,
+      selectors: { toolName: "push_files" }, config: { rateLimit: { limit: 1, windowSeconds: 3600 } },
+    }).returning();
+
+    const check = async () => {
+      await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [adminAsk!.id] });
+      await expect(github.decide(dev, "push_files", true)).resolves.toMatchObject({ decision: "allow" });
+      await expect(github.decide(dev, "push_files", true)).resolves.toMatchObject({ decision: "rate_limited", matchedPolicyIds: [limit!.id] });
+    };
+    await check();
+
+    // Reorder: put the template's outward rule first and the marker last. Same outcome.
+    await db.delete(toolPolicies).where(eq(toolPolicies.id, limit!.id));
+    const [limit2] = await db.insert(toolPolicies).values({
+      companyId: s.companyId, name: "Admin: one push an hour (2)", policyType: "rate_limit", priority: 100, enabled: true,
+      selectors: { toolName: "push_files" }, config: { rateLimit: { limit: 1, windowSeconds: 3600 } },
+    }).returning();
+    const listed = await policies.listPolicies(s.companyId);
+    const outward = listed.find((row) => (row.config as Record<string, unknown> | null)?.templateRule === "outward")!;
+    const ordered = [outward.id, ...listed.map((row) => row.id).filter((id) => id !== outward.id && id !== marker!.id), marker!.id];
+    await policies.reorderPolicies(s.companyId, { policyIds: ordered });
+    await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [adminAsk!.id] });
+    await expect(github.decide(dev, "push_files", true)).resolves.toMatchObject({ decision: "allow" });
+    await expect(github.decide(dev, "push_files", true)).resolves.toMatchObject({ decision: "rate_limited", matchedPolicyIds: [limit2!.id] });
+
+    // Without the admin rule, the template outward ask stays lifted after the reorder.
+    await db.delete(toolPolicies).where(eq(toolPolicies.id, adminAsk!.id));
+    await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "allow" });
+
+    // An explicit block wins.
+    await db.insert(toolPolicies).values({
+      companyId: s.companyId, name: "Never merge", policyType: "block", priority: 300, enabled: true, selectors: { toolName: "merge_pull_request" },
+    });
+    await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
+  }, 60_000);
+
+  it("never allows a call the agent's own access does not allow", async () => {
     const s = await seed();
     const dev = await templatedAgent(s, "staples/coding-agent");
     const github = await connection(s.companyId, "github", [["merge_pull_request", "write"]]);
@@ -238,27 +292,67 @@ describeEmbeddedPostgres("agent Autopilot", () => {
     await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "deny" });
   }, 60_000);
 
-  it("survives a policy reorder: the outward rule never moves ahead of Autopilot", async () => {
+  it("shows ask (stale) for a switched-off marker or one for a removed connection; auto repairs it", async () => {
     const s = await seed();
     const dev = await templatedAgent(s, "staples/coding-agent");
     const github = await connection(s.companyId, "github", [["merge_pull_request", "write"]]);
     expect((await put(boardActor(s), dev, "code", "auto")).status).toBe(200);
-    const [autopilot] = await autopilotRows(dev);
+    const [marker] = await autopilotRows(dev);
     const policies = toolAccessPolicyService(db);
-    const listed = await policies.listPolicies(s.companyId);
-    // Put the outward ask-first rule first and Autopilot last.
-    const outward = listed.find((row) => (row.config as Record<string, unknown> | null)?.templateRule === "outward")!;
-    const ordered = [outward.id, ...listed.map((row) => row.id).filter((id) => id !== outward.id && id !== autopilot!.id), autopilot!.id];
-    const reordered = await policies.reorderPolicies(s.companyId, { policyIds: ordered });
-    expect(reordered.find((row) => row.id === autopilot!.id)!.priority).toBe(45);
-    expect(reordered.find((row) => row.id === outward.id)!.priority).toBeGreaterThan(45);
-    await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "allow", matchedPolicyIds: [autopilot!.id] });
-    // A reorder that leaves Autopilot out is fine too.
-    await policies.reorderPolicies(s.companyId, { policyIds: ordered.filter((id) => id !== autopilot!.id) });
-    await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "allow" });
-    // Turning it off still restores asking.
-    expect((await put(boardActor(s), dev, "code", "ask")).status).toBe(200);
+    const get = async () => (await request(app(boardActor(s))).get(`/api/agents/${dev}/autopilot`)).body.categories[0];
+
+    // Switched off through the generic policy API (PATCH enabled: false).
+    await policies.updatePolicy({ companyId: s.companyId, policyId: marker!.id, body: { enabled: false } });
+    expect(await get()).toMatchObject({ mode: "ask", stale: true, canToggle: true });
     await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "require_approval" });
+    const repaired = await put(boardActor(s), dev, "code", "auto");
+    expect(repaired.body).toMatchObject({ mode: "auto", stale: false });
+    expect((await autopilotRows(dev)).map((row) => [row.id, row.enabled])).toEqual([[marker!.id, true]]);
+    await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "allow" });
+
+    // The connection is removed; a new one takes its place.
+    await db.update(toolConnections).set({ status: "archived" }).where(eq(toolConnections.id, github.id));
+    expect(await get()).toMatchObject({ mode: "ask", stale: true, canToggle: false, connection: null });
+    const next = await connection(s.companyId, "github", [["merge_pull_request", "write"]]);
+    expect(await get()).toMatchObject({ mode: "ask", stale: true, canToggle: true, connection: { id: next.id } });
+    await expect(next.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "require_approval" });
+    expect((await put(boardActor(s), dev, "code", "auto")).body).toMatchObject({ mode: "auto", stale: false, connection: { id: next.id } });
+    expect(await autopilotRows(dev)).toHaveLength(1);
+    await expect(next.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "allow" });
+  }, 60_000);
+
+  it("ask removes markers for a capability the template no longer has", async () => {
+    const s = await seed();
+    const dev = await templatedAgent(s, "staples/coding-agent");
+    await db.insert(toolPolicies).values({
+      companyId: s.companyId, name: "Old marker", policyType: "allow", priority: 45, enabled: true,
+      selectors: { agentId: dev, connectionId: randomUUID(), riskLevels: ["write"], toolNamePatterns: ["*send*"] },
+      config: { source: AGENT_AUTOPILOT_POLICY_SOURCE, capability: "legacy" },
+    });
+    expect((await put(boardActor(s), dev, "legacy", "auto")).status).toBe(404);
+    const removed = await put(boardActor(s), dev, "legacy", "ask");
+    expect(removed.status).toBe(200);
+    expect(removed.body).toMatchObject({ capability: "legacy", mode: "ask" });
+    expect(await autopilotRows(dev)).toHaveLength(0);
+    expect((await put(boardActor(s), dev, "legacy", "ask")).status).toBe(404);
+  }, 60_000);
+
+  it("the generic policy API cannot create or reshape server-owned rows", async () => {
+    const s = await seed();
+    const dev = await templatedAgent(s, "staples/coding-agent");
+    const policies = toolAccessPolicyService(db);
+    for (const source of ["agent_template", "agent_autopilot"]) {
+      await expect(policies.createPolicy(s.companyId, {
+        name: `Forged ${source}`, policyType: "rate_limit", priority: 1, enabled: true, selectors: { agentId: dev },
+        config: { source, rateLimit: { limit: 5, windowSeconds: 60 } },
+      } as never)).rejects.toMatchObject({ status: 422 });
+    }
+    const guard = (await db.select().from(toolPolicies)).find((row) =>
+      (row.selectors as Record<string, unknown>).agentId === dev && (row.config as Record<string, unknown> | null)?.templateRule === "destructive")!;
+    await expect(policies.updatePolicy({ companyId: s.companyId, policyId: guard.id, body: { enabled: false } })).rejects.toMatchObject({ status: 422 });
+    await expect(policies.updatePolicy({ companyId: s.companyId, policyId: guard.id, body: { config: {} } as never })).rejects.toMatchObject({ status: 422 });
+    await expect(policies.duplicatePolicy({ companyId: s.companyId, policyId: guard.id, body: {} })).rejects.toMatchObject({ status: 422 });
+    expect((await db.select().from(toolPolicies).where(eq(toolPolicies.id, guard.id)))[0]!.enabled).toBe(true);
   }, 60_000);
 
   it("is empty for untemplated and read-only agents", async () => {

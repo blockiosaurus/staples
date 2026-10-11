@@ -561,14 +561,16 @@ describeEmbeddedPostgres("tool gateway service", () => {
   });
 
   it("does not offer Always allow on an approval asked by an agent template's destructive guard", async () => {
-    // Regression guard: remembering it would always be refused (422).
+    // Remembering it would always be refused (422). The tool is rated write
+    // (so no formal board approval) and matched by the guard's destructive
+    // tool-name pattern.
     const { company, agent, run } = await createRunFixture(db);
     const { connection, catalogEntry } = await createRemoteMcpToolFixture(db, company.id);
-    await db.update(toolCatalogEntries).set({ riskLevel: "destructive", isReadOnly: false }).where(eq(toolCatalogEntries.id, catalogEntry.id));
+    await db.update(toolCatalogEntries).set({ riskLevel: "write", isReadOnly: false }).where(eq(toolCatalogEntries.id, catalogEntry.id));
     const [guard] = await db.insert(toolPolicies).values({
       companyId: company.id, name: "Template: ask before deleting", policyType: "require_approval", priority: 5,
       selectors: { agentId: agent.id, riskLevels: ["destructive", "high", "critical"] },
-      config: { source: "agent_template", templateRule: "destructive", templateRef: "staples/coding-agent" },
+      config: { source: "agent_template", templateRule: "destructive", templateRef: "staples/coding-agent", destructiveToolPatterns: ["*needs*input*"] },
     }).returning();
     await db.insert(toolPolicies).values({ companyId: company.id, name: "Allow the connection", policyType: "allow", priority: 10, selectors: { connectionId: connection.id } });
     const gateway = createTestToolGatewayService(db);
@@ -578,7 +580,8 @@ describeEmbeddedPostgres("tool gateway service", () => {
     const [invocation] = await db.select().from(toolInvocations);
     expect(invocation.matchedPolicyIds).toEqual([guard.id]);
     const [interaction] = await db.select().from(issueThreadInteractions);
-    expect((interaction.payload as { toolAction: Record<string, unknown> }).toolAction).toMatchObject({ risk: "destructive" });
+    expect((interaction.payload as { toolAction: Record<string, unknown> }).toolAction).toMatchObject({ risk: "write" });
+    expect(await db.select().from(approvals)).toHaveLength(0);
     expect((interaction.payload as { toolAction: Record<string, unknown> }).toolAction).not.toHaveProperty("rememberActionScope");
   });
 

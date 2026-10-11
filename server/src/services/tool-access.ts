@@ -13843,6 +13843,14 @@ export function toolAccessService(
       askFirstEntries: Array<typeof toolCatalogEntries.$inferSelect>;
       actor?: ActorInfo;
       disableStale?: boolean;
+      /**
+       * True when these Ask first rows are the connection's setup defaults
+       * (the first finish of a connection that is not active yet). Rows keep
+       * `config.defaultAskFirst` only while they stay the setup's choice; a
+       * row a person turns on later is an explicit choice and is not marked.
+       * Agent Autopilot lifts only marked rows.
+       */
+      markDefaults?: boolean;
     },
     dbClient: ToolAccessMutationDb = db,
   ): Promise<ToolPolicy[]> {
@@ -13875,12 +13883,15 @@ export function toolAccessService(
     const askFirstIds = new Set(input.askFirstEntries.map((entry) => entry.id));
     const results: ToolPolicy[] = [];
     for (const entry of input.askFirstEntries) {
+      const existing = policiesByCatalogEntryId.get(entry.id);
+      const defaultAskFirst = input.markDefaults === true
+        || Boolean(existing && existing.enabled && asRecord(existing.config).defaultAskFirst === true);
       const config = {
         source: "app_gallery_finish",
         connectionId: input.connection.id,
         catalogEntryId: entry.id,
+        ...(defaultAskFirst ? { defaultAskFirst: true } : {}),
       };
-      const existing = policiesByCatalogEntryId.get(entry.id);
       if (existing) {
         const [updated] = await dbClient
           .update(toolPolicies)
@@ -14302,6 +14313,7 @@ export function toolAccessService(
           connection,
           askFirstEntries: askFirstRows,
           disableStale: !input.preserveExistingAccess,
+          markDefaults: connection.status !== "active",
           actor,
         },
         tx,

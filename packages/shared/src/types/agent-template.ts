@@ -56,6 +56,12 @@ export interface AgentTemplateOutwardAction {
    * any of them.
    */
   toolPatterns: string[];
+  /**
+   * Globs over tool names that perform the destructive action named by
+   * `destructiveLabel` (e.g. "*close*"). Always asked first by the template's
+   * destructive guard, whatever their risk rating; never on Autopilot.
+   */
+  destructiveToolPatterns?: string[];
 }
 
 /**

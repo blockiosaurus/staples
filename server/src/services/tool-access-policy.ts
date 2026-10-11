@@ -140,15 +140,20 @@ export function agentTemplateGuardKind(policy: { config: unknown }): AgentTempla
 }
 
 /**
- * `config.source` of an agent's Autopilot rule: an `allow` rule (priority
- * 45, just ahead of the template's outward ask-first rule at 50) scoped to
- * the agent, one connection, write risk and one outward category's tool-name
- * patterns. It only removes the ask: an explicit block still wins, and it
- * allows only a call something else (a profile, grant, allow or trust rule)
- * would allow. A reorder never renumbers it, so the outward rule cannot be
- * moved ahead of it.
+ * `config.source` of an agent's Autopilot marker. A marker is not an ordered
+ * allow: the policy loop never applies it. It names an agent, one
+ * connection, write risk and one outward category's tool-name patterns; for
+ * a call it matches, the access decision skips only that agent's template
+ * outward ask-first rule and the connection's seeded Ask first defaults
+ * (`app_gallery_finish` rows still marked `defaultAskFirst`). Every other
+ * rule (blocks, admin ask-first rules, connection-intent asks, rate limits,
+ * trust-rule review, the profile/grant fallback) still applies, and the
+ * template's destructive guard runs before all of it.
  */
 export const AGENT_AUTOPILOT_POLICY_SOURCE = "agent_autopilot";
+
+/** `config.source` values only the server writes; the generic policy API refuses them. */
+export const RESERVED_TOOL_POLICY_SOURCES: readonly string[] = [AGENT_TEMPLATE_POLICY_SOURCE, AGENT_AUTOPILOT_POLICY_SOURCE];
 
 /** Whether a policy is an agent's Autopilot rule. */
 export function isAgentAutopilotPolicy(policy: { config: unknown }): boolean {
@@ -157,7 +162,7 @@ export function isAgentAutopilotPolicy(policy: { config: unknown }): boolean {
   return (config as Record<string, unknown>).source === AGENT_AUTOPILOT_POLICY_SOURCE;
 }
 
-/** Template guards and Autopilot rules keep their priority on a reorder. */
+/** Template guards and Autopilot markers keep their priority on a reorder (markers are not ordered anyway). */
 function keepsPriorityOnReorder(policy: { config: unknown }): boolean {
   return Boolean(agentTemplateGuardKind(policy)) || isAgentAutopilotPolicy(policy);
 }
@@ -172,6 +177,33 @@ function templatePolicyAgentId(policy: { selectors: unknown }): string | null {
 
 /** Risk levels a template's destructive guard always asks first for. */
 export const TEMPLATE_DESTRUCTIVE_RISK_LEVELS: readonly ToolRiskLevel[] = ["destructive", "high", "critical"];
+
+function configStrings(config: unknown, key: string): string[] {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return [];
+  const value = (config as Record<string, unknown>)[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function namesMatchPatterns(patterns: string[], names: Array<string | null | undefined>): boolean {
+  const actual = names.filter((name): name is string => Boolean(name));
+  return patterns.some((pattern) => actual.some((name) => toolNamePatternMatches(pattern.trim(), name)));
+}
+
+/**
+ * Whether an agent's template destructive guard asks first for a call:
+ * destructive/high/critical risk, or any non-read call whose name matches
+ * the guard's `destructiveToolPatterns` (e.g. closing an issue is rated
+ * write but still always asks).
+ */
+export function templateDestructiveGuardApplies(
+  guard: { config: unknown },
+  riskLevel: string | null | undefined,
+  names: Array<string | null | undefined>,
+): boolean {
+  if (riskLevel && (TEMPLATE_DESTRUCTIVE_RISK_LEVELS as readonly string[]).includes(riskLevel)) return true;
+  if (riskLevel === "read") return false;
+  return namesMatchPatterns(configStrings(guard.config, "destructiveToolPatterns"), names);
+}
 
 /** Verbs a read-only agent's tool name must lead with (see `toolNameIsReadOnlyVerb`). */
 export const READ_ONLY_TOOL_VERBS = [
@@ -819,6 +851,9 @@ function assertSupportedGenericPolicyShape(
   config: Record<string, unknown> | null | undefined,
 ) {
   assertGenericPolicyType(policyType);
+  if (isRecord(config) && typeof config.source === "string" && RESERVED_TOOL_POLICY_SOURCES.includes(config.source)) {
+    throw unprocessable(`Tool policy config source '${config.source}' is managed by Staples and cannot be set directly`);
+  }
   assertSupportedPolicyConditions(conditions);
   if (policyType !== "rate_limit" && hasConfig(config)) {
     throw unprocessable(`Tool policy type '${policyType}' does not support config`);
@@ -1034,6 +1069,24 @@ export function toolAccessPolicyService(db: Db) {
     body: UpdateToolPolicy;
   }) {
     const existing = await getGenericPolicyRow(db, input.companyId, input.policyId);
+    const existingSource = isRecord(existing.config) ? existing.config.source : undefined;
+    if (typeof existingSource === "string" && RESERVED_TOOL_POLICY_SOURCES.includes(existingSource)) {
+      // Server-owned rows: agent-template rules can only be renamed (they
+      // cannot be switched off here); Autopilot markers can also be switched
+      // off or on.
+      const editable = new Set(existingSource === AGENT_AUTOPILOT_POLICY_SOURCE ? ["enabled", "name", "description"] : ["name", "description"]);
+      const other = Object.entries(input.body).filter(([key, value]) => value !== undefined && !editable.has(key)).map(([key]) => key);
+      if (other.length) {
+        throw unprocessable(`This tool policy is managed by Staples; only ${[...editable].join(", ")} can be changed (got ${other.join(", ")})`);
+      }
+      const [policy] = await db.update(toolPolicies).set({
+        ...(input.body.name !== undefined ? { name: input.body.name } : {}),
+        ...(input.body.description !== undefined ? { description: input.body.description ?? null } : {}),
+        ...(input.body.enabled !== undefined ? { enabled: input.body.enabled } : {}),
+        updatedAt: new Date(),
+      }).where(eq(toolPolicies.id, existing.id)).returning();
+      return policy;
+    }
     const nextPolicyType = input.body.policyType ?? existing.policyType;
     const nextConditions = input.body.conditions !== undefined ? input.body.conditions ?? null : existing.conditions ?? null;
     const nextConfig = input.body.config !== undefined ? input.body.config ?? null : existing.config ?? null;
@@ -1564,7 +1617,7 @@ export function toolAccessPolicyService(db: Db) {
       );
     }
     const destructiveGuard = templateGuards.find((policy) => agentTemplateGuardKind(policy) === "destructive");
-    if (destructiveGuard && ctx.riskLevel && TEMPLATE_DESTRUCTIVE_RISK_LEVELS.includes(ctx.riskLevel)) {
+    if (destructiveGuard && templateDestructiveGuardApplies(destructiveGuard, ctx.riskLevel, [ctx.toolName, ctx.upstreamToolName])) {
       if (explicitBlock) {
         return decision("deny", "deny_policy_block", explicitBlock.policy.description ?? "Tool access is blocked by policy.", effectiveProfileIds, [explicitBlock.policy.id], { redactionPlan: redaction.redactionPlan });
       }
@@ -1583,9 +1636,28 @@ export function toolAccessPolicyService(db: Db) {
       }
     }
 
+    // Autopilot: a marker for this agent, connection, write risk and tool
+    // pattern (and not one of its excluded destructive patterns) lifts only
+    // the template's outward ask and the connection's seeded Ask first
+    // defaults. Markers are never applied as ordered rules.
+    const autopilotMarker = ctx.agentId
+      ? matchingPolicies.find(({ policy }) => isAgentAutopilotPolicy(policy)
+        && templatePolicyAgentId(policy) === ctx.agentId
+        && !namesMatchPatterns(configStrings(policy.config, "excludedToolPatterns"), [ctx.toolName, ctx.upstreamToolName]))?.policy ?? null
+      : null;
+    const autopilotLifts = (policy: typeof toolPolicies.$inferSelect) => {
+      if (!autopilotMarker) return false;
+      const config = isRecord(policy.config) ? policy.config : {};
+      if (config.source === AGENT_TEMPLATE_POLICY_SOURCE) {
+        return config.templateRule === "outward" && templatePolicyAgentId(policy) === ctx.agentId;
+      }
+      return config.source === "app_gallery_finish" && config.defaultAskFirst === true
+        && typeof config.connectionId === "string" && config.connectionId === ctx.connectionId;
+    };
+
     for (const { policy, conditionEvaluation } of matchingPolicies) {
-      // Guards were applied above, by type.
-      if (agentTemplateGuardKind(policy)) continue;
+      // Guards were applied above, by type; Autopilot markers are not ordered rules.
+      if (agentTemplateGuardKind(policy) || isAgentAutopilotPolicy(policy)) continue;
       const policyExplanation = {
         policyId: policy.id,
         policyType: policy.policyType,
@@ -1646,6 +1718,7 @@ export function toolAccessPolicyService(db: Db) {
         return decision("allow", "allow_trust_rule", policy.description ?? "Tool access allowed by trust rule.", effectiveProfileIds, [policy.id], { redactionPlan: redaction.redactionPlan, policyExplanation });
       }
       if (policy.policyType === "require_approval") {
+        if (autopilotLifts(policy)) continue;
         // The connection's Ask first control restricts an existing action grant;
         // it must never grant access to agents outside that connection's profile.
         if (["app_gallery_finish", "connection_intent"].includes(String(policy.config?.source)) && !permittedByProfile) continue;
@@ -1664,14 +1737,6 @@ export function toolAccessPolicyService(db: Db) {
         return decision("require_approval", "requires_approval_policy", policy.description ?? "Tool access requires approval.", effectiveProfileIds, [policy.id], { redactionPlan: redaction.redactionPlan, policyExplanation });
       }
       if (policy.policyType === "allow") {
-        // Autopilot only removes the ask: never past an explicit block, and
-        // never for a call nothing else would allow.
-        if (isAgentAutopilotPolicy(policy)) {
-          if (explicitBlock) {
-            return decision("deny", "deny_policy_block", explicitBlock.policy.description ?? "Tool access is blocked by policy.", effectiveProfileIds, [explicitBlock.policy.id], { redactionPlan: redaction.redactionPlan });
-          }
-          if (!await otherwiseAllowed()) continue;
-        }
         return decision("allow", "allow_policy", "Tool access allowed by policy.", effectiveProfileIds, [policy.id], { redactionPlan: redaction.redactionPlan, policyExplanation });
       }
     }

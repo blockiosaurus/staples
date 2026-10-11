@@ -16509,6 +16509,20 @@ describeEmbeddedPostgres("tool access service", () => {
         .from(toolPolicies)
         .where(eq(toolPolicies.companyId, company.id)),
     ).resolves.toHaveLength(1);
+    // Setup's Ask first choices are marked as defaults (agent Autopilot may
+    // lift only these), and keep the mark while they stay on.
+    const askFirstConfig = async () => (await db.select().from(toolPolicies).where(eq(toolPolicies.companyId, company.id)))[0]!.config;
+    expect(await askFirstConfig()).toMatchObject({ source: "app_gallery_finish", defaultAskFirst: true });
+    // A person who later turns Ask first off and on again made an explicit choice: no mark.
+    for (const askFirstCatalogEntryIds of [[], [updateEntry.id]]) {
+      await service.finishGalleryAppConnection(
+        company.id,
+        connect.connectionId,
+        { enabledCatalogEntryIds: [listEntry.id, updateEntry.id], askFirstCatalogEntryIds, access: { agentIds: [agent.id] } },
+        { actorType: "user", actorId: "board" },
+      );
+    }
+    expect(await askFirstConfig()).not.toHaveProperty("defaultAskFirst");
 
     const finishedCatalog = await db
       .select()

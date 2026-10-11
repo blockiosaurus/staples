@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "tagline": "Triages GitHub issues, fixes bugs and opens pull requests for review",
   "icon": "code",
   "marketplaceCategory": "engineering",
@@ -48,7 +48,8 @@
       "capability": "code",
       "label": "Merging and pushing to the default branch",
       "destructiveLabel": "Deleting branches or closing issues",
-      "toolPatterns": ["*merge*", "*push*", "*create_or_update_file*", "*update_issue*", "*close*"]
+      "toolPatterns": ["*merge*", "*push*", "*create_or_update_file*"],
+      "destructiveToolPatterns": ["*delete*", "*close*", "*update_issue*"]
     }
   ],
   "defaultBudgetMonthlyCents": 6000
