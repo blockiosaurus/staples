@@ -78,9 +78,9 @@ export async function testEnvironment(
         level: "error",
         message: engineSelection.unavailableReason,
       },
-        ...(engineSelection.unavailableCause === "node_version"
-          ? [{ code: "adapter_engine_node_unsupported", level: "error" as const, message: engineSelection.unavailableReason }]
-          : []),
+      ...(engineSelection.unavailableCause === "node_version"
+        ? [{ code: "adapter_engine_node_unsupported", level: "error" as const, message: engineSelection.unavailableReason }]
+        : []),
       ],
       testedAt: new Date().toISOString(),
     };

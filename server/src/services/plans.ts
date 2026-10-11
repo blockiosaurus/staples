@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, gt, isNull, lt, or } from "drizzle-orm";
-import { agents, planApplications, type Db } from "@paperclipai/db";
+import { agents, planApplications, toolConnectionInstalls, type Db } from "@paperclipai/db";
 import {
   aiRuntimeConnectionBindingSchema,
   planAgentCreationOrder,
@@ -107,6 +107,27 @@ export function planHireBody(
     if (withConnection && assistant.aiConnection) body.runtimeConfig = { aiConnection: assistant.aiConnection };
   }
   return body;
+}
+
+/** A company-wide install lets any hire use the connection; otherwise the applier must be able to install it. */
+async function applierCanUseShared(
+  db: Db, companyId: string, binding: Extract<AiRuntimeConnectionBinding, { mode: "shared" }>,
+  canInstall: ((binding: Extract<AiRuntimeConnectionBinding, { mode: "shared" }>) => Promise<boolean>) | undefined,
+) {
+  const [installed] = await db.select({ id: toolConnectionInstalls.id }).from(toolConnectionInstalls).where(and(
+    eq(toolConnectionInstalls.companyId, companyId), eq(toolConnectionInstalls.connectionId, binding.connectionId),
+    eq(toolConnectionInstalls.targetType, "company"), eq(toolConnectionInstalls.targetId, companyId),
+  )).limit(1);
+  if (installed) return true;
+  return canInstall ? canInstall(binding) : false;
+}
+
+/** Codes the hire route gives when a connection binding (not the hire itself) is refused. */
+function isBindingRefusal(json: unknown) {
+  const record = json && typeof json === "object" ? json as Record<string, unknown> : {};
+  const details = record.details && typeof record.details === "object" ? record.details as Record<string, unknown> : {};
+  const code = String(details.code ?? record.code ?? "");
+  return code.startsWith("ai_connection_") || code === "connection_unavailable" || code === "incompatible_connection";
 }
 
 /** How long one apply holds its idempotency key; a crashed apply frees it after this. */
@@ -340,6 +361,11 @@ export async function applyPlan(db: Db, input: {
   idempotencyKey?: string | null;
   hireAgent: PlanHireAgent;
   assertCanAssign: PlanAssertCanAssign;
+  /**
+   * Whether the applier could install this shared connection on a new agent
+   * (the check agent-hires use). Without it a shared binding is never inherited.
+   */
+  canInstallSharedConnection?: (binding: Extract<AiRuntimeConnectionBinding, { mode: "shared" }>) => Promise<boolean>;
 }): Promise<AppliedPlan> {
   const { companyId, plan, userId } = input;
   const key = input.idempotencyKey ?? null;
@@ -390,6 +416,12 @@ export async function applyPlan(db: Db, input: {
 
   try {
     const assistant = plan.agents.length ? await assistantHireDefaults(db, companyId) : null;
+    // A shared binding the applier cannot use would make every hire fail with a
+    // 403 that must stay final; leave it off instead, like before inheritance.
+    const binding = assistant?.aiConnection;
+    if (assistant && binding?.mode === "shared" && !(await applierCanUseShared(db, companyId, binding, input.canInstallSharedConnection))) {
+      delete assistant.aiConnection;
+    }
     for (const agent of planAgentCreationOrder(plan.agents)) {
       if (hired[agent.clientKey]) continue;
       // Stop before hiring if a newer request took the plan over.
@@ -403,10 +435,11 @@ export async function applyPlan(db: Db, input: {
         }
       };
       let response = await hire(body);
-      // An inherited router/shared binding that fails validation (422) must not
+      // An inherited router/shared binding refused by binding validation (422 with a
+      // connection code) must not
       // fail the plan: hire once more without it. Authorization (403) and every
       // other failure are final, and the retry's own result is what is reported.
-      if (response.statusCode === 422 && planHireInheritsConnection(agent, assistant)
+      if (response.statusCode === 422 && isBindingRefusal(response.json) && planHireInheritsConnection(agent, assistant)
         && (assistant!.aiConnection!.mode === "router" || assistant!.aiConnection!.mode === "shared")) {
         response = await hire(planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant, false));
       }

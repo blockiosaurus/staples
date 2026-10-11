@@ -49,6 +49,16 @@ describe("assistantSetupStatus", () => {
     });
   });
 
+  it("names Kimi's own Node minimum", () => {
+    const claude = failed(["adapter_engine_unavailable", "adapter_engine_node_unsupported"]);
+    const kimiFailure = {
+      ...claude, adapterType: "kimi_local",
+      lifecycleOperation: { ...claude.lifecycleOperation, lastHarnessTest: { ...claude.lifecycleOperation.lastHarnessTest, adapterType: "kimi_local" } },
+    };
+    expect(assistantSetupStatus(kimiFailure))
+      .toMatchObject({ reason: "Kimi is installed, but it needs Node 20 or newer on this computer to run the Assistant." });
+  });
+
   it("explains other harness failures with fixed copy, never the raw lifecycle message", () => {
     expect(assistantSetupStatus(failed(["claude_hello_probe_timed_out"]))).toEqual({
       state: "error", adapterType: "claude_local",

@@ -15,6 +15,10 @@ export const ASSISTANT_CLI_ENGINE_ADAPTER_TYPES: readonly string[] = ["claude_lo
  * messages can carry provider details). Mirrors the server's
  * `harnessFailureReason`.
  */
+/** The Node version each adapter's ACP engine needs (Kimi's is lower). Mirrors the server. */
+const ACP_NODE_MINIMUM: Record<string, string> = { kimi_local: "20" };
+const acpNodeMinimum = (adapterType: string) => ACP_NODE_MINIMUM[adapterType] ?? "24.11";
+
 export function connectionFailureReason(adapterType: string, codes: readonly string[]): string {
   const label = ASSISTANT_ADAPTER_LABELS[adapterType] ?? "The model";
   if (codes.some((code) => code === ADAPTER_AUTH_MISSING_CHECK_CODE || /_auth_required$/.test(code))) {
@@ -27,8 +31,8 @@ export function connectionFailureReason(adapterType: string, codes: readonly str
     const cliFallback = ASSISTANT_CLI_ENGINE_ADAPTER_TYPES.includes(adapterType);
     if (codes.includes("adapter_engine_node_unsupported")) {
       return cliFallback
-        ? `${label} is installed, but its default engine needs Node 24.11 or newer. Pick ${label} below to connect it on its CLI engine instead.`
-        : `${label} is installed, but it needs Node 24.11 or newer on this computer to run the Assistant.`;
+        ? `${label} is installed, but its default engine needs Node ${acpNodeMinimum(adapterType)} or newer. Pick ${label} below to connect it on its CLI engine instead.`
+        : `${label} is installed, but it needs Node ${acpNodeMinimum(adapterType)} or newer on this computer to run the Assistant.`;
     }
     return cliFallback
       ? `${label} is installed, but its default engine isn't available here. Pick ${label} below to connect it on its CLI engine instead.`

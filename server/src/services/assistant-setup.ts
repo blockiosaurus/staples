@@ -75,12 +75,17 @@ function adapterLabel(adapterType: string) {
  * Codex fall back to their CLI engine when connected again; Gemini and Kimi
  * only carry the Assistant's tools on ACP, so they need a newer Node.
  */
+/** The Node version each adapter's ACP engine needs (Kimi's is lower). */
+const ACP_NODE_MINIMUM: Record<string, string> = { kimi_local: "20" };
+const DEFAULT_ACP_NODE_MINIMUM = "24.11";
+export const acpNodeMinimum = (adapterType: string) => ACP_NODE_MINIMUM[adapterType] ?? DEFAULT_ACP_NODE_MINIMUM;
+
 function engineUnavailableReason(adapterType: string, label: string, nodeIsCause: boolean): string {
   const cliFallback = ASSISTANT_CLI_ENGINE_ADAPTER_TYPES.includes(adapterType);
   if (nodeIsCause) {
     return cliFallback
-      ? `${label} is installed, but its default engine needs Node 24.11 or newer. Pick ${label} below to connect it on its CLI engine instead.`
-      : `${label} is installed, but it needs Node 24.11 or newer on this computer to run the Assistant.`;
+      ? `${label} is installed, but its default engine needs Node ${acpNodeMinimum(adapterType)} or newer. Pick ${label} below to connect it on its CLI engine instead.`
+      : `${label} is installed, but it needs Node ${acpNodeMinimum(adapterType)} or newer on this computer to run the Assistant.`;
   }
   return cliFallback
     ? `${label} is installed, but its default engine isn't available here. Pick ${label} below to connect it on its CLI engine instead.`
@@ -235,7 +240,7 @@ export async function assistantAdapterAvailability(deps: {
       return { adapterType, installed, available, engine, signedIn: null, hint: `Not installed: install the ${command} CLI, then check again.` };
     }
     if (!available) {
-      return { adapterType, installed, available, engine, signedIn: null, hint: "Needs Node 24.11 or newer on this computer." };
+      return { adapterType, installed, available, engine, signedIn: null, hint: `Needs Node ${acpNodeMinimum(adapterType)} or newer on this computer.` };
     }
     let signedIn: boolean | null = null;
     if (adapterType === "claude_local") {

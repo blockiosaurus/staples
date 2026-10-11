@@ -11,6 +11,7 @@ import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "../s
 import { applyPlan, PlanPartiallyAppliedError, type PlanHireAgent } from "../services/plans.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 import { trustedBoardMutationOrigin } from "../middleware/board-mutation-guard.js";
+import { canInstallSharedAiConnectionForNewAgent } from "./ai-connections.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
 export type PlanRoutesOptions = {
@@ -69,6 +70,7 @@ export function planRoutes(db: Db, options: PlanRoutesOptions) {
       applied = await applyPlan(db, {
         companyId, plan, userId, idempotencyKey,
         hireAgent: (body) => options.hireAgent(req.actor, companyId, body, origin),
+        canInstallSharedConnection: (binding) => canInstallSharedAiConnectionForNewAgent(db, req, companyId, binding),
         // The same check as assigning a task in the app (POST /issues), for every assignee.
         assertCanAssign: async (assigneeAgentId) => {
           const scope = { issueId: null, projectId: null, parentIssueId: null, assigneeAgentId, assigneeUserId: null };

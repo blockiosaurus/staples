@@ -11,6 +11,12 @@ describe("connectionFailureReason", () => {
     );
   });
 
+  it("names each adapter's own Node minimum", () => {
+    expect(connectionFailureReason("kimi_local", ["adapter_engine_unavailable", "adapter_engine_node_unsupported"])).toBe(
+      "Kimi is installed, but it needs Node 20 or newer on this computer to run the Assistant.",
+    );
+  });
+
   it("otherwise says the default engine isn't available here", () => {
     expect(connectionFailureReason("claude_local", ["adapter_engine_unavailable"])).toBe(
       "Claude is installed, but its default engine isn't available here. Pick Claude below to connect it on its CLI engine instead.",

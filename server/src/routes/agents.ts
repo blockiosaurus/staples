@@ -3023,9 +3023,9 @@ export function agentRoutes(
   async function validateManagedAgentBinding(req: Request, companyId: string, agentId: string, adapterType: string, config: Record<string, unknown>, binding: AiRuntimeConnectionBinding, environmentId: string | null | undefined, test: boolean, newAgent = false) {
     if (binding.mode === "router") {
       const settings = await import("../services/instance-settings.js");
-      if (!(await settings.instanceSettingsService(db).getExperimental()).enableAiConnectionRouters) throw unprocessable("Ask your instance operator to enable AI connection routing.");
+      if (!(await settings.instanceSettingsService(db).getExperimental()).enableAiConnectionRouters) throw unprocessable("Ask your instance operator to enable AI connection routing.", { code: "ai_connection_pool_unavailable" });
       const pool = (await aiConnectionRouterService(db).selectable(companyId, responsibleUserForAiRequest(req) ?? "")).find((p) => p.id === binding.connectionId && p.enabled);
-      if (!pool) throw unprocessable("Enable the selected connection pool");
+      if (!pool) throw unprocessable("Enable the selected connection pool", { code: "ai_connection_pool_unavailable" });
       const userId = responsibleUserForAiRequest(req);
       const memberConnectionIds = new Set<string>();
       let compatible = false;
@@ -3043,7 +3043,7 @@ export function agentRoutes(
           if (!(error instanceof HttpError && [403, 422].includes(error.status))) throw error;
         }
       }
-      if (!compatible) throw unprocessable("This pool has no compatible harness");
+      if (!compatible) throw unprocessable("This pool has no compatible harness", { code: "ai_connection_pool_incompatible" });
       if (!memberConnectionIds.size) throw unprocessable("Install or repair a compatible pool member for this agent.", { code: "ai_connection_pool_no_eligible_member" });
       return { connectionId: pool.id, ...(newAgent ? { memberConnectionIds: [...memberConnectionIds] } : {}) };
     }

@@ -32,6 +32,7 @@ import { injectApiRequest } from "../services/public-mcp/capabilities.js";
 import { companyBriefService } from "../services/company-brief.js";
 import { claimPlanApplication, planHash, takeOverPlanApplication } from "../services/plans.js";
 import { applyPlanSchema } from "@paperclipai/shared";
+import { aiConnectionService } from "../services/ai-connections.js";
 import { planHireConnectionsFor } from "../services/assistant-tools.js";
 
 const support = await getEmbeddedPostgresTestSupport();
@@ -541,6 +542,14 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       });
     }
 
+    /** A real shared connection the person (seed user) created, so the applier may install it. */
+    async function ownSharedBinding(s: Seed) {
+      const saved = await aiConnectionService(db).save(s.companyId, s.userId, {
+        provider: "openai", method: "api_key", name: "Team key", ownership: "shared", apiKey: "fixture-key", agentIds: [], allAgents: false,
+      }, "fixture-key");
+      return { provider: "openai", method: "api_key", mode: "shared", connectionId: saved.connectionId, grantId: saved.grantId };
+    }
+
     const onePlan = { agents: [{ clientKey: "editor", name: "Editor", role: "pm", adapterType: "codex_local" }], tasks: [{ clientKey: "t", title: "Write the style guide", assigneeClientKey: "editor" }] };
 
     function recordingApp(s: Seed, failWith?: number) {
@@ -548,7 +557,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       const built = buildApp(sessionActor(s), {
         hireAgent: async (actor, companyId, body, origin) => {
           bodies.push(body as Record<string, unknown>);
-          if (failWith && bodies.length === 1) return { statusCode: failWith, json: { error: "Binding refused" } };
+          if (failWith && bodies.length === 1) return { statusCode: failWith, json: { error: "Binding refused", details: { code: "ai_connection_unavailable" } } };
           return injectApiRequest(built.api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin });
         },
       });
@@ -557,6 +566,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
 
     it("hands a shared Assistant connection to hires on its adapter", async () => {
       const s = await seed();
+      const sharedBinding = await ownSharedBinding(s);
       await provisionAssistant(s, sharedBinding);
       const { app, bodies } = recordingApp(s, 422);
       // The first attempt is refused so only the body is inspected here.
@@ -587,9 +597,10 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
 
     it("retries once without a refused shared binding instead of failing the plan", async () => {
       const s = await seed();
+      const sharedBinding = await ownSharedBinding(s);
       await provisionAssistant(s, sharedBinding);
-      // The real hire route refuses a shared connection that does not exist (422).
-      const { app, bodies } = recordingApp(s);
+      // The first hire is refused for the binding (422 with a connection code).
+      const { app, bodies } = recordingApp(s, 422);
       const response = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send(onePlan);
       expect(response.status, JSON.stringify(response.body)).toBe(201);
       expect(bodies).toHaveLength(2);
@@ -600,12 +611,46 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       expect((editor!.runtimeConfig as Record<string, unknown>).aiConnection).toBeUndefined();
     }, 120_000);
 
-    it("reports the retry's own failure when the hire still fails without the binding", async () => {
+    it("leaves a real shared connection off when the applier could not install it, instead of failing the plan with a 403", async () => {
+      const s = await seed({ membershipRole: "member" });
+      // Created by someone else and not installed anywhere: the applier cannot install it.
+      const otherId = `other-${randomUUID().slice(0, 8)}`;
+      await db.insert(authUsers).values({ id: otherId, name: "Sam", email: `${otherId}@fixture.invalid`, emailVerified: true, createdAt: new Date(), updatedAt: new Date() });
+      await db.insert(companyMemberships).values({ companyId: s.companyId, principalType: "user", principalId: otherId, status: "active", membershipRole: "owner" });
+      const saved = await aiConnectionService(db).save(s.companyId, otherId, {
+        provider: "openai", method: "api_key", name: "Team key", ownership: "shared", apiKey: "fixture-key", agentIds: [], allAgents: false,
+      }, "fixture-key");
+      const binding = { provider: "openai", method: "api_key", mode: "shared", connectionId: saved.connectionId, grantId: saved.grantId };
+      await provisionAssistant(s, binding);
+      const { app, bodies } = recordingApp(s);
+      const response = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send(onePlan);
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]!.runtimeConfig).toBeUndefined();
+      const [editor] = await db.select().from(agents).where(eq(agents.id, response.body.agents.editor.id));
+      expect((editor!.runtimeConfig as Record<string, unknown>).aiConnection).toBeUndefined();
+    }, 120_000);
+
+    it("does not retry a 422 that is not about the binding", async () => {
       const s = await seed();
+      const sharedBinding = await ownSharedBinding(s);
       await provisionAssistant(s, sharedBinding);
       const bodies: unknown[] = [];
       const { app } = buildApp(sessionActor(s), {
-        hireAgent: async (_actor, _companyId, body) => { bodies.push(body); return { statusCode: 422, json: { error: bodies.length === 1 ? "Binding refused" : "Adapter unavailable" } }; },
+        hireAgent: async (_actor, _companyId, body) => { bodies.push(body); return { statusCode: 422, json: { error: "Invalid hire", details: { code: "something_else" } } }; },
+      });
+      const response = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send(onePlan);
+      expect(response.status).toBe(422);
+      expect(bodies).toHaveLength(1);
+    }, 120_000);
+
+    it("reports the retry's own failure when the hire still fails without the binding", async () => {
+      const s = await seed();
+      const sharedBinding = await ownSharedBinding(s);
+      await provisionAssistant(s, sharedBinding);
+      const bodies: unknown[] = [];
+      const { app } = buildApp(sessionActor(s), {
+        hireAgent: async (_actor, _companyId, body) => { bodies.push(body); return { statusCode: 422, json: { error: bodies.length === 1 ? "Binding refused" : "Adapter unavailable", ...(bodies.length === 1 ? { details: { code: "ai_connection_unavailable" } } : {}) } }; },
       });
       const response = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send(onePlan);
       expect(response.status).toBe(422);
