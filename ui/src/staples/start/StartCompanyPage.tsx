@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Navigate, useNavigate } from "@/lib/router";
+import { Link, useNavigate } from "@/lib/router";
 import { companiesApi } from "@/api/companies";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,8 +15,9 @@ import { queryKeys } from "@/lib/queryKeys";
 /**
  * `/start`: the one-field way into a new company. Creating it drops the user
  * into stage 0, the full-screen Assistant conversation, which does the rest of
- * the setup. A Cloud-managed stack never creates in-app (POST /companies is a
- * 403 floor there), so it goes to its existing company or out to Cloud.
+ * the setup. People who already have a company get a way back. A Cloud-managed
+ * stack never creates in-app (POST /companies is a 403 floor there), so it
+ * explains that and links out to Cloud instead of redirecting silently.
  */
 export function StartCompanyPage() {
   const navigate = useNavigate();
@@ -30,16 +31,26 @@ export function StartCompanyPage() {
 
   if (loading) return <PaperclipLoading />;
 
+  const existing = selectedCompany ?? companies[0] ?? null;
+  const backLink = existing ? (
+    <Link to={`/${existing.issuePrefix}/assistant`} className="text-sm text-muted-foreground underline-offset-4 hover:underline">
+      Back to {existing.name}
+    </Link>
+  ) : null;
+
   if (cloudInstance) {
-    const existing = selectedCompany ?? companies[0] ?? null;
-    if (existing) return <Navigate to={`/${existing.issuePrefix}/assistant`} replace />;
     return (
-      <StartShell title="Create your company">
+      <StartShell title={existing ? "New companies are created in Cloud" : "Create your company"} footer={backLink}>
+        <p className="mb-4 text-sm text-muted-foreground">
+          {existing
+            ? "This stack is managed by Paperclip Cloud, so a new company is created there, not in this app."
+            : "Companies on this stack are created in Paperclip Cloud."}
+        </p>
         {createStackUrl ? (
           <Button onClick={() => navigateTopLevel(createStackUrl)}>Create in Paperclip Cloud</Button>
         ) : (
           <p className="text-sm text-muted-foreground">
-            Companies are created in Paperclip Cloud. This instance can&apos;t reach it right now; try again from your Cloud portfolio.
+            This instance can&apos;t reach Paperclip Cloud right now; try again from your Cloud portfolio.
           </p>
         )}
       </StartShell>
@@ -65,7 +76,7 @@ export function StartCompanyPage() {
   }
 
   return (
-    <StartShell title="Name your company">
+    <StartShell title="Name your company" footer={backLink}>
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="start-company-name">Company name</Label>
@@ -87,12 +98,13 @@ export function StartCompanyPage() {
   );
 }
 
-function StartShell({ title, children }: { title: string; children: React.ReactNode }) {
+function StartShell({ title, children, footer }: { title: string; children: React.ReactNode; footer?: React.ReactNode }) {
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background px-4 text-foreground">
       <div className="w-full max-w-md">
         <h1 className="mb-6 text-2xl font-semibold">{title}</h1>
         {children}
+        {footer ? <div className="mt-6">{footer}</div> : null}
       </div>
     </main>
   );

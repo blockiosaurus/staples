@@ -67,6 +67,17 @@ function adapterLabel(adapterType: string) {
 }
 
 /**
+ * The CLI is installed but its default (ACP) engine can't run here. Claude and
+ * Codex fall back to their CLI engine when connected again; Gemini and Kimi
+ * only carry the Assistant's tools on ACP, so they need a newer Node.
+ */
+function engineUnavailableReason(adapterType: string, label: string): string {
+  return ASSISTANT_CLI_ENGINE_ADAPTER_TYPES.includes(adapterType)
+    ? `${label} is installed, but its default engine needs Node 24.11 or newer. Pick ${label} below to connect it on its CLI engine instead.`
+    : `${label} is installed, but it needs Node 24.11 or newer on this computer to run the Assistant.`;
+}
+
+/**
  * Fixed copy for why the last harness test failed, from its check codes only
  * (check messages can carry provider details and are never shown here).
  */
@@ -76,7 +87,7 @@ export function harnessFailureReason(adapterType: string, codes: readonly string
     return `${label} isn't signed in on this computer.`;
   }
   if (codes.some((code) => /_command_unresolvable$/.test(code))) return `${label} isn't installed on this computer.`;
-  if (codes.includes("adapter_engine_unavailable")) return `${label}'s engine isn't available on this computer.`;
+  if (codes.includes("adapter_engine_unavailable")) return engineUnavailableReason(adapterType, label);
   if (codes.some((code) => /_usage_limited$/.test(code))) return `${label} has reached its usage limit.`;
   if (codes.some((code) => /_timed_out$|_timeout$/.test(code))) return `${label} didn't answer in time.`;
   return `${label} didn't pass its connection test.`;

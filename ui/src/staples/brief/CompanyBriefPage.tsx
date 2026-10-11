@@ -100,7 +100,8 @@ export function CompanyBriefPage() {
         </p>
       </div>
 
-      <div className="rounded-md border border-border">
+      {/* Same inner padding as the standard Textarea (px-3 py-2), so text and placeholder clear the border. */}
+      <div className="rounded-md border border-border px-3 py-2">
         <MarkdownEditor
           value={draft}
           onChange={setDraft}

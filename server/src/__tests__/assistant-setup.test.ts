@@ -37,7 +37,7 @@ describe("assistantSetupStatus", () => {
     ["claude_hello_probe_auth_required", "Claude isn't signed in on this computer."],
     ["adapter_auth_missing", "Claude isn't signed in on this computer."],
     ["claude_command_unresolvable", "Claude isn't installed on this computer."],
-    ["adapter_engine_unavailable", "Claude's engine isn't available on this computer."],
+    ["adapter_engine_unavailable", "Claude is installed, but its default engine needs Node 24.11 or newer. Pick Claude below to connect it on its CLI engine instead."],
   ])("needs a model when the harness test failed with %s, with a fixed reason", (code, reason) => {
     expect(assistantSetupStatus(failed([code]))).toEqual({ state: "needs_model", adapterType: "claude_local", reason });
   });

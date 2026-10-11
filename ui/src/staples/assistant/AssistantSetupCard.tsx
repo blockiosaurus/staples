@@ -16,13 +16,11 @@ import {
 import { queryKeys } from "@/lib/queryKeys";
 import { testAgentSetup } from "@/lib/test-agent-setup";
 import { cn } from "@/lib/utils";
-import { ASSISTANT_ADAPTER_LABELS, connectionFailureReason, connectionTestPassed } from "./setup-reasons";
+import { ASSISTANT_ADAPTER_LABELS, ASSISTANT_CLI_ENGINE_ADAPTER_TYPES, connectionFailureReason, connectionTestPassed } from "./setup-reasons";
 
 /** Adapters with a login/API-key flow in AgentProviderConnection. */
 const PROVIDER_CONNECTION_TYPES = ["claude_local", "codex_local"] as const;
 type ProviderConnectionType = (typeof PROVIDER_CONNECTION_TYPES)[number];
-/** Adapters whose CLI engine still gives the Assistant its tools (server: ASSISTANT_CLI_ENGINE_ADAPTER_TYPES). */
-const CLI_ENGINE_TYPES: readonly string[] = ["claude_local", "codex_local"];
 
 const label = (adapterType: string) => ASSISTANT_ADAPTER_LABELS[adapterType] ?? adapterType;
 const codesOf = (result: AdapterEnvironmentTestResult) => result.checks.map((check) => check.code);
@@ -219,7 +217,7 @@ function ConnectModel({
   ): Promise<{ passed: boolean; engine: "cli" | null; codes: string[] }> {
     let engine = engineFor(adapterType);
     let result = await run(engine);
-    if (!engine && CLI_ENGINE_TYPES.includes(adapterType) && codesOf(result).includes("adapter_engine_unavailable")) {
+    if (!engine && ASSISTANT_CLI_ENGINE_ADAPTER_TYPES.includes(adapterType) && codesOf(result).includes("adapter_engine_unavailable")) {
       engine = "cli";
       engineOverride.current = "cli";
       result = await run(engine);

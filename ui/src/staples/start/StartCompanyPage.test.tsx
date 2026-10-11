@@ -23,6 +23,7 @@ vi.mock("@/lib/browserNavigation", () => ({ navigateTopLevel: mocks.navigateTopL
 vi.mock("@/lib/router", () => ({
   useNavigate: () => mocks.navigate,
   Navigate: ({ to }: { to: string }) => <div data-testid="redirect" data-to={to} />,
+  Link: ({ to, children, ...props }: { to: string; children: React.ReactNode }) => <a href={to} data-testid="back-link" {...props}>{children}</a>,
 }));
 vi.mock("@/context/CompanyContext", () => ({
   useCompany: () => ({ ...mocks.company, setSelectedCompanyId: mocks.setSelectedCompanyId }),
@@ -108,19 +109,33 @@ describe("StartCompanyPage", () => {
     expect(mocks.navigate).not.toHaveBeenCalled();
   });
 
-  it("lets an existing, non-managed user create another company", async () => {
+  it("lets an existing, non-managed user create another company, with a way back", async () => {
     mocks.company = { companies: [ACME], selectedCompany: ACME, loading: false };
     await render();
     expect(container.querySelector("[data-testid=redirect]")).toBeNull();
     expect(container.querySelector("input")).not.toBeNull();
+    const back = container.querySelector("[data-testid=back-link]");
+    expect(back?.getAttribute("href")).toBe("/ACM/assistant");
+    expect(back?.textContent).toBe("Back to Acme");
   });
 
-  it("redirects a cloud-managed stack to its existing company's Assistant", async () => {
+  it("offers no back link to someone without a company", async () => {
+    await render();
+    expect(container.querySelector("[data-testid=back-link]")).toBeNull();
+  });
+
+  it("explains, instead of silently redirecting, that a cloud-managed stack creates companies in Cloud", async () => {
     mocks.cloud = { cloudBaseUrl: "https://cloud.example.com" };
     mocks.company = { companies: [ACME], selectedCompany: ACME, loading: false };
     await render();
-    expect(container.querySelector("[data-testid=redirect]")?.getAttribute("data-to")).toBe("/ACM/assistant");
+    expect(container.querySelector("[data-testid=redirect]")).toBeNull();
     expect(container.querySelector("input")).toBeNull();
+    expect(container.textContent).toContain("created there, not in this app");
+    expect(container.querySelector("[data-testid=back-link]")?.getAttribute("href")).toBe("/ACM/assistant");
+    const button = container.querySelector("button") as HTMLButtonElement;
+    await act(async () => button.click());
+    expect(mocks.navigateTopLevel).toHaveBeenCalledWith("https://cloud.example.com/stacks/new");
+    expect(mocks.create).not.toHaveBeenCalled();
   });
 
   it("never offers in-app create on a cloud-managed stack with no company", async () => {
