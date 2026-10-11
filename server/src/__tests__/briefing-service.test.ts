@@ -15,6 +15,9 @@ import {
   inboxDismissals,
   issueThreadInteractions,
   issues,
+  toolApplications,
+  toolConnections,
+  toolInvocations,
 } from "@paperclipai/db";
 import type { AttentionFeed, AttentionItem, AttentionSourceKind } from "@paperclipai/shared";
 import {
@@ -24,6 +27,7 @@ import {
 import { errorHandler } from "../middleware/index.js";
 import { briefingRoutes } from "../routes/briefing.js";
 import {
+  agentActionsTitle,
   askUserQuestionsRecommendation,
   briefingService,
   companyRelativeHref,
@@ -216,6 +220,9 @@ describeEmbeddedPostgres("briefing service", () => {
   }, 30_000);
 
   afterEach(async () => {
+    await db.delete(toolInvocations);
+    await db.delete(toolConnections);
+    await db.delete(toolApplications);
     await db.delete(inboxDismissals);
     await db.delete(issueThreadInteractions);
     await db.delete(heartbeatRunEvents);
@@ -701,6 +708,139 @@ describeEmbeddedPostgres("briefing service", () => {
     }
     expect(briefing.inProgress.map((item) => item.id)).toEqual([ownActiveId]);
     expect(briefing.needsYou.map((item) => item.id)).toEqual([own.errorAgentId]);
+  });
+
+  describe("templated agent roll-ups", () => {
+    const EMAIL_TEMPLATE = {
+      ref: "staples/email-secretary",
+      version: "1.0.1",
+      readOnly: false,
+      outwardActions: [{
+        capability: "email", label: "Sending email", destructiveLabel: "Deleting email",
+        toolPatterns: ["*send*", "*reply*", "*forward*"], destructiveToolPatterns: ["*delete*", "*trash*"],
+      }],
+      requiredApps: [{ capability: "email", anyOf: ["agentmail", "gmail"], why: "Email." }],
+    };
+    const CODING_TEMPLATE = {
+      ref: "staples/coding-agent",
+      version: "1.0.1",
+      readOnly: false,
+      outwardActions: [{
+        capability: "code", label: "Merging and pushing to the default branch", destructiveLabel: "Deleting branches or closing issues",
+        toolPatterns: ["*merge*", "*push*"], destructiveToolPatterns: ["*delete*", "*close*"],
+      }],
+      requiredApps: [{ capability: "code", anyOf: ["github"], why: "Code." }],
+    };
+
+    async function insertTemplatedAgent(companyId: string, name: string, template: Record<string, unknown>) {
+      const id = randomUUID();
+      await db.insert(agents).values({
+        id, companyId, name, role: "general", status: "idle", adapterType: "codex_local",
+        adapterConfig: {}, runtimeConfig: {}, permissions: {}, metadata: { staplesTemplate: template },
+      });
+      return id;
+    }
+
+    async function insertConnection(companyId: string, slug: string) {
+      const [application] = await db.insert(toolApplications).values({
+        companyId, applicationKey: `app-gallery:${slug}:${randomUUID()}`, name: slug, type: "mcp_http", status: "active",
+        metadata: { sourceTemplateKey: slug },
+      }).returning();
+      const [connection] = await db.insert(toolConnections).values({
+        companyId, applicationId: application!.id, name: `${slug} connection`, uid: `test/${randomUUID()}`,
+        transport: "mcp_remote", status: "active", enabled: true, config: { sourceTemplateKey: slug },
+      }).returning();
+      return connection!.id;
+    }
+
+    async function insertInvocation(input: {
+      companyId: string; agentId: string; connectionId: string | null; toolName: string;
+      riskLevel?: string; status?: string; completedAt: Date;
+    }) {
+      await db.insert(toolInvocations).values({
+        companyId: input.companyId,
+        agentId: input.agentId,
+        connectionId: input.connectionId,
+        toolName: input.toolName,
+        riskLevel: (input.riskLevel ?? "write") as "write",
+        status: (input.status ?? "succeeded") as "succeeded",
+        actorType: "agent",
+        completedAt: input.completedAt,
+        createdAt: input.completedAt,
+      });
+    }
+
+    it("words the roll-up by category", () => {
+      expect(agentActionsTitle("Sam", 3, new Set(["email"]), ["AgentMail"])).toBe("Sam sent 3 emails");
+      expect(agentActionsTitle("Sam", 1, new Set(["email"]), ["AgentMail"])).toBe("Sam sent 1 email");
+      expect(agentActionsTitle("Cody", 2, new Set(["code"]), ["GitHub", "GitHub"])).toBe("Cody took 2 actions in GitHub");
+      expect(agentActionsTitle("Pat", 4, new Set(["email", "social"]), ["AgentMail", "X"])).toBe("Pat took 4 actions in AgentMail and X");
+    });
+
+    it("counts each templated agent's succeeded outward write actions in the last 24 hours", async () => {
+      const { companyId, workerId } = await seedCompany("BRT");
+      const now = Date.now();
+      const secretaryId = await insertTemplatedAgent(companyId, "Sam", EMAIL_TEMPLATE);
+      const coderId = await insertTemplatedAgent(companyId, "Cody", CODING_TEMPLATE);
+      const quietId = await insertTemplatedAgent(companyId, "Quiet", EMAIL_TEMPLATE);
+      const mail = await insertConnection(companyId, "agentmail");
+      const github = await insertConnection(companyId, "github");
+      const hourAgo = new Date(now - 60 * 60 * 1000);
+      for (const toolName of ["send_message", "reply_to_message", "forward_message"]) {
+        await insertInvocation({ companyId, agentId: secretaryId, connectionId: mail, toolName, completedAt: hourAgo });
+      }
+      // Not counted: failed, read-risk, destructive name, unrelated write, older than 24 hours.
+      await insertInvocation({ companyId, agentId: secretaryId, connectionId: mail, toolName: "send_message", status: "failed", completedAt: hourAgo });
+      await insertInvocation({ companyId, agentId: secretaryId, connectionId: mail, toolName: "send_preview", riskLevel: "read", completedAt: hourAgo });
+      await insertInvocation({ companyId, agentId: secretaryId, connectionId: mail, toolName: "trash_and_send", completedAt: hourAgo });
+      await insertInvocation({ companyId, agentId: secretaryId, connectionId: mail, toolName: "create_label", completedAt: hourAgo });
+      await insertInvocation({ companyId, agentId: secretaryId, connectionId: mail, toolName: "send_message", completedAt: new Date(now - 25 * 60 * 60 * 1000) });
+      const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000);
+      await insertInvocation({ companyId, agentId: coderId, connectionId: github, toolName: "merge_pull_request", completedAt: twoHoursAgo });
+      await insertInvocation({ companyId, agentId: coderId, connectionId: github, toolName: "push_files", completedAt: twoHoursAgo });
+      // Untemplated agents never get a roll-up.
+      await insertInvocation({ companyId, agentId: workerId, connectionId: mail, toolName: "send_message", completedAt: hourAgo });
+      // Quiet only has a failed send: no row.
+      await insertInvocation({ companyId, agentId: quietId, connectionId: mail, toolName: "send_message", status: "failed", completedAt: hourAgo });
+      const doneId = await insertIssue({
+        companyId, identifier: "BRT-1", title: "Shipped", status: "done",
+        completedAt: new Date(now - 90 * 60 * 1000), updatedAt: new Date(now - 90 * 60 * 1000),
+      });
+
+      const briefing = await briefingService(db).get({ companyId, userId: "board-user", actor: boardActor(companyId) });
+
+      expect(briefing.doneRecently.map((item) => [item.kind, item.id])).toEqual([
+        ["agent_actions", secretaryId],
+        ["done_task", doneId],
+        ["agent_actions", coderId],
+      ]);
+      expect(briefing.doneRecently[0]).toMatchObject({
+        title: "Sam sent 3 emails", subtitle: "Last 24 hours", href: `/agents/${secretaryId}`, createdAt: hourAgo.toISOString(),
+      });
+      expect(briefing.doneRecently[2]).toMatchObject({ title: "Cody took 2 actions in GitHub", href: `/agents/${coderId}` });
+      expect(briefing.counts.doneRecently).toBe(3);
+    });
+
+    it("keeps other companies' agents and agents the person cannot see out of the roll-up", async () => {
+      const own = await seedCompany("BRU");
+      const other = await seedCompany("BRV");
+      const now = new Date(Date.now() - 60 * 1000);
+      const otherAgentId = await insertTemplatedAgent(other.companyId, "Elsewhere", EMAIL_TEMPLATE);
+      const otherMail = await insertConnection(other.companyId, "agentmail");
+      await insertInvocation({ companyId: other.companyId, agentId: otherAgentId, connectionId: otherMail, toolName: "send_message", completedAt: now });
+
+      const ownBriefing = await briefingService(db).get({ companyId: own.companyId, userId: "board-user", actor: boardActor(own.companyId) });
+      expect(ownBriefing.doneRecently).toEqual([]);
+      expect(JSON.stringify(ownBriefing)).not.toContain(otherAgentId);
+
+      const otherBriefing = await briefingService(db).get({ companyId: other.companyId, userId: "board-user", actor: boardActor(other.companyId) });
+      expect(otherBriefing.doneRecently.map((item) => item.title)).toEqual(["Elsewhere sent 1 email"]);
+
+      // An actor without access to the company sees no roll-up even if asked for it directly.
+      const outsider = { type: "board" as const, source: "session" as const, userId: "outsider", companyIds: [], isInstanceAdmin: false };
+      const hidden = await briefingService(db).get({ companyId: other.companyId, userId: "outsider", actor: outsider });
+      expect(hidden.doneRecently.filter((item) => item.kind === "agent_actions")).toEqual([]);
+    });
   });
 
   it("serves the briefing to board users and rejects agents", async () => {

@@ -184,6 +184,21 @@ describe("HomePage", () => {
     expect(container.querySelector('textarea[aria-label="Ask the Assistant"]')).not.toBeNull();
   });
 
+  it("shows a templated agent's roll-up under Done recently, linking to the agent", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({
+      doneRecently: [
+        item({ kind: "agent_actions", id: "agent-7", title: "Sam sent 3 emails", subtitle: "Last 24 hours", href: "/agents/agent-7" }),
+        item({ kind: "done_task", id: "issue-30", title: "Write the pricing page", href: "/issues/PAP-30" }),
+      ],
+    }));
+    await render();
+    const rollup = row("agent-7")!;
+    expect(rollup.textContent).toContain("Sam sent 3 emails");
+    expect(rollup.textContent).toContain("Last 24 hours");
+    expect(rollup.textContent).toContain("Agent actions");
+    expect(rollup.querySelector('a[href="/PAP/agents/agent-7"]')).not.toBeNull();
+  });
+
   it("polls every 30 seconds", async () => {
     mocks.getBriefing.mockResolvedValue(fixture());
     await render();

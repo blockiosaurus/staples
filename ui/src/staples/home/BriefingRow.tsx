@@ -13,6 +13,7 @@ import {
   Sparkles,
   TriangleAlert,
   Wallet,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ const KIND_ICONS: Record<BriefingItemKind, LucideIcon> = {
   active_task: CircleDot,
   live_run: Play,
   done_task: CircleCheck,
+  agent_actions: Zap,
 };
 
 const KIND_LABELS: Record<BriefingItemKind, string> = {
@@ -45,6 +47,7 @@ const KIND_LABELS: Record<BriefingItemKind, string> = {
   active_task: "Task in progress",
   live_run: "Running now",
   done_task: "Done",
+  agent_actions: "Agent actions",
 };
 
 /** True when Home can resolve the item in one click with its recommendation. */

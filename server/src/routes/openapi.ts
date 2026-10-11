@@ -6115,6 +6115,7 @@ const briefingItemSchema = z.object({
     "active_task",
     "live_run",
     "done_task",
+    "agent_actions",
   ]),
   id: z.string(),
   title: z.string(),

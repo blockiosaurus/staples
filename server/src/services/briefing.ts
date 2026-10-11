@@ -1,7 +1,16 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents, companies, issueThreadInteractions, issues } from "@paperclipai/db";
 import {
+  agents,
+  companies,
+  issueThreadInteractions,
+  issues,
+  toolApplications,
+  toolConnections,
+  toolInvocations,
+} from "@paperclipai/db";
+import {
+  BRIEFING_AGENT_ACTIONS_WINDOW_HOURS,
   askUserQuestionsPayloadToQuestionSet,
   BRIEFING_DONE_RECENTLY_LIMIT,
   BRIEFING_DONE_RECENTLY_WINDOW_DAYS,
@@ -16,13 +25,17 @@ import {
   type BriefingRecommendation,
   type BriefingRecommendationAnswer,
 } from "@paperclipai/shared";
+import { autopilotCategoriesFromMetadata } from "./agent-autopilot.js";
 import { attentionService } from "./attention.js";
-import { issueReadSqlCondition, type AuthorizationActor } from "./authorization.js";
+import { authorizationService, issueReadSqlCondition, type AuthorizationActor } from "./authorization.js";
 import { issueService } from "./issues.js";
 import { executionIssueCondition } from "./issue-visibility.js";
 import { listLiveRuns } from "./live-runs.js";
+import { appChoiceLabel, appDisplayName, connectionAppSlug } from "./plan-templates.js";
+import { toolNamePatternMatches } from "./tool-access-policy.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 
 /** Attention source kinds shown under "Needs you", mapped to briefing kinds. */
 const NEEDS_YOU_KIND_BY_SOURCE: Partial<Record<AttentionSourceKind, BriefingItemKind>> = {
@@ -183,6 +196,25 @@ export function requestConfirmationRecommendation(payload: unknown): BriefingRec
   const serverOwned = SERVER_OWNED_CONFIRMATION_KEYS.some((key) => record[key] !== undefined && record[key] !== null);
   if (serverOwned) return { label: acceptLabel ?? "Review", inline: false };
   return { label: acceptLabel ?? "Confirm", inline: true, accept: true };
+}
+
+function plural(count: number, singular: string, pluralForm = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+function listLabel(names: string[]): string {
+  if (names.length <= 1) return names.join("");
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/**
+ * "Riley sent 3 emails" when every counted action is in the template's email
+ * category, otherwise "Riley took 3 actions in GitHub".
+ */
+export function agentActionsTitle(agentName: string, count: number, capabilities: ReadonlySet<string>, appNames: string[]): string {
+  if (capabilities.size === 1 && capabilities.has("email")) return `${agentName} sent ${plural(count, "email")}`;
+  const apps = listLabel([...new Set(appNames)]);
+  return `${agentName} took ${plural(count, "action")}${apps ? ` in ${apps}` : ""}`;
 }
 
 export function briefingService(db: Db, serviceOptions: BriefingServiceOptions = {}) {
@@ -413,6 +445,98 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
       }));
   }
 
+  /**
+   * One row per templated agent the person can see: its succeeded write-risk
+   * tool calls in the template's outward categories over the last 24 hours.
+   */
+  async function agentActionRollups(input: BriefingGetInput, now: number, nowIso: string): Promise<BriefingItem[]> {
+    const since = new Date(now - BRIEFING_AGENT_ACTIONS_WINDOW_HOURS * HOUR_MS);
+    const agentRows = await db
+      .select({ id: agents.id, name: agents.name, metadata: agents.metadata })
+      .from(agents)
+      .where(and(eq(agents.companyId, input.companyId), sql`(${agents.metadata} -> 'staplesTemplate') is not null`));
+    const templated = agentRows
+      .map((row) => ({ ...row, categories: autopilotCategoriesFromMetadata(row.metadata) }))
+      .filter((row) => row.categories.length > 0);
+    if (templated.length === 0) return [];
+    const authz = authorizationService(db);
+    const decisions = await Promise.all(templated.map((row) => authz.decide({
+      actor: input.actor,
+      action: "agent:read",
+      resource: { type: "agent", companyId: input.companyId, agentId: row.id },
+    })));
+    const visible = templated.filter((_, index) => decisions[index]?.allowed);
+    if (visible.length === 0) return [];
+
+    const invocationRows = await db
+      .select({
+        agentId: toolInvocations.agentId,
+        toolName: toolInvocations.toolName,
+        upstreamToolName: toolInvocations.upstreamToolName,
+        connectionId: toolInvocations.connectionId,
+        completedAt: toolInvocations.completedAt,
+        createdAt: toolInvocations.createdAt,
+      })
+      .from(toolInvocations)
+      .where(and(
+        eq(toolInvocations.companyId, input.companyId),
+        inArray(toolInvocations.agentId, visible.map((row) => row.id)),
+        eq(toolInvocations.riskLevel, "write"),
+        eq(toolInvocations.status, "succeeded"),
+        sql`coalesce(${toolInvocations.completedAt}, ${toolInvocations.createdAt}) >= ${since.toISOString()}::timestamptz`,
+      ));
+    if (invocationRows.length === 0) return [];
+
+    const connectionIds = [...new Set(invocationRows.map((row) => row.connectionId).filter((id): id is string => !!id))];
+    const connectionRows = connectionIds.length === 0 ? [] : await db
+      .select({
+        id: toolConnections.id,
+        config: toolConnections.config,
+        transportConfig: toolConnections.transportConfig,
+        applicationMetadata: toolApplications.metadata,
+      })
+      .from(toolConnections)
+      .leftJoin(toolApplications, eq(toolApplications.id, toolConnections.applicationId))
+      .where(and(eq(toolConnections.companyId, input.companyId), inArray(toolConnections.id, connectionIds)));
+    const slugByConnectionId = new Map(connectionRows.map((row) => [row.id, connectionAppSlug(row)]));
+
+    const items: BriefingItem[] = [];
+    for (const agent of visible) {
+      let count = 0;
+      let latest = 0;
+      const capabilities = new Set<string>();
+      const appNames: string[] = [];
+      for (const row of invocationRows) {
+        if (row.agentId !== agent.id) continue;
+        const names = [row.toolName, row.upstreamToolName].filter((name): name is string => !!name);
+        const slug = row.connectionId ? slugByConnectionId.get(row.connectionId) ?? null : null;
+        const matching = agent.categories.filter((category) =>
+          category.toolPatterns.some((pattern) => names.some((name) => toolNamePatternMatches(pattern, name)))
+          && !category.destructiveToolPatterns.some((pattern) => names.some((name) => toolNamePatternMatches(pattern, name))));
+        // Patterns may overlap across categories (e.g. "*publish*"): prefer the one served by this app.
+        const category = matching.find((candidate) => slug && candidate.anyOf.includes(slug)) ?? matching[0];
+        if (!category) continue;
+        count += 1;
+        latest = Math.max(latest, toTime(row.completedAt ?? row.createdAt));
+        capabilities.add(category.capability);
+        appNames.push(slug && category.anyOf.includes(slug)
+          ? appDisplayName(slug)
+          : category.anyOf.length ? appChoiceLabel(category.anyOf) : category.label);
+      }
+      if (count === 0) continue;
+      items.push({
+        kind: "agent_actions",
+        id: agent.id,
+        title: agentActionsTitle(agent.name, count, capabilities, appNames),
+        subtitle: "Last 24 hours",
+        href: `/agents/${agent.id}`,
+        issueId: null,
+        createdAt: toIso(latest ? new Date(latest) : null, nowIso),
+      });
+    }
+    return items;
+  }
+
   return {
     get: async (input: BriefingGetInput): Promise<Briefing> => {
       const now = serviceOptions.now?.() ?? Date.now();
@@ -421,11 +545,14 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         companyPrefix(input.companyId),
         issueReadSqlCondition(db, input.actor),
       ]);
-      const [needs, moving, done] = await Promise.all([
+      const [needs, moving, doneTasks, rollups] = await Promise.all([
         needsYou(input, prefix, readCondition, nowIso),
         inProgress(input, readCondition, nowIso),
         doneRecently(input, readCondition, now, nowIso),
+        agentActionRollups(input, now, nowIso),
       ]);
+      // Newest first across finished tasks and agent roll-ups.
+      const done = [...doneTasks, ...rollups].sort((a, b) => toTime(b.createdAt) - toTime(a.createdAt));
       return {
         needsYou: needs.slice(0, BRIEFING_NEEDS_YOU_LIMIT),
         inProgress: moving.slice(0, BRIEFING_IN_PROGRESS_LIMIT),

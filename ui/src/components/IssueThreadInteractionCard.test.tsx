@@ -7,7 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Agent } from "@paperclipai/shared";
 import { ApiError } from "../api/client";
-import { IssueThreadInteractionCard } from "./IssueThreadInteractionCard";
+import { agentsApi } from "../api/agents";
+import { IssueThreadInteractionCard, rememberActionLabel } from "./IssueThreadInteractionCard";
 import { ThemeProvider } from "../context/ThemeContext";
 import { TooltipProvider } from "./ui/tooltip";
 import {
@@ -1211,6 +1212,64 @@ describe("IssueThreadInteractionCard tool-action card", () => {
     expect(host.textContent).not.toContain("Technical details");
     expect(host.textContent).not.toContain("Expires");
     expect(host.textContent).not.toContain("args hash");
+  });
+
+  describe("Always allow label", () => {
+    const TEMPLATE_METADATA = {
+      staplesTemplate: {
+        ref: "staples/email-secretary",
+        version: "1.0.1",
+        outwardActions: [{
+          capability: "email", label: "Sending email", toolPatterns: ["*send*"], destructiveToolPatterns: ["*trash*"],
+        }],
+        requiredApps: [{ capability: "email", anyOf: ["agentmail"] }],
+      },
+    };
+
+    it("names the template category for templated agents and stays generic otherwise", () => {
+      expect(rememberActionLabel(TEMPLATE_METADATA, "agentmail.send_message")).toBe("Always allow sending email for this agent");
+      expect(rememberActionLabel(TEMPLATE_METADATA, "agentmail.list_messages")).toBe("Always allow");
+      expect(rememberActionLabel({}, "agentmail.send_message")).toBe("Always allow");
+      expect(rememberActionLabel(undefined, "agentmail.send_message")).toBe("Always allow");
+    });
+
+    async function openOptions(interaction: typeof pendingToolActionWriteInteraction) {
+      const host = renderCard({ interaction, onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+      for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="Approval options"]');
+      expect(trigger).not.toBeNull();
+      await act(async () => {
+        trigger!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      });
+      return [...document.body.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
+    }
+
+    it("relabels the remember option for a templated agent's outward action", async () => {
+      const get = vi.spyOn(agentsApi, "get").mockResolvedValue({ id: "agent-codex", metadata: TEMPLATE_METADATA } as unknown as Awaited<ReturnType<typeof agentsApi.get>>);
+      const interaction = structuredClone(pendingToolActionWriteInteraction);
+      interaction.payload.toolAction!.toolName = "agentmail.send_message";
+      interaction.payload.toolAction!.rememberActionScope = "This agent may use this action with different arguments on this connection.";
+      expect(await openOptions(interaction)).toEqual(["Always allow sending email for this agent"]);
+      expect(get).toHaveBeenCalledWith("agent-codex", interaction.companyId);
+      get.mockRestore();
+    });
+
+    it("keeps the generic label for an untemplated agent", async () => {
+      const get = vi.spyOn(agentsApi, "get").mockResolvedValue({ id: "agent-codex", metadata: {} } as unknown as Awaited<ReturnType<typeof agentsApi.get>>);
+      const interaction = structuredClone(pendingToolActionWriteInteraction);
+      interaction.payload.toolAction!.toolName = "agentmail.send_message";
+      interaction.payload.toolAction!.rememberActionScope = "This agent may use this action with different arguments on this connection.";
+      expect(await openOptions(interaction)).toEqual(["Always allow"]);
+      get.mockRestore();
+    });
+
+    it("offers no remember option when the server does not", () => {
+      const get = vi.spyOn(agentsApi, "get");
+      const host = renderCard({ interaction: pendingToolActionWriteInteraction, onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+      expect(host.querySelector('button[aria-label="Approval options"]')).toBeNull();
+      expect(get).not.toHaveBeenCalled();
+      get.mockRestore();
+    });
   });
 
   it("keeps reviewed argument values visible across preview paragraphs", () => {

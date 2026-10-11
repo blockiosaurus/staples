@@ -16,11 +16,13 @@ import {
   ShieldCheck,
   Sparkles,
   Wrench,
+  Zap,
 } from "lucide-react";
 import { agentsApi } from "@/api/agents";
 import { chatEndpointsApi } from "@/api/chatEndpoints";
 import { useCompany } from "@/context/CompanyContext";
 import { queryKeys } from "@/lib/queryKeys";
+import { isTemplatedAgent } from "@/staples/autopilot/templateRecord";
 import { chatProviderVisible, useChatConnectorsEnabled } from "@/hooks/useChatConnectorsEnabled";
 import { ContextualSidebarFrame } from "./ContextualSidebarFrame";
 import { SidebarNavItem } from "./SidebarNavItem";
@@ -44,6 +46,7 @@ const localIcons = {
   overview: Sparkles,
   instructions: BookOpenText,
   skills: Library,
+  autopilot: Zap,
   runtime: Settings2,
   secrets: ShieldCheck,
   tools: Wrench,
@@ -72,11 +75,11 @@ export function AgentContextualSidebar({
   labels?: Partial<Record<AgentLocalDetailView, string>>;
 }) {
   const { selectedCompanyId } = useCompany();
-  const shouldResolveAgent = !agentId || !agentName;
+  // Always resolved: the template record (Autopilot) lives on the agent.
   const { data: resolvedAgent } = useQuery({
     queryKey: [...queryKeys.agents.detail(agentRef), selectedCompanyId ?? null, "contextual-sidebar"],
     queryFn: () => agentsApi.get(agentRef, selectedCompanyId ?? undefined),
-    enabled: shouldResolveAgent && Boolean(agentRef && selectedCompanyId),
+    enabled: Boolean(agentRef && selectedCompanyId),
   });
   const resolvedId = agentId ?? resolvedAgent?.id;
   const resolvedName = agentName ?? resolvedAgent?.name ?? "Agent";
@@ -108,6 +111,7 @@ export function AgentContextualSidebar({
           chatProviderVisible(provider, chatEnabled, githubEnabled))
       : undefined,
     apiKeys: keys ? keys.length : undefined,
+    templated: resolvedAgent ? isTemplatedAgent(resolvedAgent) : undefined,
   };
 
   const toggleAdvanced = () => {

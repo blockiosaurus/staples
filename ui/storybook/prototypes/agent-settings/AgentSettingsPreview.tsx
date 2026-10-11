@@ -48,6 +48,7 @@ const descriptions: Record<AgentLocalDetailView, string> = {
   overview: "A snapshot of Nova’s work, capabilities, and current setup.",
   instructions: "The files that guide how your agent thinks and works.",
   skills: "Choose the skills your agent brings to each task.",
+  autopilot: "Choose what your agent may do without asking you first.",
   runtime:
     "Configure the harness, model, environment, and how your agent runs.",
   secrets:

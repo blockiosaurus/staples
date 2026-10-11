@@ -44,6 +44,8 @@ import { assetsApi } from "../api/assets";
 import { toolsApi } from "../api/tools";
 import { getUIAdapter, buildTranscript, onAdapterChange } from "../adapters";
 import { StatusBadge } from "../components/StatusBadge";
+import { AgentTemplateChip } from "../staples/autopilot/AgentTemplateChip";
+import { AutopilotPanel } from "../staples/autopilot/AutopilotPanel";
 import { AgentLifecycleStatus, useAgentLifecycleStatus } from "../components/AgentLifecycleStatus";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { CopyText } from "../components/CopyText";
@@ -1264,6 +1266,7 @@ export function AgentDetail() {
               <span>{getAdapterDisplay(agent.adapterType === "paperclip_runner" && agent.adapterConfig.provider === "openai_dot" ? "openai_dot" : agent.adapterType).label}</span><span>·</span>
               <span>{agent.title || roleLabels[agent.role] || agent.role}</span>
             </div>
+            <AgentTemplateChip agent={agent} companyId={resolvedCompanyId} />
             <AgentLifecycleStatus agent={currentAgent} refreshError={lifecycle.isError} onRetry={() => agentAction.mutate("retryLifecycle")} retryPending={agentAction.isPending} />
             <SetPrimaryAgentButton agent={agent} />
           </div>
@@ -1460,6 +1463,8 @@ export function AgentDetail() {
           companyId={resolvedCompanyId ?? undefined}
         />
       )}
+
+      {activeView === "autopilot" && <AutopilotPanel agent={agent} />}
 
       {activeView === "tools" && resolvedCompanyId && (
         <AgentToolsTab agent={agent} companyId={resolvedCompanyId} />

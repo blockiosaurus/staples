@@ -530,6 +530,14 @@ export interface UsableAppConnection {
   displayName: string;
 }
 
+/** The catalog app slug a connection was created from, if known. */
+export function connectionAppSlug(row: { config: unknown; transportConfig: unknown; applicationMetadata: unknown }): string | null {
+  return text(metadataRecord(row.config).sourceTemplateKey)
+    ?? text(metadataRecord(row.transportConfig).sourceTemplateKey)
+    ?? text(metadataRecord(row.applicationMetadata).sourceTemplateKey)
+    ?? text(metadataRecord(row.applicationMetadata).galleryKey);
+}
+
 /**
  * The company's usable connections (active, enabled, healthy, non-AI) that
  * come from a known app, oldest first.
@@ -548,10 +556,7 @@ export async function usableAppConnections(db: Db, companyId: string): Promise<U
   for (const row of rows) {
     if (row.status !== "active" || !row.enabled || row.purpose === "ai") continue;
     if (isToolConnectionAttentionHealth(row.health as ToolConnectionHealthStatus)) continue;
-    const slug = text(metadataRecord(row.config).sourceTemplateKey)
-      ?? text(metadataRecord(row.transportConfig).sourceTemplateKey)
-      ?? text(metadataRecord(row.applicationMetadata).sourceTemplateKey)
-      ?? text(metadataRecord(row.applicationMetadata).galleryKey);
+    const slug = connectionAppSlug(row);
     if (slug) usable.push({ id: row.id, appSlug: slug, displayName: text(row.name) ?? appDisplayName(slug) });
   }
   return usable;

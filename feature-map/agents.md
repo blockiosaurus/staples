@@ -20,7 +20,7 @@ Use New agent from the roster, or Hire an agent (`/agents/new`) to pick a ready-
 
 ### `agent-configuration`
 
-Open `/agents/:agentId` and the configuration/instruction surfaces it exposes.
+Open `/agents/:agentId` and the configuration/instruction surfaces it exposes. Agents hired from a template show a "From template" chip and an Autopilot page (`/agents/:agentId/autopilot`) to choose, per outward category, Ask first or Send without asking.
 
 ### `organization`
 

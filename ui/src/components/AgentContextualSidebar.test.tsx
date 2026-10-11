@@ -115,6 +115,26 @@ describe("AgentContextualSidebar", () => {
     expect(markup).not.toContain('href="/agents/codexcoder/channels"');
   });
 
+  it("shows Autopilot in the Agent group only for templated agents", () => {
+    const seedAgent = (metadata: Record<string, unknown> | null) => (c: QueryClient) => {
+      c.setQueryData([...queryKeys.agents.detail("codexcoder"), "company-1", "contextual-sidebar"], {
+        id: "agent-1", name: "Codex Coder", metadata,
+      });
+    };
+    const templated = seedAgent({ staplesTemplate: { ref: "staples/coding-agent", version: "1.0.1" } });
+    for (const path of ["/agents/codexcoder/overview", "/TES/agents/codexcoder/overview", "/TES/agents/codexcoder/autopilot"]) {
+      const markup = render(path, templated);
+      expect(markup).toContain('href="/agents/codexcoder/autopilot"');
+      expect(markup).toContain("Autopilot");
+    }
+    for (const path of ["/agents/codexcoder/overview", "/TES/agents/codexcoder/autopilot"]) {
+      expect(render(path, seedAgent({ other: true }))).not.toContain('href="/agents/codexcoder/autopilot"');
+      expect(render(path, seedAgent(null))).not.toContain('href="/agents/codexcoder/autopilot"');
+      // Unknown (not loaded yet): hidden.
+      expect(render(path)).not.toContain('href="/agents/codexcoder/autopilot"');
+    }
+  });
+
   it("opens Advanced on company-prefixed deep links", () => {
     const markup = render("/TES/agents/codexcoder/permissions");
     expect(markup).toContain('aria-expanded="true"');

@@ -60,6 +60,7 @@ import { agentsApi } from "../api/agents";
 import { companiesApi } from "../api/companies";
 import { AI_CONNECTION_CAPABILITIES, applyPlanSchema, planTaskCreationOrder, type AiProvider, type ApplyPlan } from "@paperclipai/shared";
 import { queryKeys } from "../lib/queryKeys";
+import { agentTemplateRecord, outwardCategoryForTool } from "../staples/autopilot/templateRecord";
 import { buildLineDiff } from "../lib/line-diff";
 
 const OTHER_ANSWER_ID = "__paperclip_other__";
@@ -1812,6 +1813,29 @@ function ToolActionResolution({
   );
 }
 
+/**
+ * The "Always allow" label. For an agent hired from a template, when the tool
+ * belongs to one of its outward categories: "Always allow <category> for this
+ * agent". Copy only; remembering still creates the usual trust rule.
+ */
+function useRememberActionLabel(interaction: RequestConfirmationInteraction, enabled: boolean): string {
+  const agentId = interaction.createdByAgentId ?? null;
+  const agent = useQuery({
+    queryKey: [...queryKeys.agents.detail(agentId ?? ""), interaction.companyId],
+    queryFn: () => agentsApi.get(agentId!, interaction.companyId),
+    enabled: enabled && Boolean(agentId),
+    staleTime: 60 * 1000,
+  });
+  return rememberActionLabel(agent.data?.metadata, interaction.payload.toolAction?.toolName ?? "");
+}
+
+export function rememberActionLabel(agentMetadata: unknown, toolName: string): string {
+  const category = outwardCategoryForTool(agentTemplateRecord(agentMetadata), toolName);
+  if (!category) return "Always allow";
+  const label = `${category.label.charAt(0).toLowerCase()}${category.label.slice(1)}`;
+  return `Always allow ${label} for this agent`;
+}
+
 function RequestToolActionCard({
   interaction,
   state,
@@ -1831,6 +1855,7 @@ function RequestToolActionCard({
   const resolutionErrorMessage = useResolutionErrorMessage();
   const isPending = state === "pending";
   const variant = payload.risk === "destructive" ? "destructive" : "cta";
+  const rememberLabel = useRememberActionLabel(interaction, Boolean(isPending && payload.rememberActionScope));
 
   useEffect(() => {
     if (!isPending) setWorking(null);
@@ -1878,7 +1903,7 @@ function RequestToolActionCard({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onSelect={() => void decide("always")} title={payload.rememberActionScope} aria-description={payload.rememberActionScope}>
-                    Always allow
+                    {rememberLabel}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

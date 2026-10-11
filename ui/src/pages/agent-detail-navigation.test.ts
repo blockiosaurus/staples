@@ -23,6 +23,7 @@ describe("agent detail navigation", () => {
       "overview",
       "instructions",
       "skills",
+      "autopilot",
       "runtime",
       "secrets",
       "tools",
@@ -58,6 +59,9 @@ describe("agent detail navigation", () => {
     expect(agentActiveViewFromPath("/agents/a/keys")).toBe("api-keys");
     expect(agentActiveViewFromPath("/TES/agents/test-agent/permissions")).toBe("permissions");
     expect(agentActiveViewFromPath("/TES/agents/test-agent/keys")).toBe("api-keys");
+    expect(agentActiveViewFromPath("/agents/a/autopilot")).toBe("autopilot");
+    expect(agentActiveViewFromPath("/TES/agents/test-agent/autopilot")).toBe("autopilot");
+    expect(parseAgentDetailView("autopilot")).toBe("autopilot");
     expect(agentActiveViewFromPath("/TES/agents/test-agent")).toBeNull();
     expect(agentActiveViewFromPath("/agents/a")).toBeNull();
     expect(agentActiveViewFromPath("/activity")).toBeNull();
@@ -89,6 +93,11 @@ describe("agent detail navigation", () => {
     expect(isAgentAdvancedItemHidden("api-keys", { apiKeys: 0 }, "api-keys")).toBe(false);
     expect(isAgentAdvancedItemHidden("api-keys", {}, null)).toBe(false);
     expect(isAgentAdvancedItemHidden("tools", { channels: 0, apiKeys: 0 }, null)).toBe(false);
+    // Autopilot only for templated agents, hidden while unknown, even when active.
+    expect(isAgentAdvancedItemHidden("autopilot", { templated: true }, null)).toBe(false);
+    expect(isAgentAdvancedItemHidden("autopilot", { templated: false }, null)).toBe(true);
+    expect(isAgentAdvancedItemHidden("autopilot", {}, null)).toBe(true);
+    expect(isAgentAdvancedItemHidden("autopilot", { templated: false }, "autopilot")).toBe(true);
   });
 
   it("reads and writes the stored preference defensively", () => {

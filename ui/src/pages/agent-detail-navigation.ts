@@ -4,6 +4,7 @@ export type AgentDetailView =
   | "overview"
   | "instructions"
   | "skills"
+  | "autopilot"
   | "runtime"
   | "secrets"
   | "tools"
@@ -25,6 +26,7 @@ export const AGENT_DETAIL_NAVIGATION: ReadonlyArray<{
       { value: "overview", label: "Overview" },
       { value: "instructions", label: "Instructions" },
       { value: "skills", label: "Skills" },
+      { value: "autopilot", label: "Autopilot" },
     ],
   },
   {
@@ -49,6 +51,7 @@ export const AGENT_DETAIL_NAVIGATION: ReadonlyArray<{
 export function parseAgentDetailView(value: string | null): AgentLocalDetailView {
   if (value === "instructions" || value === "prompts") return "instructions";
   if (value === "skills") return "skills";
+  if (value === "autopilot") return "autopilot";
   if (value === "runtime" || value === "configure" || value === "configuration") return "runtime";
   if (value === "secrets") return "secrets";
   if (value === "tools") return "tools";
@@ -144,14 +147,21 @@ export type AgentAdvancedCounts = {
   /** undefined = loading/error/unknown (fail open: keep visible) */
   channels?: number;
   apiKeys?: number;
+  /** Whether the agent was hired from a template; Autopilot shows only when true. */
+  templated?: boolean;
 };
 
-/** Hide Channels / API keys when the agent is known to have none, unless that view is active. */
+/**
+ * Hide Channels / API keys when the agent is known to have none, unless that
+ * view is active. Autopilot shows only for templated agents (it fails closed:
+ * hidden while unknown).
+ */
 export function isAgentAdvancedItemHidden(
   view: AgentLocalDetailView,
   counts: AgentAdvancedCounts,
   activeView: AgentLocalDetailView | null,
 ): boolean {
+  if (view === "autopilot") return counts.templated !== true;
   if (view === activeView) return false;
   if (view === "channels") return counts.channels === 0;
   if (view === "api-keys") return counts.apiKeys === 0;

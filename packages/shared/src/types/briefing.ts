@@ -16,7 +16,9 @@ export type BriefingItemKind =
   | "agent_error"
   | "active_task"
   | "live_run"
-  | "done_task";
+  | "done_task"
+  /** Done recently: one roll-up per templated agent of its outward write actions in the last 24 hours. */
+  | "agent_actions";
 
 export interface BriefingRecommendationAnswer {
   questionId: string;
@@ -55,7 +57,11 @@ export interface Briefing {
   needsYou: BriefingItem[];
   /** Capped at 20: live runs first, then in-progress tasks. */
   inProgress: BriefingItem[];
-  /** Done within the last 7 days, newest first, capped at 10. */
+  /**
+   * Done within the last 7 days, newest first, capped at 10. Includes one
+   * "agent_actions" roll-up per templated agent with outward write actions in
+   * the last 24 hours.
+   */
   doneRecently: BriefingItem[];
   /** Uncapped totals. */
   counts: { needsYou: number; inProgress: number; doneRecently: number };
@@ -66,3 +72,5 @@ export const BRIEFING_NEEDS_YOU_LIMIT = 20;
 export const BRIEFING_IN_PROGRESS_LIMIT = 20;
 export const BRIEFING_DONE_RECENTLY_LIMIT = 10;
 export const BRIEFING_DONE_RECENTLY_WINDOW_DAYS = 7;
+/** Window of the per-agent outward action roll-up. */
+export const BRIEFING_AGENT_ACTIONS_WINDOW_HOURS = 24;
