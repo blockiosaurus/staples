@@ -2090,7 +2090,7 @@ function ProposedActionContextBlock({ context }: { context: NonNullable<NonNulla
   return (
     <div data-testid="proposed-action-context" className="mt-3 rounded-md border border-border bg-muted/30 p-3">
       <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">From the approval</p>
-      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+      <dl className="mt-2 grid grid-cols-(--gtc-16) gap-x-3 gap-y-1 text-sm">
         {rows.map(([label, value]) => (
           <div key={label} className="contents">
             <dt className="text-muted-foreground">{label}</dt>
