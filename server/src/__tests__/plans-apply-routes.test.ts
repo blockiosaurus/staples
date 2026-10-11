@@ -28,7 +28,8 @@ import { planRoutes } from "../routes/plans.js";
 import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
 import { injectApiRequest } from "../services/public-mcp/capabilities.js";
 import { companyBriefService } from "../services/company-brief.js";
-import { claimPlanApplication, takeOverPlanApplication } from "../services/plans.js";
+import { claimPlanApplication, planHash, takeOverPlanApplication } from "../services/plans.js";
+import { applyPlanSchema } from "@paperclipai/shared";
 
 const support = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = support.supported ? describe : describe.skip;
@@ -383,6 +384,55 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       const rows = await db.select().from(planApplications).where(eq(planApplications.companyId, s.companyId));
       expect(Object.fromEntries(rows.map((row) => [row.idempotencyKey, row.status]))).toEqual({ "card-one": "superseded", "card-two": "applied" });
     }, 120_000);
+
+    it("an apply that loses its lease mid-way stops before creating tasks; the newer request finishes once", async () => {
+      const s = await seed();
+      const plan = fullPlan(s);
+      let hires = 0;
+      const built = buildApp(sessionActor(s), {
+        hireAgent: async (actor, companyId, body, origin) => {
+          hires += 1;
+          if (hires === 2) {
+            // The first apply stalls past its lease and a newer request takes the plan over.
+            const [row] = await db.select().from(planApplications).where(and(eq(planApplications.companyId, s.companyId), eq(planApplications.idempotencyKey, "slow")));
+            await db.update(planApplications).set({ leaseUntil: new Date(Date.now() - 1000) }).where(eq(planApplications.id, row!.id));
+            const [stale] = await db.select().from(planApplications).where(eq(planApplications.id, row!.id));
+            await takeOverPlanApplication(db, stale!, { key: "fresh", userId: s.userId });
+          }
+          return injectApiRequest(built.api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin });
+        },
+      });
+      const send = (key: string) => request(built.app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", key).send(plan);
+      const slow = await send("slow");
+      expect(slow.status, JSON.stringify(slow.body)).toBe(409);
+      expect(slow.body.error).toMatch(/lost the plan lease/);
+      expect(await db.select().from(issues).where(eq(issues.companyId, s.companyId))).toHaveLength(0);
+      // The superseded key points at the newer request until it finishes.
+      const early = await send("slow");
+      expect(early.status).toBe(409);
+      expect(early.body.error).toMatch(/continued by a newer request/);
+
+      const fresh = await send("fresh");
+      expect(fresh.status, JSON.stringify(fresh.body)).toBe(201);
+      expect(await db.select().from(issues).where(eq(issues.companyId, s.companyId))).toHaveLength(4);
+      expect(fresh.body.agents.editor.id).toBe(slow.body.partial.agents.editor.id);
+      // Retrying the superseded key now returns the successor's stored result.
+      const retried = await send("slow");
+      expect(retried.status).toBe(200);
+      expect(retried.body.tasks).toEqual(fresh.body.tasks);
+      expect(await db.select().from(issues).where(eq(issues.companyId, s.companyId))).toHaveLength(4);
+    }, 120_000);
+
+    it("takes over an in-progress application whose lease was never set", async () => {
+      const s = await seed();
+      const hash = planHash(applyPlanSchema.parse(fullPlan(s)));
+      const hired = { editor: { id: s.staffId, status: "idle", approvalId: null } };
+      await db.insert(planApplications).values({ companyId: s.companyId, idempotencyKey: "nolease", planHash: hash, status: "in_progress", leaseUntil: null, createdByUserId: s.userId, agents: hired });
+      const claimed = await claimPlanApplication(db, { companyId: s.companyId, key: "next", hash, userId: s.userId });
+      expect(claimed).toMatchObject({ kind: "claimed", row: { idempotencyKey: "next", agents: hired } });
+      const [old] = await db.select().from(planApplications).where(and(eq(planApplications.companyId, s.companyId), eq(planApplications.idempotencyKey, "nolease")));
+      expect(old).toMatchObject({ status: "superseded", supersededById: claimed.row.id, leaseOwner: null });
+    }, 60_000);
 
     it("only one of two racing resumers takes over a failed application", async () => {
       const s = await seed();

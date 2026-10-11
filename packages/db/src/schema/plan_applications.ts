@@ -22,6 +22,10 @@ export const planApplications = pgTable(
     lastError: text("last_error"),
     /** While set in the future, another apply holds this key. */
     leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    /** Random token of the apply holding the lease; every write during an apply is conditional on it. */
+    leaseOwner: text("lease_owner"),
+    /** The row that took this one over (status superseded). */
+    supersededById: uuid("superseded_by_id"),
     createdByUserId: text("created_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

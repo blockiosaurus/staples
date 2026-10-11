@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { and, desc, eq, gt, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { createHash, randomUUID } from "node:crypto";
+import { and, desc, eq, gt, isNull, lt, or } from "drizzle-orm";
 import { agents, planApplications, type Db } from "@paperclipai/db";
 import {
   planAgentCreationOrder,
@@ -106,30 +106,37 @@ const ALREADY_RUNNING = "This plan is already being applied. Wait a moment and c
 export async function takeOverPlanApplication(db: Db, previous: ApplicationRow, input: { key: string; userId: string | null }): Promise<ApplicationRow> {
   return db.transaction(async (tx) => {
     const now = new Date();
+    // Clearing the lease owner fences the previous apply: its later writes match no row.
     const [taken] = await tx.update(planApplications)
-      .set({ status: "superseded", leaseUntil: null, updatedAt: now })
+      .set({ status: "superseded", leaseUntil: null, leaseOwner: null, updatedAt: now })
       .where(and(
         eq(planApplications.id, previous.id),
         or(
           eq(planApplications.status, "failed"),
-          and(eq(planApplications.status, "in_progress"), lt(planApplications.leaseUntil, now)),
+          and(
+            eq(planApplications.status, "in_progress"),
+            // A lease that was never set counts as expired.
+            or(isNull(planApplications.leaseUntil), lt(planApplications.leaseUntil, now)),
+          ),
         ),
       ))
       .returning();
     if (!taken) throw conflict(ALREADY_RUNNING);
-    const [inserted] = await tx.insert(planApplications).values({
+    let [successor] = await tx.insert(planApplications).values({
       companyId: taken.companyId, idempotencyKey: input.key, planHash: taken.planHash,
       agents: taken.agents, createdByUserId: input.userId,
     }).onConflictDoNothing().returning();
-    if (inserted) return inserted;
-    // The new key was inserted concurrently (the same request twice): carry the hires over.
-    const [existing] = await tx.select().from(planApplications)
-      .where(and(eq(planApplications.companyId, taken.companyId), eq(planApplications.idempotencyKey, input.key)));
-    if (!existing || existing.planHash !== taken.planHash) throw conflict("This idempotency key was already used for a different plan.");
-    const [merged] = await tx.update(planApplications)
-      .set({ agents: { ...taken.agents, ...existing.agents }, updatedAt: now })
-      .where(eq(planApplications.id, existing.id)).returning();
-    return merged!;
+    if (!successor) {
+      // The new key was inserted concurrently (the same request twice): carry the hires over.
+      const [existing] = await tx.select().from(planApplications)
+        .where(and(eq(planApplications.companyId, taken.companyId), eq(planApplications.idempotencyKey, input.key)));
+      if (!existing || existing.planHash !== taken.planHash) throw conflict("This idempotency key was already used for a different plan.");
+      [successor] = await tx.update(planApplications)
+        .set({ agents: { ...taken.agents, ...existing.agents }, updatedAt: now })
+        .where(eq(planApplications.id, existing.id)).returning();
+    }
+    await tx.update(planApplications).set({ supersededById: successor!.id }).where(eq(planApplications.id, taken.id));
+    return successor!;
   });
 }
 
@@ -145,12 +152,13 @@ export async function takeOverPlanApplication(db: Db, previous: ApplicationRow, 
  * again does not hire twice; one still running is a 409.
  */
 export async function claimPlanApplication(db: Db, input: { companyId: string; key: string; hash: string; userId: string | null }):
-  Promise<{ kind: "applied"; row: ApplicationRow } | { kind: "claimed"; row: ApplicationRow }> {
+  Promise<{ kind: "applied"; row: ApplicationRow } | { kind: "claimed"; row: ApplicationRow; leaseOwner: string }> {
   const { companyId, key, hash } = input;
   let [row] = await db.select().from(planApplications)
     .where(and(eq(planApplications.companyId, companyId), eq(planApplications.idempotencyKey, key)));
   if (row && row.planHash !== hash) throw conflict("This idempotency key was already used for a different plan.");
   if (row?.status === "applied") return { kind: "applied", row };
+  if (row?.status === "superseded") return { kind: "applied", row: await appliedSuccessor(db, row) };
   if (!row) {
     const now = new Date();
     const [earlier] = input.userId ? await db.select().from(planApplications)
@@ -174,19 +182,60 @@ export async function claimPlanApplication(db: Db, input: { companyId: string; k
     }
   }
   const now = new Date();
+  const leaseOwner = randomUUID();
   const [leased] = await db.update(planApplications)
-    .set({ leaseUntil: new Date(now.getTime() + PLAN_APPLY_LEASE_MS), updatedAt: now })
+    .set({ status: "in_progress", leaseOwner, leaseUntil: new Date(now.getTime() + PLAN_APPLY_LEASE_MS), updatedAt: now })
     .where(and(
       eq(planApplications.id, row.id),
-      ne(planApplications.status, "applied"),
-      ne(planApplications.status, "superseded"),
+      or(eq(planApplications.status, "in_progress"), eq(planApplications.status, "failed")),
       or(isNull(planApplications.leaseUntil), lt(planApplications.leaseUntil, now)),
     ))
     .returning();
-  if (leased) return { kind: "claimed", row: leased };
+  if (leased) return { kind: "claimed", row: leased, leaseOwner };
   const [current] = await db.select().from(planApplications).where(eq(planApplications.id, row.id));
   if (current?.status === "applied") return { kind: "applied", row: current };
+  if (current?.status === "superseded") return { kind: "applied", row: await appliedSuccessor(db, current) };
   throw conflict(ALREADY_RUNNING);
+}
+
+/**
+ * A superseded key answers with its successor's stored result once the
+ * successor applied; until then the retry is refused (409).
+ */
+async function appliedSuccessor(db: Db, row: ApplicationRow): Promise<ApplicationRow> {
+  let current: ApplicationRow | undefined = row;
+  for (let hop = 0; current && current.status === "superseded" && hop < 20; hop += 1) {
+    if (!current.supersededById) break;
+    [current] = await db.select().from(planApplications).where(eq(planApplications.id, current.supersededById));
+  }
+  if (current?.status === "applied") return current;
+  throw conflict("This plan was continued by a newer request. Check the company, or wait for that request to finish.");
+}
+
+/** Thrown when a write finds this apply no longer holds the key (it expired and was taken over). */
+export class PlanLeaseLostError extends HttpError {
+  constructor() {
+    super(409, "This apply lost the plan lease to a newer request");
+  }
+}
+
+/** Set fields on the application only while this apply still holds its lease, renewing it; otherwise PlanLeaseLostError. */
+async function writeLeased(
+  executor: Pick<Db, "update">,
+  application: { id: string; leaseOwner: string },
+  set: Partial<typeof planApplications.$inferInsert>,
+  renew = true,
+) {
+  const now = new Date();
+  const [row] = await executor.update(planApplications)
+    .set({ ...(renew ? { leaseUntil: new Date(now.getTime() + PLAN_APPLY_LEASE_MS) } : {}), updatedAt: now, ...set })
+    .where(and(
+      eq(planApplications.id, application.id),
+      eq(planApplications.status, "in_progress"),
+      eq(planApplications.leaseOwner, application.leaseOwner),
+    ))
+    .returning({ id: planApplications.id });
+  if (!row) throw new PlanLeaseLostError();
 }
 
 /** Agents an earlier attempt hired that still exist in this company (not terminated), with their current status. */
@@ -240,22 +289,25 @@ export async function applyPlan(db: Db, input: {
       .where(and(eq(planApplications.companyId, companyId), eq(planApplications.idempotencyKey, key)));
     if (existing && existing.planHash !== hash) throw conflict("This idempotency key was already used for a different plan.");
     if (existing?.status === "applied") return replay(existing);
+    if (existing?.status === "superseded") return replay(await appliedSuccessor(db, existing));
   }
 
   await validatePlanForApply(db, companyId, plan, input.assertCanAssign);
 
-  let application: ApplicationRow | null = null;
+  let application: (ApplicationRow & { leaseOwner: string }) | null = null;
   if (key) {
     const claimed = await claimPlanApplication(db, { companyId, key, hash, userId });
     if (claimed.kind === "applied") return replay(claimed.row);
-    application = claimed.row;
+    application = { ...claimed.row, leaseOwner: claimed.leaseOwner };
   }
 
   const hired: HiredAgents = application ? await reusableHires(db, companyId, application.agents) : {};
+  // Every write during the apply is fenced by the lease owner and renews the lease.
+  const holdLease = async () => {
+    if (application) await writeLeased(db, application, {});
+  };
   const recordHires = async () => {
-    if (application) {
-      await db.update(planApplications).set({ agents: hired, updatedAt: new Date() }).where(eq(planApplications.id, application.id));
-    }
+    if (application) await writeLeased(db, application, { agents: hired });
   };
   const fail = async (error: unknown): Promise<never> => {
     const status = error instanceof HttpError ? error.status : 500;
@@ -263,9 +315,8 @@ export async function applyPlan(db: Db, input: {
     if (application) {
       // Recording the failure must never replace the error the person needs to see.
       try {
-        await db.update(planApplications).set({
-          status: "failed", agents: hired, lastError: reason.slice(0, 1000), leaseUntil: null, updatedAt: new Date(),
-        }).where(eq(planApplications.id, application.id));
+        // Only while still holding the lease: never overwrite a newer request's row.
+        await writeLeased(db, application, { status: "failed", agents: hired, lastError: reason.slice(0, 1000), leaseUntil: null, leaseOwner: null }, false);
       } catch (recordError) {
         logger.warn({ err: recordError, planApplicationId: application.id }, "failed to record plan application failure");
       }
@@ -279,6 +330,8 @@ export async function applyPlan(db: Db, input: {
   try {
     for (const agent of planAgentCreationOrder(plan.agents)) {
       if (hired[agent.clientKey]) continue;
+      // Stop before hiring if a newer request took the plan over.
+      await holdLease();
       const body: Record<string, unknown> = { name: agent.name, role: agent.role, adapterType: agent.adapterType };
       if (agent.title !== undefined) body.title = agent.title;
       if (agent.capabilities !== undefined) body.capabilities = agent.capabilities;
@@ -312,6 +365,8 @@ export async function applyPlan(db: Db, input: {
       const agent = hired[clientKey]!;
       if (agent.status !== "pending_approval") await input.assertCanAssign(agent.id);
     }
+    // Renew right before the transaction; the transaction checks ownership again when it marks the plan applied.
+    await holdLease();
   } catch (error) {
     return fail(error);
   }
@@ -407,10 +462,11 @@ export async function applyPlan(db: Db, input: {
       };
       if (application) {
         // Marked applied in the same transaction that created everything.
-        await tx.update(planApplications).set({
+        // Fenced: if the lease was lost, this throws and everything above rolls back.
+        await writeLeased(tx, application, {
           status: "applied", agents: hired, result: result as unknown as Record<string, unknown>,
-          lastError: null, leaseUntil: null, updatedAt: sql`now()`,
-        }).where(eq(planApplications.id, application.id));
+          lastError: null, leaseUntil: null, leaseOwner: null,
+        }, false);
       }
       return { result, replayed: false, briefChanged, goal, project, tasks };
     });
