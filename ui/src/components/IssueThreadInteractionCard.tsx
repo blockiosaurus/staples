@@ -47,6 +47,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { AppLogo } from "@/pages/apps/AppLogo";
 import { ConnectionIntentInteractionBody } from "@/features/connections/ConnectionIntentInteractionBody";
 import { QuestionForm } from "./task-chat/QuestionForm";
+import { AcceptRecommendationsButton } from "./task-chat/AcceptRecommendationsButton";
 import {
   executeProposedAction,
   issuesApi,
@@ -1208,17 +1209,21 @@ function AskUserQuestionsCard({
     }
   }
 
-  async function handleAcceptAll() {
+  /** Fill unanswered questions with their recommendation; keep every given answer. */
+  async function handleAcceptRecommendations() {
     if (!onSubmitInteractionAnswers || missingRecommendation) return;
     const accepted = questions.map((question) => {
-      const recommended = legacyRecommendedOptionIds(question);
-      if (recommended.length > 0) return { questionId: question.id, optionIds: recommended };
+      const optionIds = draftAnswers[question.id] ?? [];
       const otherText = otherActiveQuestions[question.id] === true
         ? draftOtherAnswers[question.id]?.trim() ?? ""
         : "";
+      const recommended = legacyRecommendedOptionIds(question);
+      if (optionIds.length === 0 && !otherText && recommended.length > 0) {
+        return { questionId: question.id, optionIds: recommended };
+      }
       return {
         questionId: question.id,
-        optionIds: draftAnswers[question.id] ?? [],
+        optionIds,
         ...(otherText ? { otherText } : {}),
       };
     });
@@ -1442,17 +1447,11 @@ function AskUserQuestionsCard({
                   </Button>
                 ) : null}
               {hasRecommendation ? (
-                <span
-                  title={missingRecommendation ? "Some questions have no recommendation" : undefined}
-                >
-                  <Button
-                    size="sm"
-                    disabled={!onSubmitInteractionAnswers || missingRecommendation || working || cancelling}
-                    onClick={() => void handleAcceptAll()}
-                  >
-                    Accept all recommendations
-                  </Button>
-                </span>
+                <AcceptRecommendationsButton
+                  disabled={!onSubmitInteractionAnswers || working || cancelling}
+                  missingRecommendation={missingRecommendation}
+                  onClick={() => void handleAcceptRecommendations()}
+                />
               ) : null}
               <Button
                 size="sm"

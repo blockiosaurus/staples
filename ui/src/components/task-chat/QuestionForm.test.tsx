@@ -125,12 +125,33 @@ describe("QuestionForm recommendations", () => {
 
   it("accepts every recommendation in one click", async () => {
     await render();
-    await act(async () => option("scope", "small").click());
-    await act(async () => button("Accept all recommendations")!.click());
+    await act(async () => button("Accept recommendations")!.click());
     expect(submit).toHaveBeenCalledExactlyOnceWith({ schema: "paperclip.question_response.v1", answers: {
       scope: { selectedOptionIds: ["large"] },
       tools: { selectedOptionIds: ["a", "c"] },
       notes: { text: "Ship it" },
+    } });
+  });
+
+  it("keeps changed answers and fills only untouched or unanswered questions", async () => {
+    await render();
+    await act(async () => option("scope", "small").click());
+    await act(async () => button("Next")!.click());
+    // Clearing every choice leaves the question unanswered, so it is filled.
+    await act(async () => option("tools", "a").click());
+    await act(async () => option("tools", "c").click());
+    // The pagination arrow browses past the now-unanswered required question.
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Next question"]')!.click());
+    const notes = container.querySelector("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(notes, "My own note");
+      notes.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => button("Accept recommendations")!.click());
+    expect(submit).toHaveBeenCalledExactlyOnceWith({ schema: "paperclip.question_response.v1", answers: {
+      scope: { selectedOptionIds: ["small"] },
+      tools: { selectedOptionIds: ["a", "c"] },
+      notes: { text: "My own note" },
     } });
   });
 
@@ -149,15 +170,16 @@ describe("QuestionForm recommendations", () => {
       { id: "why", prompt: "Why?", required: true, answerMode: "text" },
     ] };
     await render(set, "question-missing-recommendation");
-    const accept = button("Accept all recommendations")!;
+    const accept = button("Accept recommendations")!;
     expect(accept.disabled).toBe(true);
-    expect(accept.closest("[title]")?.getAttribute("title")).toBe("Some questions have no recommendation");
+    const reason = document.getElementById(accept.getAttribute("aria-describedby")!);
+    expect(reason?.textContent).toBe("Some questions have no recommendation");
   });
 
   it("hides accept-all when no question carries a recommendation", async () => {
     await render({ schema: "paperclip.question_set.v1", questions: [
       { id: "q", prompt: "Q?", required: true, answerMode: "single_select", options: [{ id: "x", label: "X" }, { id: "y", label: "Y" }] },
     ] }, "question-none");
-    expect(button("Accept all recommendations")).toBeUndefined();
+    expect(button("Accept recommendations")).toBeUndefined();
   });
 });

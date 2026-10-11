@@ -24,6 +24,7 @@ import {
   TaskChatComposerTakeoverControls,
   useTaskChatComposerTakeoverActions,
 } from "./TaskChatComposerTakeoverContext";
+import { AcceptRecommendationsButton } from "./AcceptRecommendationsButton";
 import { TaskChatRichInput } from "./TaskChatRichInput";
 import { matchSafeQuestionValidationPattern } from "./question-validation-pattern";
 
@@ -462,15 +463,31 @@ function QuestionFormForRequest({
     }
   }
 
-  function acceptAllRecommendations() {
+  /**
+   * Fill each unanswered question with its recommendation and submit. Any
+   * answer the person gave (a changed selection, edited text, a custom
+   * answer) is kept; untouched questions already hold their recommendation
+   * from initialization.
+   */
+  function acceptRecommendations() {
     if (missingRecommendation) return;
     const accepted: Record<string, Answer> = { ...answers };
+    const filled: string[] = [];
     for (const candidate of questionSet.questions) {
       const recommended = recommendedAnswer(candidate);
-      if (recommended) accepted[candidate.id] = recommended;
+      if (recommended && !answerHasValue(answers[candidate.id])) {
+        accepted[candidate.id] = recommended;
+        filled.push(candidate.id);
+      }
     }
     setAnswers(accepted);
-    setCustomActive({});
+    if (filled.length > 0) {
+      // An empty custom field left open would block the filled answer.
+      setCustomActive((current) => ({
+        ...current,
+        ...Object.fromEntries(filled.map((questionId) => [questionId, false])),
+      }));
+    }
     void submit(accepted);
   }
 
@@ -756,22 +773,11 @@ function QuestionFormForRequest({
           </Button>
         ) : null}
         {hasRecommendation ? (
-          <span
-            title={
-              missingRecommendation
-                ? "Some questions have no recommendation"
-                : undefined
-            }
-          >
-            <Button
-              type="button"
-              size="sm"
-              disabled={busy || missingRecommendation}
-              onClick={acceptAllRecommendations}
-            >
-              Accept all recommendations
-            </Button>
-          </span>
+          <AcceptRecommendationsButton
+            disabled={busy}
+            missingRecommendation={missingRecommendation}
+            onClick={acceptRecommendations}
+          />
         ) : null}
         <Button
           type="button"

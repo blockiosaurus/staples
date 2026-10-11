@@ -305,7 +305,7 @@ describe("IssueThreadInteractionCard", () => {
       },
     };
     const acceptButton = (host: HTMLElement) => Array.from(host.querySelectorAll("button"))
-      .find((button) => button.textContent?.trim() === "Accept all recommendations");
+      .find((button) => button.textContent?.trim() === "Accept recommendations");
 
     it("pre-selects recommended options", () => {
       const host = renderCard({ interaction: recommendedLegacy, onSubmitInteractionAnswers: vi.fn() });
@@ -317,14 +317,31 @@ describe("IssueThreadInteractionCard", () => {
     it("accepts all recommendations in one click", async () => {
       const onSubmitInteractionAnswers = vi.fn(async () => undefined);
       const host = renderCard({ interaction: recommendedLegacy, onSubmitInteractionAnswers });
-      await act(async () => {
-        host.querySelector<HTMLButtonElement>("#interaction-legacy-recommended-scope-small")!.click();
-      });
       await act(async () => acceptButton(host)!.click());
       expect(onSubmitInteractionAnswers).toHaveBeenCalledWith(
         expect.objectContaining({ id: "interaction-legacy-recommended" }),
         [
           { questionId: "scope", optionIds: ["large"] },
+          { questionId: "tools", optionIds: ["a"] },
+        ],
+      );
+    });
+
+    it("keeps a changed answer and fills only unanswered questions", async () => {
+      const onSubmitInteractionAnswers = vi.fn(async () => undefined);
+      const host = renderCard({ interaction: recommendedLegacy, onSubmitInteractionAnswers });
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>("#interaction-legacy-recommended-scope-small")!.click();
+      });
+      // Deselecting the only recommended choice leaves the question unanswered.
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>("#interaction-legacy-recommended-tools-a")!.click();
+      });
+      await act(async () => acceptButton(host)!.click());
+      expect(onSubmitInteractionAnswers).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "interaction-legacy-recommended" }),
+        [
+          { questionId: "scope", optionIds: ["small"] },
           { questionId: "tools", optionIds: ["a"] },
         ],
       );
@@ -349,7 +366,8 @@ describe("IssueThreadInteractionCard", () => {
       const mixedHost = renderCard({ interaction: mixed, onSubmitInteractionAnswers: vi.fn() });
       const accept = acceptButton(mixedHost)!;
       expect(accept.disabled).toBe(true);
-      expect(accept.closest("[title]")?.getAttribute("title")).toBe("Some questions have no recommendation");
+      const reason = document.getElementById(accept.getAttribute("aria-describedby")!);
+      expect(reason?.textContent).toBe("Some questions have no recommendation");
     });
   });
 
