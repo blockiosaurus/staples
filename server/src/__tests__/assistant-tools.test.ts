@@ -9,6 +9,9 @@ import {
   createAssistantTools,
   type AssistantToolContext,
 } from "../services/assistant-tools.js";
+const create = vi.hoisted(() => vi.fn());
+vi.mock("../services/issue-thread-interactions.js", () => ({ issueThreadInteractionService: () => ({ create }) }));
+vi.mock("../services/activity-log.js", () => ({ logActivity: vi.fn() }));
 import { McpApiError, type ApiDispatch } from "../services/public-mcp/capabilities.js";
 
 const companyId = "11111111-1111-4111-8111-111111111111";
@@ -170,5 +173,57 @@ describe("assistant run actor attribution", () => {
     expect(isDelegatedBoardSource("assistant_run")).toBe(true);
     expect(isDelegatedBoardSource("mcp_oauth")).toBe(true);
     expect(isDelegatedBoardSource("session")).toBe(false);
+  });
+});
+
+describe("staples_ask_questions", () => {
+  const issueRow = {
+    id: "77777777-7777-4777-8777-777777777777", companyId, status: "in_progress", assigneeAgentId: "assistant-agent",
+    conversationAgentId: "assistant-agent", conversationUserId: "person-1",
+  };
+  const askDb = () => ({ select: () => ({ from: () => ({ where: async () => [issueRow] }) }) }) as unknown as Db;
+  const questions = [{
+    id: "owner", prompt: "Should I assign this to Riley?", required: true, answerMode: "single_select",
+    options: [{ id: "yes", label: "Yes, Riley", recommended: true }, { id: "no", label: "Someone else" }],
+  }];
+
+  it("is a write tool hidden from viewers", () => {
+    const t = tools(vi.fn() as unknown as ApiDispatch);
+    expect(ASSISTANT_WRITE_TOOL_NAMES).toContain("staples_ask_questions");
+    expect(t.definitions(true).some((d) => d.name === "staples_ask_questions")).toBe(true);
+    expect(t.definitions(false).some((d) => d.name === "staples_ask_questions")).toBe(false);
+  });
+
+  it("creates an Assistant-authored question card addressed to the person", async () => {
+    create.mockResolvedValueOnce({ id: "int-1", issueId: issueRow.id, kind: "ask_user_questions", status: "pending" });
+    const t = tools(vi.fn() as unknown as ApiDispatch, askDb());
+    const result = await t.call(context(), "staples_ask_questions", { title: "Quick check", questions });
+    expect(result.isError).toBeUndefined();
+    const [, data, actor] = create.mock.calls[0];
+    expect(actor).toEqual({ agentId: "assistant-agent", runId: context().runId });
+    expect(data).toMatchObject({
+      kind: "ask_user_questions", addresseeUserId: "person-1", continuationPolicy: "wake_assignee", sourceRunId: context().runId,
+    });
+    expect(data.idempotencyKey).toMatch(new RegExp(`^assistant-questions:${context().runId}:[0-9a-f]{16,}$`));
+    expect(data.payload.questionSet).toMatchObject({ schema: "paperclip.question_set.v1", title: "Quick check" });
+    expect(data.payload.questions[0].id).toBe("owner");
+  });
+
+  it("surfaces missing recommendations as a tool error listing the question ids", async () => {
+    create.mockRejectedValueOnce(Object.assign(new Error("Every question needs a recommended option"), {
+      status: 422, details: { code: "question_recommendation_required", questionIds: ["owner", "when"] },
+    }));
+    const t = tools(vi.fn() as unknown as ApiDispatch, askDb());
+    const result = await t.call(context(), "staples_ask_questions", { questions });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("owner, when");
+    expect(result.content[0].text).toContain("recommended");
+  });
+
+  it("refuses viewers and rejects more than 8 questions", async () => {
+    const t = tools(vi.fn() as unknown as ApiDispatch, askDb());
+    expect((await t.call(context("viewer"), "staples_ask_questions", { questions })).isError).toBe(true);
+    const many = Array.from({ length: 9 }, (_, i) => ({ ...questions[0], id: `q${i}` }));
+    expect((await t.call(context(), "staples_ask_questions", { questions: many })).isError).toBe(true);
   });
 });

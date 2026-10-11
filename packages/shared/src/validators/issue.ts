@@ -1310,7 +1310,7 @@ const paperclipQuestionOptionSchema = z.object({
   recommended: z.boolean().optional(),
 });
 
-const paperclipQuestionSchema = z
+export const paperclipQuestionSchema = z
   .object({
     id: z.string().min(1).max(160),
     header: z.string().max(1000).optional(),

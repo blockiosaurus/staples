@@ -1,8 +1,9 @@
 import type { Request } from "express";
 import { and, eq, inArray } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { agents, approvals, authUsers, companies, companyMemberships, issueThreadInteractions, issues, type Db } from "@paperclipai/db";
-import { COMPANY_BRIEF_MAX_CHARS, PROPOSED_ACTION_CATEGORIES, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, isAssistantAgent, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
+import { COMPANY_BRIEF_MAX_CHARS, PROPOSED_ACTION_CATEGORIES, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, createIssueThreadInteractionSchema, isAssistantAgent, paperclipQuestionSchema, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
@@ -24,7 +25,7 @@ export const ASSISTANT_READ_TOOL_NAMES = [
 /** Low-risk writes. Governed actions (finish, block, delete, configure, approvals) are not exposed. */
 export const ASSISTANT_WRITE_TOOL_NAMES = [
   "paperclip_create_task", "paperclip_add_comment", "paperclip_update_task", "staples_answer_question", "staples_pin_surface",
-  "staples_propose_action",
+  "staples_propose_action", "staples_ask_questions",
 ] as const;
 
 /** `paperclip_update_task` may only touch these fields. */
@@ -271,6 +272,21 @@ function assistantCapabilities(db: Db): Capability[] {
       run: async () => { throw new McpCapabilityError("Tool is unavailable to the Assistant."); },
     },
     {
+      name: ASK_QUESTIONS_TOOL, write: true,
+      description: [
+        "Ask the person up to 8 questions as a card in this conversation. Use it instead of asking in plain text. Ask only the questions that can be answered right now, in rounds, and number the ids in order (q1, q2, ...).",
+        "Every single_select or multi_select question must mark the option you recommend with recommended: true (exactly one for single_select), worded so that accepting it is a yes. Use answerMode text for open answers, and customAnswer { enabled: true } to allow an other answer.",
+        "After asking, end your turn: you are woken with the answers when the person submits. Do not guess the answers.",
+      ].join(" "),
+      schema: z.object({
+        ...companyField,
+        title: z.string().trim().max(240).optional().describe("Short heading for the card."),
+        questions: z.array(paperclipQuestionSchema).min(1).max(8),
+      }).strict(),
+      // Dispatched in createAssistantTools: it needs the run's conversation, not just the principal.
+      run: async () => { throw new McpCapabilityError("Tool is unavailable to the Assistant."); },
+    },
+    {
       name: "staples_get_company_brief",
       description: "Read the company brief (mission, glossary, key decisions) that every agent sees. Returns null when there is none. Read it before proposing a change so your proposal starts from the current text.",
       schema: z.object(companyField).strict(),
@@ -288,6 +304,7 @@ function assistantCapabilities(db: Db): Capability[] {
 }
 
 const PROPOSE_ACTION_TOOL = "staples_propose_action";
+const ASK_QUESTIONS_TOOL = "staples_ask_questions";
 
 /** Adapter config keys that run or shape a host process. */
 const COMMAND_LIKE_KEY = /command|^cmd$|args$|^env$|script|shell|executable|entrypoint|binary/i;
@@ -408,6 +425,57 @@ async function proposeAction(db: Db, context: AssistantToolContext, args: Record
   };
 }
 
+/**
+ * Ask the person questions as an Assistant-authored card on the run's own
+ * conversation. Created through the service (not the person's API session) so
+ * the card's author and source run are the Assistant; the answers wake it.
+ */
+async function askQuestions(db: Db, context: AssistantToolContext, args: Record<string, unknown>) {
+  const [issue] = await db.select({
+    id: issues.id, companyId: issues.companyId, status: issues.status, assigneeAgentId: issues.assigneeAgentId,
+    conversationAgentId: issues.conversationAgentId, conversationUserId: issues.conversationUserId,
+  }).from(issues).where(and(eq(issues.id, context.issueId), eq(issues.companyId, context.companyId)));
+  if (!issue || issue.conversationAgentId !== context.agentId || issue.conversationUserId !== context.userId) {
+    throw new McpCapabilityError("Questions can only be asked from this person's Assistant conversation.");
+  }
+  if (issue.assigneeAgentId !== context.agentId) {
+    throw new McpCapabilityError("This conversation is not assigned to the Assistant, so it could not be woken with the answers. Ask the person to reassign it first.");
+  }
+  const questions = args.questions as unknown[];
+  const title = typeof args.title === "string" && args.title ? args.title : undefined;
+  const questionSet = { schema: "paperclip.question_set.v1" as const, ...(title ? { title } : {}), questions };
+  const hash = createHash("sha256").update(JSON.stringify(questions)).digest("hex").slice(0, 24);
+  const data = createIssueThreadInteractionSchema.parse({
+    kind: "ask_user_questions",
+    continuationPolicy: "wake_assignee",
+    addresseeUserId: context.userId,
+    sourceRunId: context.runId,
+    idempotencyKey: `assistant-questions:${context.runId}:${hash}`,
+    ...(title ? { title } : {}),
+    payload: { version: 1, ...(title ? { title } : {}), questionSet },
+  });
+  let interaction;
+  try {
+    interaction = await issueThreadInteractionService(db).create(issue, data, { agentId: context.agentId, runId: context.runId });
+  } catch (error) {
+    const details = (error as { details?: { code?: string; questionIds?: string[] } }).details;
+    if (details?.code === "question_recommendation_required") {
+      const ids = (details.questionIds ?? []).join(", ");
+      throw new McpCapabilityError(`Every select question needs exactly one option marked recommended: true (at least one for multi_select). Fix these questions and ask again: ${ids}.`);
+    }
+    throw error;
+  }
+  await logActivity(db, {
+    companyId: context.companyId, actorType: "agent", actorId: context.agentId, agentId: context.agentId, runId: context.runId,
+    action: "issue.thread_interaction_created", entityType: "issue", entityId: issue.id,
+    details: { interactionId: interaction.id, interactionKind: interaction.kind, addresseeUserId: context.userId },
+  });
+  return {
+    interaction: { id: interaction.id, issueId: interaction.issueId, status: interaction.status },
+    next: "The person will see the question card. End your turn; you will be woken with their answers.",
+  };
+}
+
 function exposedSchema(schema: Capability["schema"]) {
   // companyId is authority, not input: the run's company is always used.
   return "companyId" in schema.shape ? schema.omit({ companyId: true }) : schema;
@@ -462,6 +530,8 @@ export function createAssistantTools(db: Db, options: { dispatch: ApiDispatch; o
         }
         const result = name === PROPOSE_ACTION_TOOL
           ? await proposeAction(db, context, args)
+          : name === ASK_QUESTIONS_TOOL
+          ? await askQuestions(db, context, args)
           : await c.run(assistantPrincipal(context), args, options.dispatch, origin);
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
       } catch (error) {
