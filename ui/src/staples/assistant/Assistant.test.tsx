@@ -536,6 +536,40 @@ describe("Assistant page and dock", () => {
       expect(shellRef!.pendingAsk).toBeNull();
     });
 
+    async function askAndNavigate(node: React.ReactNode, pathname: string) {
+      await act(async () => {
+        shellRef!.askAssistant({ text: "Hello" });
+        mocks.location = { ...mocks.location, pathname };
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <BreadcrumbProvider companyName="Acme">
+              <PanelProvider>
+                <AssistantProvider>{node}</AssistantProvider>
+              </PanelProvider>
+            </BreadcrumbProvider>
+          </QueryClientProvider>,
+        );
+      });
+      await settle();
+    }
+
+    it("keeps an ask issued in the same tick as a navigation to another page", async () => {
+      const tree = <><Capture /><HostPage crumbs={["Home"]} /></>;
+      await render(tree);
+      await askAndNavigate(tree, "/PAP/issues/PAP-99");
+      expect(dock()).not.toBeNull();
+      expect(shellRef!.pendingAsk?.text).toBe("Hello");
+    });
+
+    it("keeps an ask issued in the same tick as a navigation to the Assistant page", async () => {
+      const tree = <><Capture /><AssistantPage /><AssistantDock /></>;
+      await render(<><Capture /><HostPage crumbs={["Home"]} /></>);
+      await askAndNavigate(tree, "/PAP/assistant");
+      expect(container.textContent).toContain("Conversation with Assistant");
+      expect(dock()).toBeNull();
+      expect(shellRef!.pendingAsk?.text).toBe("Hello");
+    });
+
     it("keeps the dock closed on the Assistant page and clears a pending draft on company switch", async () => {
       mocks.location.pathname = "/PAP/assistant";
       await render(<><Capture /><AssistantPage /><AssistantDock /></>);

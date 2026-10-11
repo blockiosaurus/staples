@@ -163,14 +163,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setAskState((current) => (current && current.companyId !== companyId ? null : current));
   }, [companyId]);
-  // An ask nobody took (dock closed, or the person navigated away) must not
-  // fire later on an unrelated open.
+  // An ask nobody took (dock closed) must not fire later on an unrelated open.
+  // No route-change clear: an ask issued together with a navigation to the
+  // Assistant page must survive until that page takes it.
   useEffect(() => {
     if (!dockOpen && !onAssistantPage) setAskState(null);
   }, [dockOpen, onAssistantPage]);
-  useEffect(() => {
-    setAskState(null);
-  }, [location.pathname]);
   const pendingAsk = useMemo<PendingAssistantAsk | null>(
     () => (askState && askState.companyId === companyId
       ? { text: askState.text, send: askState.send, nonce: askState.nonce }
