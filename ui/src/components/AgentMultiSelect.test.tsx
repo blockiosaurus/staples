@@ -92,7 +92,7 @@ describe("AgentMultiSelect", () => {
     expect(onChange.mock.calls[0]?.[0]).toEqual(new Set(["agent-17"]));
   });
 
-  it("excludes the built-in Assistant from the selectable agents", async () => {
+  it("offers the built-in Assistant by default (non-assignee pickers)", async () => {
     const agents = [
       { id: "agent-1", name: "Ralph" },
       {
@@ -105,6 +105,30 @@ describe("AgentMultiSelect", () => {
     root = createRoot(container);
     act(() => {
       root?.render(<AgentMultiSelect agents={agents} selectedAgentIds={new Set()} onChange={vi.fn()} />);
+    });
+
+    act(() => {
+      container.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(document.body.textContent).toContain("Ralph");
+    expect(document.body.textContent).toContain("Built-in Assistant");
+  });
+
+  it("excludes the built-in Assistant when excludeAssistant is set (assignee pickers)", async () => {
+    const agents = [
+      { id: "agent-1", name: "Ralph" },
+      {
+        id: "assistant-1",
+        name: "Built-in Assistant",
+        metadata: { paperclipBuiltInAgent: { key: "assistant" } },
+      },
+    ];
+
+    root = createRoot(container);
+    act(() => {
+      root?.render(<AgentMultiSelect agents={agents} selectedAgentIds={new Set()} excludeAssistant onChange={vi.fn()} />);
     });
 
     act(() => {

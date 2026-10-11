@@ -40,6 +40,9 @@ export const BOARD_ROUTE_ROOTS = [
   "pipelines",
   "review-queue",
   "learnings",
+  "runs",
+  "budgets",
+  "status-cards",
 ] as const;
 
 /** Top-level routes that live outside any company prefix. */

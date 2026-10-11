@@ -136,6 +136,7 @@ export function AgentMultiSelect({
   emptyMessage = "No agents yet.",
   showSelectionPreview = true,
   onOpenChange,
+  excludeAssistant = false,
 }: {
   agents: AgentMultiSelectOption[];
   selectedAgentIds: Set<string>;
@@ -158,9 +159,13 @@ export function AgentMultiSelect({
   emptyMessage?: string;
   showSelectionPreview?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Set where the selection assigns work: the built-in Assistant is not a staff agent. */
+  excludeAssistant?: boolean;
 }) {
-  // The built-in Assistant is not a staff agent; never offer it for selection.
-  const agents = useMemo(() => excludeAssistantAgents(agentsProp), [agentsProp]);
+  const agents = useMemo(
+    () => (excludeAssistant ? excludeAssistantAgents(agentsProp) : agentsProp),
+    [agentsProp, excludeAssistant],
+  );
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [draftAgentIds, setDraftAgentIds] = useState<Set<string>>(new Set(selectedAgentIds));
