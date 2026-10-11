@@ -1,6 +1,6 @@
 ---
 name: staples-plan
-description: Turn a finished interview into a concrete plan (brief, goal, project, agent roles and 3 to 12 starter tasks with blocking order) and propose it for the person to confirm in one card. Use right after the staples-interview skill ends with a confirmed shared understanding, or when the person asks you to turn an agreed idea into a team and tasks.
+description: Turn a finished interview into a plan (brief, goal, project, agent roles, 3 to 12 starter tasks with blocking order) and propose it for the person to confirm in one card. Use right after staples-interview ends with a confirmed understanding, or to turn an agreed idea into a team and tasks.
 ---
 
 # Plan

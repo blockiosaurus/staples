@@ -1,6 +1,6 @@
 ---
 name: staples-interview
-description: Interview a person until you both understand what they want to build or change, using rounds of question cards with a recommended answer for each question. Use when someone describes a new company, team, project or initiative, when a request is too vague to act on, or when they ask to be challenged on a plan.
+description: Interview a person until you both understand what they want to build or change, in rounds of question cards with a recommended answer each. Use when someone describes a new company, team, project or initiative, when a request is too vague to act on, or when they ask to be challenged on a plan.
 ---
 
 # Interview

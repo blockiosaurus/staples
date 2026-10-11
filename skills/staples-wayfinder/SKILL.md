@@ -1,6 +1,6 @@
 ---
 name: staples-wayfinder
-description: Plan a big, foggy initiative (too large for one conversation) as a decision map, a parent task with child decision tasks and blockers, then settle the decisions with the person one at a time. Use when someone brings a large initiative whose route is unclear, such as a launch, a new line of business or a major change, or when they return to continue an existing map.
+description: Plan a big, foggy initiative as a decision map (a parent task with child decision tasks and blockers), then settle the decisions with the person one at a time. Use for a large initiative with an unclear route, such as a launch or a new line of business, or to continue an existing map.
 ---
 
 # Wayfinder
