@@ -443,6 +443,26 @@ describe("Layout", () => {
       expect(container.textContent).toContain("Outlet content");
       await act(async () => root.unmount());
     });
+
+    it.each(["/PAP/agents", "/PAP/agents/writer", "/PAP/apps", "/PAP/issues/PAP-1", "/PAP/approvals/approval-1"])(
+      "keeps %s, which the Assistant links to, reachable in stage 0",
+      async (pathname) => {
+        mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+        currentPathname = pathname;
+        const root = await renderLayout();
+        expect(container.querySelector("[data-testid='stage-zero-shell']")).toBeNull();
+        expect(container.textContent).toContain("Outlet content");
+        await act(async () => root.unmount());
+      },
+    );
+
+    it("still shows only the Assistant on other company pages in stage 0", async () => {
+      mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+      currentPathname = "/PAP/projects";
+      const root = await renderLayout();
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).not.toBeNull();
+      await act(async () => root.unmount());
+    });
   });
 
   it("does not render the deployment explainer in the shared layout", async () => {

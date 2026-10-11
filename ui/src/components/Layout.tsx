@@ -87,6 +87,13 @@ const RESERVED_APP_SUBPATHS = new Set([
   "app",
 ]);
 
+/**
+ * Company route roots that render in the normal shell even in stage 0:
+ * settings, brief and organization (`company`, `companies`), profiles (`u`),
+ * and the pages the Assistant sends people to.
+ */
+const STAGE_ZERO_EXEMPT_ROOTS = new Set(["company", "companies", "u", "agents", "apps", "issues", "approvals"]);
+
 export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   return (
     <AssistantProvider>
@@ -238,12 +245,14 @@ function LayoutShell({ sidebarSections }: { sidebarSections?: ReactNode }) {
     surface: ContextualSidebarSurface | null;
   } | null>(null);
   // Stage 0: no staff agents yet, so the Assistant is the whole app. Settings,
-  // brief, organization and profile pages stay reachable in the normal shell.
+  // brief, organization and profile pages stay reachable in the normal shell,
+  // as do the pages the Assistant links to (agents, connectors, tasks and
+  // approvals), so its advice never points at a page that cannot open.
   // While signals load, show a neutral spinner rather than flashing the sidebar.
   const { signals, loaded: signalsLoaded, failed: signalsFailed } = useCompanySignals(selectedCompanyId);
   const stageZeroRoot = companyPathSegments[0]?.toLowerCase();
   const stageZeroExempt = !companyPrefix || hasUnknownCompanyPrefix
-    || ["company", "companies", "u"].includes(stageZeroRoot ?? "");
+    || STAGE_ZERO_EXEMPT_ROOTS.has(stageZeroRoot ?? "");
   const decidedShell: "stage_zero" | "normal" | null = !selectedCompanyId || stageZeroExempt || signalsFailed
     ? "normal"
     : !signalsLoaded
