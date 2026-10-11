@@ -547,6 +547,96 @@ describeEmbeddedPostgres("briefing service", () => {
     expect(briefing.counts.doneRecently).toBe(2);
   });
 
+  it("keeps conversation, hidden and filtered-out issues out of live runs and dedupes issue-less runs per agent", async () => {
+    const { companyId, workerId, errorAgentId } = await seedCompany("BRV");
+    const now = Date.now();
+    const visibleIssueId = await insertIssue({
+      companyId, identifier: "BRV-1", title: "Real work", status: "in_progress", assigneeAgentId: workerId,
+    });
+    const ownChatId = randomUUID();
+    const otherChatId = randomUUID();
+    const hiddenIssueId = randomUUID();
+    await db.insert(issues).values([
+      {
+        id: ownChatId, companyId, identifier: "BRV-2", title: "My private chat with the assistant", status: "in_progress",
+        priority: "medium", assigneeAgentId: workerId, conversationAgentId: workerId, conversationUserId: "board-user",
+        conversationState: "active", originKind: "manual", originFingerprint: "default",
+      },
+      {
+        id: otherChatId, companyId, identifier: "BRV-3", title: "Another member's chat", status: "in_progress",
+        priority: "medium", assigneeAgentId: errorAgentId, conversationAgentId: errorAgentId, conversationUserId: "other-user",
+        conversationState: "active", originKind: "manual", originFingerprint: "default",
+      },
+      {
+        id: hiddenIssueId, companyId, identifier: "BRV-4", title: "Hidden harness work", status: "in_progress",
+        priority: "medium", assigneeAgentId: workerId, hiddenAt: new Date(), originKind: "manual", originFingerprint: "default",
+      },
+    ]);
+    const visibleRunId = randomUUID();
+    const issueLessNewestId = randomUUID();
+    const issueLessOlderId = randomUUID();
+    await db.insert(heartbeatRuns).values([
+      { id: visibleRunId, companyId, agentId: workerId, status: "running", scopeKind: "issue", issueId: visibleIssueId, createdAt: new Date(now - 5000) },
+      { id: randomUUID(), companyId, agentId: workerId, status: "running", scopeKind: "issue", issueId: ownChatId, createdAt: new Date(now - 4000) },
+      { id: randomUUID(), companyId, agentId: errorAgentId, status: "running", scopeKind: "issue", issueId: otherChatId, createdAt: new Date(now - 3000) },
+      { id: randomUUID(), companyId, agentId: workerId, status: "queued", scopeKind: "issue", issueId: hiddenIssueId, createdAt: new Date(now - 2000) },
+      { id: issueLessNewestId, companyId, agentId: workerId, status: "queued", createdAt: new Date(now - 1000) },
+      { id: issueLessOlderId, companyId, agentId: workerId, status: "running", createdAt: new Date(now - 6000) },
+    ]);
+
+    // An instance admin reads every issue, yet still never sees anyone's chats.
+    const adminActor = { ...boardActor(companyId), source: "session" as const, isInstanceAdmin: true };
+    for (const actor of [boardActor(companyId), adminActor]) {
+      const briefing = await briefingService(db).get({ companyId, userId: "board-user", actor });
+      const serialized = JSON.stringify(briefing);
+      for (const hidden of ["My private chat", "Another member's chat", "Hidden harness work", ownChatId, otherChatId, hiddenIssueId]) {
+        expect(serialized).not.toContain(hidden);
+      }
+      const liveRuns = briefing.inProgress.filter((item) => item.kind === "live_run");
+      expect(liveRuns.map((item) => item.id)).toEqual([issueLessNewestId, visibleRunId]);
+      expect(liveRuns[0]).toMatchObject({ title: "Riley", href: `/agents/${workerId}`, issueId: null });
+      expect(liveRuns.some((item) => item.title === "Broken Agent")).toBe(false);
+      expect(briefing.inProgress.filter((item) => item.kind === "active_task")).toEqual([]);
+      expect(briefing.counts.inProgress).toBe(2);
+    }
+  });
+
+  it("never shows the title of an issue the person cannot read in an interaction subtitle", async () => {
+    const { companyId, workerId } = await seedCompany("BRU");
+    const privateIssueId = randomUUID();
+    await db.insert(issues).values({
+      id: privateIssueId, companyId, identifier: "BRU-1", title: "Secret acquisition plan", status: "in_progress",
+      priority: "medium", assigneeAgentId: workerId, visibility: "private", createdByUserId: "someone-else",
+      originKind: "manual", originFingerprint: "default",
+    });
+    const interactionId = randomUUID();
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId, companyId, issueId: privateIssueId, kind: "request_confirmation", status: "pending",
+      continuationPolicy: "wake_assignee", payload: { version: 1, prompt: "Go ahead?" },
+    });
+    const feed = {
+      items: [{
+        id: `issue_thread_interaction:${interactionId}`,
+        sourceKind: "issue_thread_interaction",
+        subject: {
+          kind: "interaction", id: interactionId, companyId, title: "Confirm", identifier: null, status: "pending",
+          href: `/BRU/issues/BRU-1#interaction-${interactionId}`, metadata: {},
+        },
+        whyNow: "why",
+        relatedIssue: null,
+        originAgentName: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      }],
+    } as unknown as AttentionFeed;
+    const memberActor = { ...boardActor(companyId), source: "session" as const };
+
+    const briefing = await briefingService(db, { attention: { list: async () => feed } })
+      .get({ companyId, userId: "board-user", actor: memberActor });
+
+    expect(briefing.needsYou.map((item) => item.id)).toEqual([interactionId]);
+    expect(JSON.stringify(briefing)).not.toContain("Secret acquisition plan");
+  });
+
   it("caps each section while counts stay uncapped", async () => {
     const { companyId, workerId } = await seedCompany("BRC");
     const now = Date.now();

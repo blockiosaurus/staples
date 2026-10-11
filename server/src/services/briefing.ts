@@ -19,6 +19,7 @@ import {
 import { attentionService } from "./attention.js";
 import { issueReadSqlCondition, type AuthorizationActor } from "./authorization.js";
 import { issueService } from "./issues.js";
+import { executionIssueCondition } from "./issue-visibility.js";
 import { listLiveRuns } from "./live-runs.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -198,7 +199,12 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     return row?.issuePrefix ?? "PAP";
   }
 
-  async function needsYou(input: BriefingGetInput, prefix: string, nowIso: string): Promise<BriefingItem[]> {
+  async function needsYou(
+    input: BriefingGetInput,
+    prefix: string,
+    readCondition: Awaited<ReturnType<typeof issueReadSqlCondition>>,
+    nowIso: string,
+  ): Promise<BriefingItem[]> {
     const feed = await attention.list(input.companyId, {
       userId: input.userId,
       actor: input.actor,
@@ -227,7 +233,7 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     const issueRows = interactionIssueIds.length === 0 ? [] : await db
       .select({ id: issues.id, identifier: issues.identifier, title: issues.title })
       .from(issues)
-      .where(and(eq(issues.companyId, input.companyId), inArray(issues.id, interactionIssueIds)));
+      .where(and(eq(issues.companyId, input.companyId), inArray(issues.id, interactionIssueIds), readCondition));
     const issueById = new Map(issueRows.map((row) => [row.id, row]));
 
     const items = kept.map((item) => toNeedsYouItem(item, prefix, nowIso, interactionById, issueById));
@@ -303,17 +309,27 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     const agentNameById = new Map(agentRows.map((row) => [row.id, row.name]));
 
     const runIssueIds = [...new Set(liveRuns.map((run) => run.issueId).filter((id): id is string => !!id))];
+    // Conversation, hidden and harness issues never surface here, and only
+    // issues the person can read do.
     const readableRunIssues = runIssueIds.length === 0 ? [] : await db
       .select({ id: issues.id, identifier: issues.identifier, title: issues.title })
       .from(issues)
-      .where(and(eq(issues.companyId, input.companyId), inArray(issues.id, runIssueIds), readCondition));
+      .where(and(
+        eq(issues.companyId, input.companyId),
+        inArray(issues.id, runIssueIds),
+        executionIssueCondition(),
+        readCondition,
+      ));
     const runIssueById = new Map(readableRunIssues.map((issue) => [issue.id, issue]));
 
     const liveItems: BriefingItem[] = [];
     const representedIssueIds = new Set<string>();
+    const representedAgentIds = new Set<string>();
     for (const run of liveRuns) {
-      const issue = run.issueId ? runIssueById.get(run.issueId) ?? null : null;
-      if (issue) {
+      if (run.issueId) {
+        const issue = runIssueById.get(run.issueId);
+        // The run's issue was filtered out (conversation, hidden, unreadable): skip the run entirely.
+        if (!issue) continue;
         // One row per task: the newest live run represents it.
         if (representedIssueIds.has(issue.id)) continue;
         representedIssueIds.add(issue.id);
@@ -327,6 +343,9 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
           createdAt: toIso(run.startedAt ?? run.createdAt, nowIso),
         });
       } else {
+        // Issue-less runs: one row per agent.
+        if (representedAgentIds.has(run.agentId)) continue;
+        representedAgentIds.add(run.agentId);
         liveItems.push({
           kind: "live_run",
           id: run.id,
@@ -403,7 +422,7 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         issueReadSqlCondition(db, input.actor),
       ]);
       const [needs, moving, done] = await Promise.all([
-        needsYou(input, prefix, nowIso),
+        needsYou(input, prefix, readCondition, nowIso),
         inProgress(input, readCondition, nowIso),
         doneRecently(input, readCondition, now, nowIso),
       ]);
