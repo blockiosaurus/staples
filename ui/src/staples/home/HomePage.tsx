@@ -62,18 +62,33 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+/** Same wording the Assistant composer uses when it can't take a message. */
+export const ASK_UNAVAILABLE_NOTICE =
+  "The Assistant can't take messages right now — your message is in the box to send later.";
+
 function AskComposer() {
   const askAssistant = useAskAssistant();
   const [text, setText] = useState("");
+  const [unavailable, setUnavailable] = useState(false);
   const trimmed = text.trim();
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (!trimmed) return;
-    askAssistant({ text: trimmed, send: true });
-    setText("");
+    // Clear only once the Assistant took the message; otherwise keep it here.
+    if (askAssistant({ text: trimmed, send: true })) {
+      setText("");
+      setUnavailable(false);
+    } else {
+      setUnavailable(true);
+    }
   };
   return (
     <Section title="Ask the Assistant">
+      {unavailable ? (
+        <p role="alert" className="text-sm text-destructive">
+          {ASK_UNAVAILABLE_NOTICE}
+        </p>
+      ) : null}
       <form className="flex items-end gap-2" onSubmit={submit}>
         <Textarea
           aria-label="Ask the Assistant"
@@ -174,6 +189,9 @@ export function HomePage() {
     return <p className="p-4 text-sm text-muted-foreground">Loading your briefing…</p>;
   }
 
+  // A failed background refresh keeps the cached briefing on screen, but says so.
+  const refreshFailed = briefingQuery.isError;
+
   const needsYou = briefing.needsYou.filter((item) => !removed.has(briefingItemKey(item)));
   const hiddenCount = briefing.needsYou.length - needsYou.length;
   const needsYouCount = Math.max(0, briefing.counts.needsYou - hiddenCount);
@@ -186,6 +204,21 @@ export function HomePage() {
         <p className="text-sm text-muted-foreground" data-testid="briefing-summary">
           {summary}
         </p>
+        {refreshFailed ? (
+          <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="briefing-refresh-error">
+            <span>Couldn't refresh — showing what we had.</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={briefingQuery.isFetching}
+              onClick={() => void briefingQuery.refetch()}
+            >
+              <RotateCw aria-hidden="true" />
+              Retry
+            </Button>
+          </div>
+        ) : null}
       </header>
 
       <Section title="Needs you">

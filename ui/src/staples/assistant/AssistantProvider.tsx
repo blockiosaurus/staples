@@ -70,8 +70,10 @@ export interface AssistantShellValue {
   /**
    * Open the Assistant with `text` in the composer (or send it). Uses the
    * conversation already on screen when there is one, else the dock.
+   * Returns false when the ask was not taken: no company is selected, or a
+   * `send` ask while the Assistant is unavailable (nothing could deliver it).
    */
-  askAssistant: (input: AskAssistantInput) => void;
+  askAssistant: (input: AskAssistantInput) => boolean;
   /** Undelivered ask for the current company; the composer applies it once. */
   pendingAsk: PendingAssistantAsk | null;
   /** The composer took the ask with this nonce; stop offering it. */
@@ -177,9 +179,14 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   );
   const onAssistantPageRef = useRef(onAssistantPage);
   onAssistantPageRef.current = onAssistantPage;
-  const askAssistant = useCallback((input: AskAssistantInput) => {
+  const availableRef = useRef(available);
+  availableRef.current = available;
+  const askAssistant = useCallback((input: AskAssistantInput): boolean => {
     const currentCompanyId = companyIdRef.current;
-    if (!currentCompanyId) return;
+    if (!currentCompanyId) return false;
+    // An auto-send ask with no Assistant to take it would be dropped: refuse it
+    // so the caller keeps the person's text.
+    if (input.send === true && !availableRef.current) return false;
     askNonce.current += 1;
     setAskState({
       text: composeAskText(input),
@@ -188,6 +195,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       companyId: currentCompanyId,
     });
     if (!onAssistantPageRef.current) setDockOpen(true);
+    return true;
   }, [setDockOpen]);
   const consumeAsk = useCallback((nonce: number) => {
     setAskState((current) => (current && current.nonce === nonce ? null : current));
@@ -226,10 +234,10 @@ export function useAssistantShell(): AssistantShellValue | null {
 
 /**
  * Open the Assistant from any page with a pre-filled (or auto-sent) message.
- * A no-op outside the app shell.
+ * A no-op (returning false) outside the app shell.
  */
 export function useAskAssistant(): AssistantShellValue["askAssistant"] {
   const shell = useAssistantShell();
   const askAssistant = shell?.askAssistant;
-  return useCallback((input: AskAssistantInput) => askAssistant?.(input), [askAssistant]);
+  return useCallback((input: AskAssistantInput) => askAssistant?.(input) ?? false, [askAssistant]);
 }

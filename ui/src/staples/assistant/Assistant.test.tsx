@@ -528,6 +528,25 @@ describe("Assistant page and dock", () => {
       expect(shellRef!.pendingAsk!.send).toBe(true);
     });
 
+    it("reports that an ask was taken", async () => {
+      await render(<><Capture /><HostPage crumbs={["Home"]} /></>);
+      let taken: boolean | undefined;
+      await act(async () => { taken = shellRef!.askAssistant({ text: "Hello", send: true }); });
+      expect(taken).toBe(true);
+      expect(shellRef!.pendingAsk?.send).toBe(true);
+    });
+
+    it("refuses an auto-send ask when the Assistant cannot be reached", async () => {
+      mocks.assistantGet.mockRejectedValue(new ApiError("Assistant down", 404, null));
+      await render(<><Capture /><HostPage crumbs={["Home"]} /></>);
+      await settle();
+      expect(shellRef!.available).toBe(false);
+      let taken: boolean | undefined;
+      await act(async () => { taken = shellRef!.askAssistant({ text: "Hello", send: true }); });
+      expect(taken).toBe(false);
+      expect(shellRef!.pendingAsk).toBeNull();
+    });
+
     it("drops a never-consumed ask when the dock closes", async () => {
       await render(<><Capture /><HostPage crumbs={["Home"]} /></>);
       await act(async () => shellRef!.askAssistant({ text: "Hello" }));

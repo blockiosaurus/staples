@@ -8,7 +8,7 @@ import type { Briefing, BriefingItem } from "@paperclipai/shared";
 import { BreadcrumbProvider, useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { ApiError } from "@/api/client";
 import { queryKeys } from "@/lib/queryKeys";
-import { BRIEFING_REFETCH_INTERVAL_MS, HomePage } from "./HomePage";
+import { ASK_UNAVAILABLE_NOTICE, BRIEFING_REFETCH_INTERVAL_MS, HomePage } from "./HomePage";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -294,8 +294,55 @@ describe("HomePage", () => {
     });
   });
 
+  async function typeInComposer(value: string) {
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Ask the Assistant"]')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(textarea, value);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    return textarea;
+  }
+
+  it("keeps the composer text and says so when the Assistant can't take it", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture());
+    mocks.askAssistant.mockReturnValue(false);
+    await render();
+    const textarea = await typeInComposer("What should I focus on today?");
+    await click(buttonIn(container, "Send"));
+    expect(mocks.askAssistant).toHaveBeenCalledWith({ text: "What should I focus on today?", send: true });
+    expect(textarea.value).toBe("What should I focus on today?");
+    expect(section("Ask the Assistant")?.querySelector('[role="alert"]')?.textContent).toBe(ASK_UNAVAILABLE_NOTICE);
+
+    mocks.askAssistant.mockReturnValue(true);
+    await click(buttonIn(container, "Send"));
+    expect(textarea.value).toBe("");
+    expect(section("Ask the Assistant")?.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("keeps the cached briefing and offers a retry when a background refresh fails", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture());
+    await render();
+    expect(container.querySelector('[data-testid="briefing-refresh-error"]')).toBeNull();
+    mocks.getBriefing.mockRejectedValue(new Error("Server unavailable"));
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.briefing("company-1") });
+    });
+    await settle();
+    const notice = container.querySelector<HTMLElement>('[data-testid="briefing-refresh-error"]');
+    expect(notice?.getAttribute("role")).toBe("status");
+    expect(notice?.textContent).toContain("Couldn't refresh — showing what we had.");
+    expect(section("Needs you")?.querySelectorAll('[data-testid="briefing-row"]')).toHaveLength(3);
+
+    mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [] }));
+    await click(buttonIn(notice, "Retry"));
+    expect(container.querySelector('[data-testid="briefing-refresh-error"]')).toBeNull();
+    expect(container.querySelector('[data-testid="briefing-summary"]')?.textContent).toContain("Nothing needs you");
+  });
+
   it("sends the composer text to the Assistant", async () => {
     mocks.getBriefing.mockResolvedValue(fixture());
+    mocks.askAssistant.mockReturnValue(true);
     await render();
     const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Ask the Assistant"]')!;
     const send = buttonIn(container, "Send") as HTMLButtonElement;
