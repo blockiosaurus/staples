@@ -287,6 +287,72 @@ describe("IssueThreadInteractionCard", () => {
     expect(otherLink?.className).toContain("underline");
   });
 
+  describe("legacy question recommendations", () => {
+    const recommendedLegacy = {
+      ...pendingAskUserQuestionsInteraction,
+      id: "interaction-legacy-recommended",
+      payload: {
+        version: 1 as const,
+        submitLabel: "Send answers",
+        questions: [
+          { id: "scope", prompt: "Scope?", selectionMode: "single" as const, required: true, options: [
+            { id: "small", label: "Small" }, { id: "large", label: "Large", recommended: true },
+          ] },
+          { id: "tools", prompt: "Tools?", selectionMode: "multi" as const, required: false, options: [
+            { id: "a", label: "A", recommended: true }, { id: "b", label: "B" },
+          ] },
+        ],
+      },
+    };
+    const acceptButton = (host: HTMLElement) => Array.from(host.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Accept all recommendations");
+
+    it("pre-selects recommended options", () => {
+      const host = renderCard({ interaction: recommendedLegacy, onSubmitInteractionAnswers: vi.fn() });
+      expect(host.querySelector("#interaction-legacy-recommended-scope-large")?.getAttribute("aria-checked")).toBe("true");
+      expect(host.querySelector("#interaction-legacy-recommended-scope-small")?.getAttribute("aria-checked")).toBe("false");
+      expect(host.querySelector("#interaction-legacy-recommended-tools-a")?.getAttribute("aria-checked")).toBe("true");
+    });
+
+    it("accepts all recommendations in one click", async () => {
+      const onSubmitInteractionAnswers = vi.fn(async () => undefined);
+      const host = renderCard({ interaction: recommendedLegacy, onSubmitInteractionAnswers });
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>("#interaction-legacy-recommended-scope-small")!.click();
+      });
+      await act(async () => acceptButton(host)!.click());
+      expect(onSubmitInteractionAnswers).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "interaction-legacy-recommended" }),
+        [
+          { questionId: "scope", optionIds: ["large"] },
+          { questionId: "tools", optionIds: ["a"] },
+        ],
+      );
+    });
+
+    it("disables accept-all when a required question has no recommendation", () => {
+      const host = renderCard({
+        interaction: pendingAskUserQuestionsInteraction,
+        onSubmitInteractionAnswers: vi.fn(),
+      });
+      // The default fixture carries no recommendations at all, so accept-all is hidden.
+      expect(acceptButton(host)).toBeUndefined();
+      act(() => root?.unmount());
+      container?.remove();
+      const mixed = {
+        ...recommendedLegacy,
+        payload: { ...recommendedLegacy.payload, questions: [
+          recommendedLegacy.payload.questions[1]!,
+          { ...recommendedLegacy.payload.questions[0]!, options: [{ id: "small", label: "Small" }, { id: "large", label: "Large" }] },
+        ] },
+      };
+      const mixedHost = renderCard({ interaction: mixed, onSubmitInteractionAnswers: vi.fn() });
+      const accept = acceptButton(mixedHost)!;
+      expect(accept.disabled).toBe(true);
+      expect(accept.closest("[title]")?.getAttribute("title")).toBe("Some questions have no recommendation");
+    });
+  });
+
   it("submits written Other answers for pending questions", async () => {
     const onSubmitInteractionAnswers = vi.fn(async () => undefined);
     const host = renderCard({

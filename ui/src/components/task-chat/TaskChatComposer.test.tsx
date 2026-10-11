@@ -2887,7 +2887,9 @@ describe("TaskChatComposer", () => {
         (button) => button.textContent?.trim() === "Production",
       );
       expect(staging?.getAttribute("data-recommended")).toBe("true");
-      expect(staging?.className.split(" ")).toContain("bg-muted/50");
+      // The recommendation starts selected; deselecting it keeps its tint.
+      expect(staging?.getAttribute("data-selected")).toBe("true");
+      expect(staging?.className.split(" ")).toContain("bg-foreground/5");
       expect(
         production?.className
           .split(" ")
@@ -2897,8 +2899,8 @@ describe("TaskChatComposer", () => {
       ).toBe(false);
 
       flushSync(() => staging?.click());
-      expect(staging?.getAttribute("data-selected")).toBe("true");
-      expect(staging?.className.split(" ")).toContain("bg-foreground/5");
+      expect(staging?.getAttribute("data-selected")).toBe("false");
+      expect(staging?.className.split(" ")).toContain("bg-muted/50");
     });
 
     it("hides Skip when the takeover already provides a request-changes path", () => {

@@ -112,6 +112,25 @@ function answerError(
   return null;
 }
 
+/** The asker's recommended answer, or null when the question carries none. */
+function recommendedAnswer(question: Question): Answer | null {
+  if (question.answerMode === "text") {
+    return question.initialText !== undefined && question.initialText.trim()
+      ? { text: question.initialText }
+      : null;
+  }
+  const selectedOptionIds = (question.options ?? [])
+    .filter((option) => option.recommended === true)
+    .map((option) => option.id);
+  if (selectedOptionIds.length === 0) return null;
+  return {
+    selectedOptionIds:
+      question.answerMode === "single_select"
+        ? selectedOptionIds.slice(0, 1)
+        : selectedOptionIds,
+  };
+}
+
 function SelectOption({
   id,
   label,
@@ -249,13 +268,20 @@ function QuestionFormForRequest({
   onCancel,
 }: QuestionFormProps) {
   const takeoverActions = useTaskChatComposerTakeoverActions();
-  // A provider default is an editable draft only. An existing response or
-  // saved draft, including an explicitly cleared value, always wins. State
-  // initialization runs once so request refreshes cannot replace user edits.
+  // A provider default or recommended option is an editable draft only. An
+  // existing response or saved draft, including an explicitly cleared value,
+  // always wins. State initialization runs once so request refreshes cannot
+  // replace user edits.
   const startingAnswers = initialResponse?.answers ?? Object.fromEntries(
-    questionSet.questions
-      .filter((question) => question.answerMode === "text" && question.initialText !== undefined)
-      .map((question) => [question.id, { text: question.initialText! }]),
+    questionSet.questions.flatMap((question) => {
+      if (question.answerMode === "text") {
+        return question.initialText !== undefined
+          ? [[question.id, { text: question.initialText }]]
+          : [];
+      }
+      const recommended = recommendedAnswer(question);
+      return recommended ? [[question.id, recommended]] : [];
+    }),
   );
   const initialDraft = draftKey
     ? loadStructuredDraft<{
@@ -324,6 +350,17 @@ function QuestionFormForRequest({
   );
   const allValid = Object.values(validationErrors).every(
     (value) => value == null,
+  );
+  const hasRecommendation = questionSet.questions.some(
+    (candidate) => recommendedAnswer(candidate) != null,
+  );
+  // A required question with no recommendation must already be answered for
+  // "Accept all" to send a complete form.
+  const missingRecommendation = questionSet.questions.some(
+    (candidate) =>
+      candidate.required &&
+      recommendedAnswer(candidate) == null &&
+      !answerHasValue(answers[candidate.id]),
   );
   if (!question)
     return (
@@ -423,6 +460,18 @@ function QuestionFormForRequest({
     } finally {
       setWorking(null);
     }
+  }
+
+  function acceptAllRecommendations() {
+    if (missingRecommendation) return;
+    const accepted: Record<string, Answer> = { ...answers };
+    for (const candidate of questionSet.questions) {
+      const recommended = recommendedAnswer(candidate);
+      if (recommended) accepted[candidate.id] = recommended;
+    }
+    setAnswers(accepted);
+    setCustomActive({});
+    void submit(accepted);
   }
 
   async function cancel() {
@@ -706,9 +755,28 @@ function QuestionFormForRequest({
             Skip
           </Button>
         ) : null}
+        {hasRecommendation ? (
+          <span
+            title={
+              missingRecommendation
+                ? "Some questions have no recommendation"
+                : undefined
+            }
+          >
+            <Button
+              type="button"
+              size="sm"
+              disabled={busy || missingRecommendation}
+              onClick={acceptAllRecommendations}
+            >
+              Accept all recommendations
+            </Button>
+          </span>
+        ) : null}
         <Button
           type="button"
           size="sm"
+          variant={hasRecommendation ? "outline" : "default"}
           disabled={busy || (isLastPage ? !allValid : currentError != null)}
           onClick={progressOrSubmit}
         >

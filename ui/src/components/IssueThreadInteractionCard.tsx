@@ -990,6 +990,7 @@ function QuestionOptionButton({
   id,
   label,
   description,
+  recommended,
   selected,
   selectionMode,
   onClick,
@@ -997,6 +998,7 @@ function QuestionOptionButton({
   id: string;
   label: string;
   description?: string | null;
+  recommended?: boolean;
   selected: boolean;
   selectionMode: "single" | "multi";
   onClick: () => void;
@@ -1022,6 +1024,11 @@ function QuestionOptionButton({
         )}
       >
         {label}
+        {recommended ? (
+          <span className="ml-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-(length:--text-micro) font-medium text-muted-foreground">
+            Recommended
+          </span>
+        ) : null}
       </div>
       {description ? (
         <div
@@ -1037,6 +1044,14 @@ function QuestionOptionButton({
       ) : null}
     </button>
   );
+}
+
+/** Recommended option ids for a legacy question (single choice keeps one). */
+function legacyRecommendedOptionIds(question: AskUserQuestionsInteraction["payload"]["questions"][number]): string[] {
+  const ids = question.options
+    .filter((option) => option.recommended === true && option.freeText !== true)
+    .map((option) => option.id);
+  return question.selectionMode === "single" ? ids.slice(0, 1) : ids;
 }
 
 function AskUserQuestionsCard({
@@ -1055,14 +1070,22 @@ function AskUserQuestionsCard({
   ) => Promise<void> | void;
   externalReferences?: MarkdownExternalReferenceMap;
 }) {
-  const [draftAnswers, setDraftAnswers] = useState<Record<string, string[]>>(() =>
-    Object.fromEntries(
-      (interaction.result?.answers ?? []).map((answer) => [
-        answer.questionId,
-        [...answer.optionIds],
-      ]),
-    ),
-  );
+  // Saved answers win; otherwise the asker's recommendations start selected.
+  const initialDraftAnswers = (): Record<string, string[]> =>
+    interaction.result?.answers
+      ? Object.fromEntries(
+          interaction.result.answers.map((answer) => [
+            answer.questionId,
+            [...answer.optionIds],
+          ]),
+        )
+      : Object.fromEntries(
+          interaction.payload.questions.flatMap((question) => {
+            const recommended = legacyRecommendedOptionIds(question);
+            return recommended.length > 0 ? [[question.id, recommended]] : [];
+          }),
+        );
+  const [draftAnswers, setDraftAnswers] = useState<Record<string, string[]>>(initialDraftAnswers);
   const [draftOtherAnswers, setDraftOtherAnswers] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       (interaction.result?.answers ?? [])
@@ -1083,14 +1106,7 @@ function AskUserQuestionsCard({
   const resolutionErrorMessage = useResolutionErrorMessage();
 
   useEffect(() => {
-    setDraftAnswers(
-      Object.fromEntries(
-        (interaction.result?.answers ?? []).map((answer) => [
-          answer.questionId,
-          [...answer.optionIds],
-        ]),
-      ),
-    );
+    setDraftAnswers(initialDraftAnswers());
     setDraftOtherAnswers(
       Object.fromEntries(
         (interaction.result?.answers ?? [])
@@ -1115,6 +1131,20 @@ function AskUserQuestionsCard({
       || (
         otherActiveQuestions[question.id] === true
         && (draftOtherAnswers[question.id]?.trim().length ?? 0) > 0
+      ),
+  );
+
+  const hasRecommendation = questions.some(
+    (question) => legacyRecommendedOptionIds(question).length > 0,
+  );
+  const missingRecommendation = questions.some(
+    (question) =>
+      question.required &&
+      legacyRecommendedOptionIds(question).length === 0 &&
+      (draftAnswers[question.id] ?? []).length === 0 &&
+      !(
+        otherActiveQuestions[question.id] === true &&
+        (draftOtherAnswers[question.id]?.trim().length ?? 0) > 0
       ),
   );
 
@@ -1171,6 +1201,32 @@ function AskUserQuestionsCard({
           };
         }),
       );
+    } catch (error) {
+      setActionError(resolutionErrorMessage(error));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function handleAcceptAll() {
+    if (!onSubmitInteractionAnswers || missingRecommendation) return;
+    const accepted = questions.map((question) => {
+      const recommended = legacyRecommendedOptionIds(question);
+      if (recommended.length > 0) return { questionId: question.id, optionIds: recommended };
+      const otherText = otherActiveQuestions[question.id] === true
+        ? draftOtherAnswers[question.id]?.trim() ?? ""
+        : "";
+      return {
+        questionId: question.id,
+        optionIds: draftAnswers[question.id] ?? [],
+        ...(otherText ? { otherText } : {}),
+      };
+    });
+    setDraftAnswers(Object.fromEntries(accepted.map((answer) => [answer.questionId, answer.optionIds])));
+    setWorking(true);
+    setActionError(null);
+    try {
+      await onSubmitInteractionAnswers(interaction, accepted);
     } catch (error) {
       setActionError(resolutionErrorMessage(error));
     } finally {
@@ -1296,6 +1352,7 @@ function AskUserQuestionsCard({
                           id={`${interaction.id}-${question.id}-${option.id}`}
                           label={option.label}
                           description={option.description}
+                          recommended={option.recommended === true && !isFreeText}
                           selected={optionSelected}
                           selectionMode={question.selectionMode}
                           onClick={() =>
@@ -1384,8 +1441,22 @@ function AskUserQuestionsCard({
                   )}
                   </Button>
                 ) : null}
+              {hasRecommendation ? (
+                <span
+                  title={missingRecommendation ? "Some questions have no recommendation" : undefined}
+                >
+                  <Button
+                    size="sm"
+                    disabled={!onSubmitInteractionAnswers || missingRecommendation || working || cancelling}
+                    onClick={() => void handleAcceptAll()}
+                  >
+                    Accept all recommendations
+                  </Button>
+                </span>
+              ) : null}
               <Button
                 size="sm"
+                variant={hasRecommendation ? "outline" : "default"}
                 disabled={!onSubmitInteractionAnswers || !canSubmit || working || cancelling}
                 onClick={() => void handleSubmit()}
               >

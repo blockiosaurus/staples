@@ -90,3 +90,74 @@ describe("QuestionForm initial text", () => {
     expect(submit).not.toHaveBeenCalled();
   });
 });
+
+describe("QuestionForm recommendations", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  const submit = vi.fn();
+  beforeEach(() => { localStorage.clear(); submit.mockReset(); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
+  afterEach(async () => { await act(async () => root.unmount()); container.remove(); localStorage.clear(); });
+  const recommendedSet: PaperclipQuestionSet = { schema: "paperclip.question_set.v1", questions: [
+    { id: "scope", prompt: "Scope?", required: true, answerMode: "single_select", options: [
+      { id: "small", label: "Small" }, { id: "large", label: "Large", recommended: true },
+    ] },
+    { id: "tools", prompt: "Tools?", required: true, answerMode: "multi_select", options: [
+      { id: "a", label: "A", recommended: true }, { id: "b", label: "B" }, { id: "c", label: "C", recommended: true },
+    ] },
+    { id: "notes", prompt: "Notes?", required: false, answerMode: "text", initialText: "Ship it" },
+  ] };
+  async function render(set = recommendedSet, draftKey = "question-recommended") {
+    await act(async () => root.render(<QuestionForm id="rec" questionSet={set} draftKey={draftKey} onSubmit={submit} />));
+  }
+  const button = (label: string) => Array.from(container.querySelectorAll("button")).find(candidate => candidate.textContent?.trim() === label);
+  const option = (questionId: string, optionId: string) => container.querySelector<HTMLButtonElement>(`#rec-${questionId}-${optionId}`)!;
+
+  it("pre-selects recommended options when the form initializes", async () => {
+    await render();
+    expect(option("scope", "large").getAttribute("aria-checked")).toBe("true");
+    expect(option("scope", "small").getAttribute("aria-checked")).toBe("false");
+    await act(async () => button("Next")!.click());
+    expect(option("tools", "a").getAttribute("aria-checked")).toBe("true");
+    expect(option("tools", "b").getAttribute("aria-checked")).toBe("false");
+    expect(option("tools", "c").getAttribute("aria-checked")).toBe("true");
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("accepts every recommendation in one click", async () => {
+    await render();
+    await act(async () => option("scope", "small").click());
+    await act(async () => button("Accept all recommendations")!.click());
+    expect(submit).toHaveBeenCalledExactlyOnceWith({ schema: "paperclip.question_response.v1", answers: {
+      scope: { selectedOptionIds: ["large"] },
+      tools: { selectedOptionIds: ["a", "c"] },
+      notes: { text: "Ship it" },
+    } });
+  });
+
+  it("keeps a saved draft over recommended pre-selection", async () => {
+    localStorage.setItem("question-recommended", JSON.stringify({
+      page: 0, answers: { scope: { selectedOptionIds: ["small"] } }, customActive: {},
+    }));
+    await render();
+    expect(option("scope", "small").getAttribute("aria-checked")).toBe("true");
+    expect(option("scope", "large").getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("disables accept-all when a required question has no recommendation", async () => {
+    const set: PaperclipQuestionSet = { ...recommendedSet, questions: [
+      recommendedSet.questions[0]!,
+      { id: "why", prompt: "Why?", required: true, answerMode: "text" },
+    ] };
+    await render(set, "question-missing-recommendation");
+    const accept = button("Accept all recommendations")!;
+    expect(accept.disabled).toBe(true);
+    expect(accept.closest("[title]")?.getAttribute("title")).toBe("Some questions have no recommendation");
+  });
+
+  it("hides accept-all when no question carries a recommendation", async () => {
+    await render({ schema: "paperclip.question_set.v1", questions: [
+      { id: "q", prompt: "Q?", required: true, answerMode: "single_select", options: [{ id: "x", label: "X" }, { id: "y", label: "Y" }] },
+    ] }, "question-none");
+    expect(button("Accept all recommendations")).toBeUndefined();
+  });
+});
