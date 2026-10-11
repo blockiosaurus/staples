@@ -8,7 +8,7 @@
 
 **Tech Stack:** Express + Drizzle, Zod (`@paperclipai/shared`), React 19 + TanStack Query v5, Tailwind v4 tokens, Vitest.
 
-Spec: `doc/plans/2026-10-10-staples-adaptive-ux-design.md` (Stage 1, §6 Home briefing, Recommended answers everywhere). Research: `.superpowers/sdd/phase5-research.md` (file:line references for everything below). Phase 4 ledger: `.superpowers/sdd/2026-10-10-staples-phase4-interview-plan/progress.md`.
+Spec: `doc/plans/2026-10-10-staples-adaptive-ux-design.md` (Stage 1, §6 Home briefing, Recommended answers everywhere). Research: `/Users/kelliott/Metaplex/staples/.superpowers/sdd/2026-10-11-staples-phase5-home-briefing-plan/research.md` (file:line references for everything below). Phase 4 ledger: `.superpowers/sdd/2026-10-10-staples-phase4-interview-plan/progress.md`.
 
 ## Global Constraints
 
