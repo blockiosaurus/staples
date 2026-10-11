@@ -3,7 +3,7 @@ import express, { Router } from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agents, approvals, authUsers, companyMemberships, heartbeatRuns, issueThreadInteractions, issues, principalPermissionGrants } from "@paperclipai/db";
+import { agents, approvals, authUsers, companyMemberships, companySkillPolicies, heartbeatRuns, issueThreadInteractions, issues, principalPermissionGrants } from "@paperclipai/db";
 import { issueRoutes } from "../routes/issues.js";
 import { agentRoutes } from "../routes/agents.js";
 import { planRoutes } from "../routes/plans.js";
@@ -639,10 +639,46 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(action.hash).toBe(proposedActionHash({ method: "POST", path: action.path, body: action.body }));
     expect(action.planTemplateSummaries).toEqual([{
       clientKey: "mail", ref: "staples/email-secretary", name: detail.name, needs: ["AgentMail or Gmail"],
-      asksBefore: ["Sending email"], routineCount: 2, budgetMonthlyCents: 3000,
+      asksBefore: ["Sending email"], routineCount: 2, budgetMonthlyCents: 3000, readOnly: false,
     }]);
     // No instructions in the proposal: they come from the template at apply.
     expect(JSON.stringify(action.body)).not.toMatch(/instructions/i);
+  }, 60_000);
+
+  async function recommendedAnswers(ref: string) {
+    const detail = await agentTemplatesService().get(ref, { companyName: "", personName: "Pat" });
+    const answers: Record<string, string | string[]> = {};
+    for (const question of detail.setupQuestions) {
+      const picks = (question.options ?? []).filter((option) => option.recommended).map((option) => option.id);
+      if (question.answerMode === "text") answers[question.id] = question.initialText || "x";
+      else if (question.answerMode === "multi_select") answers[question.id] = picks;
+      else answers[question.id] = picks[0] ?? "";
+    }
+    return answers;
+  }
+
+  it("marks a read-only template's line and refuses templates whose skills the company skill policy denies the person", async () => {
+    const f = await assistantFixture();
+    const books = await call(f, "staples_propose_plan", {
+      summary: "Hire a bookkeeper",
+      plan: { agents: [{ clientKey: "books", templateRef: "staples/bookkeeper", templateAnswers: { reportDay: "monday", currency: "USD" }, adapterType: "claude_local" }] },
+    });
+    expect(books.body.result.isError, JSON.stringify(books.body)).toBeUndefined();
+    const [row] = await server.db.select().from(issueThreadInteractions)
+      .where(eq(issueThreadInteractions.id, books.body.result.structuredContent.interaction.id));
+    const summaries = (row!.payload as { proposedAction: { planTemplateSummaries?: Array<Record<string, unknown>> } }).proposedAction.planTemplateSummaries;
+    expect(summaries).toEqual([expect.objectContaining({ clientKey: "books", readOnly: true, asksBefore: [] })]);
+
+    await server.db.insert(companySkillPolicies).values({
+      companyId: f.companyId, schemaVersion: 1, revision: 1, defaultEffect: "allow",
+      rules: [{ id: "no-catalog-installs", priority: 0, effect: "deny", subject: { type: "roles", roles: ["board"] }, actions: ["skills.install"], resources: { sourceTypes: ["catalog"] } }],
+    });
+    const dev = await call(f, "staples_propose_plan", {
+      summary: "Hire a coding agent",
+      plan: { agents: [{ clientKey: "dev", templateRef: "staples/coding-agent", templateAnswers: await recommendedAnswers("staples/coding-agent"), adapterType: "claude_local" }] },
+    });
+    expect(dev.body.result).toMatchObject({ isError: true });
+    expect(dev.body.result.content[0].text).toMatch(/skill policy does not allow installing the skill/);
   }, 60_000);
 
   it("refuses templated hires with invalid answers, a stale version, an unknown or preview template, or instructions", async () => {

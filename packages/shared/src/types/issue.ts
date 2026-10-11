@@ -1435,6 +1435,8 @@ export interface PlanTemplateSummary {
   asksBefore: string[];
   routineCount: number;
   budgetMonthlyCents: number | null;
+  /** The template never changes anything in connected services. */
+  readOnly?: boolean;
 }
 
 /** What the server read from the approval a proposal decides on, shown as "From the approval". */

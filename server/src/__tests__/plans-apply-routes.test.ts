@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import express, { Router } from "express";
 import request from "supertest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
@@ -21,6 +21,8 @@ import {
   projectGoals,
   projects,
   companySkills,
+  companySkillPolicies,
+  agentConfigRevisions,
   routines,
   routineTriggers,
   toolApplications,
@@ -48,6 +50,7 @@ import { agentInstructionsService } from "../services/agent-instructions.js";
 import { approvalService } from "../services/approvals.js";
 import { teamsCatalogService } from "../services/teams-catalog.js";
 import { toolAccessPolicyService } from "../services/tool-access-policy.js";
+import { agentService } from "../services/agents.js";
 
 const support = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = support.supported ? describe : describe.skip;
@@ -828,7 +831,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       // Access rules: ask first for destructive calls and for outward writes; drafts and other writes are untouched.
       const rules = await templatePolicies(dev!.id);
       expect(rules.map((rule) => [(rule.config as Record<string, unknown>).templateRule, rule.policyType, rule.priority]).sort())
-        .toEqual([["destructive", "require_approval", 50], ["outward", "require_approval", 50]]);
+        .toEqual([["destructive", "require_approval", 5], ["outward", "require_approval", 50]]);
       const decide = await toolFixture(s.companyId, [
         ["merge_pull_request", "write"], ["create_branch", "write"], ["delete_branch", "destructive"], ["get_issue", "read"],
       ]);
@@ -838,6 +841,22 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       await expect(decide(dev!.id, "get_issue")).resolves.toMatchObject({ decision: "allow" });
       // Other agents are not affected by this agent's rules.
       await expect(decide(s.staffId, "merge_pull_request")).resolves.toMatchObject({ decision: "allow" });
+
+      // Rules that run before the outward rule (a remembered trust rule, an allow
+      // policy) never skip the destructive ask-first rule, which runs first.
+      const remembered = async (agentId: string, toolName: string) => (await db.insert(toolPolicies).values({
+        companyId: s.companyId, name: `Remember ${toolName} for ${agentId}`, policyType: "trust_rule", priority: 40,
+        selectors: { agentId, toolName }, config: { trustRule: { hitCount: 0, argumentFilters: { allowAny: true } } },
+      }).returning())[0]!;
+      await remembered(dev!.id, "delete_branch");
+      await db.insert(toolPolicies).values({
+        companyId: s.companyId, name: "Allow all for dev", policyType: "allow", priority: 10, selectors: { agentId: dev!.id },
+      });
+      await expect(decide(dev!.id, "delete_branch")).resolves.toMatchObject({ decision: "require_approval", reasonCode: "requires_approval_policy" });
+      // The same remembered permission does allow it for an untemplated agent.
+      const staffRule = await remembered(s.staffId, "delete_branch");
+      await expect(decide(s.staffId, "delete_branch")).resolves.toMatchObject({ decision: "allow", matchedPolicyIds: [staffRule.id] });
+      await db.delete(toolPolicies).where(and(eq(toolPolicies.companyId, s.companyId), sql`${toolPolicies.config} ->> 'source' is null`));
 
       // The template record, server-written.
       expect((dev!.metadata as Record<string, any>).staplesTemplate).toMatchObject({
@@ -850,6 +869,9 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       const actions = (await db.select().from(activityLog).where(eq(activityLog.companyId, s.companyId))).map((row) => row.action);
       expect(actions.filter((action) => action === "routine.created")).toHaveLength(routineRows.length);
       expect(actions.filter((action) => action === "tool_policy.created")).toHaveLength(2);
+      // Skills: one activity entry per skill the install created.
+      expect(actions.filter((action) => action === "company.skill_catalog_installed")).toHaveLength(3);
+      expect(actions.filter((action) => action === "company.skills_imported")).toHaveLength(2);
 
       // Template agents are hires, not installed catalog teams.
       expect(await teamsCatalogService(db).listInstalledCatalogTeams(s.companyId)).toEqual([]);
@@ -957,6 +979,16 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       const [approved] = await db.select().from(agents).where(eq(agents.id, mail.id));
       expect(approved!.status).not.toBe("pending_approval");
       expect((approved!.metadata as Record<string, any>).staplesTemplate).toMatchObject({ ref: "staples/email-secretary" });
+      // Approval starts the template's routines: assigned to the agent and active, schedules intact.
+      const resumed = await db.select().from(routines).where(eq(routines.companyId, s.companyId));
+      expect(resumed).toHaveLength(routineRows.length);
+      for (const row of resumed) {
+        expect(row).toMatchObject({ status: "active", assigneeAgentId: mail.id, originKind: "agent_template", originId: mail.id });
+        const [trigger] = await db.select().from(routineTriggers).where(eq(routineTriggers.routineId, row.id));
+        expect(trigger).toMatchObject({ kind: "schedule", enabled: true });
+      }
+      const resumedActivity = (await db.select().from(activityLog).where(and(eq(activityLog.companyId, s.companyId), eq(activityLog.action, "routine.updated"))));
+      expect(resumedActivity).toHaveLength(routineRows.length);
     }, 120_000);
 
     it("blocks every write for a read-only template", async () => {
@@ -966,8 +998,23 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       expect(response.status, JSON.stringify(response.body)).toBe(201);
       const books = response.body.agents.books.id as string;
       const rules = await templatePolicies(books);
-      expect(rules.map((rule) => [rule.policyType, (rule.config as Record<string, unknown>).templateRule])).toEqual([["block", "read_only"]]);
-      const decide = await toolFixture(s.companyId, [["create_refund", "write"], ["create_payment_link", "write"], ["delete_customer", "destructive"], ["list_charges", "read"]]);
+      expect(rules.map((rule) => [rule.policyType, (rule.config as Record<string, unknown>).templateRule, rule.priority]).sort())
+        .toEqual([["block", "read_only", 5], ["block", "read_only_by_name", 5]]);
+      const decide = await toolFixture(s.companyId, [
+        ["create_refund", "write"], ["create_payment_link", "write"], ["delete_customer", "destructive"], ["list_charges", "read"],
+        ["stripe_create_refund", "read"], ["list_refunds", "read"], ["list_payouts", "read"], ["list_invoices", "read"],
+      ]);
+      // A misclassified money-moving tool is still blocked; money reads still work.
+      await expect(decide(books, "stripe_create_refund")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
+      for (const read of ["list_refunds", "list_payouts", "list_invoices"]) {
+        await expect(decide(books, read), read).resolves.toMatchObject({ decision: "allow" });
+      }
+      // An allow policy or a remembered permission for the agent does not get past the block.
+      await db.insert(toolPolicies).values([
+        { companyId: s.companyId, name: "Allow all for books", policyType: "allow", priority: 10, selectors: { agentId: books } },
+        { companyId: s.companyId, name: "Remember refunds", policyType: "trust_rule", priority: 40,
+          selectors: { agentId: books, toolName: "create_refund" }, config: { trustRule: { hitCount: 0, argumentFilters: { allowAny: true } } } },
+      ]);
       await expect(decide(books, "create_refund")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
       await expect(decide(books, "create_payment_link")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
       await expect(decide(books, "delete_customer")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_policy_block" });
@@ -1016,6 +1063,51 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       expect(dropped.status, JSON.stringify(dropped.body)).toBe(409);
       const kept = await request(app).patch(`/api/agents/${devId}`).set("Origin", ORIGIN).send({ metadata: { note: "hi", staplesTemplate: stored } });
       expect(kept.status, JSON.stringify(kept.body)).toBe(200);
+    }, 120_000);
+
+    it("refuses a template whose skills the company skill policy does not let the person install, before creating anything", async () => {
+      const s = await seed();
+      await db.insert(companySkillPolicies).values({
+        companyId: s.companyId, schemaVersion: 1, revision: 1, defaultEffect: "allow",
+        rules: [{ id: "no-catalog-installs", priority: 0, effect: "deny", subject: { type: "roles", roles: ["board"] }, actions: ["skills.install"], resources: { sourceTypes: ["catalog"] } }],
+      });
+      const { app } = buildApp(sessionActor(s));
+      const response = await apply(app, s.companyId, { agents: [await templatedAgent("dev", "staples/coding-agent")] });
+      expect(response.status, JSON.stringify(response.body)).toBe(403);
+      expect(response.body.error).toMatch(/skill policy does not allow installing the skill/);
+      expect(await db.select().from(agents).where(eq(agents.companyId, s.companyId))).toHaveLength(2);
+      expect(await db.select().from(companySkills).where(eq(companySkills.companyId, s.companyId))).toHaveLength(0);
+      // A template without catalog skills is unaffected by that rule... unless imports are denied too.
+      await db.update(companySkillPolicies).set({
+        rules: [{ id: "no-imports", priority: 0, effect: "deny", subject: { type: "roles", roles: ["board"] }, actions: ["skills.import"], resources: { sourceTypes: ["catalog"] } }],
+      }).where(eq(companySkillPolicies.companyId, s.companyId));
+      const imported = await apply(app, s.companyId, { agents: [await templatedAgent("research", "staples/researcher")] });
+      expect(imported.status, JSON.stringify(imported.body)).toBe(403);
+      expect(imported.body.error).toMatch(/importing the skill/);
+    }, 120_000);
+
+    it("keeps the template record when an agent's config is rolled back to an older revision", async () => {
+      const s = await seed();
+      const { app } = buildApp(sessionActor(s));
+      const response = await apply(app, s.companyId, { agents: [await templatedAgent("dev", "staples/coding-agent")] });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      const devId = response.body.agents.dev.id as string;
+      const [dev] = await db.select().from(agents).where(eq(agents.id, devId));
+      const stored = (dev!.metadata as Record<string, unknown>).staplesTemplate;
+      const snapshot = {
+        name: dev!.name, role: dev!.role, title: dev!.title, reportsTo: dev!.reportsTo, capabilities: dev!.capabilities,
+        adapterType: dev!.adapterType, adapterConfig: dev!.adapterConfig, runtimeConfig: dev!.runtimeConfig,
+        budgetMonthlyCents: dev!.budgetMonthlyCents,
+      };
+      for (const metadata of [{ note: "before the template" }, { note: "forged", staplesTemplate: { ...(stored as object), readOnly: true } }]) {
+        const [revision] = await db.insert(agentConfigRevisions).values({
+          companyId: s.companyId, agentId: devId, source: "patch", changedKeys: ["metadata"],
+          beforeConfig: { ...snapshot, metadata }, afterConfig: { ...snapshot, metadata },
+        }).returning();
+        await agentService(db).rollbackConfigRevision(devId, revision!.id, { userId: s.userId });
+        const [after] = await db.select().from(agents).where(eq(agents.id, devId));
+        expect(after!.metadata, JSON.stringify(metadata)).toMatchObject({ note: metadata.note, staplesTemplate: stored });
+      }
     }, 120_000);
 
     it("does not count template agents (or forged provenance pointing at a template) as installed catalog teams", async () => {

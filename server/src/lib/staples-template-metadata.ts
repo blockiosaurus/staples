@@ -47,3 +47,14 @@ export function withoutStaplesTemplateMarker<T extends Record<string, unknown> |
   const { [STAPLES_TEMPLATE_METADATA_KEY]: _removed, ...rest } = metadata;
   return rest as T;
 }
+
+/**
+ * `incoming` with the marker set to exactly the stored one (or removed when
+ * none is stored), for server-side rewrites such as config rollback: an older
+ * snapshot can neither drop nor change the record.
+ */
+export function withStaplesTemplateMarkerFrom(stored: unknown, incoming: Record<string, unknown> | null): Record<string, unknown> | null {
+  const marker = rawStaplesTemplateMarker(stored);
+  if (marker === undefined) return withoutStaplesTemplateMarker(incoming);
+  return { ...(incoming ?? {}), [STAPLES_TEMPLATE_METADATA_KEY]: marker };
+}

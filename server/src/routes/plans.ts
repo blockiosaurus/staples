@@ -71,7 +71,7 @@ export function planRoutes(db: Db, options: PlanRoutesOptions) {
     let applied: Awaited<ReturnType<typeof applyPlan>>;
     try {
       applied = await applyPlan(db, {
-        companyId, plan, userId, idempotencyKey, personTimezone,
+        companyId, plan, userId, idempotencyKey, personTimezone, actor: req.actor,
         hireAgent: (body) => options.hireAgent(req.actor, companyId, body, origin),
         canInstallSharedConnection: (binding) => canInstallSharedAiConnectionForNewAgent(db, req, companyId, binding),
         // The same check as assigning a task in the app (POST /issues), for every assignee.

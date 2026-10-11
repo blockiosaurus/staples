@@ -1680,6 +1680,7 @@ export const requestConfirmationProposedActionPayloadSchema = z.object({
     asksBefore: z.array(z.string().max(200)).max(20),
     routineCount: z.number().int().min(0).max(100),
     budgetMonthlyCents: z.number().int().min(0).nullable(),
+    readOnly: z.boolean().optional(),
   })).max(8).optional(),
 }).superRefine((value, ctx) => {
   const max = proposedActionBodyMaxBytes(value.category);

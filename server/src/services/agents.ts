@@ -8,6 +8,7 @@ import { isAssistantAgent, isUuidLike, normalizeAgentApiKeyScope, normalizeAgent
 import { conflict, notFound, unprocessable } from "../errors.js";
 
 import { normalizeAgentPermissions } from "../lib/agent-permissions.js";
+import { withStaplesTemplateMarkerFrom } from "../lib/staples-template-metadata.js";
 
 import {
   agentRecordQueries,
@@ -99,6 +100,11 @@ export function agentService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       }
 
       const patch = configPatchFromSnapshot(revision.afterConfig);
+      if (Object.prototype.hasOwnProperty.call(patch, "metadata")) {
+        // The template record is server-owned: keep the current one whatever the snapshot held.
+        const current = await getById(id);
+        patch.metadata = withStaplesTemplateMarkerFrom(current?.metadata, (patch.metadata ?? null) as Record<string, unknown> | null);
+      }
       return updateAgent(id, patch, {
         recordRevision: {
           createdByAgentId: actor.agentId ?? null,

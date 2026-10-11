@@ -8,6 +8,7 @@ import {
   planTemplateContext,
   planTemplateErrorMessage,
   renderPlanTemplates,
+  templateSkillPolicyDenial,
   withTemplateDefaults,
   type AgentTemplatesService,
   type PlanTemplates,
@@ -413,6 +414,9 @@ export async function pinPlanProposalBody(
       if (message) throw new ProposedActionError(message);
       throw error;
     }
+    // The person must be allowed to add the template's skills (checked again at apply).
+    const denial = await templateSkillPolicyDenial(db, companyId, agent.clientKey, rendered.get(agent.clientKey)!, { userId: options.userId ?? null });
+    if (denial) throw new ProposedActionError(denial);
   }
   const filled = withTemplateDefaults(plan, rendered, { fallbackAdapterType: await assistantAdapterType(db, companyId), pinVersion: true });
   const violation = planRuleViolation(filled, { resolved: true });

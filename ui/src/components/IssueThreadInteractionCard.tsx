@@ -2076,7 +2076,8 @@ function planTemplateLine(summary: PlanTemplateSummary) {
   const lower = (label: string) => label.charAt(0).toLowerCase() + label.slice(1);
   const parts = [summary.name];
   if (summary.needs.length) parts.push(`needs ${summary.needs.join(", ")}`);
-  if (summary.asksBefore.length) parts.push(`asks before: ${summary.asksBefore.map(lower).join(", ")}`);
+  if (summary.readOnly) parts.push("read-only");
+  else if (summary.asksBefore.length) parts.push(`asks before: ${summary.asksBefore.map(lower).join(", ")}`);
   parts.push(`${summary.routineCount} routine${summary.routineCount === 1 ? "" : "s"}`);
   if (summary.budgetMonthlyCents !== null) parts.push(`${formatCents(summary.budgetMonthlyCents).replace(/\.00$/, "")}/mo`);
   return parts.join(" · ");

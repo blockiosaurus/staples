@@ -61,6 +61,17 @@ async function reinheritAssistantAfterHire(db: Db, agent: { id: string; companyI
   }
 }
 
+/** A templated agent's routines were created paused while its hire waited: start them now. */
+async function activateTemplateRoutines(db: Db, agentId: string, userId: string | null) {
+  try {
+    // Imported lazily: plan templates depend on services that hire through this module.
+    const { activateTemplateRoutinesAfterHire } = await import("./plan-templates.js");
+    await activateTemplateRoutinesAfterHire(db, agentId, userId && userId !== "board" ? userId : null);
+  } catch (error) {
+    logger.warn({ err: error, agentId }, "template routine activation after hire approval failed");
+  }
+}
+
 export function createAgentLifecycle(db: Db, hooks: BudgetServiceHooks = {}) {
   const base = lifecycle.createAgentLifecycle(db, createAgentLifecycleEffects(hooks));
   return {
@@ -75,6 +86,7 @@ export function createAgentLifecycle(db: Db, hooks: BudgetServiceHooks = {}) {
       if (result?.hireApprovedAgentId) {
         const [approved] = await db.select().from(agents).where(eq(agents.id, result.hireApprovedAgentId));
         await reinheritAssistantAfterHire(db, approved);
+        await activateTemplateRoutines(db, result.hireApprovedAgentId, typeof args[1] === "string" ? args[1] : null);
       }
       return result;
     },

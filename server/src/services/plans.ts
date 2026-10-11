@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, gt, isNull, lt, or } from "drizzle-orm";
-import { agents, planApplications, toolConnectionInstalls, type Db } from "@paperclipai/db";
+import { agents, planApplications, routines as routinesTable, toolConnectionInstalls, type Db } from "@paperclipai/db";
 import {
   aiRuntimeConnectionBindingSchema,
   createRoutineSchema,
@@ -12,7 +12,7 @@ import {
   type ApplyPlan,
   type ApplyPlanResult,
 } from "@paperclipai/shared";
-import { conflict, HttpError, unprocessable } from "../errors.js";
+import { conflict, forbidden, HttpError, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
@@ -23,6 +23,7 @@ import { getDefaultCompanyGoal, goalService } from "./goals.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import {
+  AGENT_TEMPLATE_ROUTINE_ORIGIN,
   assistantAdapterType,
   connectedAppSlugs,
   ensureTemplateAgentSetup,
@@ -31,6 +32,7 @@ import {
   planTemplateErrorMessage,
   renderPlanTemplates,
   routineSafeText,
+  templateSkillPolicyDenial,
   templateTaskSpecs,
   withTemplateDefaults,
   type AgentTemplatesService,
@@ -38,6 +40,7 @@ import {
 } from "./plan-templates.js";
 import { projectService } from "./projects.js";
 import { routineService } from "./routines.js";
+import type { AuthorizationActor } from "./authorization.js";
 
 /**
  * Hires one agent through the real agent-hire route (POST
@@ -390,10 +393,11 @@ function replay(row: ApplicationRow): AppliedPlan {
  * Render a plan's templated agents for apply (at their pinned versions) and
  * fill the hire fields their templates supply. Throws before anything is
  * created: 409 when a pinned version is no longer current, 422 for an
- * unavailable template or answers that no longer validate.
+ * unavailable template or answers that no longer validate, 403 when the
+ * company skill policy does not let the person install a template's skills.
  */
 async function preparePlanTemplates(db: Db, companyId: string, plan: ApplyPlan, input: {
-  userId: string | null; personTimezone?: string | null; templates?: AgentTemplatesService;
+  userId: string | null; personTimezone?: string | null; templates?: AgentTemplatesService; actor?: AuthorizationActor | null;
 }): Promise<{ plan: ApplyPlan; templates: PlanTemplates }> {
   if (!plan.agents.some((agent) => agent.templateRef)) return { plan, templates: new Map() };
   const ctx = await planTemplateContext(db, companyId, input.userId, input.personTimezone);
@@ -408,6 +412,8 @@ async function preparePlanTemplates(db: Db, companyId: string, plan: ApplyPlan, 
       if (!message) throw error;
       throw error instanceof HttpError && error.status === 409 ? conflict(message) : unprocessable(message);
     }
+    const denial = await templateSkillPolicyDenial(db, companyId, agent.clientKey, templates.get(agent.clientKey)!, { userId: input.userId, actor: input.actor });
+    if (denial) throw forbidden(denial, { code: "skill_policy_denied" });
   }
   return { plan: withTemplateDefaults(plan, templates, { fallbackAdapterType: await assistantAdapterType(db, companyId) }), templates };
 }
@@ -444,6 +450,8 @@ export async function applyPlan(db: Db, input: {
   personTimezone?: string | null;
   /** Template catalog override (tests). */
   templates?: AgentTemplatesService;
+  /** The request's actor, for the platform skill check when a template installs skills. */
+  actor?: AuthorizationActor | null;
 }): Promise<AppliedPlan> {
   const { companyId, userId } = input;
   const key = input.idempotencyKey ?? null;
@@ -521,16 +529,34 @@ export async function applyPlan(db: Db, input: {
     }
     for (const agent of planAgentCreationOrder(plan.agents)) {
       if (hired[agent.clientKey]) {
-        await setUpTemplatedAgent(agent.clientKey);
+        if (templates.has(agent.clientKey)) {
+          // Stop before writing if a newer request took the plan over.
+          await holdLease();
+          await setUpTemplatedAgent(agent.clientKey);
+        }
         continue;
       }
       // Stop before hiring if a newer request took the plan over.
       await holdLease();
       const rendered = templates.get(agent.clientKey);
       // Template skills must be in the company library before the hire selects them.
-      const template = rendered
-        ? { instructionsMarkdown: rendered.agent.instructionsMarkdown, desiredSkills: await ensureTemplateSkills(db, companyId, rendered) }
-        : undefined;
+      let template: { instructionsMarkdown: string; desiredSkills: string[] } | undefined;
+      if (rendered) {
+        const skills = await ensureTemplateSkills(db, companyId, rendered);
+        for (const skill of skills.installed) {
+          // Logged as each is created, like the skills routes: the skill stays even if a later step fails.
+          await logActivity(db, {
+            companyId, actorType: "user", actorId: userId ?? "board",
+            action: skill.kind === "catalog" ? "company.skill_catalog_installed" : "company.skills_imported",
+            entityType: skill.kind === "catalog" ? "company_skill" : "company",
+            entityId: skill.kind === "catalog" ? skill.id : companyId,
+            details: skill.kind === "catalog"
+              ? { action: "created", catalogId: skill.catalogId, catalogKey: skill.catalogKey, slug: skill.slug, source: "agent_template", templateRef: rendered.ref }
+              : { source: "agent_template", templateRef: rendered.ref, importedCount: 1, importedSlugs: [skill.slug], skillId: skill.id },
+          });
+        }
+        template = { instructionsMarkdown: rendered.agent.instructionsMarkdown, desiredSkills: skills.keys };
+      }
       if (rendered) await holdLease();
       const body = planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant, true, template);
       const hire = async (hireBody: Record<string, unknown>) => {
@@ -701,6 +727,9 @@ export async function applyPlan(db: Db, input: {
             // Routines cannot be assigned to an agent awaiting approval: paused until the person assigns and resumes them.
             status: waitsForApproval ? "paused" : "active",
           }), routineActor);
+          // Linked to the hire, so approving it later can assign and resume the routine.
+          await txDb.update(routinesTable).set({ originKind: AGENT_TEMPLATE_ROUTINE_ORIGIN, originId: hire.id })
+            .where(eq(routinesTable.id, createdRoutine.id));
           await routineSvc!.createTrigger(createdRoutine.id, createRoutineTriggerSchema.parse({
             kind: "schedule", label: routineSafeText(routine.title).slice(0, 120),
             cronExpression: routine.cronExpression, timezone: routine.timezone, enabled: true,
