@@ -82,6 +82,8 @@ export function teamsCatalogRoutes(db: Db) {
     res.json(teams.filter((team) => !isAgentTemplateCatalogEntry(team)));
   });
 
+  // Detail and file reads stay available for agent templates by id or key:
+  // they are read-only, and preview/install below reject templates.
   router.get("/teams/catalog/:catalogId/files", async (req, res) => {
     assertAuthenticated(req);
     const catalogRef = firstQueryString(req.query.ref) ?? (req.params.catalogId as string);

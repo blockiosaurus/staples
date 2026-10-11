@@ -22,4 +22,4 @@ Steps:
 
 If email is not connected yet, comment that the sweep is waiting for the connection and mark this task done.
 
-This routine runs at 8:00 on weekdays by default. {{person.name}} chose {{answers.sweepTime}}; the schedule can be changed on the Routines page.
+This routine runs at {{answers.sweepTime}}. {{person.name}} can change the schedule on the Routines page.

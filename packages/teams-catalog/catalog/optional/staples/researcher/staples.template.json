@@ -13,7 +13,9 @@
       "required": true,
       "answerMode": "text",
       "initialText": "Our market: competitors, what customers want, and trends that could affect our business",
-      "textValidation": { "maxLength": 500 }
+      "textValidation": {
+        "maxLength": 500
+      }
     },
     {
       "id": "reportDay",
@@ -22,8 +24,17 @@
       "required": true,
       "answerMode": "single_select",
       "options": [
-        { "id": "monday", "label": "Monday", "description": "Start the week knowing what changed.", "recommended": true },
-        { "id": "friday", "label": "Friday", "description": "Look back on the week before the weekend." }
+        {
+          "id": "monday",
+          "label": "Monday",
+          "description": "Start the week knowing what changed.",
+          "recommended": true
+        },
+        {
+          "id": "friday",
+          "label": "Friday",
+          "description": "Look back on the week before the weekend."
+        }
       ]
     },
     {
@@ -33,11 +44,29 @@
       "required": true,
       "answerMode": "single_select",
       "options": [
-        { "id": "brief", "label": "Brief", "description": "A five-minute read: the top few items and what they mean.", "recommended": true },
-        { "id": "deep_dive", "label": "Deep dive", "description": "A fuller analysis with more background and more sources." }
+        {
+          "id": "brief",
+          "label": "Brief",
+          "description": "A five-minute read: the top few items and what they mean.",
+          "recommended": true
+        },
+        {
+          "id": "deep_dive",
+          "label": "Deep dive",
+          "description": "A fuller analysis with more background and more sources."
+        }
       ]
     }
   ],
   "outwardActions": [],
-  "defaultBudgetMonthlyCents": 2000
+  "defaultBudgetMonthlyCents": 2000,
+  "scheduleByAnswer": {
+    "weekly-market-brief": {
+      "questionId": "reportDay",
+      "cron": {
+        "monday": "0 9 * * 1",
+        "friday": "0 9 * * 5"
+      }
+    }
+  }
 }

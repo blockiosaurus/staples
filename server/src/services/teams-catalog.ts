@@ -280,7 +280,9 @@ export async function resolveCatalogTeamReference(reference: string): Promise<{ 
   const exact = teams.find((team) => team.id === trimmed || team.key === trimmed);
   if (exact) return { team: exact, ambiguous: false };
 
-  const slugMatches = teams.filter((team) => team.slug === trimmed);
+  // Bare slugs name teams only; an agent template resolves by id or key
+  // (its agent-templates ref is `staples/<slug>`, handled by that service).
+  const slugMatches = teams.filter((team) => team.slug === trimmed && !isAgentTemplateCatalogEntry(team));
   if (slugMatches.length === 1) return { team: slugMatches[0]!, ambiguous: false };
   if (slugMatches.length > 1) return { team: null, ambiguous: true };
   return { team: null, ambiguous: false };

@@ -52,6 +52,17 @@ export interface AgentTemplateOutwardAction {
   destructiveLabel?: string;
 }
 
+/**
+ * Picks a recurring task's cron from a single_select setup answer. Keyed by
+ * the TASK.md slug. Every option of the question needs a cron; render falls
+ * back to the TASK.md `schedule` when the answer has no entry (for example an
+ * unanswered optional question or a custom answer).
+ */
+export interface AgentTemplateScheduleByAnswer {
+  questionId: string;
+  cron: Record<string, string>;
+}
+
 export interface AgentTemplateSidecar {
   /** semver */
   version: string;
@@ -66,6 +77,8 @@ export interface AgentTemplateSidecar {
   recommendedAdapterType?: string;
   defaultBudgetMonthlyCents?: number;
   preview?: boolean;
+  /** Recurring-task cron chosen by a single_select answer, keyed by TASK.md slug. */
+  scheduleByAnswer?: Record<string, AgentTemplateScheduleByAnswer>;
 }
 
 /** Card data. */

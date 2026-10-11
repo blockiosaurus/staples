@@ -268,6 +268,26 @@ describe("teams catalog manifest", () => {
         "agents/helper/AGENTS.md": "---\nname: Helper\nslug: helper\n---\n\nHelp.\n",
       },
     });
+    await writeTeam(packageDir, "optional", "staples", "bad-schedule-map", {
+      frontmatter: [
+        "name: Bad schedule map",
+        "description: scheduleByAnswer errors.",
+        "schema: agentcompanies/v1",
+        "manager: agents/helper/AGENTS.md",
+      ],
+      files: {
+        "staples.template.json": JSON.stringify({
+          scheduleByAnswer: {
+            "one-off": { questionId: "day", cron: { monday: "0 9 * * 1" } },
+            "missing-task": { questionId: "day", cron: { monday: "0 9 * * 1" } },
+            weekly: { questionId: "day", cron: { monday: "0 9 * * 7" } },
+          },
+        }),
+        "agents/helper/AGENTS.md": "---\nname: Helper\nslug: helper\n---\n\nHelp.\n",
+        "tasks/one-off/TASK.md": "---\nname: One off\nslug: one-off\n---\n\nX.\n",
+        "tasks/weekly/TASK.md": "---\nname: Weekly\nslug: weekly\nrecurring: true\nschedule: \"0 9 * * 1\"\n---\n\nX.\n",
+      },
+    });
     await writeTeam(packageDir, "optional", "staples", "broken-json", {
       frontmatter: [
         "name: Broken",
@@ -291,6 +311,9 @@ describe("teams catalog manifest", () => {
         expect.stringContaining("tasks/bad-cron/TASK.md timezone must be \"person\" or an IANA time zone"),
         expect.stringContaining("stray-sidecar/staples.template.json is only allowed under catalog/optional/staples"),
         expect.stringContaining("broken-json/staples.template.json is not valid JSON"),
+        expect.stringContaining('scheduleByAnswer "one-off" points at a task that is not recurring'),
+        expect.stringContaining('scheduleByAnswer "missing-task" does not match a task slug'),
+        expect.stringContaining('scheduleByAnswer "weekly" option "monday" cron is not a valid 5-field cron expression'),
       ]),
     );
   });

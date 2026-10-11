@@ -24,13 +24,13 @@ Getting an issue from a draft to subscribers' inboxes safely. Mistakes here reac
 
 ## Procedure
 
-1. **Create the issue in the service** as a draft:
+1. **Create the issue in the service** as a draft (this changes the service, so it may wait for approval):
    - Beehiiv: a new post, sent as an email to subscribers.
    - Resend: a broadcast to the newsletter audience.
    - Klaviyo: an email campaign to the newsletter list.
    Use the recommended subject line and the preview text. Keep the service's own footer and unsubscribe link.
 2. **Choose the audience.** Use the list or audience the owner normally sends to. If there are several and you are not sure which, ask with your recommendation before going further.
-3. **Send a test** to the owner if the service supports it.
+3. **Send a test** to the owner only if the service has a test send that goes to them alone and never to the list. If it does not, skip this step and say so in your comment. Never send to the list as a test.
 4. **Schedule** for 10:00 on the send day in the owner's time zone. If that time has already passed, schedule for the next full hour. Scheduling is the step that waits for the owner's approval, unless autopilot is on for sending to the list.
 5. **Report.** Comment with: subject line, audience and size if known, scheduled time, and "test email sent" if you sent one. Then mark the task done once the schedule is approved, or set it to `in_review` while the approval is pending.
 6. **Log it.** Add the issue to the `issue-log` document.

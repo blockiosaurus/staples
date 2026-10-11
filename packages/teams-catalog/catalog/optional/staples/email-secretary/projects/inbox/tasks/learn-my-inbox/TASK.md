@@ -20,7 +20,6 @@ If email is not connected yet, wait: work your "Connect <service>" task first, t
 3. Ask {{person.name}} in one question card:
    - Which filing rules to use (multiple choice, with the ones you recommend marked).
    - Whether your summary of urgent email is right (recommended: "Yes").
-4. Set your schedule. Your "Morning inbox sweep" routine runs at 8:00 on weekdays. They chose {{answers.sweepTime}}. If that is not 8am, change the routine's schedule trigger to the same minute at the chosen hour (7am is cron `0 7 * * 1-5`, 9am is `0 9 * * 1-5`), keeping the time zone. If you cannot change it, tell them they can do it on the Routines page.
-5. Comment with a short summary and a link to the document, then set this task to `in_review` while you wait.
+4. Comment with a short summary and a link to the document, then set this task to `in_review` while you wait.
 
 When they answer, apply the chosen filing rules only if the email service supports it (each change waits for approval unless autopilot is on), note the decisions in the document, and mark this task done.

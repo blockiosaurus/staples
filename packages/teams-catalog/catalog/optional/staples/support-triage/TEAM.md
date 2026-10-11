@@ -1,6 +1,6 @@
 ---
 name: Support triage
-description: Checks your support inbox every two hours, sorts customer messages, drafts friendly answers, and passes anything tricky to the right person.
+description: Checks your support inbox every two hours on weekdays, sorts customer messages, drafts friendly answers, and passes anything tricky to the right person.
 schema: agentcompanies/v1
 slug: support-triage
 category: staples
@@ -28,7 +28,7 @@ A support assistant who makes sure every customer gets a quick, accurate answer,
 
 ## What it does
 
-- Every two hours, checks for new customer messages and sorts them: simple questions, problems, complaints, and anything urgent.
+- Every two hours during business hours, checks for new customer messages and sorts them: simple questions, problems, complaints, and anything urgent.
 - Drafts answers in your tone, using your FAQ and Company Brief.
 - Passes refunds, complaints and anything it cannot answer to the person you name, with a summary and a suggested reply.
 - Builds and keeps up an FAQ from the questions customers actually ask.
@@ -39,6 +39,8 @@ Somewhere customer messages arrive: an AgentMail inbox, Gmail, or Slack.
 
 - **With Gmail**, it prepares replies as drafts for you to send. Sending from Gmail is not available on this platform.
 - **With AgentMail or Slack**, it can reply itself, after you approve each reply (or automatically, if you turn on autopilot for replying to customers).
+
+We recommend a dedicated support address (for example an AgentMail inbox or a support@ address), a Gmail label for support mail, or a dedicated Slack channel. It only reads messages that look like customer support, but a dedicated place keeps your personal email out of its way.
 
 ## What it will never do
 

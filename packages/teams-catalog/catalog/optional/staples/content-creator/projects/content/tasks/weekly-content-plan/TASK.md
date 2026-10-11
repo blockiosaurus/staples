@@ -20,8 +20,8 @@ Steps:
 2. Pick this week's posts from the calendar to match the chosen frequency. Add anything timely: news, launches, or questions customers asked.
 3. Draft every post with the `post-writing` skill. List any facts you need confirmed.
 4. Save the plan and drafts as this task's `content-plan` document, and roll the calendar forward one week.
-5. If a social account or the website is connected, publish each post on its planned day. Each post waits for {{person.name}}'s approval unless autopilot is on for publishing. If nothing is connected, say the drafts are ready to copy and post.
-6. Comment with a two to four sentence summary and a link to the document. Mark this task done when every post is published, or when the drafts are ready for {{person.name}} to post.
+5. Queue the week. Give every post a planned day in the `content-plan` document. If the connected service can schedule posts itself, schedule each one there for its planned day (each waits for {{person.name}}'s approval unless autopilot is on for publishing) and mark it "scheduled". Otherwise leave it "queued"; your "Publish today's posts" routine publishes it on its day. If nothing is connected, say the drafts are ready to copy and post.
+6. Comment with a two to four sentence summary and a link to the document, then mark this task done. Do not wait for the posts to go out.
 
 If you need facts confirmed, ask them in one question card with your recommended answers, and set this task to `in_review` while you wait.
 

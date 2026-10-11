@@ -6,12 +6,17 @@
   "requiredApps": [
     {
       "capability": "email",
-      "anyOf": ["agentmail", "gmail"],
+      "anyOf": [
+        "agentmail",
+        "gmail"
+      ],
       "why": "Reads your email and prepares replies. With Gmail, replies are saved as drafts for you to send; with AgentMail, they can be sent after you approve."
     },
     {
       "capability": "calendar",
-      "anyOf": ["google-calendar"],
+      "anyOf": [
+        "google-calendar"
+      ],
       "why": "Checks when you are free if an email asks for a meeting.",
       "optional": true
     }
@@ -25,7 +30,9 @@
       "required": true,
       "answerMode": "text",
       "initialText": "{{person.name}}",
-      "textValidation": { "maxLength": 100 }
+      "textValidation": {
+        "maxLength": 100
+      }
     },
     {
       "id": "sweepTime",
@@ -34,9 +41,22 @@
       "required": true,
       "answerMode": "single_select",
       "options": [
-        { "id": "8am", "label": "8am on weekdays", "description": "Ready when most working days start.", "recommended": true },
-        { "id": "7am", "label": "7am on weekdays", "description": "For early starts." },
-        { "id": "9am", "label": "9am on weekdays", "description": "Catches the early-morning email too." }
+        {
+          "id": "8am",
+          "label": "8am on weekdays",
+          "description": "Ready when most working days start.",
+          "recommended": true
+        },
+        {
+          "id": "7am",
+          "label": "7am on weekdays",
+          "description": "For early starts."
+        },
+        {
+          "id": "9am",
+          "label": "9am on weekdays",
+          "description": "Catches the early-morning email too."
+        }
       ]
     },
     {
@@ -47,11 +67,27 @@
       "required": true,
       "answerMode": "text",
       "initialText": "customers, money, deadlines",
-      "textValidation": { "maxLength": 500 }
+      "textValidation": {
+        "maxLength": 500
+      }
     }
   ],
   "outwardActions": [
-    { "capability": "email", "label": "Sending email", "destructiveLabel": "Deleting email" }
+    {
+      "capability": "email",
+      "label": "Sending email",
+      "destructiveLabel": "Deleting email"
+    }
   ],
-  "defaultBudgetMonthlyCents": 3000
+  "defaultBudgetMonthlyCents": 3000,
+  "scheduleByAnswer": {
+    "morning-inbox-sweep": {
+      "questionId": "sweepTime",
+      "cron": {
+        "8am": "0 8 * * 1-5",
+        "7am": "0 7 * * 1-5",
+        "9am": "0 9 * * 1-5"
+      }
+    }
+  }
 }

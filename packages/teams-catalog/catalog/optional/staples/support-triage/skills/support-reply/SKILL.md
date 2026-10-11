@@ -14,7 +14,7 @@ Every customer message deserves an answer that is correct, kind and short. This 
 
 ## Procedure for each sweep
 
-1. **Collect new messages** since the last sweep (see the previous `triage` document for the time). Skip threads where someone from the business has already replied after the customer's latest message.
+1. **Collect new support messages** since the last sweep (see the previous `triage` document for the time). Use the dedicated support address, label or channel if there is one; otherwise only customer messages about the business's products, orders or service. Skip threads where someone from the business has already replied after the customer's latest message.
 2. **Sort each message:**
 
 | Type | Examples | Action |

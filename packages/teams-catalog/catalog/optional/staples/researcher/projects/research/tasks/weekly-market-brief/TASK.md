@@ -22,4 +22,4 @@ Steps:
 
 If you find something urgent, also create a separate task for {{person.name}} with your recommended next step.
 
-This routine runs every Monday at 9:00 by default. {{person.name}} chose {{answers.reportDay}}; the schedule can be changed on the Routines page.
+This routine runs every {{answers.reportDay}} at 9:00. {{person.name}} can change the schedule on the Routines page.

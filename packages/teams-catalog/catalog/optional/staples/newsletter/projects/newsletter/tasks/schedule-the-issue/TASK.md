@@ -14,10 +14,10 @@ Steps:
 
 1. Check whether an issue is due this week (cadence: {{answers.cadence}}). If not, comment one line and mark this task done.
 2. Find the latest `issue` document. If it is missing or still has facts to confirm, comment what is missing and set this task to `in_review`.
-3. Create the issue in the newsletter service, send a test to {{person.name}} if possible, and schedule it for 10:00 today. Scheduling waits for {{person.name}}'s approval unless autopilot is on for sending to the list.
+3. Create the issue in the newsletter service as a draft. Send a test to {{person.name}} only if the service can send a test to them alone, without the list. Then schedule it for 10:00 on the send day ({{answers.sendDay}}), or the next full hour if that has passed. Creating the draft may ask for approval; scheduling always waits for {{person.name}}'s approval unless autopilot is on for sending to the list.
 4. Comment with the subject line, the audience, the scheduled time and whether a test was sent. Add the issue to the `issue-log`.
 5. Mark this task done once the schedule is approved, or set it to `in_review` while the approval is pending.
 
 If the newsletter service is not connected, deliver the final issue as a document for {{person.name}} to paste into their own tool, and say so.
 
-This routine runs on Tuesdays at 9:00 by default. {{person.name}} chose {{answers.sendDay}}; the schedule can be changed on the Routines page.
+This routine runs at 9:00 on the send day ({{answers.sendDay}}). {{person.name}} can change the schedule on the Routines page.

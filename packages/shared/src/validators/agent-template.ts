@@ -74,6 +74,17 @@ export const agentTemplateSidecarSchema = z
     recommendedAdapterType: z.string().trim().min(1).max(100).optional(),
     defaultBudgetMonthlyCents: z.number().int().min(0).optional(),
     preview: z.boolean().optional(),
+    scheduleByAnswer: z
+      .record(
+        z.string().regex(SLUG_PATTERN, "task slugs must be lowercase URL slugs"),
+        z
+          .object({
+            questionId: z.string().min(1).max(160),
+            cron: z.record(z.string().min(1).max(160), z.string().trim().min(1).max(200)),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -110,6 +121,29 @@ export const agentTemplateSidecarSchema = z
         });
       }
     });
+    for (const [taskSlug, rule] of Object.entries(value.scheduleByAnswer ?? {})) {
+      const path = ["scheduleByAnswer", taskSlug];
+      const question = value.setupQuestions.find((entry) => entry.id === rule.questionId);
+      if (!question) {
+        ctx.addIssue({ code: "custom", message: `scheduleByAnswer question "${rule.questionId}" is not a setup question`, path });
+        continue;
+      }
+      if (question.answerMode !== "single_select") {
+        ctx.addIssue({ code: "custom", message: `scheduleByAnswer question "${rule.questionId}" must be single_select`, path });
+        continue;
+      }
+      const optionIds = (question.options ?? []).map((option) => option.id);
+      for (const optionId of optionIds) {
+        if (!Object.hasOwn(rule.cron, optionId)) {
+          ctx.addIssue({ code: "custom", message: `scheduleByAnswer for "${taskSlug}" has no cron for option "${optionId}"`, path: [...path, "cron"] });
+        }
+      }
+      for (const optionId of Object.keys(rule.cron)) {
+        if (!optionIds.includes(optionId)) {
+          ctx.addIssue({ code: "custom", message: `scheduleByAnswer for "${taskSlug}" names unknown option "${optionId}"`, path: [...path, "cron", optionId] });
+        }
+      }
+    }
     const outwardCapabilities = value.outwardActions.map((action) => action.capability);
     if (new Set(outwardCapabilities).size !== outwardCapabilities.length) {
       ctx.addIssue({ code: "custom", message: "outwardActions capabilities must be unique", path: ["outwardActions"] });

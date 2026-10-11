@@ -20,7 +20,7 @@ The FAQ is the support assistant's source of truth: short, confirmed answers to 
 
 ## Building the first FAQ
 
-1. **Read past messages:** the last 30 days, or the last 200 messages, whichever is fewer.
+1. **Read past support messages:** the last 30 days, or the last 200 messages, whichever is fewer. Only support-like messages: the dedicated support address, label or channel if there is one, otherwise customer messages about the business's products, orders or service.
 2. **Group them** by what the customer really wants to know, not by their exact words. "Where's my parcel?" and "Has my order shipped?" are the same question.
 3. **Count** how often each group comes up. Keep groups that appear at least twice.
 4. **Write one entry per group** (format below), most frequent first.

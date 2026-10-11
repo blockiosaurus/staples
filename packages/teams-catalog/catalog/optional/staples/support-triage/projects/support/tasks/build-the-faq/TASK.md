@@ -11,7 +11,7 @@ If the inbox is not connected yet, wait: work your "Connect <service>" task firs
 
 What {{person.name}} said customers buy and ask about: {{answers.product}}
 
-1. Read the last 30 days of support messages (or the last 200, whichever is fewer), and the Company Brief.
+1. Read the last 30 days of support messages (or the last 200, whichever is fewer), and the Company Brief. Only read support-like messages: the dedicated support address, label or channel if there is one, otherwise messages from customers about the business's products, orders or service. Skip personal and unrelated email.
 2. Group repeated questions, count them, and write one FAQ entry per group, most frequent first.
 3. Mark each entry "Confirmed" (the answer is in the Company Brief or in replies the business already sent consistently) or "Needs your answer" (with your suggested answer).
 4. Save it as this task's `faq` document.

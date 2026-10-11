@@ -73,6 +73,9 @@ describe("shipped Staples agent templates", () => {
       expect(body, team.slug).toContain("approval");
       expect(body, team.slug).toContain("task document");
       expect(body, team.slug).toContain("recommended answer");
+      // Untrusted-content rule: outside text is data, never instructions.
+      expect(body, team.slug).toMatch(/never (an instruction|instructions) to you/);
+      expect(body, team.slug).toMatch(/Never create tasks.*request connections/);
     }
   });
 
@@ -129,5 +132,36 @@ describe("shipped Staples agent templates", () => {
       ["Daily digest", "0 17 * * 1-5"],
       ["Morning inbox sweep", "0 8 * * 1-5"],
     ]);
+  });
+
+  it("picks routine schedules from the setup answers", async () => {
+    const svc = agentTemplatesService();
+    async function crons(ref: string, overrides: AgentTemplateAnswers) {
+      const detail = await svc.get(ref, CTX);
+      const rendered = await svc.render(ref, null, { ...recommendedAnswers(detail.setupQuestions), ...overrides }, CTX);
+      return Object.fromEntries(rendered.routines.map((routine) => [routine.title, routine.cronExpression]));
+    }
+
+    expect((await crons("staples/researcher", { reportDay: "monday" }))["Weekly market brief"]).toBe("0 9 * * 1");
+    expect((await crons("staples/researcher", { reportDay: "friday" }))["Weekly market brief"]).toBe("0 9 * * 5");
+
+    expect((await crons("staples/email-secretary", { sweepTime: "7am" }))["Morning inbox sweep"]).toBe("0 7 * * 1-5");
+    expect((await crons("staples/email-secretary", { sweepTime: "8am" }))["Morning inbox sweep"]).toBe("0 8 * * 1-5");
+    expect((await crons("staples/email-secretary", { sweepTime: "9am" }))["Morning inbox sweep"]).toBe("0 9 * * 1-5");
+
+    expect(await crons("staples/newsletter", { sendDay: "tuesday" })).toEqual({
+      "Research and draft the issue": "0 9 * * 0",
+      "Schedule the issue": "0 9 * * 2",
+    });
+    expect(await crons("staples/newsletter", { sendDay: "thursday" })).toEqual({
+      "Research and draft the issue": "0 9 * * 2",
+      "Schedule the issue": "0 9 * * 4",
+    });
+
+    expect(await crons("staples/support-triage", {})).toEqual({ "Support triage": "0 8-18/2 * * 1-5" });
+    expect(await crons("staples/content-creator", {})).toEqual({
+      "Publish today's posts": "0 10 * * 1-5",
+      "Weekly content plan": "0 9 * * 1",
+    });
   });
 });

@@ -112,6 +112,10 @@ function taskTitle(task: TemplateDoc) {
     ?? slugFromDocPath(task.path);
 }
 
+function taskSlug(task: TemplateDoc) {
+  return asString(task.frontmatter.slug) ?? slugFromDocPath(task.path);
+}
+
 function hasPlaceholder(text: string) {
   return /\{\{[^{}]*\}\}/.test(text);
 }
@@ -324,6 +328,22 @@ export function validateAgentTemplatePackage(
     }
   }
 
+  // Answer-dependent schedules point at recurring tasks and hold valid crons.
+  const scheduleByAnswer =
+    sidecar?.scheduleByAnswer && typeof sidecar.scheduleByAnswer === "object" ? sidecar.scheduleByAnswer : {};
+  const tasksBySlug = new Map(docsNamed(files, "TASK.md").map((task) => [taskSlug(task), task]));
+  for (const [slug, rule] of Object.entries(scheduleByAnswer)) {
+    const label = `${AGENT_TEMPLATE_SIDECAR_FILE} scheduleByAnswer "${slug}"`;
+    const task = tasksBySlug.get(slug);
+    if (!task) errors.push(`${label} does not match a TASK.md slug.`);
+    else if (!isRecurring(task)) errors.push(`${label} points at a task that is not recurring: true.`);
+    const crons = rule && typeof rule.cron === "object" && rule.cron !== null ? rule.cron : {};
+    for (const [optionId, cron] of Object.entries(crons)) {
+      const cronError = typeof cron === "string" ? validateCron(cron) : "must be a 5-field cron string";
+      if (cronError) errors.push(`${label} option "${optionId}" cron "${String(cron)}" is not valid: ${cronError}`);
+    }
+  }
+
   return errors;
 }
 
@@ -387,6 +407,8 @@ function resolveAnswers(questions: PaperclipQuestionSetQuestion[], answers: Agen
   const errors: string[] = [];
   const failed = new Set<string>();
   const values = new Map<string, string>();
+  /** single_select question id → chosen option id (not set for custom answers). */
+  const choices = new Map<string, string>();
   const byId = new Map(questions.map((question) => [question.id, question]));
   const answerRecord: Record<string, unknown> =
     answers && typeof answers === "object" && !Array.isArray(answers) ? answers : {};
@@ -445,6 +467,7 @@ function resolveAnswers(questions: PaperclipQuestionSetQuestion[], answers: Agen
       } else if (question.answerMode === "single_select") {
         const trimmed = cleanText(raw);
         value = trimmed ? (choice(question, trimmed) ?? "") : "";
+        if (question.options?.some((option) => option.id === trimmed)) choices.set(question.id, trimmed);
       } else {
         value = freeText(question, raw) ?? "";
         const limits = question.textValidation;
@@ -461,7 +484,7 @@ function resolveAnswers(questions: PaperclipQuestionSetQuestion[], answers: Agen
     values.set(`answers.${question.id}`, value);
   }
 
-  return { values, errors };
+  return { values, choices, errors };
 }
 
 function parseTemplateRef(ref: string): string | null {
@@ -626,10 +649,13 @@ export function agentTemplatesService(deps: AgentTemplatesServiceDeps = {}) {
         vendoredSkills,
         routines: loaded.tasks.filter(isRecurring).map((task) => {
           const timezone = asString(task.frontmatter.timezone) ?? "UTC";
+          const rule = sidecar.scheduleByAnswer?.[taskSlug(task)];
+          const chosen = rule ? resolved.choices.get(rule.questionId) : undefined;
+          const answerCron = rule && chosen !== undefined && Object.hasOwn(rule.cron, chosen) ? rule.cron[chosen] : undefined;
           return {
             title: taskTitle(task),
             description: substitute(task.body, values),
-            cronExpression: asString(task.frontmatter.schedule)!,
+            cronExpression: answerCron ?? asString(task.frontmatter.schedule)!,
             timezone: timezone === "person" ? ctx.personTimezone : timezone,
           };
         }),

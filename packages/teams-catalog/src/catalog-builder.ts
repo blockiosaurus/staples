@@ -327,6 +327,7 @@ async function buildCatalogTeam(
   }
   const staplesTemplate = await readStaplesTemplateSidecar(candidate.absolutePath, isStaplesTemplate, prefix, errors);
   validateTaskSchedules(graph.tasks, isStaplesTemplate, prefix, errors);
+  if (staplesTemplate) validateScheduleByAnswer(staplesTemplate, graph.tasks, prefix, errors);
   const rootAgentSlugs = validateLocalReferences(candidate.absolutePath, parsed.frontmatter, graph, agentSlugs, projectSlugs, errors);
   const requiredSkills = collectRequiredSkills(candidate.absolutePath, parsed.frontmatter, graph, catalogSkills, agentSlugs, localSkillSlugs, errors);
   const envInputs = collectEnvInputs(graph);
@@ -432,6 +433,40 @@ function validateTaskSchedules(
       if (typeof timezone !== "string" || !isValidTaskTimezone(timezone)) {
         errors.push(`${label} timezone must be "person" or an IANA time zone.`);
       }
+    }
+  }
+}
+
+/**
+ * `scheduleByAnswer` in the sidecar maps a recurring task slug to crons chosen
+ * by a setup answer. The server validator checks the full rules; the build
+ * checks the parts it can see: the task exists, is recurring, crons parse.
+ */
+function validateScheduleByAnswer(
+  sidecar: Record<string, unknown>,
+  tasks: ParsedTeamFile[],
+  prefix: string,
+  errors: string[],
+) {
+  const rules = sidecar.scheduleByAnswer;
+  if (rules === undefined) return;
+  if (!isPlainRecord(rules)) {
+    errors.push(`${prefix}/${STAPLES_TEMPLATE_SIDECAR} scheduleByAnswer must be an object.`);
+    return;
+  }
+  for (const [taskSlug, rule] of Object.entries(rules)) {
+    const label = `${prefix}/${STAPLES_TEMPLATE_SIDECAR} scheduleByAnswer "${taskSlug}"`;
+    const task = tasks.find((entry) => (asString(entry.frontmatter.slug) ?? slugFromEntityPath(entry.relativePath)) === taskSlug);
+    if (!task) errors.push(`${label} does not match a task slug.`);
+    else if (!(asBoolean(task.frontmatter.recurring) ?? false)) errors.push(`${label} points at a task that is not recurring.`);
+    const crons = isPlainRecord(rule) && isPlainRecord(rule.cron) ? rule.cron : null;
+    if (!crons) {
+      errors.push(`${label} must have a cron map.`);
+      continue;
+    }
+    for (const [optionId, cron] of Object.entries(crons)) {
+      const cronError = typeof cron === "string" ? cronSyntaxError(cron) : "not a string";
+      if (cronError) errors.push(`${label} option "${optionId}" cron is not a valid 5-field cron expression: ${cronError}.`);
     }
   }
 }

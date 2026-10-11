@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@paperclipai/teams-catalog",
   "packageVersion": "0.1.0",
-  "generatedAt": "2026-10-11T16:15:08.250Z",
+  "generatedAt": "2026-10-11T16:28:41.226Z",
   "teams": [
     {
       "id": "paperclipai:bundled:company-defaults:core-exec-team",
@@ -490,7 +490,7 @@
         "agents": 1,
         "projects": 1,
         "tasks": 1,
-        "routines": 1,
+        "routines": 2,
         "localSkills": 2,
         "catalogSkills": 0,
         "externalSkillSources": 0
@@ -536,8 +536,8 @@
         {
           "path": "agents/content-creator/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 5234,
-          "sha256": "6a056b915b9076f4f7b36e2df6d08bdd39c1cf4ee71b675029d2a10a988102b4"
+          "sizeBytes": 6230,
+          "sha256": "fae58765c3d59ed5054b9558ed1cd759fce924d7ac94d521cf8220cab4805548"
         },
         {
           "path": "projects/content/PROJECT.md",
@@ -552,10 +552,16 @@
           "sha256": "9d0370d6c026951e3022f026be99157c6326346347fd3b8f84d195e160bab7db"
         },
         {
+          "path": "projects/content/tasks/publish-todays-posts/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1204,
+          "sha256": "f2226e6816993d78c65e3a5721dbf9f33e182442a7d9e620a6f0f64ae5da1334"
+        },
+        {
           "path": "projects/content/tasks/weekly-content-plan/TASK.md",
           "kind": "task",
-          "sizeBytes": 1479,
-          "sha256": "d3093ecedebb6c5125942bbecdd29a5de1080b4ba4adbb599cd1d979c8271145"
+          "sizeBytes": 1633,
+          "sha256": "5f959df4fd78e5f7f9009ec2c7f6a6d48652cc8e236c93eb896620f7c94325e8"
         },
         {
           "path": "skills/content-calendar-planning/SKILL.md",
@@ -578,7 +584,7 @@
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:3962de83166c05aedc23efcb617e11fde163560be1b4f980ca9a94684ea82c20",
+      "contentHash": "sha256:9a2b58d629bbcce08bc7e82ecafadcb6353318e7b54b66d83788a68fee81ef64",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Plans, writes and publishes your posts on a steady schedule",
@@ -753,8 +759,8 @@
         {
           "path": "agents/email-secretary/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 6291,
-          "sha256": "c80944100ca790a87d794f17bf2ef81e5844b809c398bec78a3f651db3207ec6"
+          "sizeBytes": 6258,
+          "sha256": "cf276f3a46a374d5d6c3cd6196422308bb992449c1e814f07b1ff027e296b25c"
         },
         {
           "path": "projects/inbox/PROJECT.md",
@@ -771,14 +777,14 @@
         {
           "path": "projects/inbox/tasks/learn-my-inbox/TASK.md",
           "kind": "task",
-          "sizeBytes": 2058,
-          "sha256": "ddcfc7246a4b393d151a8af978db0561df6f7e1cf2230e592111ac2cfe3af9d9"
+          "sizeBytes": 1699,
+          "sha256": "65a718dfac57ca5b03f4088e9d73cd1429826414536f6f255afee84abcf36da1"
         },
         {
           "path": "projects/inbox/tasks/morning-inbox-sweep/TASK.md",
           "kind": "task",
-          "sizeBytes": 1095,
-          "sha256": "fb8291a70d0a445e84e6fa18189f13648228865dc9a6d7a2e6037fb5cdee9feb"
+          "sizeBytes": 1056,
+          "sha256": "7b47fb3047cd1bbeacaaf3f96d132a6c06b2bf68f224a712b1292dbbaa67f6c7"
         },
         {
           "path": "skills/inbox-digest/SKILL.md",
@@ -795,13 +801,13 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2020,
-          "sha256": "7a1a5f4c8dc94f73d2349f9d7eab47a88ebb3b97bcb01fe8ed59814a808b23a9"
+          "sizeBytes": 2444,
+          "sha256": "66a3ae13680b1af62ccaf40f0b7bb7aa8222eafe19b693ab48165f48f49085e5"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:074d92c3c0f30e361de8d50ace220ccc06dec9d1770ac6ef9233c73077c5ba56",
+      "contentHash": "sha256:c1eb922cbdb507df75e0adc9d69bd9037fec7e9e9a8bc6fe31c2d17c1966ddce",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Sorts your inbox, drafts replies and sends a daily digest",
@@ -883,7 +889,17 @@
             "destructiveLabel": "Deleting email"
           }
         ],
-        "defaultBudgetMonthlyCents": 3000
+        "defaultBudgetMonthlyCents": 3000,
+        "scheduleByAnswer": {
+          "morning-inbox-sweep": {
+            "questionId": "sweepTime",
+            "cron": {
+              "8am": "0 8 * * 1-5",
+              "7am": "0 7 * * 1-5",
+              "9am": "0 9 * * 1-5"
+            }
+          }
+        }
       }
     },
     {
@@ -959,8 +975,8 @@
         {
           "path": "agents/newsletter-editor/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 5511,
-          "sha256": "6617f9e2de251f3ee5ad1a90b47feed35fcf42426a615a7fcad9a3be1962ccba"
+          "sizeBytes": 6087,
+          "sha256": "d9c667113f0653d5b730bb1d8755a91d8b0da4c66bef2859ffc1be778535bbe6"
         },
         {
           "path": "projects/newsletter/PROJECT.md",
@@ -971,20 +987,20 @@
         {
           "path": "projects/newsletter/tasks/draft-the-issue/TASK.md",
           "kind": "task",
-          "sizeBytes": 1107,
-          "sha256": "50975c894e51be903b9bf35dcef6bc6cb52dfa1c0494798a8750475f237da64b"
+          "sizeBytes": 1078,
+          "sha256": "55ec8678823d92dabac87f30613ba884d972bb8bc5c439440979f248c49a5694"
         },
         {
           "path": "projects/newsletter/tasks/plan-the-newsletter/TASK.md",
           "kind": "task",
-          "sizeBytes": 1813,
-          "sha256": "aa945eb8dc3e922f089bc83fd18ff77acde69e8f89bbb12a3dfb36e79719d9f7"
+          "sizeBytes": 1431,
+          "sha256": "6d277c1ade5c50f6b2ee64f781b29a7f046542f1114b36681297cc28540d4589"
         },
         {
           "path": "projects/newsletter/tasks/schedule-the-issue/TASK.md",
           "kind": "task",
-          "sizeBytes": 1265,
-          "sha256": "b9db4038d83fff4c824279cf350fda8772958f27cf03d82452486c32b7c859c7"
+          "sizeBytes": 1439,
+          "sha256": "a34e57033c0ebaf17d07f014d6ba804d3fd4d1432427d94df36225f9f88c63bd"
         },
         {
           "path": "skills/newsletter-issue/SKILL.md",
@@ -995,19 +1011,19 @@
         {
           "path": "skills/newsletter-sending/SKILL.md",
           "kind": "skill",
-          "sizeBytes": 2681,
-          "sha256": "11a0811493fc366835a014125740410d27d43fc9cb4450c5216fd418f3c7b843"
+          "sizeBytes": 2885,
+          "sha256": "bc1a463b6064f51d23f620f2cae42d6e617b40d61aa29cf7e152f3b952b0d4d0"
         },
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 1791,
-          "sha256": "e547a953cd80e76af1e60ca4a3663b31a8d3878dbc595888e15264ebd0b9953c"
+          "sizeBytes": 2396,
+          "sha256": "ad69a3ab2167248b2547e9114836e57d1b5bfe1eeb9956675d0f420592052f9f"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:c620828a7f6c7cb45db6e066774f56ada05d59417622b010d383ed440b02ef41",
+      "contentHash": "sha256:4d050718510a4c33d32cff13fe7bf627f67d7d10105d9c2d39f6116b7b31acc2",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Researches, writes and schedules your newsletter on time",
@@ -1089,7 +1105,23 @@
             "label": "Sending to your list"
           }
         ],
-        "defaultBudgetMonthlyCents": 2000
+        "defaultBudgetMonthlyCents": 2000,
+        "scheduleByAnswer": {
+          "draft-the-issue": {
+            "questionId": "sendDay",
+            "cron": {
+              "tuesday": "0 9 * * 0",
+              "thursday": "0 9 * * 2"
+            }
+          },
+          "schedule-the-issue": {
+            "questionId": "sendDay",
+            "cron": {
+              "tuesday": "0 9 * * 2",
+              "thursday": "0 9 * * 4"
+            }
+          }
+        }
       }
     },
     {
@@ -1165,8 +1197,8 @@
         {
           "path": "agents/researcher/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 5259,
-          "sha256": "5eb8765e7fab4290c578eab69d2a779f38c1cb2eca9e4ef6b2edf810860c235e"
+          "sizeBytes": 5645,
+          "sha256": "7e9764f93186438dde996f11bb7c022fa68b90fa68a8329e409a8d495c90bfbf"
         },
         {
           "path": "projects/research/PROJECT.md",
@@ -1177,14 +1209,14 @@
         {
           "path": "projects/research/tasks/learn-the-business/TASK.md",
           "kind": "task",
-          "sizeBytes": 1761,
-          "sha256": "af8bf5dc79b04e8202210ff2e04d767b37147fbe219a675f4c93f29d1f1574c2"
+          "sizeBytes": 1408,
+          "sha256": "70faaef088fb1b673b51b6577819f2b00695e1278c314d6139d59a26c649027b"
         },
         {
           "path": "projects/research/tasks/weekly-market-brief/TASK.md",
           "kind": "task",
-          "sizeBytes": 945,
-          "sha256": "6d55875d89bb93da0b8eaca9c85e49cfc32a9b005008fc40bb5f9097b45cb2ce"
+          "sizeBytes": 916,
+          "sha256": "3a37c67f777243605f947bb305cf78af7c64a9b7aa2fe82be353f7a1c5ba00e4"
         },
         {
           "path": "skills/market-brief/SKILL.md",
@@ -1201,13 +1233,13 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 1658,
-          "sha256": "9893f0e34cba9f8161079b9236ed7db0ddf66dafa733bd1e6035e0af4e7a9f9a"
+          "sizeBytes": 2026,
+          "sha256": "ea207df5664eb72f3b902564b41ddf627421968b403c757e06a4472001b01fe3"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:71f70b7ef018bb14b803a5ab8473a8cebba2fe4b56398a04871b801b643b2ffc",
+      "contentHash": "sha256:e27a254854efccbb7b33a8d4edb59961d83797bde27ceada1927c0cf9fc9bbad",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "A weekly brief on your market, competitors and customers",
@@ -1269,7 +1301,16 @@
           }
         ],
         "outwardActions": [],
-        "defaultBudgetMonthlyCents": 2000
+        "defaultBudgetMonthlyCents": 2000,
+        "scheduleByAnswer": {
+          "weekly-market-brief": {
+            "questionId": "reportDay",
+            "cron": {
+              "monday": "0 9 * * 1",
+              "friday": "0 9 * * 5"
+            }
+          }
+        }
       }
     },
     {
@@ -1279,7 +1320,7 @@
       "category": "staples",
       "slug": "support-triage",
       "name": "Support triage",
-      "description": "Checks your support inbox every two hours, sorts customer messages, drafts friendly answers, and passes anything tricky to the right person.",
+      "description": "Checks your support inbox every two hours on weekdays, sorts customer messages, drafts friendly answers, and passes anything tricky to the right person.",
       "path": "catalog/optional/staples/support-triage",
       "entrypoint": "TEAM.md",
       "schema": "agentcompanies/v1",
@@ -1339,14 +1380,14 @@
         {
           "path": "TEAM.md",
           "kind": "team",
-          "sizeBytes": 1774,
-          "sha256": "23eb2652d24567a1d15490993aed7e7562b92005206a8cff2644d754a09b2da8"
+          "sizeBytes": 2088,
+          "sha256": "6e58c961b1de28ea3fd28902606cf617f106a8bc444c6e76dcb7cd45670c3a8f"
         },
         {
           "path": "agents/support-triage/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 6380,
-          "sha256": "b7716b8453c515a5875025ec5fb618693ee2cdfe0d5fc7d1457b80cef2dda5d0"
+          "sizeBytes": 6787,
+          "sha256": "226e10bb3248bcf9752e8c62bd56a3e4fb7b4c4983de65cbe321052ea33f1103"
         },
         {
           "path": "projects/support/PROJECT.md",
@@ -1357,26 +1398,26 @@
         {
           "path": "projects/support/tasks/build-the-faq/TASK.md",
           "kind": "task",
-          "sizeBytes": 1273,
-          "sha256": "469061b7fae126f203e8525d153392f1fa0f78b98e386c53395b8242c7da3627"
+          "sizeBytes": 1490,
+          "sha256": "972275a48387c0740b37ce3f76a61eebde45dfce301580c3c6a848338b4de6e0"
         },
         {
           "path": "projects/support/tasks/support-triage-sweep/TASK.md",
           "kind": "task",
-          "sizeBytes": 1209,
-          "sha256": "4b30dcef0fd3d905634cd5873044d0d22e3fe440ebc5378f1e3d96a6d7024ff1"
+          "sizeBytes": 1503,
+          "sha256": "271a92ee91257255072f6780a9f2420cd2b98856a2d362bbcc4925ff3a878f20"
         },
         {
           "path": "skills/support-faq/SKILL.md",
           "kind": "skill",
-          "sizeBytes": 2700,
-          "sha256": "cc6a69a99d62d45f8ed113c21db876d32e82fbf6940f6d70512b158e97ccb320"
+          "sizeBytes": 2879,
+          "sha256": "a912b746a375ad1f612ee1a68a8e112da249dd8ff3f9d9afc5ebfefafd80a0c1"
         },
         {
           "path": "skills/support-reply/SKILL.md",
           "kind": "skill",
-          "sizeBytes": 3560,
-          "sha256": "e67f6fe1a3c2e0432076f4069d76b6a22b60d36af7dc1e3bc723ea80392240ac"
+          "sizeBytes": 3720,
+          "sha256": "772fe6dd4002e96680fd6b66c75a5a3761c3839060791267979296a7f78c161e"
         },
         {
           "path": "staples.template.json",
@@ -1387,7 +1428,7 @@
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:0de6f585c8473fc67855c1c0313802420defb39ca48c43bf277d37070465a177",
+      "contentHash": "sha256:4c510c871cc75b81df4120dd7150d6fa057fd3d03253c8d21873ed2f29a49530",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Sorts customer messages, drafts answers and escalates problems",

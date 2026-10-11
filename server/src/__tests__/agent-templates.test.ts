@@ -183,6 +183,44 @@ describe("validateAgentTemplatePackage", () => {
     ]);
   });
 
+  it("validates scheduleByAnswer: recurring task, single_select question, a valid cron per option", () => {
+    const ok = editSidecar(readFixtureFiles(), (sidecar) => {
+      sidecar.scheduleByAnswer = { "daily-check-in": { questionId: "cadence", cron: { daily: "0 9 * * 1-5", weekly: "0 9 * * 1" } } };
+    });
+    expect(validate(ok)).toEqual([]);
+
+    const badTask = editSidecar(readFixtureFiles(), (sidecar) => {
+      sidecar.scheduleByAnswer = {
+        "introduce-yourself": { questionId: "cadence", cron: { daily: "0 9 * * 1-5", weekly: "0 9 * * 1" } },
+        "no-such-task": { questionId: "cadence", cron: { daily: "0 9 * * 1-5", weekly: "0 9 * * 1" } },
+      };
+    });
+    expect(validate(badTask)).toEqual([
+      expect.stringContaining('scheduleByAnswer "introduce-yourself" points at a task that is not recurring'),
+      expect.stringContaining('scheduleByAnswer "no-such-task" does not match a TASK.md slug'),
+    ]);
+
+    const badQuestion = editSidecar(readFixtureFiles(), (sidecar) => {
+      sidecar.scheduleByAnswer = {
+        "daily-check-in": { questionId: "focus", cron: { daily: "0 9 * * 1-5" } },
+        "weekly-review": { questionId: "missing", cron: {} },
+      };
+    });
+    expect(validate(badQuestion)).toEqual([
+      expect.stringContaining('scheduleByAnswer question "focus" must be single_select'),
+      expect.stringContaining('scheduleByAnswer question "missing" is not a setup question'),
+    ]);
+
+    const badCron = editSidecar(readFixtureFiles(), (sidecar) => {
+      sidecar.scheduleByAnswer = { "daily-check-in": { questionId: "cadence", cron: { daily: "0 25 * * *", other: "0 9 * * 1" } } };
+    });
+    expect(validate(badCron)).toEqual([
+      expect.stringContaining('has no cron for option "weekly"'),
+      expect.stringContaining('names unknown option "other"'),
+      expect.stringContaining('option "daily" cron "0 25 * * *" is not valid'),
+    ]);
+  });
+
   it("rejects skills that are neither vendored nor in the skills catalog", () => {
     const files = readFixtureFiles();
     files["agents/helper/AGENTS.md"] = files["agents/helper/AGENTS.md"]!.replace("  - task-planning", "  - mystery-skill");
@@ -257,6 +295,21 @@ describe("agentTemplatesService", () => {
     expect(rendered.outwardActions).toEqual([{ capability: "email", label: "Send an email", destructiveLabel: "Delete an email" }]);
     expect(rendered.defaultBudgetMonthlyCents).toBe(2000);
     expect(rendered.recommendedAdapterType).toBe("claude_local");
+  });
+
+  it("picks a recurring task's cron from the chosen answer, falling back to TASK.md", async () => {
+    const files = editSidecar(readFixtureFiles(), (sidecar) => {
+      sidecar.setupQuestions[1].customAnswer = { enabled: true };
+      sidecar.scheduleByAnswer = { "daily-check-in": { questionId: "cadence", cron: { daily: "0 7 * * 1-5", weekly: "30 8 * * 1" } } };
+    });
+    const svc = service({ "test-helper": files });
+    const cronFor = async (cadence: string) =>
+      (await svc.render("staples/test-helper", null, { ...ANSWERS, cadence }, CTX)).routines.map((routine) => routine.cronExpression);
+
+    expect(await cronFor("daily")).toEqual(["0 7 * * 1-5", "0 16 * * 5"]);
+    expect(await cronFor("weekly")).toEqual(["30 8 * * 1", "0 16 * * 5"]);
+    // A custom answer has no entry, so the TASK.md schedule applies.
+    expect(await cronFor("Every other day")).toEqual(["0 9 * * 1-5", "0 16 * * 5"]);
   });
 
   it("inserts an answer containing a placeholder literally, without re-expanding it", async () => {

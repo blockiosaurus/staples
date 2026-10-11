@@ -19,8 +19,7 @@ Set up the newsletter for {{company.name}}.
    - "First three issues": an outline of each, with a working subject line and two to four items.
    - "What I need from you": facts, offers or dates the first issues depend on.
 4. Create an empty `issue-log` document on this task, with a one-line heading. You will add a line for every issue sent.
-5. Set your schedule. Your routines are "Research and draft the issue" (Sundays at 9:00) and "Schedule the issue" (Tuesdays at 9:00). If the send day is not Tuesday, move them: for Thursday, draft on Tuesdays (cron `0 9 * * 2`) and schedule on Thursdays (cron `0 9 * * 4`), keeping the time zone. If you cannot change them, tell {{person.name}} they can do it on the Routines page.
-6. Ask {{person.name}} in one question card: which name (single choice, your recommendation marked), whether the format works (recommended: "Yes"), and the facts you need, each with your best guess as the starting text.
-7. Comment with a short summary and a link to the plan, then set this task to `in_review` while you wait.
+5. Ask {{person.name}} in one question card: which name (single choice, your recommendation marked), whether the format works (recommended: "Yes"), and the facts you need, each with your best guess as the starting text.
+6. Comment with a short summary and a link to the plan, then set this task to `in_review` while you wait.
 
 When they answer, update the `plan` document and mark this task done.

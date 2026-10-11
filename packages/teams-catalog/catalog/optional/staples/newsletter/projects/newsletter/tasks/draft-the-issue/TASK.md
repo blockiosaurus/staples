@@ -21,4 +21,4 @@ Steps:
 4. Save it as this task's `issue` document.
 5. Comment with the recommended subject line and a link to the document. If any facts need confirming, ask them in one question card with your recommended answers and set this task to `in_review`; otherwise mark it done.
 
-This routine runs on Sundays at 9:00, two days before the default send day. {{person.name}} chose {{answers.sendDay}}; the schedule can be changed on the Routines page.
+This routine runs at 9:00 two days before the send day ({{answers.sendDay}}). {{person.name}} can change the schedule on the Routines page.
