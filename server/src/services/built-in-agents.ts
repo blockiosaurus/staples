@@ -948,7 +948,12 @@ export function builtInAgentService(db: Db) {
     return ensured;
   }
 
-  async function defaultProvisionInput(companyId: string, definition: BuiltInAgentDefinition, input: BuiltInAgentProvisionInput) {
+  async function defaultProvisionInput(
+    companyId: string,
+    definition: BuiltInAgentDefinition,
+    input: BuiltInAgentProvisionInput,
+    lookup?: { degraded: boolean },
+  ) {
     if (input.adapterType || input.adapterConfig) return input;
     if (definition.inheritCompanyAdapterType) {
       const rows = await db
@@ -978,6 +983,7 @@ export function builtInAgentService(db: Db) {
             // A slow lookup falls back to the adapter's default model.
             logger.warn({ companyId, adapterType: candidate.adapterType }, "adapter model lookup timed out while provisioning a built-in agent");
             model = "";
+            if (lookup) lookup.degraded = true;
           } else if (known.length > 0 && !known.some((entry) => entry.id === model)) {
             model = "";
           }
@@ -2276,21 +2282,41 @@ export function builtInAgentService(db: Db) {
     }
     const assistant = await findSingleAgent(companyId, definition);
     if (!assistant || assistant.status === "pending_approval" || assistant.status === "terminated") return null;
-    const [ran] = await db.select({ id: heartbeatRuns.id }).from(heartbeatRuns)
-      .where(and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.agentId, assistant.id))).limit(1);
-    if (ran) return null;
-    // Managed-instruction keys are server-owned; anything else means a person configured it.
-    const current = isPlainRecord(assistant.adapterConfig) ? assistant.adapterConfig : {};
-    if (Object.keys(current).some((key) => key !== "model" && !key.startsWith("instructions"))) return null;
-    const inherited = await defaultProvisionInput(companyId, definition, {});
+    // Best-effort: a failed or slow model lookup must skip the write, never block the hire.
+    const lookup = { degraded: false };
+    let inherited: Awaited<ReturnType<typeof defaultProvisionInput>>;
+    try {
+      inherited = await defaultProvisionInput(companyId, definition, {}, lookup);
+    } catch (error) {
+      logger.warn({ err: error, companyId }, "Assistant re-inheritance skipped: adapter lookup failed");
+      return null;
+    }
+    if (lookup.degraded) return null;
     if (!inherited.adapterType || !definition.allowedAdapterTypes.includes(inherited.adapterType)) return null;
+    const inheritedAdapterType = inherited.adapterType;
     const inheritedModel = isPlainRecord(inherited.adapterConfig) ? inherited.adapterConfig.model : undefined;
-    if (inherited.adapterType === assistant.adapterType && inheritedModel === current.model) return null;
-    const { model: _previousModel, ...kept } = current;
-    const nextConfig = { ...kept, ...(typeof inheritedModel === "string" && inheritedModel ? { model: inheritedModel } : {}) };
-    const ensured = await ensure(companyId, ASSISTANT_BUILT_IN_AGENT_KEY, { adapterType: inherited.adapterType, adapterConfig: nextConfig });
-    logger.info({ companyId, agentId: assistant.id, adapterType: inherited.adapterType }, "Assistant re-inherited the first staff agent's adapter");
-    return ensured.agent ?? null;
+    // Re-check and write under a row lock so a concurrent first run or edit cannot be clobbered.
+    const wrote = await db.transaction(async (tx) => {
+      const [locked] = await tx.select().from(agents)
+        .where(and(eq(agents.companyId, companyId), eq(agents.id, assistant.id))).for("update");
+      if (!locked || locked.status === "pending_approval" || locked.status === "terminated") return false;
+      const [ran] = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns)
+        .where(and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.agentId, assistant.id))).limit(1);
+      if (ran) return false;
+      // Managed-instruction keys are server-owned; anything else means a person configured it.
+      const current = isPlainRecord(locked.adapterConfig) ? locked.adapterConfig : {};
+      if (Object.keys(current).some((key) => key !== "model" && !key.startsWith("instructions"))) return false;
+      if (inheritedAdapterType === locked.adapterType && inheritedModel === current.model) return false;
+      const { model: _previousModel, ...kept } = current;
+      const nextConfig = { ...kept, ...(typeof inheritedModel === "string" && inheritedModel ? { model: inheritedModel } : {}) };
+      await tx.update(agents)
+        .set({ adapterType: inheritedAdapterType, adapterConfig: nextConfig, updatedAt: new Date() })
+        .where(eq(agents.id, locked.id));
+      return true;
+    });
+    if (!wrote) return null;
+    logger.info({ companyId, agentId: assistant.id, adapterType: inheritedAdapterType }, "Assistant re-inherited the first staff agent's adapter");
+    return (await agentSvc.getById(assistant.id)) as Agent | null;
   }
 
   async function autoProvisionBundledAgents(companyId: string) {

@@ -334,7 +334,7 @@ describe("run failure diagnostics", () => {
     expect(collectRunFailureSecretValues({
       CUSTOM_BINDING: "bound-opaque-value", ACCESS_TOKEN: "plain-opaque-value", REGION: "us-east-1", EMPTY_KEY: "",
     }, ["CUSTOM_BINDING"])).toEqual(["bound-opaque-value", "plain-opaque-value", "us-east-1"]);
-    expect(collectRunFailureSecretValues({ PATH: "/usr/bin", CUSTOM_BINDING: "opaque" }, [], true)).toEqual(["opaque"]);
+    expect(collectRunFailureSecretValues({ PATH: "/usr/bin", CUSTOM_BINDING: "opaque-value" }, [], true)).toEqual(["opaque-value"]);
     expect(collectRunFailureSecretValues({ PATH: "secret-override" }, ["PATH"], true)).toEqual(["secret-override"]);
   });
 
@@ -351,8 +351,17 @@ describe("run failure diagnostics", () => {
     const env = { PAPERCLIP_DB_BACKUP_ENABLED: "false", PAPERCLIP_DB_BACKUP_RETENTION_DAYS: "1" };
     expect(collectRunFailureSecretValues(env, [], true)).toEqual([]);
     expect(collectRunFailureSecretValues(env, ["PAPERCLIP_DB_BACKUP_ENABLED"], true)).toEqual(["false"]);
-    expect(collectRunFailureSecretValues({ CUSTOM_BINDING: "1" }, [], true)).toEqual(["1"]);
-    expect(collectRunFailureSecretValues({ PAPERCLIP_DB_BACKUP_ENABLED: "opaque" }, [], true)).toEqual(["opaque"]);
+    expect(collectRunFailureSecretValues({ CUSTOM_BINDING: "1" }, ["CUSTOM_BINDING"], true)).toEqual(["1"]);
+    expect(collectRunFailureSecretValues({ PAPERCLIP_DB_BACKUP_ENABLED: "opaque-value" }, [], true)).toEqual(["opaque-value"]);
+  });
+  it("ignores short inherited values and common shell settings, but never declared bindings", () => {
+    const shell = { EDITOR: "vi", VISUAL: "vim", PAGER: "less", SHELL: "/bin/zsh", LC_NUMERIC: "C", TERM: "xterm-256color" };
+    expect(collectRunFailureSecretValues(shell, [], true)).toEqual([]);
+    expect(collectRunFailureSecretValues({ SHORT_OPAQUE: "abc1234" }, [], true)).toEqual([]);
+    expect(collectRunFailureSecretValues({ LONG_OPAQUE: "abcd1234" }, [], true)).toEqual(["abcd1234"]);
+    expect(collectRunFailureSecretValues({ EDITOR: "vi" }, ["EDITOR"], true)).toEqual(["vi"]);
+    // Configured (non-inherited) values stay private regardless of length.
+    expect(collectRunFailureSecretValues({ API_KEY: "abc" })).toEqual(["abc"]);
   });
   it("preserves generic exceptions, numeric codes and nested network causes", () => {
     const root = Object.assign(new Error("network failed"), { code: "ECONNRESET", statusCode: 502, request_id: "req-123" });

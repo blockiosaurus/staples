@@ -52,6 +52,15 @@ import { issueThreadInteractionService } from "../services/issue-thread-interact
 import { issueService } from "../services/issues.ts";
 import { ASSISTANT_RUNTIME_ADAPTER_TYPES, PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "../services/assistant-identity.ts";
 
+const modelLookup = vi.hoisted(() => ({ override: null as null | (() => Promise<Array<{ id: string; label: string }>>) }));
+vi.mock("../adapters/registry.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../adapters/registry.js")>();
+  return {
+    ...original,
+    listAdapterModels: (type: string) => (modelLookup.override ? modelLookup.override() : original.listAdapterModels(type)),
+  };
+});
+
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 
@@ -383,6 +392,38 @@ describeEmbeddedPostgres("built-in agents", () => {
     await hire(customized, "codex_local", "gpt-5.4");
     expect((await db.select().from(agents).where(eq(agents.id, customizedAssistant.id)))[0])
       .toMatchObject({ adapterType: "claude_local", adapterConfig: { model: "claude-sonnet-4-6", effort: "high" } });
+  });
+
+  it("skips re-inheritance (no write) when the model lookup times out, without blocking the hire", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const before = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    modelLookup.override = () => new Promise(() => {});
+    try {
+      const hired = await hire(companyId, "codex_local", "gpt-5.4");
+      expect(hired.id).toBeTruthy();
+    } finally {
+      modelLookup.override = null;
+    }
+    const [after] = await db.select().from(agents).where(eq(agents.id, before.id));
+    expect(after).toMatchObject({ adapterType: "claude_local" });
+    expect(after!.adapterConfig).not.toHaveProperty("model", "gpt-5.4");
+  }, 20_000);
+
+  it("re-checks the never-ran condition under a row lock before writing", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const before = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    // The Assistant runs while the (slow) model lookup is in flight.
+    modelLookup.override = async () => {
+      await db.insert(heartbeatRuns).values({ companyId, agentId: before.id, status: "succeeded", contextSnapshot: {} });
+      return [{ id: "gpt-5.4", label: "GPT" }];
+    };
+    try {
+      await hire(companyId, "codex_local", "gpt-5.4");
+    } finally {
+      modelLookup.override = null;
+    }
+    const [after] = await db.select().from(agents).where(eq(agents.id, before.id));
+    expect(after).toMatchObject({ adapterType: "claude_local" });
   });
 
   it("gives up on a slow adapter model lookup and reports a timeout", async () => {

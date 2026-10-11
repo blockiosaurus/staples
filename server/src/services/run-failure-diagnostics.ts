@@ -65,7 +65,7 @@ function scalars(value: unknown, fields: readonly string[]): Context {
 // Unknown inherited values may contain credentials under arbitrary names.
 // Explicitly configured values remain private, including overrides of these keys.
 const PUBLIC_ENV_KEYS = new Set([
-  "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "HOME", "USERPROFILE",
+  "EDITOR", "VISUAL", "PAGER", "LC_COLLATE", "LC_MESSAGES", "LC_MONETARY", "LC_NUMERIC", "LC_TIME", "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "HOME", "USERPROFILE",
   "HOMEDRIVE", "HOMEPATH", "USER", "USERNAME", "LOGNAME", "SHELL", "LANG",
   "LANGUAGE", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP", "NODE_ENV",
   "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME",
@@ -75,6 +75,7 @@ const PUBLIC_ENV_KEYS = new Set([
   "XPC_SERVICE_NAME", "VITEST_POOL_ID", "VITEST_WORKER_ID",
   "PAPERCLIP_AGENT_ID", "PAPERCLIP_COMPANY_ID", "PAPERCLIP_RUN_ID", "PAPERCLIP_TASK_ID",
 ]);
+const MIN_INHERITED_SECRET_LENGTH = 8;
 const PUBLIC_BOOLEAN_ENV_KEYS = new Set([
   "OPENCODE_ALLOW_ALL_MODELS", "CLAUDE_CODE_USE_BEDROCK", "GOOGLE_GENAI_USE_GCA",
   "CI", "NO_COLOR", "FORCE_COLOR",
@@ -103,6 +104,8 @@ export function collectRunFailureSecretValues(
   const values: string[] = [];
   for (const [key, value] of Object.entries(strings)) {
     if (!value) continue;
+    // Short inherited values (EDITOR=vi, LANG=C) are never credentials and redacting them mangles diagnostics.
+    if (inherited && !declared.has(key) && value.length < MIN_INHERITED_SECRET_LENGTH) continue;
     const publicSetting = (inherited && (
       PUBLIC_ENV_KEYS.has(key.toUpperCase()) ||
       (PUBLIC_NUMBER_ENV_KEYS.has(key.toUpperCase()) && /^\d+$/.test(value)) ||
