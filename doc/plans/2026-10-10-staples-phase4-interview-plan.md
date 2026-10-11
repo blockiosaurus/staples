@@ -4,7 +4,7 @@
 
 **Goal:** A new company starts as a full-screen conversation with the Assistant asking "What do you want to build?". The Assistant interviews the person with question cards (every question has a pre-selected recommended answer and an "Accept all recommendations" button), writes a Company Brief, and proposes a plan (goal, agents, starter tasks with dependencies) that one Confirm creates. The onboarding wizard is removed.
 
-**Architecture:** Builds on Phase 3. The Assistant gains three tools: `staples_ask_questions` (question-set interactions on its conversation), `staples_update_company_brief` (low-risk write) and `staples_propose_plan` (a governed proposed action targeting a new composite `POST /api/companies/:id/plans/apply` endpoint executed by the person's browser). The Company Brief is a company-scoped document injected into every agent's wake context. Pocock-derived skills ship in root `skills/` (auto-imported) and are attached to the Assistant. Stage 0 is a UI mode: a company with no staff agents shows only the Assistant, full screen; model connection happens inline in that conversation.
+**Architecture:** Builds on Phase 3. The Assistant gains `staples_ask_questions` (question-set interactions on its conversation), `staples_get_company_brief` (read; brief edits are governed proposals) and `staples_propose_plan` (a governed proposed action targeting a new composite `POST /api/companies/:id/plans/apply` endpoint executed by the person's browser). The Company Brief is a company-scoped document injected into every agent's wake context. Pocock-derived skills ship in root `skills/` (auto-imported) and are attached to the Assistant. Stage 0 is a UI mode: a company with no staff agents shows only the Assistant, full screen; model connection happens inline in that conversation.
 
 **Tech Stack:** Express + Drizzle, Zod (`@paperclipai/shared`), React 19 + TanStack Query, Vitest.
 
@@ -53,7 +53,7 @@ Spec: `doc/plans/2026-10-10-staples-adaptive-ux-design.md` (Stage 0, The intervi
 
 - Storage: `company_documents(company_id, key, document_id, created_at, updated_at)` unique (company_id, key); the brief is key `brief`, a normal `documents` row with revisions.
 - API: `GET /api/companies/:id/brief` → `{ body: string, revisionId, updatedAt } | null`; `PUT /api/companies/:id/brief` `{ body, baseRevisionId? }` (board members except viewers; 409 on revision conflict); activity logged `company.brief_updated`.
-- Assistant tool `staples_update_company_brief({ body, baseRevisionId? })` — low-risk write as the person (Phase 3 tools endpoint; body ≤ 20,000 chars).
+- Assistant brief edits are governed (controller decision after review): proposed action category `brief` targeting `PUT /api/companies/:id/brief`; read tool `staples_get_company_brief`.
 - Injection: every agent's wake payload carries `companyBrief` (first 4,000 chars + "(truncated — read the full brief at /company/brief)") rendered as a "Company brief:" block in the prompt, only when a brief exists. Bracket/line safety like page context isn't needed (it's company-authored), but cap length.
 - UI: `/company/brief` page with the existing markdown document editor (find the component issue documents use), revision history if trivially reusable; registry surface `nav.brief` (label "Company brief", icon `BookOpen`, group `org`, tier `grows`, revealWhen: a brief exists — add `hasBrief: boolean` to `CompanySignals`), and a "Company brief" link in the Assistant page header.
 - Tests: route CRUD + conflict + viewer 403; tool; wake payload + prompt rendering; UI page; signal.
@@ -76,7 +76,7 @@ Spec: `doc/plans/2026-10-10-staples-adaptive-ux-design.md` (Stage 0, The intervi
 
 Adapt (don't copy) from `mattpocock/skills` (local copy: `/private/tmp/claude-501/-Users-kelliott-Metaplex-staples/0e6f9dde-474d-462b-8890-e7b3dc16a0da/scratchpad/pocock/skills/`):
 - `staples-interview` ← productivity/grilling: decision tree, rounds = frontier, ask via `staples_ask_questions`, every question has a recommendation ("yes" accepts), facts looked up with tools not asked, done only when no open decisions remain and the person confirms shared understanding; then hand off to staples-plan.
-- `staples-company-brief` ← engineering/domain-modeling: maintain the Company Brief (mission, glossary of terms, key decisions, constraints); challenge fuzzy terms; update the brief inline with `staples_update_company_brief` as terms resolve; brief contains no implementation chatter.
+- `staples-company-brief` ← engineering/domain-modeling: maintain the Company Brief (mission, glossary of terms, key decisions, constraints); challenge fuzzy terms; keep a working draft of the brief in the conversation as terms resolve and propose it (governed, category `brief`) at natural checkpoints — during the first interview it is proposed together with the plan via `plans/apply`; brief contains no implementation chatter.
 - `staples-plan` ← engineering/to-spec + to-tickets: turn the settled interview into goal, agent roles (allowlisted hire fields, non-CEO), and 3–12 starter tasks as tracer-bullet slices with blocking edges; present via `staples_propose_plan`.
 - `staples-questionnaire` ← productivity/to-questionnaire: when the person can't answer, draft a questionnaire for someone else as a task document (create a task with the questionnaire as description, assigned to nobody).
 - `staples-wayfinder` ← engineering/wayfinder: for big initiatives, a decision map as a parent task with child decision tasks and blockers; resolve one decision at a time with the person.
@@ -91,6 +91,7 @@ Each SKILL.md: frontmatter (`name`, `description`), ≤ 150 lines, attribution l
 ```ts
 // shared
 export const applyPlanSchema = z.object({
+  brief: z.object({ body: z.string().min(1).max(20_000), baseRevisionId: z.string().uuid().nullable() }).optional(),
   goal: z.object({ title: z.string().min(1).max(200), description: z.string().max(4000).optional() }).optional(),
   project: z.object({ name: z.string().min(1).max(120), description: z.string().max(4000).optional() }).optional(),
   agents: z.array(z.object({
@@ -109,10 +110,10 @@ export const applyPlanSchema = z.object({
 }).strict();
 ```
 
-- `POST /api/companies/:id/plans/apply` (board session; non-viewer): validates references (client keys exist, no cycles in parent/blocked edges, assignees exist in company and aren't the Assistant), roles non-privileged (reuse Phase 3 role rule), adapterType in the proposable hire set; then in one transaction (or ordered with compensation if hiring can't be transactional — document): create goal (level `company` if the company has no company-level goal, else `task`), project (linked to goal), hire agents (agent-hire path, honoring `requireBoardApprovalForNewAgents` — if approvals are required, created agents stay pending and tasks are still created assigned to them), create tasks (topological order like suggest_tasks `buildTaskCreationOrder`; goal/project attached; blockers resolved to ids). Response: created ids by clientKey. Activity logged `plan.applied`.
+- `POST /api/companies/:id/plans/apply` (board session; non-viewer): validates references (client keys exist, no cycles in parent/blocked edges, assignees exist in company and aren't the Assistant), roles non-privileged (reuse Phase 3 role rule), adapterType in the proposable hire set; then in one transaction (or ordered with compensation if hiring can't be transactional — document): write the brief if present (same base-revision rule as PUT /brief; stale → 409 before anything is created), create goal (level `company` if the company has no company-level goal, else `task`), project (linked to goal), hire agents (agent-hire path, honoring `requireBoardApprovalForNewAgents` — if approvals are required, created agents stay pending and tasks are still created assigned to them), create tasks (topological order like suggest_tasks `buildTaskCreationOrder`; goal/project attached; blockers resolved to ids). Response: created ids by clientKey. Activity logged `plan.applied`.
 - Governed allowlist: category `plan`, pattern `POST /api/companies/:id/plans/apply`, body validated with `applyPlanSchema` + the same checks (so the claim re-validation covers it).
 - Tool `staples_propose_plan(plan, summary)` → creates the proposed action (category `plan`).
-- UI: for category `plan`, the card shows a structured preview (Goal; Project; Agents: name — role (adapter); Tasks as an ordered list with "after: <titles>" and assignee) above the raw Request, and Confirm reads "Create plan".
+- UI: for category `plan`, the card shows a structured preview (Brief (collapsed markdown preview); Goal; Project; Agents: name — role (adapter); Tasks as an ordered list with "after: <titles>" and assignee) above the raw Request, and Confirm reads "Create plan".
 - Tests: schema; cycle detection; privileged role refused; apply happy path creates everything with correct links; approval-required company; allowlist + claim; UI preview.
 
 ---
@@ -145,7 +146,7 @@ export const applyPlanSchema = z.object({
 
 **Files:** `server/src/built-ins/agents/assistant/AGENTS.md`, `stockVersion` bump, tests that snapshot instructions.
 
-- When the company has no staff agents (use `staples_company_signals`) or the person asks to start something new: follow `staples-interview`, keep the Company Brief current via `staples-company-brief`, finish with `staples-plan` → `staples_propose_plan`; after the plan is created, tell the person what happens next and where to look.
+- When the company has no staff agents (use `staples_company_signals`) or the person asks to start something new: follow `staples-interview`, draft the Company Brief via `staples-company-brief`, finish with `staples-plan` → `staples_propose_plan` (brief + plan in one Confirm); after the plan is created, tell the person what happens next and where to look.
 - Otherwise: the Phase 3 behaviour (what's up, questions, help, governed proposals).
 - Keep ≤ 250 lines.
 
@@ -154,6 +155,6 @@ export const applyPlanSchema = z.object({
 ### Task 10: Phase verification
 
 - [ ] Typechecks; full UI suite; touched server test files serially; UI build.
-- [ ] One end-to-end test (stubbed adapter, real routes): company with no staff agents → Assistant run calls `staples_ask_questions` → person accepts all recommendations → continuation → `staples_update_company_brief` → `staples_propose_plan` → claim → browser-executed `plans/apply` → accept → goal/agents/tasks exist with blockers → signals.agents ≥ 1 → stage 0 ends.
+- [ ] One end-to-end test (stubbed adapter, real routes): company with no staff agents → Assistant run calls `staples_ask_questions` → person accepts all recommendations → continuation → `staples_propose_plan` (with brief) → claim → browser-executed `plans/apply` → accept → goal/agents/tasks exist with blockers → signals.agents ≥ 1 → stage 0 ends.
 - [ ] Browser: `/start` → name company → stage 0 full-screen Assistant with the opening bubble; setup card appears (this host can't run models) with installed/not-installed adapters; the Company brief page; a seeded question card shows pre-selected recommendations and "Accept all recommendations"; a seeded plan card shows the structured preview.
 - [ ] Ledger update.
