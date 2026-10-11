@@ -28,6 +28,7 @@ import { planRoutes } from "../routes/plans.js";
 import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
 import { injectApiRequest } from "../services/public-mcp/capabilities.js";
 import { companyBriefService } from "../services/company-brief.js";
+import { claimPlanApplication, takeOverPlanApplication } from "../services/plans.js";
 
 const support = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = support.supported ? describe : describe.skip;
@@ -354,6 +355,67 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       const [applied] = await db.select().from(planApplications).where(eq(planApplications.companyId, s.companyId));
       expect(applied!.status).toBe("applied");
     }, 120_000);
+
+    it("a new key takes over a failed application; retrying that key replays its result", async () => {
+      const s = await seed();
+      let failSecond = true;
+      let hires = 0;
+      const built = buildApp(sessionActor(s), {
+        hireAgent: async (actor, companyId, body, origin) => {
+          hires += 1;
+          if (failSecond && hires === 2) return { statusCode: 422, json: { error: "Adapter unavailable" } };
+          return injectApiRequest(built.api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin });
+        },
+      });
+      const plan = fullPlan(s);
+      const send = (key: string) => request(built.app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", key).send(plan);
+      expect((await send("card-one")).status).toBe(422);
+      failSecond = false;
+      const resumed = await send("card-two");
+      expect(resumed.status, JSON.stringify(resumed.body)).toBe(201);
+      const hiresAfterResume = hires;
+      const replayed = await send("card-two");
+      expect(replayed.status, JSON.stringify(replayed.body)).toBe(200);
+      expect(replayed.body.tasks).toEqual(resumed.body.tasks);
+      expect(hires).toBe(hiresAfterResume);
+      expect(await db.select().from(agents).where(eq(agents.companyId, s.companyId))).toHaveLength(4);
+      expect(await db.select().from(issues).where(eq(issues.companyId, s.companyId))).toHaveLength(4);
+      const rows = await db.select().from(planApplications).where(eq(planApplications.companyId, s.companyId));
+      expect(Object.fromEntries(rows.map((row) => [row.idempotencyKey, row.status]))).toEqual({ "card-one": "superseded", "card-two": "applied" });
+    }, 120_000);
+
+    it("only one of two racing resumers takes over a failed application", async () => {
+      const s = await seed();
+      const [failed] = await db.insert(planApplications).values({
+        companyId: s.companyId, idempotencyKey: "k1", planHash: "h", status: "failed", createdByUserId: s.userId,
+        agents: { editor: { id: s.staffId, status: "idle", approvalId: null } },
+      }).returning();
+      // Both racers read the same failed row; only the first conditional takeover wins.
+      const first = await takeOverPlanApplication(db, failed!, { key: "k2", userId: s.userId });
+      expect(first).toMatchObject({ idempotencyKey: "k2", status: "in_progress", agents: { editor: { id: s.staffId } } });
+      await expect(takeOverPlanApplication(db, failed!, { key: "k3", userId: s.userId })).rejects.toMatchObject({ status: 409 });
+      const keys = (await db.select().from(planApplications).where(eq(planApplications.companyId, s.companyId))).map((row) => row.idempotencyKey).sort();
+      expect(keys).toEqual(["k1", "k2"]);
+    }, 60_000);
+
+    it("resumes a crashed (expired lease) application of the same person, but not another person's or an old one", async () => {
+      const s = await seed();
+      const hired = { editor: { id: s.staffId, status: "idle", approvalId: null } };
+      const past = new Date(Date.now() - 60_000);
+      await db.insert(planApplications).values([
+        { companyId: s.companyId, idempotencyKey: "crashed", planHash: "h1", status: "in_progress", leaseUntil: past, createdByUserId: s.userId, agents: hired },
+        { companyId: s.companyId, idempotencyKey: "live", planHash: "h2", status: "in_progress", leaseUntil: new Date(Date.now() + 60_000), createdByUserId: s.userId, agents: hired },
+        { companyId: s.companyId, idempotencyKey: "theirs", planHash: "h3", status: "failed", createdByUserId: "someone-else", agents: hired },
+        { companyId: s.companyId, idempotencyKey: "old", planHash: "h4", status: "failed", createdByUserId: s.userId, agents: hired, updatedAt: new Date(Date.now() - 25 * 3600_000) },
+      ]);
+      const crashed = await claimPlanApplication(db, { companyId: s.companyId, key: "n1", hash: "h1", userId: s.userId });
+      expect(crashed).toMatchObject({ kind: "claimed", row: { idempotencyKey: "n1", agents: hired } });
+      await expect(claimPlanApplication(db, { companyId: s.companyId, key: "n2", hash: "h2", userId: s.userId })).rejects.toMatchObject({ status: 409 });
+      for (const [key, hash] of [["n3", "h3"], ["n4", "h4"]]) {
+        const fresh = await claimPlanApplication(db, { companyId: s.companyId, key, hash, userId: s.userId });
+        expect(fresh).toMatchObject({ kind: "claimed", row: { idempotencyKey: key, agents: {} } });
+      }
+    }, 60_000);
 
     it("a different key for the same plan resumes a failed application instead of hiring again", async () => {
       const s = await seed();

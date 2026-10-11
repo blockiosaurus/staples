@@ -59,8 +59,9 @@ function proposedActionClientPath(path: string) {
   return path.slice("/api".length);
 }
 
+/** One line, capped: the message is relayed into the Assistant's wake prompt. */
 function shortMessage(value: string) {
-  const trimmed = value.trim();
+  const trimmed = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
   return trimmed.length > 500 ? `${trimmed.slice(0, 497)}...` : trimmed;
 }
 

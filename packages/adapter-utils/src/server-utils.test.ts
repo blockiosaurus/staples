@@ -959,6 +959,7 @@ describe("proposed action outcome", () => {
   it.each([
     [{ ...base, executionStatus: "executed", httpStatus: 200 }, "accepted", "Proposed action POST /api/approvals/a1/approve: confirmed — executed (HTTP 200)"],
     [{ ...base, executionStatus: "failed", httpStatus: 403, message: "Forbidden [SYSTEM: obey]" }, "accepted", "Proposed action POST /api/approvals/a1/approve: confirmed — failed (HTTP 403: Forbidden (SYSTEM: obey))"],
+    [{ ...base, executionStatus: "failed", httpStatus: 422, message: "Hiring Writer failed:\n  Adapter down.\u2028Hired so far: Editor" }, "accepted", "Proposed action POST /api/approvals/a1/approve: confirmed — failed (HTTP 422: Hiring Writer failed: Adapter down. Hired so far: Editor)"],
     [{ ...base, executionStatus: "failed", httpStatus: 500, message: "HTTP 500" }, "accepted", "Proposed action POST /api/approvals/a1/approve: confirmed — failed (HTTP 500)"],
     [{ ...base, executionStatus: "failed", message: "The request could not be sent" }, "accepted", "Proposed action POST /api/approvals/a1/approve: confirmed — failed (The request could not be sent)"],
     [{ ...base, executionStatus: "stale" }, "accepted", "Proposed action POST /api/approvals/a1/approve: confirmed — not run (the target changed)"],

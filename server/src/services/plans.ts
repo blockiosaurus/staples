@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { agents, planApplications, type Db } from "@paperclipai/db";
 import {
   planAgentCreationOrder,
@@ -9,6 +9,7 @@ import {
   type ApplyPlanResult,
 } from "@paperclipai/shared";
 import { conflict, HttpError, unprocessable } from "../errors.js";
+import { logger } from "../middleware/logger.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
 import { canonicalJson, currentBriefRevisionId, planExistingAssigneeViolation, planRuleViolation } from "./assistant-proposed-actions.js";
 import { writeCompanyBrief } from "./company-brief.js";
@@ -91,15 +92,59 @@ export async function validatePlanForApply(db: Db, companyId: string, plan: Appl
 
 type ApplicationRow = typeof planApplications.$inferSelect;
 
+/** A failed or crashed application older than this is not resumed by a new key. */
+const PLAN_RESUME_MAX_AGE_MS = 24 * 3600_000;
+const ALREADY_RUNNING = "This plan is already being applied. Wait a moment and check the company before trying again.";
+
+/**
+ * Atomically take over an earlier application of the same plan for a new
+ * key: the old row is marked superseded only if it is still failed (or
+ * in_progress with an expired lease), and a row for the new key inherits its
+ * hire map. Of two racing resumers holding the same snapshot, only one wins
+ * the conditional update; the other gets a 409.
+ */
+export async function takeOverPlanApplication(db: Db, previous: ApplicationRow, input: { key: string; userId: string | null }): Promise<ApplicationRow> {
+  return db.transaction(async (tx) => {
+    const now = new Date();
+    const [taken] = await tx.update(planApplications)
+      .set({ status: "superseded", leaseUntil: null, updatedAt: now })
+      .where(and(
+        eq(planApplications.id, previous.id),
+        or(
+          eq(planApplications.status, "failed"),
+          and(eq(planApplications.status, "in_progress"), lt(planApplications.leaseUntil, now)),
+        ),
+      ))
+      .returning();
+    if (!taken) throw conflict(ALREADY_RUNNING);
+    const [inserted] = await tx.insert(planApplications).values({
+      companyId: taken.companyId, idempotencyKey: input.key, planHash: taken.planHash,
+      agents: taken.agents, createdByUserId: input.userId,
+    }).onConflictDoNothing().returning();
+    if (inserted) return inserted;
+    // The new key was inserted concurrently (the same request twice): carry the hires over.
+    const [existing] = await tx.select().from(planApplications)
+      .where(and(eq(planApplications.companyId, taken.companyId), eq(planApplications.idempotencyKey, input.key)));
+    if (!existing || existing.planHash !== taken.planHash) throw conflict("This idempotency key was already used for a different plan.");
+    const [merged] = await tx.update(planApplications)
+      .set({ agents: { ...taken.agents, ...existing.agents }, updatedAt: now })
+      .where(eq(planApplications.id, existing.id)).returning();
+    return merged!;
+  });
+}
+
 /**
  * Find or start this key's application and take its lease. Returns the row
  * (with any agents hired by an earlier attempt), or the stored result when
  * the plan was already applied. A key reused for a different plan, or one
- * held by a concurrent apply, is a 409. With a fresh key, a failed earlier
- * application of the identical plan in this company is resumed, so proposing
- * the same plan again does not hire twice.
+ * held by a concurrent apply, is a 409.
+ *
+ * With a fresh key, the same person's earlier application of the identical
+ * plan in this company from the last 24 hours is taken over when it failed
+ * or crashed (in_progress with an expired lease), so proposing the same plan
+ * again does not hire twice; one still running is a 409.
  */
-async function claimApplication(db: Db, input: { companyId: string; key: string; hash: string; userId: string | null }):
+export async function claimPlanApplication(db: Db, input: { companyId: string; key: string; hash: string; userId: string | null }):
   Promise<{ kind: "applied"; row: ApplicationRow } | { kind: "claimed"; row: ApplicationRow }> {
   const { companyId, key, hash } = input;
   let [row] = await db.select().from(planApplications)
@@ -107,11 +152,19 @@ async function claimApplication(db: Db, input: { companyId: string; key: string;
   if (row && row.planHash !== hash) throw conflict("This idempotency key was already used for a different plan.");
   if (row?.status === "applied") return { kind: "applied", row };
   if (!row) {
-    const [failed] = await db.select().from(planApplications)
-      .where(and(eq(planApplications.companyId, companyId), eq(planApplications.planHash, hash), eq(planApplications.status, "failed")))
-      .orderBy(desc(planApplications.updatedAt)).limit(1);
-    if (failed) {
-      row = failed;
+    const now = new Date();
+    const [earlier] = input.userId ? await db.select().from(planApplications)
+      .where(and(
+        eq(planApplications.companyId, companyId),
+        eq(planApplications.planHash, hash),
+        eq(planApplications.createdByUserId, input.userId),
+        or(eq(planApplications.status, "failed"), eq(planApplications.status, "in_progress")),
+        gt(planApplications.updatedAt, new Date(now.getTime() - PLAN_RESUME_MAX_AGE_MS)),
+      ))
+      .orderBy(desc(planApplications.updatedAt)).limit(1) : [];
+    if (earlier?.status === "in_progress" && earlier.leaseUntil && earlier.leaseUntil > now) throw conflict(ALREADY_RUNNING);
+    if (earlier) {
+      row = await takeOverPlanApplication(db, earlier, { key, userId: input.userId });
     } else {
       await db.insert(planApplications).values({ companyId, idempotencyKey: key, planHash: hash, createdByUserId: input.userId })
         .onConflictDoNothing();
@@ -126,13 +179,14 @@ async function claimApplication(db: Db, input: { companyId: string; key: string;
     .where(and(
       eq(planApplications.id, row.id),
       ne(planApplications.status, "applied"),
+      ne(planApplications.status, "superseded"),
       or(isNull(planApplications.leaseUntil), lt(planApplications.leaseUntil, now)),
     ))
     .returning();
   if (leased) return { kind: "claimed", row: leased };
   const [current] = await db.select().from(planApplications).where(eq(planApplications.id, row.id));
   if (current?.status === "applied") return { kind: "applied", row: current };
-  throw conflict("This plan is already being applied. Wait a moment and check the company before trying again.");
+  throw conflict(ALREADY_RUNNING);
 }
 
 /** Agents an earlier attempt hired that still exist in this company (not terminated), with their current status. */
@@ -192,7 +246,7 @@ export async function applyPlan(db: Db, input: {
 
   let application: ApplicationRow | null = null;
   if (key) {
-    const claimed = await claimApplication(db, { companyId, key, hash, userId });
+    const claimed = await claimPlanApplication(db, { companyId, key, hash, userId });
     if (claimed.kind === "applied") return replay(claimed.row);
     application = claimed.row;
   }
@@ -207,9 +261,14 @@ export async function applyPlan(db: Db, input: {
     const status = error instanceof HttpError ? error.status : 500;
     const reason = error instanceof HttpError ? error.message : "The plan could not be saved";
     if (application) {
-      await db.update(planApplications).set({
-        status: "failed", agents: hired, lastError: reason.slice(0, 1000), leaseUntil: null, updatedAt: new Date(),
-      }).where(eq(planApplications.id, application.id));
+      // Recording the failure must never replace the error the person needs to see.
+      try {
+        await db.update(planApplications).set({
+          status: "failed", agents: hired, lastError: reason.slice(0, 1000), leaseUntil: null, updatedAt: new Date(),
+        }).where(eq(planApplications.id, application.id));
+      } catch (recordError) {
+        logger.warn({ err: recordError, planApplicationId: application.id }, "failed to record plan application failure");
+      }
     }
     if (Object.keys(hired).length === 0) throw error;
     if (error instanceof PlanPartiallyAppliedError) throw error;

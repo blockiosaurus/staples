@@ -14,7 +14,7 @@ export const planApplications = pgTable(
     idempotencyKey: text("idempotency_key").notNull(),
     /** sha256 of the canonical plan; a key reused for a different plan is refused. */
     planHash: text("plan_hash").notNull(),
-    /** in_progress | applied | failed */
+    /** in_progress | applied | failed | superseded (taken over by a newer key) */
     status: text("status").notNull().default("in_progress"),
     /** Hired agents by client key: { id, status, approvalId }. */
     agents: jsonb("agents").$type<Record<string, { id: string; status: string; approvalId: string | null }>>().notNull().default({}),

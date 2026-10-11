@@ -409,7 +409,7 @@ describe("ProposedActionCard", () => {
       fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
         if (url.endsWith("/claim-proposed-action")) return claimed();
         if (url === PLAN_PATH && init?.method === "POST") {
-          return json(422, { error: "Hiring Writer failed: Adapter unavailable. Hired so far: Editor (idle, a1).", code: "plan_partially_applied", partial: { agents: { editor: { id: "a1" } } } });
+          return json(422, { error: "Hiring Writer failed:\n  Adapter unavailable.\r\nHired so far: Editor (idle, a1).", code: "plan_partially_applied", partial: { agents: { editor: { id: "a1" } } } });
         }
         return json(200, []);
       });
@@ -417,7 +417,7 @@ describe("ProposedActionCard", () => {
       const host = await render({ interaction: planProposal(), onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
       await click(button(host, "Create plan"));
       expect(accept).toHaveBeenCalledWith(expect.anything(), undefined, undefined, undefined,
-        expect.objectContaining({ status: "failed", httpStatus: 422, message: expect.stringContaining("Hired so far: Editor (idle, a1)") }));
+        expect.objectContaining({ status: "failed", httpStatus: 422, message: "Hiring Writer failed: Adapter unavailable. Hired so far: Editor (idle, a1)." }));
     });
   });
 });
