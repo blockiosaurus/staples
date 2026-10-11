@@ -851,6 +851,19 @@ describe("TaskChatThread draft pass-through", () => {
     expect(onAdd.mock.calls[0]![0]).toBe("Ask about this");
   });
 
+  it("keeps an external send request as a draft while the composer is replaced", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    const props = { comments: [], onAdd, draftKey: "external-replaced" };
+    const request = { text: "Ask about this", nonce: 1, send: true };
+    render(<TaskChatThread {...props} externalDraftRequest={request} composerReplacement={<div>Connect a model</div>} />);
+    await act(async () => {});
+    render(<TaskChatThread {...props} externalDraftRequest={null} />);
+    await act(async () => {});
+    await act(async () => {});
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="mock-editor"]')?.textContent).toBe("Ask about this");
+  });
+
   it("lets the composer replacement explain a paused, failed agent instead of the lifecycle banner", () => {
     const agent = { id: "assistant", name: "Assistant", status: "paused", lifecycleState: "verifying",
       lifecycleError: "The lifecycle step failed. Retry the operation." } as never;

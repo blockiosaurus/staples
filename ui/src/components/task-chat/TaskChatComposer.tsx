@@ -527,14 +527,22 @@ export function TaskChatComposer({
   const draftRequestNonce = draftRequest?.nonce ?? 0;
   const draftRequestText = draftRequest?.text ?? "";
   const draftRequestSend = draftRequest?.send === true;
+  const appliedDraftNonceRef = useRef(0);
   useEffect(() => {
-    if (draftRequestNonce <= 0) return;
+    if (draftRequestNonce <= 0 || draftRequestNonce === appliedDraftNonceRef.current) return;
+    appliedDraftNonceRef.current = draftRequestNonce;
     changeBodyRef.current(draftRequestText);
     if (draftKey && !creation) saveDraft(draftKey, draftRequestText);
     requestAnimationFrame(() => editorRef.current?.focus());
     // A send request goes through the same submit as pressing Send. `send` is
     // dropped by the owner once applied, so a remount never sends it twice.
-    if (draftRequestSend) void submit();
+    if (draftRequestSend) {
+      if (disabled || pause) {
+        setActionError("The Assistant can't take messages right now — your message is in the box to send later.");
+      } else {
+        void submit();
+      }
+    }
     onDraftRequestApplied?.(draftRequestNonce);
     // Only a new request (nonce) replaces the draft.
     // eslint-disable-next-line react-hooks/exhaustive-deps

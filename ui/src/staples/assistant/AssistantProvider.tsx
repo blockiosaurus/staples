@@ -32,7 +32,7 @@ export function composeAskText({ text, context }: Pick<AskAssistantInput, "text"
   if (!context) return text;
   const label = context.label.replace(/\s+/g, " ").trim();
   const line = `About: ${label} (${context.href.trim()})`;
-  return text ? `${text}\n${line}` : line;
+  return text ? `${text}\n\n${line}` : line;
 }
 
 export interface AssistantShellValue {
@@ -163,6 +163,14 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setAskState((current) => (current && current.companyId !== companyId ? null : current));
   }, [companyId]);
+  // An ask nobody took (dock closed, or the person navigated away) must not
+  // fire later on an unrelated open.
+  useEffect(() => {
+    if (!dockOpen && !onAssistantPage) setAskState(null);
+  }, [dockOpen, onAssistantPage]);
+  useEffect(() => {
+    setAskState(null);
+  }, [location.pathname]);
   const pendingAsk = useMemo<PendingAssistantAsk | null>(
     () => (askState && askState.companyId === companyId
       ? { text: askState.text, send: askState.send, nonce: askState.nonce }

@@ -507,7 +507,7 @@ describe("Assistant page and dock", () => {
 
     it("composes a plain About line from the context", () => {
       expect(composeAskText({ text: "What is blocking this?", context: { label: "Fix login", href: "/PAP/issues/PAP-12" } }))
-        .toBe("What is blocking this?\nAbout: Fix login (/PAP/issues/PAP-12)");
+        .toBe("What is blocking this?\n\nAbout: Fix login (/PAP/issues/PAP-12)");
       expect(composeAskText({ text: "Hi" })).toBe("Hi");
     });
 
@@ -520,12 +520,20 @@ describe("Assistant page and dock", () => {
       await settle();
       expect(dock()).not.toBeNull();
       const first = shellRef!.pendingAsk!;
-      expect(first).toMatchObject({ text: "Summarize\nAbout: Fix login (/PAP/issues/PAP-12)", send: false });
+      expect(first).toMatchObject({ text: "Summarize\n\nAbout: Fix login (/PAP/issues/PAP-12)", send: false });
       act(() => shellRef!.consumeAsk(first.nonce));
       expect(shellRef!.pendingAsk).toBeNull();
       await act(async () => shellRef!.askAssistant({ text: "Again", send: true }));
       expect(shellRef!.pendingAsk!.nonce).toBeGreaterThan(first.nonce);
       expect(shellRef!.pendingAsk!.send).toBe(true);
+    });
+
+    it("drops a never-consumed ask when the dock closes", async () => {
+      await render(<><Capture /><HostPage crumbs={["Home"]} /></>);
+      await act(async () => shellRef!.askAssistant({ text: "Hello" }));
+      expect(shellRef!.pendingAsk?.text).toBe("Hello");
+      await act(async () => shellRef!.setDockOpen(false));
+      expect(shellRef!.pendingAsk).toBeNull();
     });
 
     it("keeps the dock closed on the Assistant page and clears a pending draft on company switch", async () => {

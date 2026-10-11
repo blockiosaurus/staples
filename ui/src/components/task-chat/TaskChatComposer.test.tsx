@@ -904,6 +904,27 @@ describe("TaskChatComposer", () => {
     expect(onAdd).toHaveBeenCalledWith("Ask this", undefined, undefined, undefined, expect.any(String));
   });
 
+  it("keeps a send request as a draft with a notice when the composer is disabled", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    render(<TaskChatComposer onAdd={onAdd} disabled workMode="standard" draftRequest={{ text: "Ask this", nonce: 1, send: true }} />);
+    await flushAsync();
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(editable().textContent).toBe("Ask this");
+    expect(container.textContent).toContain("can't take messages right now");
+  });
+
+  it("sends a draft request only once under StrictMode", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    render(
+      <StrictMode>
+        <TaskChatComposer onAdd={onAdd} workMode="standard" draftRequest={{ text: "Ask this", nonce: 1, send: true }} />
+      </StrictMode>,
+    );
+    await flushAsync();
+    await flushAsync();
+    expect(onAdd).toHaveBeenCalledTimes(1);
+  });
+
   it("submits on Ctrl+Enter", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     render(<TaskChatComposer onAdd={onAdd} workMode="standard" />);

@@ -631,8 +631,12 @@ export function TaskChatThread(props: TaskChatThreadProps) {
     if (!externalDraftRequest || externalDraftRequest.nonce === consumedExternalNonce.current) return;
     consumedExternalNonce.current = externalDraftRequest.nonce;
     const { text, send, nonce } = externalDraftRequest;
-    setDraftRequest((current) => ({ text, send, nonce: (current?.nonce ?? 0) + 1 }));
+    // Without a rendered composer nothing can be sent now; keep it as a draft
+    // rather than auto-sending whenever a composer later appears.
+    const canSend = send === true && showComposer && !composerReplacement;
+    setDraftRequest((current) => ({ text, send: canSend, nonce: (current?.nonce ?? 0) + 1 }));
     onDraftRequestConsumedRef.current?.(nonce);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalDraftRequest]);
   // Once applied, a send request must not fire again if the composer remounts.
   const markDraftRequestApplied = useCallback((nonce: number) => {
