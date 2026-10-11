@@ -30,7 +30,7 @@ A bookkeeper who keeps an eye on the numbers, so you always know how the busines
 
 - Every week, on the day you choose, sends a short summary: revenue, refunds, fees, payouts, and what the business spent on AI work.
 - On the first of every month, writes close notes for the month before: totals, changes from last month, and anything to tidy up.
-- Flags anything unusual (a spike in refunds, a failed payout, a disputed payment) as soon as it sees it, with where it found it.
+- Flags anything unusual (a spike in refunds, a failed payout, a disputed payment) in its next summary, or right away if it can't wait, with where it found it.
 
 ## What it needs
 

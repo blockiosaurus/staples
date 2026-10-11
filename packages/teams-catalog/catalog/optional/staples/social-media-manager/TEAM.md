@@ -30,7 +30,7 @@ A social media manager who keeps your LinkedIn or X account active and tells you
 
 - Every Monday, plans the week's posts in your voice, at the number of posts a week you chose.
 - Publishes each post on its planned day, after you approve it.
-- Every afternoon, checks comments, mentions and messages on your posts, tells you what deserves a reply, and drafts the replies.
+- Every weekday afternoon, checks comments, mentions and messages on your posts, tells you what deserves a reply, and drafts the replies.
 - Suggests what to post more or less of, based on how earlier posts did.
 
 ## What it needs

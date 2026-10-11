@@ -10,7 +10,7 @@ tags:
 
 # Social Engagement
 
-People who comment on or mention a business expect to be noticed. This skill turns a day of notifications into a short list of replies, ready to approve. The bar: nobody worth answering waits more than a day.
+People who comment on or mention a business expect to be noticed. This skill turns a day of notifications into a short list of replies, ready to approve. The bar: nobody worth answering waits more than a working day.
 
 ## When to use
 

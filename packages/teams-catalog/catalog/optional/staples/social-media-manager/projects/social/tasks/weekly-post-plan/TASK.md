@@ -19,7 +19,7 @@ Steps:
 1. Read the Company Brief, last week's `post-plan` document and the latest `engagement` documents: what did well, what people asked about.
 2. Pick this week's posts to match the chosen number, spread across the week and the connected platforms. Add anything timely: launches, news, questions people asked. If posts for this week are already queued (for example from your 2-week plan), keep them and only fill the gaps.
 3. Draft every post. List any facts you need confirmed.
-4. Give every post a planned day and time. If the platform can schedule posts itself, schedule each one there (each waits for {{person.name}}'s approval unless autopilot is on for posting) and mark it "scheduled". Otherwise mark it "queued"; your daily "Engagement check" publishes it on its day.
+4. Give every post a planned day and time. If the platform can schedule posts itself, schedule each one there (each waits for {{person.name}}'s approval unless autopilot is on for posting) and mark it "scheduled". Otherwise plan it on a weekday and mark it "queued"; your weekday "Engagement check" publishes it that afternoon.
 5. Save the plan as this task's `post-plan` document.
 6. Comment with a two to four sentence summary and a link to the document, then mark this task done. Do not wait for the posts to go out.
 

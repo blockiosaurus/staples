@@ -46,7 +46,7 @@
       "options": [
         { "id": "3", "label": "3 posts a week", "description": "Steady and easy to keep up.", "recommended": true },
         { "id": "5", "label": "5 posts a week", "description": "One every weekday." },
-        { "id": "7", "label": "7 posts a week", "description": "One every day, for fast-moving audiences." }
+        { "id": "7", "label": "7 posts a week", "description": "One every day if your platform can schedule posts; otherwise some weekdays get two." }
       ]
     }
   ],

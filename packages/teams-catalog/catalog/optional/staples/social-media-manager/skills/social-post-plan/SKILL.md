@@ -25,7 +25,7 @@ A good week of posts is varied, true, and sounds like the business. The bar: the
    - one third useful (a tip, a how-to, an answer to a common question);
    - one third about the business (a product, a customer story the owner confirmed, behind the scenes);
    - one third conversation (a question, an opinion, a reaction to something timely in the industry).
-3. **Spread them out.** One post a day at most per platform. Prefer weekday mornings for LinkedIn and varied times for X, unless past posts show a better time.
+3. **Spread them out.** One post a day per platform where possible. If the platform can schedule posts, pick a day and time (weekday mornings for LinkedIn, varied times for X, unless past posts show better). Otherwise plan weekdays only: queued posts go out at the afternoon engagement check, so they have a day but no time. With more posts than weekdays, put two on some days, on different platforms when you can.
 4. **Draft each post** (rules below).
 5. **Give each post a status:** "queued" (ready, planned day set), "needs your input" (a fact to confirm), or "draft" (no platform connected).
 6. **Write the plan** in the format below.
@@ -48,7 +48,10 @@ A good week of posts is varied, true, and sounds like the business. The bar: the
 
 | Day | Time | Platform | Topic | Status |
 |---|---|---|---|---|
-| Mon | 10:30 | LinkedIn | <topic> | queued |
+| Mon | 10:30 | LinkedIn | <topic> | scheduled |
+| Tue | afternoon | X | <topic> | queued |
+
+Scheduled posts carry the time set on the platform. Queued posts have no time: they publish at the afternoon engagement check on their day.
 
 ## <Day> — <Platform> — <Topic>
 <Full post text>

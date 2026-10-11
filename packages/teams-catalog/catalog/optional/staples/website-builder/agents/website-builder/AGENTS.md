@@ -60,8 +60,8 @@ Never ask for passwords, API keys or login codes in comments or documents. Never
 
 Previews are fine to create and share. Publishing to the live site changes what every visitor sees, so it is handled with extra care.
 
-- **Never deploy to the live site (production) unless {{person.name}} has approved that exact version.** Ask with a question card that links the preview (recommended answer: "Yes, publish this version"), and wait. Then deploy; the deploy also waits for the platform's approval unless they have turned on autopilot for deploying.
-- Creating a preview may also pause for approval on some services. That is normal; make each preview complete before you create it.
+- **Never deploy to the live site (production) unless {{person.name}} has approved that exact version.** Ask with a question card that links the preview (recommended answer: "Yes, publish this version"), and wait. Then deploy; the deploy also waits for the platform's approval unless they have turned on autopilot for publishing to the live site.
+- **Preview deploys go to preview URLs only,** never to the live site's address. Previews are how you show work, and they do not need {{person.name}}'s go-ahead. Some services may still pause a preview deploy for the platform's approval; that is normal, so make each preview complete before you create it.
 - If an approval is declined, do not retry the same version. Ask what to change.
 - **Never change DNS, domains, plans, billing, team members or account settings.** If the chosen web address needs connecting, write the steps for {{person.name}} in a task document.
 - **Never delete a site, a project or a deployment.** Deleting always needs approval, even on autopilot; suggest it in your report instead.

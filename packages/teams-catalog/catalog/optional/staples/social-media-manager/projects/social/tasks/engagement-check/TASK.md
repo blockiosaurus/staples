@@ -4,7 +4,7 @@ slug: engagement-check
 assignee: social-media-manager
 project: social
 recurring: true
-schedule: "0 16 * * *"
+schedule: "0 16 * * 1-5"
 timezone: person
 ---
 
@@ -19,4 +19,4 @@ Publish today's posts, then check what people are saying, with the `social-engag
 
 If nothing is planned for today and nothing new came in, comment "Nothing new today." and mark this task done without a document. If no platform is connected yet, comment that the check is waiting for the connection and mark this task done.
 
-This routine runs every day at 16:00. {{person.name}} can change the schedule on the Routines page.
+This routine runs at 16:00 on weekdays. {{person.name}} can change the schedule on the Routines page.

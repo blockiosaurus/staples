@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@paperclipai/teams-catalog",
   "packageVersion": "0.1.0",
-  "generatedAt": "2026-10-11T16:48:48.487Z",
+  "generatedAt": "2026-10-11T16:52:43.628Z",
   "teams": [
     {
       "id": "paperclipai:bundled:company-defaults:core-exec-team",
@@ -530,8 +530,8 @@
         {
           "path": "TEAM.md",
           "kind": "team",
-          "sizeBytes": 1641,
-          "sha256": "1a2e85676b965579394662f1658c57202108b34a87b3ba6f95be92e33d2b9802"
+          "sizeBytes": 1671,
+          "sha256": "13f5cf2ff5ea23268d2388345f7c914481a1e2a5fb57c3a6a2333294aef1c1a4"
         },
         {
           "path": "agents/bookkeeper/AGENTS.md",
@@ -584,7 +584,7 @@
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:cd0cbfeba7141ea96e02300073480b32f65ae2a12ab25a47f5ff7ab261c34213",
+      "contentHash": "sha256:22cf758195be1c2be3bdae9c9cf9c206ed217ce30dedf4381e6192f9b17aa538",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Read-only weekly summaries of your revenue and spending",
@@ -757,8 +757,8 @@
         {
           "path": "agents/coding-agent/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 7772,
-          "sha256": "b904b36afc47c609ffe069e623c6cb6d2f309d54018f4be027d94c54122d4b6e"
+          "sizeBytes": 8169,
+          "sha256": "49f4f3121426a8b52705aa1ad03a31c4a1fcc2d90926a6c5b22f8ff063725378"
         },
         {
           "path": "projects/code/PROJECT.md",
@@ -787,8 +787,8 @@
         {
           "path": "skills/github-issue-sorting/SKILL.md",
           "kind": "skill",
-          "sizeBytes": 2965,
-          "sha256": "955d755476c4d9f70c70afb3ecfdfd8e5ca122f9dac298d9cf86a05730f9615e"
+          "sizeBytes": 3268,
+          "sha256": "27df56f15f41ea084668d2b08e782764988a71405f853ec571e97da656d85730"
         },
         {
           "path": "skills/repo-health-check/SKILL.md",
@@ -800,12 +800,12 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 2084,
-          "sha256": "7742972c02a96ad05d0f2db9dbf89b4c98170dd93101add21169b7b64ce54ae3"
+          "sha256": "0138f44040ca285990f351e4a930e409accce7fb541ffead1f814dfe3b57747a"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:25df5e6349423445a58e8d639c8d7ba2464541255786b8362c03642cfcba7ce5",
+      "contentHash": "sha256:efbfff5e31ad9a34846eda071f8d55802a3917f3f89e6dc0339a9bc11ce14475",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Triages GitHub issues, fixes bugs and opens pull requests for review",
@@ -849,7 +849,7 @@
               {
                 "id": "small_fixes",
                 "label": "Push small fixes to main",
-                "description": "Typos, comments and one-line fixes go straight to main after your approval. Everything else is a pull request."
+                "description": "Typos, comments and one-line fixes go to main once you say yes to each one. Everything else is a pull request."
               }
             ]
           },
@@ -1793,14 +1793,14 @@
         {
           "path": "TEAM.md",
           "kind": "team",
-          "sizeBytes": 1574,
-          "sha256": "20dc6ad4ad929b443a95017d01c71d167d17143ce71bb22e9ac1fc1e2412d270"
+          "sizeBytes": 1582,
+          "sha256": "004f0a627cc4e58e3f10cb82542bf22d6e116a8d72e4fc5bb6e3b5516008192c"
         },
         {
           "path": "agents/social-media-manager/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 6878,
-          "sha256": "d460aad7c230e4c3dc370cb29e581032ac1562465328df53c12fe4187806690b"
+          "sizeBytes": 6952,
+          "sha256": "492e52eb11145449583ab6d1633e5b9a15b46f9c1d3afbca6848559450ecc1d8"
         },
         {
           "path": "projects/social/PROJECT.md",
@@ -1817,37 +1817,37 @@
         {
           "path": "projects/social/tasks/engagement-check/TASK.md",
           "kind": "task",
-          "sizeBytes": 1719,
-          "sha256": "6f9dea7173c53d86221a168ba197fc95bc4645c2257dccea66bb194f5daf98df"
+          "sizeBytes": 1723,
+          "sha256": "f6cc4b5774717a2c7753c981a41c2a75a10ebf15933f22d794a7ec3eeb2efa4b"
         },
         {
           "path": "projects/social/tasks/weekly-post-plan/TASK.md",
           "kind": "task",
-          "sizeBytes": 1787,
-          "sha256": "f850aff1b4fc9efd6efa27a08c6b10c0bfc2e58d236cd2e0ccd4ef70448aa25d"
+          "sizeBytes": 1818,
+          "sha256": "9a2bcebb6932fe4f503e534c630836fc04e26e010f2a222724f394976d7aae07"
         },
         {
           "path": "skills/social-engagement/SKILL.md",
           "kind": "skill",
-          "sizeBytes": 2933,
-          "sha256": "2d362e67e9cd1a973fe35bfaf2e3d46c91d1631ee370a9cefeef2d989afb18f3"
+          "sizeBytes": 2941,
+          "sha256": "b4e60fd6cd5335d20f14d9b63712b8ef6da3a7eabb2b3ccfe0ff5709cf0922e7"
         },
         {
           "path": "skills/social-post-plan/SKILL.md",
           "kind": "skill",
-          "sizeBytes": 2942,
-          "sha256": "c70808e8ea7bfe504bcaac22c1860fe2200f064323f0a12bf74ac6e221c385eb"
+          "sizeBytes": 3384,
+          "sha256": "588f0e478a7d933f62ad398be84f5f95e3e1425ff96a646b0baa4edc90cc4ad7"
         },
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2220,
-          "sha256": "929d06659b727f830f600dd3f3a64f7a4496728115d13ceeaa8169dd7587cedc"
+          "sizeBytes": 2262,
+          "sha256": "ab165d7f3432ad93714187f95074f0c75dd0efc5f7c4e812fc2ce8833ee18946"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:ce14237781158daf7e325279dbd5025752d2d30996f167d20e51c4ca3d362a07",
+      "contentHash": "sha256:7ae05b4de0365604c530dc54e85cbcd3ae1fe101b278632f86cd0c4282c8926b",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Plans your social posts each week and keeps an eye on replies",
@@ -1933,7 +1933,7 @@
               {
                 "id": "7",
                 "label": "7 posts a week",
-                "description": "One every day, for fast-moving audiences."
+                "description": "One every day if your platform can schedule posts; otherwise some weekdays get two."
               }
             ]
           }
@@ -2207,8 +2207,8 @@
         {
           "path": "agents/website-builder/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 6387,
-          "sha256": "6fbc95eca23e62386357d725bc5de508847eac888858c9103c95181691f102f0"
+          "sizeBytes": 6579,
+          "sha256": "8639bbcf74c2276bc218c528278a3fb85e7d3b352dbc5c11c355cdbc54e21c0f"
         },
         {
           "path": "projects/website/PROJECT.md",
@@ -2219,8 +2219,8 @@
         {
           "path": "projects/website/tasks/build-landing-page/TASK.md",
           "kind": "task",
-          "sizeBytes": 1834,
-          "sha256": "3bdd22ee8ae4b3c523e7d8042b331165ec4a05319fb9324a0846820d25b8fa34"
+          "sizeBytes": 1852,
+          "sha256": "8411d14db19252e9179d91f9d6b886e88ff4adf074bf2962a6498d785093e092"
         },
         {
           "path": "projects/website/tasks/weekly-site-check/TASK.md",
@@ -2243,13 +2243,13 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2021,
-          "sha256": "baa97f934ad9807251e7cb3aa5403e96c97eef37a62231768f4f7c0465296509"
+          "sizeBytes": 2022,
+          "sha256": "ce56f26f78e93235420dfcf93f806ba9f3a137ee10068e61d55d2738b8d3a521"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:ebf204260ca472e0156cc58493853e4185d20822c8a56cfcd6f0381c33a7a9e3",
+      "contentHash": "sha256:05265fa418a9bbf8dd46d1a4dc568165d9e25765f21071cbba0800ebe8c85665",
       "staplesTemplate": {
         "version": "1.0.0",
         "tagline": "Builds a simple website, shares previews and checks it every week",
@@ -2320,7 +2320,7 @@
         "outwardActions": [
           {
             "capability": "hosting",
-            "label": "Deploying to your live site"
+            "label": "Publishing to your live site"
           }
         ],
         "defaultBudgetMonthlyCents": 3000

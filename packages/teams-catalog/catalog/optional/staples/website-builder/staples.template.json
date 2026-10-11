@@ -45,7 +45,7 @@
     }
   ],
   "outwardActions": [
-    { "capability": "hosting", "label": "Deploying to your live site" }
+    { "capability": "hosting", "label": "Publishing to your live site" }
   ],
   "defaultBudgetMonthlyCents": 3000
 }
