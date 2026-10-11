@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Agent, Issue } from "@paperclipai/shared";
 import { agentChatsApi } from "@/api/agentChats";
 import { agentsApi } from "@/api/agents";
-import { assistantApi, type AssistantSummary } from "@/api/assistant";
+import { assistantApi, type AssistantSetup, type AssistantSummary } from "@/api/assistant";
 import { authApi } from "@/api/auth";
 import { ApiError } from "@/api/client";
 import { useCompany } from "@/context/CompanyContext";
@@ -13,6 +13,8 @@ export interface UseAssistantResult {
   /** The full Assistant agent record, once loaded. */
   agent: Agent | null;
   summary: AssistantSummary | null;
+  /** Whether the Assistant can answer yet (ready when the server predates setup). */
+  setup: AssistantSetup | null;
   conversationIssueId: string | null;
   conversationIssue: Issue | null;
   /** Creates the caller's conversation with the Assistant if needed. */
@@ -38,6 +40,8 @@ export function useAssistant({ withConversation = true }: { withConversation?: b
     queryFn: () => assistantApi.get(selectedCompanyId!),
     enabled: !!selectedCompanyId,
     staleTime: 60_000,
+    // While the Assistant is being verified, poll until it is ready (or needs a model).
+    refetchInterval: (query) => (query.state.data?.setup?.state === "starting" ? 2_000 : false),
     // A 4xx (no Assistant route, no access) won't fix itself; show the inline
     // error with its Retry button instead of spinning through backoff.
     retry: (failureCount, error) => !(error instanceof ApiError && error.status < 500) && failureCount < 2,
@@ -103,6 +107,7 @@ export function useAssistant({ withConversation = true }: { withConversation?: b
   return {
     agent: agent.data ?? null,
     summary: summary.data ?? null,
+    setup: summary.data ? (summary.data.setup ?? { state: "ready", adapterType: summary.data.agent.adapterType }) : null,
     conversationIssueId: chat.data?.id ?? summary.data?.conversationIssueId ?? null,
     conversationIssue: chat.data ?? null,
     ensureConversation,

@@ -147,6 +147,8 @@ interface TaskChatComposerProps {
   mobile?: boolean;
   /** Storage key used to restore, persist, and clear this task's text draft. */
   draftKey?: string;
+  /** Each new request (by nonce) replaces the draft with `text` and focuses the editor. */
+  draftRequest?: { text: string; nonce: number } | null;
   onReviewConversation?: () => Promise<void>;
   /** When set, the main composer temporarily edits this queued message. */
   queuedEdit?: { commentId: string; body: string; stale?: boolean } | null;
@@ -400,6 +402,7 @@ export function TaskChatComposer({
   issueStatus,
   mobile = false,
   draftKey,
+  draftRequest = null,
   onReviewConversation,
   queuedEdit = null,
   onSaveQueuedEdit,
@@ -515,6 +518,19 @@ export function TaskChatComposer({
     setTakeoverBusy(false);
     setTakeoverError(null);
   }, [takeover?.id]);
+
+  const changeBodyRef = useRef(changeBody);
+  changeBodyRef.current = changeBody;
+  const draftRequestNonce = draftRequest?.nonce ?? 0;
+  const draftRequestText = draftRequest?.text ?? "";
+  useEffect(() => {
+    if (draftRequestNonce <= 0) return;
+    changeBodyRef.current(draftRequestText);
+    if (draftKey && !creation) saveDraft(draftKey, draftRequestText);
+    requestAnimationFrame(() => editorRef.current?.focus());
+    // Only a new request (nonce) replaces the draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftRequestNonce]);
 
   useEffect(() => {
     const previousId = previousQueuedEditIdRef.current;

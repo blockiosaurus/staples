@@ -1,10 +1,13 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
+import { useCompany } from "@/context/CompanyContext";
 import { TaskDetailSurface } from "@/pages/IssueDetail";
 import { useAssistantShell } from "./AssistantProvider";
 import { useAssistant } from "./useAssistant";
+import { AssistantOpening } from "./AssistantOpening";
+import { AssistantSetupCard } from "./AssistantSetupCard";
 
 export function AssistantUnavailable({ message, onRetry }: { message?: string | null; onRetry: () => void }) {
   return (
@@ -33,13 +36,31 @@ function AssistantPageCrumb() {
  * same `TaskDetailSurface` Agent Chat uses (so proposed-action cards and their
  * Confirm/Cancel handlers come along); the dock renders it `embedded`.
  */
-export function AssistantConversation({ embedded = false }: { embedded?: boolean }) {
+export function AssistantConversation({
+  embedded = false,
+  opening = !embedded,
+}: {
+  embedded?: boolean;
+  /** Show the client-rendered opening bubble while the thread is empty (page and stage 0, not the dock). */
+  opening?: boolean;
+}) {
   const assistant = useAssistant();
+  const { selectedCompanyId } = useCompany();
   const shell = useAssistantShell();
   const shellCommentMetadata = shell?.commentMetadata;
   const shellCommentSent = shell?.commentSent;
   const commentMetadata = useCallback(() => shellCommentMetadata?.(), [shellCommentMetadata]);
   const onCommentSent = useCallback(() => shellCommentSent?.(), [shellCommentSent]);
+  const setup = assistant.setup;
+  const setupReady = !setup || setup.state === "ready";
+  const emptyState = useMemo(
+    () => (opening
+      ? ({ fill }: { fill: (text: string) => void }) => (
+        <AssistantOpening onSuggestion={fill} suggestionsDisabled={!setupReady} />
+      )
+      : undefined),
+    [opening, setupReady],
+  );
 
   if (assistant.error) {
     return (
@@ -68,6 +89,10 @@ export function AssistantConversation({ embedded = false }: { embedded?: boolean
         onCommentSent,
         embedded,
         focusComposerRequest: embedded ? shell?.dockFocusRequest : undefined,
+        emptyState,
+        composerReplacement: !setupReady && setup && selectedCompanyId
+          ? <AssistantSetupCard companyId={selectedCompanyId} agentId={assistant.agent.id} setup={setup} />
+          : undefined,
       }}
     />
   );

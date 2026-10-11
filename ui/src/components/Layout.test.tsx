@@ -248,6 +248,22 @@ vi.mock("../context/SidebarContext", () => ({
   }),
 }));
 
+const mockSignalsState = vi.hoisted(() => ({
+  value: { signals: { agents: 1 }, loaded: true, failed: false } as {
+    signals: { agents: number } | null;
+    loaded: boolean;
+    failed: boolean;
+  },
+}));
+
+vi.mock("../hooks/useCompanySignals", () => ({
+  useCompanySignals: () => mockSignalsState.value,
+}));
+
+vi.mock("../staples/assistant/StageZeroShell", () => ({
+  StageZeroShell: () => <div data-testid="stage-zero-shell">Stage zero Assistant</div>,
+}));
+
 vi.mock("../hooks/useKeyboardShortcuts", () => ({
   useKeyboardShortcuts: () => undefined,
 }));
@@ -335,6 +351,71 @@ describe("Layout", () => {
     container.remove();
     document.body.innerHTML = "";
     vi.clearAllMocks();
+  });
+
+  async function renderLayout() {
+    const root = createRoot(container);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Layout />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+    return root;
+  }
+
+  describe("stage 0", () => {
+    afterEach(() => {
+      mockSignalsState.value = { signals: { agents: 1 }, loaded: true, failed: false };
+    });
+
+    it("shows only the Assistant, without the sidebar, when the company has no staff agents", async () => {
+      mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+      const root = await renderLayout();
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).not.toBeNull();
+      expect(container.textContent).not.toContain("Main company nav");
+      expect(container.textContent).not.toContain("Outlet content");
+      await act(async () => root.unmount());
+    });
+
+    it("renders the normal shell once a staff agent exists", async () => {
+      mockSignalsState.value = { signals: { agents: 2 }, loaded: true, failed: false };
+      const root = await renderLayout();
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).toBeNull();
+      expect(container.textContent).toContain("Main company nav");
+      expect(container.textContent).toContain("Outlet content");
+      await act(async () => root.unmount());
+    });
+
+    it("shows a neutral loading state, not the sidebar, while signals load", async () => {
+      mockSignalsState.value = { signals: null, loaded: false, failed: false };
+      const root = await renderLayout();
+      expect(container.querySelector("[data-testid='layout-signals-loading']")).not.toBeNull();
+      expect(container.textContent).not.toContain("Main company nav");
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).toBeNull();
+      await act(async () => root.unmount());
+    });
+
+    it("falls back to the normal shell when signals fail to load", async () => {
+      mockSignalsState.value = { signals: null, loaded: false, failed: true };
+      const root = await renderLayout();
+      expect(container.textContent).toContain("Main company nav");
+      await act(async () => root.unmount());
+    });
+
+    it("keeps company settings reachable in stage 0", async () => {
+      mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+      currentPathname = "/PAP/company/settings";
+      const root = await renderLayout();
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).toBeNull();
+      expect(container.textContent).toContain("Company settings sidebar");
+      expect(container.textContent).toContain("Outlet content");
+      await act(async () => root.unmount());
+    });
   });
 
   it("does not render the deployment explainer in the shared layout", async () => {

@@ -2,6 +2,7 @@ import { SetupWizardSidebarOutlet } from "./SetupWizard";
 import { ChatSetupSidebarProvider } from "@/context/ChatSetupSidebarContext";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import { Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { Sidebar } from "./Sidebar";
 import { CompanySettingsSidebar } from "./CompanySettingsSidebar";
@@ -31,6 +32,8 @@ import { AgentConversationsSidebar } from "./AgentConversationsSidebar";
 import { SurfaceTracker } from "../staples/surfaces/SurfaceTracker";
 import { AssistantProvider, useAssistantShell } from "../staples/assistant/AssistantProvider";
 import { AssistantDock } from "../staples/assistant/AssistantDock";
+import { StageZeroShell } from "../staples/assistant/StageZeroShell";
+import { useCompanySignals } from "../hooks/useCompanySignals";
 import { SidebarShell } from "./SidebarShell";
 import { SecondarySidebar } from "./SecondarySidebar";
 import { ContextualSidebarFrame } from "./ContextualSidebarFrame";
@@ -234,6 +237,18 @@ function LayoutShell({ sidebarSections }: { sidebarSections?: ReactNode }) {
     pathname: string;
     surface: ContextualSidebarSurface | null;
   } | null>(null);
+  // Stage 0: no staff agents yet, so the Assistant is the whole app. Settings,
+  // brief, organization and profile pages stay reachable in the normal shell.
+  // While signals load, show a neutral spinner rather than flashing the sidebar.
+  const { signals, loaded: signalsLoaded, failed: signalsFailed } = useCompanySignals(selectedCompanyId);
+  const stageZeroRoot = companyPathSegments[0]?.toLowerCase();
+  const stageZeroExempt = !companyPrefix || hasUnknownCompanyPrefix
+    || ["company", "companies", "u"].includes(stageZeroRoot ?? "");
+  const stageZeroShell: "pending" | "stage_zero" | null = !selectedCompanyId || stageZeroExempt || signalsFailed
+    ? null
+    : !signalsLoaded
+      ? "pending"
+      : signals?.agents === 0 ? "stage_zero" : null;
   const { data: health } = useQuery({
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),
@@ -568,6 +583,28 @@ function LayoutShell({ sidebarSections }: { sidebarSections?: ReactNode }) {
       resetNavigationScroll(main);
     }
   }, [location.key, location.pathname, location.state, navigationType]);
+
+  if (stageZeroShell === "pending") {
+    return (
+      <div
+        data-testid="layout-signals-loading"
+        role="status"
+        aria-label="Loading"
+        className="flex h-dvh items-center justify-center bg-background text-muted-foreground"
+      >
+        <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+      </div>
+    );
+  }
+  if (stageZeroShell === "stage_zero") {
+    return (
+      <ChatSetupSidebarProvider>
+        <StageZeroShell deploymentMode={health?.deploymentMode} />
+        <ToastViewport />
+        <PluginAppShellOverlays localTrusted={health?.deploymentMode === "local_trusted"} />
+      </ChatSetupSidebarProvider>
+    );
+  }
 
   return (
     <ChatSetupSidebarProvider>

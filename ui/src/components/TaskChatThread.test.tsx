@@ -3,6 +3,7 @@
 import type { ComponentProps, ReactElement } from "react";
 import { act, forwardRef, useImperativeHandle, type ForwardedRef } from "react";
 import { flushSync } from "react-dom";
+import { loadDraft } from "@/lib/composer-draft";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "@/context/ThemeContext";
@@ -796,6 +797,37 @@ describe("TaskChatThread draft pass-through", () => {
     expect(dock?.classList).not.toContain("md:pb-4");
     expect(dock?.classList).not.toContain("bg-background/80");
     expect(dock?.classList).not.toContain("backdrop-blur");
+  });
+
+  it("renders a custom empty state whose suggestions fill the composer", async () => {
+    render(
+      <TaskChatThread
+        comments={[]}
+        onAdd={async () => {}}
+        draftKey="assistant-draft"
+        emptyState={({ fill }) => (
+          <button type="button" data-testid="suggestion" onClick={() => fill("Build a newsletter")}>Suggest</button>
+        )}
+      />,
+    );
+    expect(container.textContent).not.toContain("No messages yet.");
+    const suggestion = container.querySelector<HTMLButtonElement>('[data-testid="suggestion"]');
+    expect(suggestion).not.toBeNull();
+    await act(async () => { suggestion!.click(); });
+    expect(container.querySelector('[data-testid="mock-editor"]')?.textContent).toBe("Build a newsletter");
+    expect(loadDraft("assistant-draft")).toBe("Build a newsletter");
+  });
+
+  it("renders a composer replacement in place of the composer", () => {
+    render(
+      <TaskChatThread
+        comments={[]}
+        onAdd={async () => {}}
+        composerReplacement={<div data-testid="setup-card">Connect a model</div>}
+      />,
+    );
+    expect(container.querySelector('[data-testid="setup-card"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="mock-editor"]')).toBeNull();
   });
 
   it("forwards draftKey so the composer restores a task's saved draft", () => {

@@ -11,6 +11,7 @@ import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { ASSISTANT_DOCK_OPEN_STORAGE_KEY, AssistantProvider, useAssistantShell } from "./AssistantProvider";
 import { AssistantDock, AssistantDockToggle } from "./AssistantDock";
 import { AssistantPage } from "./AssistantPage";
+import { StageZeroShell } from "./StageZeroShell";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   chatGet: vi.fn(),
   chatEnsure: vi.fn(),
   surfaceProps: [] as Array<{ conversation: Record<string, unknown> }>,
+  fill: vi.fn(),
 }));
 
 vi.mock("@/lib/router", () => ({
@@ -36,6 +38,11 @@ vi.mock("@/context/CompanyContext", () => ({
 }));
 vi.mock("@/context/SidebarContext", () => ({ useSidebar: () => ({ isMobile: mocks.isMobile }) }));
 vi.mock("@/api/assistant", () => ({ assistantApi: { get: mocks.assistantGet } }));
+vi.mock("./AssistantSetupCard", () => ({
+  AssistantSetupCard: ({ setup }: { setup: { state: string } }) => <div data-testid="setup-card">Setup: {setup.state}</div>,
+}));
+vi.mock("@/components/CompanySwitcher", () => ({ CompanySwitcher: () => <div>Company switcher</div> }));
+vi.mock("@/components/SidebarAccountMenu", () => ({ SidebarAccountMenu: () => <div>Account menu</div> }));
 vi.mock("@/api/agents", () => ({ agentsApi: { get: mocks.agentGet } }));
 vi.mock("@/api/agentChats", () => ({ agentChatsApi: { get: mocks.chatGet, ensure: mocks.chatEnsure } }));
 vi.mock("@/api/auth", () => ({
@@ -53,11 +60,18 @@ vi.mock("@/pages/IssueDetail", () => ({
       setBreadcrumbs([{ label: props.conversation.agent.name }]);
       openPanel(<div>conversation properties</div>);
     }, [setBreadcrumbs, openPanel, props.conversation.agent.name]);
+    const conversation = props.conversation as typeof props.conversation & {
+      emptyState?: (composer: { fill: (text: string) => void }) => React.ReactNode;
+      composerReplacement?: React.ReactNode;
+    };
     return (
       <div data-testid="assistant-surface">
         Conversation with {props.conversation.agent.name}
+        {conversation.emptyState?.({ fill: mocks.fill })}
         <div data-testid="task-chat-composer-dock">
-          <div data-testid="stub-composer" contentEditable="true" suppressContentEditableWarning tabIndex={0} />
+          {conversation.composerReplacement ?? (
+            <div data-testid="stub-composer" contentEditable="true" suppressContentEditableWarning tabIndex={0} />
+          )}
         </div>
       </div>
     );
@@ -97,6 +111,7 @@ describe("Assistant page and dock", () => {
     mocks.location.pathname = "/PAP/issues/PAP-12";
     mocks.isMobile = false;
     mocks.surfaceProps.length = 0;
+    mocks.fill.mockReset();
     mocks.navigate.mockReset();
     mocks.assistantGet.mockReset().mockResolvedValue({ agent: ASSISTANT, conversationIssueId: "conv-1" });
     mocks.agentGet.mockReset().mockResolvedValue({ ...ASSISTANT, companyId: "company-1" });
@@ -166,6 +181,71 @@ describe("Assistant page and dock", () => {
     expect(conversation.commentMetadata?.()).toBeUndefined();
     const brief = [...container.querySelectorAll("a")].find((a) => a.textContent?.includes("Company brief"));
     expect(brief?.getAttribute("href")).toBe("/company/brief");
+  });
+
+  it("opens an empty conversation with a client-rendered bubble whose chips fill the composer", async () => {
+    mocks.location.pathname = "/PAP/assistant";
+    mocks.assistantGet.mockResolvedValue({ agent: ASSISTANT, conversationIssueId: null, setup: { state: "ready", adapterType: "claude_local" } });
+    await render(<AssistantPage />);
+    expect(container.querySelector('[data-testid="assistant-opening"]')?.textContent)
+      .toContain("Hi — I'm your Assistant. What do you want to build?");
+    const chips = [...container.querySelectorAll<HTMLButtonElement>('[data-testid="assistant-opening"] button')];
+    expect(chips.map((chip) => chip.textContent)).toEqual([
+      "A marketing team for my product",
+      "Research and write a weekly newsletter",
+      "Triage and fix bugs in my repo",
+    ]);
+    await act(async () => chips[1]!.click());
+    expect(mocks.fill).toHaveBeenCalledWith("Research and write a weekly newsletter");
+    // Nothing is sent: the bubble is not a message.
+    expect(mocks.chatEnsure).not.toHaveBeenCalled();
+  });
+
+  it("shows the setup card instead of the composer until the Assistant can answer", async () => {
+    mocks.location.pathname = "/PAP/assistant";
+    mocks.assistantGet.mockResolvedValue({ agent: ASSISTANT, conversationIssueId: "conv-1", setup: { state: "needs_model", adapterType: "claude_local" } });
+    await render(<AssistantPage />);
+    expect(container.querySelector('[data-testid="setup-card"]')?.textContent).toBe("Setup: needs_model");
+    expect(container.querySelector('[data-testid="stub-composer"]')).toBeNull();
+    // Suggestions wait for a model too.
+    const chip = container.querySelector<HTMLButtonElement>('[data-testid="assistant-opening"] button');
+    expect(chip?.disabled).toBe(true);
+  });
+
+  it("polls while the Assistant is starting and swaps the card for the composer once ready", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.location.pathname = "/PAP/assistant";
+      mocks.assistantGet.mockResolvedValue({ agent: ASSISTANT, conversationIssueId: "conv-1", setup: { state: "starting", adapterType: "claude_local" } });
+      await render(<AssistantPage />);
+      expect(container.querySelector('[data-testid="setup-card"]')?.textContent).toBe("Setup: starting");
+      mocks.assistantGet.mockResolvedValue({ agent: ASSISTANT, conversationIssueId: "conv-1", setup: { state: "ready", adapterType: "claude_local" } });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_500); });
+      await settle();
+      expect(container.querySelector('[data-testid="setup-card"]')).toBeNull();
+      expect(container.querySelector('[data-testid="stub-composer"]')).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not show the opening bubble in the dock", async () => {
+    localStorage.setItem(ASSISTANT_DOCK_OPEN_STORAGE_KEY, "true");
+    mocks.assistantGet.mockResolvedValue({ agent: ASSISTANT, conversationIssueId: null });
+    await render(<HostPage crumbs={["Issues"]} />);
+    expect(dock()).not.toBeNull();
+    expect(container.querySelector('[data-testid="assistant-opening"]')).toBeNull();
+  });
+
+  it("renders stage 0 as the full-screen Assistant with the opening bubble and no dock", async () => {
+    mocks.location.pathname = "/PAP/dashboard";
+    mocks.assistantGet.mockResolvedValue({ agent: ASSISTANT, conversationIssueId: null, setup: { state: "ready", adapterType: "claude_local" } });
+    await render(<StageZeroShell />);
+    expect(container.querySelector('[data-testid="stage-zero-shell"]')).not.toBeNull();
+    expect(container.textContent).toContain("Company switcher");
+    expect(container.textContent).toContain("Account menu");
+    expect(container.querySelector('[data-testid="assistant-opening"]')).not.toBeNull();
+    expect(dock()).toBeNull();
   });
 
   it("shows an inline error with retry when the Assistant is unavailable", async () => {

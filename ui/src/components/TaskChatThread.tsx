@@ -20,6 +20,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type ReactNode,
 } from "react";
 import {
   IssueAssigneePausedNotice,
@@ -421,6 +422,13 @@ export type TaskChatThreadProps = ComponentProps<typeof IssueChatThread> & {
   initialHistoryError?: boolean;
   onRetryInitialHistory?: () => void;
   onOpenSkill?: (skillId: string, name: string) => void;
+  /**
+   * Rendered instead of `emptyMessage` while the thread has no items (e.g. an
+   * agent's opening bubble). `composer.fill` replaces the composer draft.
+   */
+  emptyState?: (composer: { fill: (text: string) => void }) => ReactNode;
+  /** Rendered in the composer dock instead of the composer (e.g. setup the agent needs first). */
+  composerReplacement?: ReactNode;
 };
 
 type PendingComposerInput =
@@ -514,6 +522,8 @@ export function TaskChatThread(props: TaskChatThreadProps) {
     composerPause,
     composerDisabledReason,
     emptyMessage = "No messages yet.",
+    emptyState,
+    composerReplacement,
     companyId,
     linkedRuns,
     liveRuns,
@@ -599,6 +609,10 @@ export function TaskChatThread(props: TaskChatThreadProps) {
   const queryClient = useQueryClient();
   const createdProjectItems = useProjectCreatedItems(props.creationActivity ?? [], companyId);
   const createdSkillItems = useMemo(() => skillCreatedItems(props.creationActivity ?? []), [props.creationActivity]);
+  const [draftRequest, setDraftRequest] = useState<{ text: string; nonce: number } | null>(null);
+  const fillComposer = useCallback((text: string) => {
+    setDraftRequest((current) => ({ text, nonce: (current?.nonce ?? 0) + 1 }));
+  }, []);
   const [pendingComposerAssignee, setPendingComposerAssignee] = useState<
     string | null
   >(null);
@@ -3023,9 +3037,13 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                         {threadHeaderWithBlockers}
                       </div>
                     ) : null}
-                    <div className="px-3 py-10 text-center text-sm text-muted-foreground">
-                      {emptyMessage}
-                    </div>
+                    {emptyState ? (
+                      emptyState({ fill: fillComposer })
+                    ) : (
+                      <div className="px-3 py-10 text-center text-sm text-muted-foreground">
+                        {emptyMessage}
+                      </div>
+                    )}
                     {bottomBlockerLinks ? (
                       <div
                         className={cn(
@@ -3162,6 +3180,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                   <TaskChatTurnStatusIsland model={tailTurnStatus} />
                 ) : null}
                 <RunnerGoalWidget control={runnerGoal} />
+                {composerReplacement ? composerReplacement : (
                 <div
                   className="relative isolate flex flex-col"
                   data-testid="task-chat-composer-stack"
@@ -3256,9 +3275,11 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                             }
                           : null
                       }
+                      draftRequest={draftRequest}
                     />
                   </div>
                 </div>
+                )}
                 {footer}
               </TaskChatComposerDock>
             ) : null}

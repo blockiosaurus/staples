@@ -190,7 +190,7 @@ import {
   type IssueChatComposerHandle,
   type IssueChatRunFinalizationAction,
 } from "../components/IssueChatThread";
-import { TaskChatThread } from "../components/TaskChatThread";
+import { TaskChatThread, type TaskChatThreadProps } from "../components/TaskChatThread";
 import type { TaskChatIssueBrief } from "../components/task-chat/TaskChatDescriptionBubble";
 import { useClassicTaskInterfaceEnabled } from "../hooks/useClassicTaskInterfaceEnabled";
 import { workModeMetaFor } from "../lib/work-mode-meta";
@@ -1251,6 +1251,10 @@ type IssueDetailChatTabProps = {
    * messages. Ignored by the classic thread (flag: enableClassicTaskInterface).
    */
   threadHeader?: ReactNode;
+  /** Chat-style thread only: replaces the empty-thread message (see TaskChatThread). */
+  emptyState?: TaskChatThreadProps["emptyState"];
+  /** Chat-style thread only: rendered instead of the composer. */
+  composerReplacement?: ReactNode;
   /**
    * The task description rendered as the requester's first chat bubble in the
    * chat-style thread (PAP-375). Ignored by the classic thread.
@@ -1392,6 +1396,8 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   composerRef,
   composerAccessory,
   threadHeader,
+  emptyState,
+  composerReplacement,
   issueBrief,
   footer,
   feedbackVotes,
@@ -2434,7 +2440,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
           <EmailThreadProvider companyId={companyId} issueId={issueId}>
           <ThreadComponent
             key={conversationMode ? draftKey : issueId}
-            {...(!classicTaskInterfaceEnabled ? { creationActivity: resolvedActivity } : {})}
+            {...(!classicTaskInterfaceEnabled ? { creationActivity: resolvedActivity, emptyState, composerReplacement } : {})}
             onOpenSkill={onOpenSkill}
             browsers={browsers}
             onOpenBrowser={onOpenBrowser}
@@ -2999,6 +3005,10 @@ export interface TaskDetailConversation {
   onCommentSent?: () => void;
   /** Each increase focuses the composer (the Assistant dock opening). */
   focusComposerRequest?: number;
+  /** Shown while the conversation has no messages; `composer.fill` replaces the draft. */
+  emptyState?: TaskChatThreadProps["emptyState"];
+  /** Shown instead of the composer (e.g. the Assistant still needs a model). */
+  composerReplacement?: ReactNode;
 }
 
 export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskSidePanelProps["tasksTab"]; conversation?: TaskDetailConversation }) {
@@ -8062,6 +8072,8 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                   onLoadOlderComments={loadOlderComments}
                   onRefreshLatestComments={refetchLatestComments}
                   composerRef={commentComposerRef}
+                  emptyState={conversation?.emptyState}
+                  composerReplacement={conversation?.composerReplacement}
                   composerAccessory={
                     hasVisibleMonitorSurface(issue) ? (
                       <IssueMonitorComposerStrip
