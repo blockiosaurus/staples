@@ -99,7 +99,7 @@ export function Sidebar({ children }: { children?: ReactNode }) {
     let extras: Record<string, unknown> = {};
     let textBadge: string | undefined;
     switch (surface.id) {
-      case "nav.dashboard":
+      case "nav.home":
         extras = { liveCount: liveRunCount };
         break;
       case "nav.inbox":

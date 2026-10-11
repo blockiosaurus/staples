@@ -4,6 +4,7 @@
  * board route, so prefix allocation must never hand one out.
  */
 export const BOARD_ROUTE_ROOTS = [
+  "home",
   "dashboard",
   "companies",
   "company",

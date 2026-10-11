@@ -1505,6 +1505,7 @@ export const WORKSPACE_OVERVIEW_LINKED_ISSUE_LIMIT = 4;
  * These map to first-class host pages under `/:companyPrefix/...`.
  */
 export const PLUGIN_RESERVED_COMPANY_ROUTE_SEGMENTS = [
+  "home",
   "dashboard",
   "onboarding",
   "companies",

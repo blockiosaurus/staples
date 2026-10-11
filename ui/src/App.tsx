@@ -35,6 +35,7 @@ import { AgentChats } from "./pages/AgentChats";
 import { AgentChat } from "./pages/AgentChat";
 import { AssistantPage } from "./staples/assistant/AssistantPage";
 import { CompanyBriefPage } from "./staples/brief/CompanyBriefPage";
+import { HomePage } from "./staples/home/HomePage";
 import { Routines } from "./pages/Routines";
 import { Learnings, PipelineItemDetail, PipelineItemLegacyRedirect, Pipelines, ReviewQueue } from "./pages/Pipelines";
 import { PipelineSettings } from "./pages/PipelineSettings";
@@ -111,7 +112,8 @@ function boardRoutes(combinedInboxTasksEnabled: boolean) {
   const mergedTasks = combinedInboxTasksEnabled;
   return (
     <>
-      <Route index element={<Navigate to="dashboard" replace />} />
+      <Route index element={<Navigate to="home" replace />} />
+      <Route path="home" element={<HomePage />} />
       <Route path="dashboard" element={<Dashboard />} />
       <Route path="dashboard/live" element={<DashboardLive />} />
       <Route
@@ -543,7 +545,7 @@ function CompanyRootRedirect() {
     return <Navigate to="/start" replace />;
   }
 
-  return <Navigate to={`/${targetCompany.issuePrefix}/dashboard`} replace />;
+  return <Navigate to={`/${targetCompany.issuePrefix}/home`} replace />;
 }
 
 function StatusCardsLegacyRedirect() {
@@ -596,6 +598,7 @@ export function App() {
           <Route path="instance/settings" element={<LegacySettingsRedirect />} />
           <Route path="instance/settings/*" element={<LegacySettingsRedirect />} />
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
+          <Route path="home" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
           <Route path="tasks" element={<UnprefixedBoardRedirect />} />
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />

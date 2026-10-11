@@ -221,7 +221,7 @@ function BuiltinCompanyMenu({ open: controlledOpen, onOpenChange }: SidebarCompa
     setOpen(false);
     if (isMobile) setSidebarOpen(false);
     if (shouldLeaveCurrentRoute) {
-      navigate(`/${company.issuePrefix}/dashboard`);
+      navigate(`/${company.issuePrefix}/home`);
     }
   }
 

@@ -456,6 +456,72 @@ describe("Layout", () => {
       },
     );
 
+    describe("stage 0 -> stage 1", () => {
+      async function drawer() {
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const root = createRoot(container);
+        const draw = async () => {
+          await act(async () => {
+            root.render(
+              <QueryClientProvider client={queryClient}>
+                <Layout />
+              </QueryClientProvider>,
+            );
+          });
+          await flushReact();
+        };
+        return { root, draw };
+      }
+      const homeCalls = () => mockNavigate.mock.calls.filter(([to]) => to === "/PAP/home");
+
+      it("lands on Home when the first staff agent arrives in place", async () => {
+        currentPathname = "/PAP/assistant";
+        const { root, draw } = await drawer();
+        mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+        await draw();
+        expect(container.querySelector("[data-testid='stage-zero-shell']")).not.toBeNull();
+        mockSignalsState.value = { signals: { agents: 1 }, loaded: true, failed: false };
+        await draw();
+        expect(homeCalls()).toEqual([["/PAP/home", { replace: true }]]);
+        await act(async () => root.unmount());
+      });
+
+      it("does not redirect a company that already has staff agents", async () => {
+        currentPathname = "/PAP/assistant";
+        const { root, draw } = await drawer();
+        mockSignalsState.value = { signals: { agents: 1 }, loaded: true, failed: false };
+        await draw();
+        await draw();
+        expect(homeCalls()).toEqual([]);
+        await act(async () => root.unmount());
+      });
+
+      it("does not redirect when the person navigated away from stage 0 themselves", async () => {
+        currentPathname = "/PAP/assistant";
+        const { root, draw } = await drawer();
+        mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+        await draw();
+        currentPathname = "/PAP/agents/writer";
+        mockSignalsState.value = { signals: { agents: 1 }, loaded: true, failed: false };
+        await draw();
+        currentPathname = "/PAP/assistant";
+        await draw();
+        expect(homeCalls()).toEqual([]);
+        await act(async () => root.unmount());
+      });
+
+      it("does not redirect when signals fail after stage 0", async () => {
+        currentPathname = "/PAP/assistant";
+        const { root, draw } = await drawer();
+        mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+        await draw();
+        mockSignalsState.value = { signals: null, loaded: false, failed: true };
+        await draw();
+        expect(homeCalls()).toEqual([]);
+        await act(async () => root.unmount());
+      });
+    });
+
     it("still shows only the Assistant on other company pages in stage 0", async () => {
       mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
       currentPathname = "/PAP/projects";

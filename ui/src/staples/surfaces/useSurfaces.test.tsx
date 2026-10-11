@@ -100,7 +100,7 @@ describe("useSurfaces / SurfaceTracker", () => {
   it("treats failed signals with no data as unknown", async () => {
     mocks.signals.mockReturnValue({ signals: null, loaded: false, failed: true });
     await mount();
-    expect(observed.visible.map((s) => s.surface.id)).toEqual(["nav.dashboard", "nav.assistant", "nav.tasks", "nav.agents"]);
+    expect(observed.visible.map((s) => s.surface.id)).toEqual(["nav.home", "nav.assistant", "nav.tasks", "nav.agents"]);
   });
 
   it("exposes preference load failures", async () => {
@@ -129,6 +129,12 @@ describe("useSurfaces / SurfaceTracker", () => {
     mocks.pathname.value = "/PAP/routines";
     await mount();
     expect(mocks.update).toHaveBeenCalledWith({ see: ["nav.routines"] });
+  });
+
+  it("records a visit to Dashboard so it stays in the sidebar (see also reveals)", async () => {
+    mocks.pathname.value = "/PAP/dashboard";
+    await mount();
+    expect(mocks.update).toHaveBeenCalledWith({ see: ["nav.dashboard"] });
   });
 
   it("does nothing for a core surface", async () => {

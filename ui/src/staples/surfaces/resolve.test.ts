@@ -67,8 +67,34 @@ describe("resolveSurface", () => {
     });
   });
 
-  it("shows only dashboard, tasks, agents for a fresh company", () => {
-    expect(visibleIds(ctx(), prefs())).toEqual(["nav.dashboard", "nav.assistant", "nav.tasks", "nav.agents"]);
+  it("shows only home, assistant, tasks, agents for a fresh company", () => {
+    expect(visibleIds(ctx(), prefs())).toEqual(["nav.home", "nav.assistant", "nav.tasks", "nav.agents"]);
+  });
+
+  it("puts the core Home surface first in the top group", () => {
+    expect(SURFACE_REGISTRY[0]).toMatchObject({
+      id: "nav.home",
+      label: "Home",
+      to: "/home",
+      matchRoots: ["home"],
+      group: "top",
+      tier: "core",
+    });
+    expect(surfaceForPath(SURFACE_REGISTRY, "/home")?.id).toBe("nav.home");
+  });
+
+  it("grows Dashboard at three agents and keeps it once revealed", () => {
+    expect(byId("nav.dashboard").tier).toBe("grows");
+    expect(resolveSurface(byId("nav.dashboard"), ctx({ signals: signals({ agents: 2 }) }), prefs()).visible).toBe(false);
+    const grown = resolveSurface(byId("nav.dashboard"), ctx({ signals: signals({ agents: 3 }) }), prefs());
+    expect(grown).toMatchObject({ visible: true, source: "grows", shouldPersistReveal: true });
+    expect(byId("nav.dashboard").reason).toBe("Dashboard appeared because your company has several agents.");
+    const sticky = resolveSurface(
+      byId("nav.dashboard"),
+      ctx({ signals: signals({ agents: 1 }) }),
+      prefs({ revealed: { "nav.dashboard": "2026-01-01T00:00:00.000Z" } }),
+    );
+    expect(sticky).toMatchObject({ visible: true, source: "revealed" });
   });
 
   it("reveals projects when growth fires", () => {
@@ -123,7 +149,7 @@ describe("resolveSurface", () => {
   it("shows only core surfaces when signals are null", () => {
     const states = resolveSurfaces(SURFACE_REGISTRY, ctx({ signals: null, inboxUnread: 3 }), prefs());
     expect(states.filter((s) => s.visible).map((s) => s.surface.id)).toEqual([
-      "nav.dashboard",
+      "nav.home",
       "nav.assistant",
       "nav.tasks",
       "nav.agents",
@@ -191,7 +217,7 @@ describe("renderableSurfaces", () => {
       }),
     );
     const ids = (ready: boolean) => renderableSurfaces(states, ready).map((s) => s.surface.id);
-    expect(ids(false)).toEqual(["nav.dashboard", "nav.assistant", "nav.tasks", "nav.projects", "nav.goals", "nav.agents"]);
+    expect(ids(false)).toEqual(["nav.home", "nav.assistant", "nav.tasks", "nav.projects", "nav.goals", "nav.agents"]);
     expect(ids(true)).toEqual(expect.arrayContaining(["nav.chat", "nav.cases", "nav.decisions"]));
   });
 });

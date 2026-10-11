@@ -57,7 +57,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
   // Tasks. The grid tracks the live count, so the bar stays evenly divided.
   const items = useMemo<MobileNavItem[]>(
     () => [
-      { type: "link", to: "/dashboard", label: "Home", icon: House },
+      { type: "link", to: "/home", label: "Home", icon: House },
       ...(showAssistant
         ? [{ type: "link", to: "/assistant", label: "Assistant", icon: Sparkles } as MobileNavItem]
         : []),

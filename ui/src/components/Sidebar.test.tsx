@@ -215,9 +215,9 @@ describe("Sidebar", () => {
     });
   });
 
-  it("fresh company shows Dashboard, Assistant, Tasks and Agents only", async () => {
+  it("fresh company shows Home, Assistant, Tasks and Agents only", async () => {
     await withSidebar({}, () => {
-      expect(navLabels()).toEqual(["Search", "Dashboard", "Assistant", "Tasks", "Agents"]);
+      expect(navLabels()).toEqual(["Search", "Home", "Assistant", "Tasks", "Agents"]);
       expect(container.textContent).toContain("New Task");
       expect(container.querySelector('[data-testid="sidebar-starred-projects"]')).toBeNull();
       expect(container.querySelector('[data-testid="sidebar-recent-tasks"]')).not.toBeNull();
@@ -457,10 +457,10 @@ describe("Sidebar", () => {
     );
   });
 
-  it("attaches the live run count to Dashboard", async () => {
+  it("attaches the live run count to Home", async () => {
     mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([{ id: "r1", issueId: "i1" }]);
     await withSidebar({}, () => {
-      expect(container.querySelector('a[href="/dashboard"]')?.textContent).toContain("1 live");
+      expect(container.querySelector('a[href="/home"]')?.textContent).toContain("1 live");
     });
   });
 
@@ -472,7 +472,8 @@ describe("Sidebar", () => {
         preferences: { revealed: { "nav.routines": "2026-01-01T00:00:00.000Z" }, pinned: ["nav.goals"] },
       },
       () => {
-        expect(hrefs()).toContain("/dashboard");
+        expect(hrefs()).toContain("/home");
+        expect(hrefs()).not.toContain("/dashboard");
         expect(hrefs()).toContain("/issues");
         expect(hrefs()).toContain("/agents");
         expect(hrefs()).toContain("/routines");

@@ -1235,6 +1235,7 @@ function invalidateHeartbeatQueries(
   queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(companyId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(companyId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(companyId) });
+  queryClient.invalidateQueries({ queryKey: queryKeys.briefing(companyId) });
   queryClient.invalidateQueries({ queryKey: ["costs", companyId] });
   queryClient.invalidateQueries({
     queryKey: queryKeys.sidebarBadges(companyId),
@@ -1328,6 +1329,7 @@ function invalidateActivityQueries(
 ) {
   queryClient.invalidateQueries({ queryKey: queryKeys.activity(companyId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(companyId) });
+  queryClient.invalidateQueries({ queryKey: queryKeys.briefing(companyId) });
   options?.refreshSignals?.(companyId);
   queryClient.invalidateQueries({
     queryKey: queryKeys.sidebarBadges(companyId),
@@ -1808,6 +1810,9 @@ function handleLiveEvent(
     });
     queryClient.invalidateQueries({
       queryKey: queryKeys.org(expectedCompanyId),
+    });
+    queryClient.invalidateQueries({
+      queryKey: queryKeys.briefing(expectedCompanyId),
     });
     const agentId = readString(payload.agentId);
     if (agentId)

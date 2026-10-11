@@ -266,6 +266,28 @@ function LayoutShell({ sidebarSections }: { sidebarSections?: ReactNode }) {
   const stageZeroShell: "pending" | "stage_zero" | null = stageZeroExempt
     ? null
     : shownShell === null ? "pending" : shownShell === "stage_zero" ? "stage_zero" : null;
+  // Stage 0 -> stage 1: when the first staff agent arrives while the stage-zero
+  // shell covers this page, land on Home instead of the URL stage 0 was showing.
+  // Only a switch that happens in place counts (same company, same path), so
+  // leaving stage 0 by navigating elsewhere keeps the person where they went.
+  const stageZeroShownAt = useRef<{ companyId: string; pathname: string } | null>(null);
+  const signalsSayStaffed = signalsLoaded && !signalsFailed && (signals?.agents ?? 0) > 0;
+  useEffect(() => {
+    if (!selectedCompanyId || !companyPrefix || stageZeroExempt) {
+      stageZeroShownAt.current = null;
+      return;
+    }
+    if (decidedShell === "stage_zero") {
+      stageZeroShownAt.current = { companyId: selectedCompanyId, pathname: location.pathname };
+      return;
+    }
+    const shownAt = stageZeroShownAt.current;
+    if (!shownAt || decidedShell !== "normal") return;
+    stageZeroShownAt.current = null;
+    if (!signalsSayStaffed || shownAt.companyId !== selectedCompanyId || shownAt.pathname !== location.pathname) return;
+    if (stageZeroRoot === "home") return;
+    navigate(`/${companyPrefix}/home`, { replace: true });
+  }, [companyPrefix, decidedShell, location.pathname, navigate, selectedCompanyId, signalsSayStaffed, stageZeroExempt, stageZeroRoot]);
   const { data: health } = useQuery({
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),
@@ -346,7 +368,7 @@ function LayoutShell({ sidebarSections }: { sidebarSections?: ReactNode }) {
         dedupeKey: `archived-company-bounce:${matchedCompany.id}`,
       });
       setSelectedCompanyId(bounce.id, { source: "route_sync" });
-      navigate(`/${bounce.issuePrefix}/dashboard`, { replace: true });
+      navigate(`/${bounce.issuePrefix}/home`, { replace: true });
       return;
     }
 

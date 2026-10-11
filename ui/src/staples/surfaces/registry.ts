@@ -6,6 +6,7 @@ import {
   FolderOpen,
   GitBranch,
   History,
+  House,
   Inbox,
   Layers,
   LayoutDashboard,
@@ -55,13 +56,24 @@ export interface SurfaceDefinition {
 
 export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
   {
+    id: "nav.home",
+    label: "Home",
+    to: "/home",
+    matchRoots: ["home"],
+    icon: House,
+    group: "top",
+    tier: "core",
+  },
+  {
     id: "nav.dashboard",
     label: "Dashboard",
     to: "/dashboard",
     matchRoots: ["dashboard"],
     icon: LayoutDashboard,
     group: "top",
-    tier: "core",
+    tier: "grows",
+    revealWhen: (ctx) => ctx.signals !== null && ctx.signals.agents >= 3,
+    reason: "Dashboard appeared because your company has several agents.",
   },
   {
     id: "nav.assistant",

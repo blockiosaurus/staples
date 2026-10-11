@@ -304,8 +304,11 @@ describe("CommandPalette", () => {
     expect(routinesItem!.textContent).toContain("not in sidebar");
     expect(routinesItem!.textContent).not.toContain("hidden");
     expect(routinesItem!.querySelector("span.text-muted-foreground")?.textContent).toBe(" · not in sidebar");
-    const dashboardItem = [...container.querySelectorAll("button")].find((b) => b.textContent === "Dashboard");
-    expect(dashboardItem).toBeDefined();
+    const homeItem = [...container.querySelectorAll("button")].find((b) => b.textContent === "Home");
+    expect(homeItem).toBeDefined();
+    // Dashboard grows in at three agents; until then it is reachable from Pages only.
+    const dashboardItem = [...container.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Dashboard"));
+    expect(dashboardItem?.textContent).toContain("not in sidebar");
 
     act(() => {
       routinesItem!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
