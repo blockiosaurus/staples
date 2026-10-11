@@ -56,6 +56,20 @@ export type {
 } from "./attention.js";
 export { ATTENTION_SOURCE_KINDS } from "./attention.js";
 export type {
+  Briefing,
+  BriefingItem,
+  BriefingItemKind,
+  BriefingRecommendation,
+  BriefingRecommendationAnswer,
+  BriefingSection,
+} from "./briefing.js";
+export {
+  BRIEFING_DONE_RECENTLY_LIMIT,
+  BRIEFING_DONE_RECENTLY_WINDOW_DAYS,
+  BRIEFING_IN_PROGRESS_LIMIT,
+  BRIEFING_NEEDS_YOU_LIMIT,
+} from "./briefing.js";
+export type {
   DecisionQueue,
   DecisionQueueItem,
   DecisionQueueSeedRule,

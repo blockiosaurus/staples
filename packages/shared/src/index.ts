@@ -207,6 +207,20 @@ export type {
   AttentionWorkspaceRef,
 } from "./types/attention.js";
 export { ATTENTION_SOURCE_KINDS } from "./types/attention.js";
+export type {
+  Briefing,
+  BriefingItem,
+  BriefingItemKind,
+  BriefingRecommendation,
+  BriefingRecommendationAnswer,
+  BriefingSection,
+} from "./types/briefing.js";
+export {
+  BRIEFING_DONE_RECENTLY_LIMIT,
+  BRIEFING_DONE_RECENTLY_WINDOW_DAYS,
+  BRIEFING_IN_PROGRESS_LIMIT,
+  BRIEFING_NEEDS_YOU_LIMIT,
+} from "./types/briefing.js";
 export {
   askUserQuestionsPayloadToQuestionSet,
   missingQuestionRecommendations,

@@ -32,6 +32,7 @@ export { dashboardRoutes } from "./dashboard.js";
 export { companySignalsRoutes } from "./company-signals.js";
 export { companyBriefRoutes } from "./company-brief.js";
 export { attentionRoutes } from "./attention.js";
+export { briefingRoutes } from "./briefing.js";
 export { decisionRoutes } from "./decisions.js";
 export { decisionQueueRoutes } from "./decision-queues.js";
 export { sidebarBadgeRoutes } from "./sidebar-badges.js";

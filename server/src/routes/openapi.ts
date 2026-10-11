@@ -6024,6 +6024,66 @@ registry.registerPath({
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
 });
 
+const briefingRecommendationSchema = z.object({
+  label: z.string(),
+  inline: z.boolean(),
+  answers: z
+    .array(
+      z.object({
+        questionId: z.string(),
+        optionIds: z.array(z.string()).optional(),
+        text: z.string().optional(),
+      }),
+    )
+    .optional(),
+  accept: z.literal(true).optional(),
+});
+
+const briefingItemSchema = z.object({
+  kind: z.enum([
+    "approval",
+    "question",
+    "confirmation",
+    "blocked_task",
+    "budget_incident",
+    "review",
+    "failed_run",
+    "agent_error",
+    "active_task",
+    "live_run",
+    "done_task",
+  ]),
+  id: z.string(),
+  title: z.string(),
+  subtitle: z.string().nullable().optional(),
+  href: z.string().describe("Company-relative link, e.g. /issues/TES-12"),
+  issueId: z.string().nullable().optional(),
+  recommendation: briefingRecommendationSchema.optional(),
+  createdAt: z.string().datetime(),
+});
+
+const briefingSchema = z.object({
+  needsYou: z.array(briefingItemSchema),
+  inProgress: z.array(briefingItemSchema),
+  doneRecently: z.array(briefingItemSchema),
+  counts: z.object({
+    needsYou: z.number().int(),
+    inProgress: z.number().int(),
+    doneRecently: z.number().int(),
+  }),
+  generatedAt: z.string().datetime(),
+});
+registry.register("Briefing", briefingSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/briefing",
+  tags: ["inbox"],
+  summary: "Get the Home briefing: what needs the person, what is in progress, and what finished recently",
+  request: { params: z.object({ companyId: z.string() }) },
+  responses: { 200: r.ok(briefingSchema), 401: r.unauthorized, 403: r.forbidden },
+});
+
 // ─── Decisions ──────────────────────────────────────────────────────────────
 
 // Decision queues and triage

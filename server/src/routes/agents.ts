@@ -35,6 +35,7 @@ import { paperclipRunnerTransitionConfig, normalizeLegacyRunnerProvider, isPaper
 import { applyMcpReasoningEffort } from "../services/public-mcp/agent-config.js";
 import { executionProjectionForRun, executionProjectionsForRuns } from "../services/execution-projection.js";
 import { selectDashboardRunIds } from "../services/dashboard-run-selection.js";
+import { liveRunColumns, liveRunsQuery as buildLiveRunsQuery } from "../services/live-runs.js";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
@@ -6750,57 +6751,8 @@ export function agentRoutes(
     const limit = readLiveRunsQueryInt(req.query.limit, 50, 50);
     const distinctTasks = req.query.distinctTasks === "true";
 
-    const columns = {
-      id: heartbeatRuns.id,
-      runtimeMode: heartbeatRuns.runtimeMode,
-      companyId: heartbeatRuns.companyId,
-      status: heartbeatRuns.status,
-      invocationSource: heartbeatRuns.invocationSource,
-      triggerDetail: heartbeatRuns.triggerDetail,
-      contextCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'commentId'`.as("contextCommentId"),
-      contextWakeCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'wakeCommentId'`.as("contextWakeCommentId"),
-      startedAt: heartbeatRuns.startedAt,
-      finishedAt: heartbeatRuns.finishedAt,
-      createdAt: heartbeatRuns.createdAt,
-      agentId: heartbeatRuns.agentId,
-      agentName: agentsTable.name,
-      agentAppearance: agentsTable.appearance,
-      adapterType: agentsTable.adapterType,
-      logBytes: heartbeatRuns.logBytes,
-      livenessState: heartbeatRuns.livenessState,
-      livenessReason: heartbeatRuns.livenessReason,
-      continuationAttempt: heartbeatRuns.continuationAttempt,
-      lastUsefulActionAt: heartbeatRuns.lastUsefulActionAt,
-      nextAction: heartbeatRuns.nextAction,
-      lastOutputAt: heartbeatRuns.lastOutputAt,
-      lastOutputSeq: heartbeatRuns.lastOutputSeq,
-      lastOutputStream: heartbeatRuns.lastOutputStream,
-      lastOutputBytes: heartbeatRuns.lastOutputBytes,
-      processStartedAt: heartbeatRuns.processStartedAt,
-      scopeKind: heartbeatRuns.scopeKind,
-      issueId: heartbeatRuns.issueId,
-      inputTokens: sql<number | null>`(${heartbeatRuns.usageJson} ->> 'inputTokens')::numeric`.as("inputTokens"),
-      cachedInputTokens: sql<number | null>`(${heartbeatRuns.usageJson} ->> 'cachedInputTokens')::numeric`.as("cachedInputTokens"),
-      outputTokens: sql<number | null>`(${heartbeatRuns.usageJson} ->> 'outputTokens')::numeric`.as("outputTokens"),
-      totalTokens: sql<number | null>`(${heartbeatRuns.usageJson} ->> 'totalTokens')::numeric`.as("totalTokens"),
-      costUsd: sql<number | null>`coalesce(
-        (${heartbeatRuns.resultJson} ->> 'costUsd')::numeric,
-        (${heartbeatRuns.resultJson} ->> 'cost_usd')::numeric,
-        (${heartbeatRuns.resultJson} ->> 'total_cost_usd')::numeric
-      )`.as("costUsd"),
-    };
-
-    const liveRunsQuery = db
-      .select(columns)
-      .from(heartbeatRuns)
-      .innerJoin(agentsTable, eq(heartbeatRuns.agentId, agentsTable.id))
-      .where(
-        and(
-          eq(heartbeatRuns.companyId, companyId),
-          inArray(heartbeatRuns.status, ["queued", "running"]),
-        ),
-      )
-      .orderBy(desc(heartbeatRuns.createdAt));
+    const columns = liveRunColumns();
+    const liveRunsQuery = buildLiveRunsQuery(db, companyId, columns);
 
     const liveRuns = distinctTasks ? [] : await liveRunsQuery.limit(limit);
     let rows = liveRuns;

@@ -115,6 +115,7 @@ import { companySignalsRoutes } from "./routes/company-signals.js";
 import { companyBriefRoutes } from "./routes/company-brief.js";
 import { planRoutes } from "./routes/plans.js";
 import { attentionRoutes } from "./routes/attention.js";
+import { briefingRoutes } from "./routes/briefing.js";
 import { decisionTrainingRoutes } from "./routes/decision-training.js";
 import { decisionRoutes } from "./routes/decisions.js";
 import { decisionQueueRoutes } from "./routes/decision-queues.js";
@@ -875,6 +876,7 @@ export async function createApp(
   api.use(companySignalsRoutes(db));
   api.use(companyBriefRoutes(db));
   api.use(attentionRoutes(db));
+  api.use(briefingRoutes(db));
   api.use(decisionTrainingRoutes(db));
   api.use(decisionRoutes(db, opts.decisionServiceOptions));
   api.use(decisionQueueRoutes(db));
