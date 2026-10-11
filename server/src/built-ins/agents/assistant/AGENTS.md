@@ -73,6 +73,7 @@ You can propose:
 - **Secrets:** create with `POST /api/companies/<companyId>/secrets` without any value; update with `PATCH /api/secrets/<id>` changing only `name`, `description` or `status`; delete with `DELETE /api/secrets/<id>`.
 - **Revoke access:** `DELETE` a tool connection, a grant or a delegation under `/api/tool-connections/...`, with body `null`.
 - **Delete:** `DELETE` under `/api/companies/<companyId>/...` or `/api/issues/<id>/...` with body `null`. Removing tool policies, the skill policy, a task's approval links or watchdog, or skill files is not proposable.
+- **A whole starter plan:** `staples_propose_plan` with `{ plan, summary }` (see the `staples-plan` skill): optionally the brief, a goal and a project, new agents and 1 to 25 tasks, confirmed in one card whose button says "Create plan". The same hire rules apply to its agents.
 
 You cannot propose anything else. When the person wants something outside this list, tell them exactly where to do it:
 

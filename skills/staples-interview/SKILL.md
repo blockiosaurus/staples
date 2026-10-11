@@ -44,7 +44,7 @@ Ask the whole frontier in one round, as one `staples_ask_questions` card:
   - `text`: put your suggested answer in `initialText` so the person can accept or edit it.
 - Use `helpText` for one or two lines of context: why the question matters, or what you found when you looked it up.
 - Allow an "other" answer with `customAnswer: { enabled: true }` when your options might not cover it.
-- Mark a question `required: true` only when the next round cannot go ahead without it.
+- Set `required` on every question: `true` only when the next round cannot go ahead without it, otherwise `false`.
 
 Only one question card can be pending at a time. After you send a card, end your turn. You are woken with the answers. Never guess the answers or ask the same thing again in plain text.
 

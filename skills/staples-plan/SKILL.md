@@ -30,7 +30,7 @@ Use the company's glossary words everywhere in the plan.
 - `clientKey`: short lowercase id such as `writer` or `researcher` (letters, digits and dashes).
 - `name`, optional `title`, and `capabilities`: one or two sentences on what this agent does and what it does not do.
 - `role`: one of `cto`, `cmo`, `cfo`, `security`, `engineer`, `designer`, `pm`, `qa`, `devops`, `researcher`, `general`. **Never `ceo`**: CEO-level hires are done by the person on the Agents page.
-- `adapterType`: reuse the adapter the company's existing agents use unless the person asked otherwise.
+- `adapterType`: must be one of the proposable local adapters: `claude_local`, `codex_local`, `cursor`, `gemini_local`, `grok_local`, `kimi_local`, `opencode_local` or `pi_local`. Reuse the one the company's existing agents use when it is in that list; otherwise ask the person which of these to use.
 - Optional `budgetMonthlyCents` if a budget was agreed, and `reportsToClientKey` when one new agent reports to another.
 
 No other fields. Do not put instructions, secrets, commands or credentials in a hire.
@@ -83,7 +83,7 @@ Use `staples_propose_plan` with the whole plan and a one-sentence `summary`:
 
 - `brief.baseRevisionId` is the `revisionId` from `staples_get_company_brief`, or `null` when there is no brief yet. Leave `brief` out if it did not change.
 - Nothing is created until the person confirms the card. End your turn after proposing; you are woken with the result.
-- If the company requires approval for new agents, the hires stay pending until approved and their tasks wait for them. Tell the person.
+- If the company requires approval for new agents, the hires stay pending until approved, and their tasks are created unassigned in the backlog, linked to the hire approval. Tell the person, and offer to assign those tasks once the hires are approved.
 
 **If `staples_propose_plan` is not available** (older servers): propose the brief alone with `staples_propose_action` (`PUT /api/companies/<companyId>/brief`, see `staples-company-brief`), and list the goal, agents and tasks in chat as a clear plan the person can act on. Do not try to create the agents or tasks one by one yourself.
 
