@@ -32,6 +32,7 @@ import { toolAccessPolicyService, toolNamePatternMatches } from "../services/too
 import { createToolPolicySchema, toolAccessSelectorSchema, updateToolPolicySchema } from "@paperclipai/shared";
 import { toolAccessService } from "../services/tool-access.js";
 import { createToolGatewayService, ToolGatewayHttpError } from "../services/tool-gateway.js";
+import { READ_ONLY_BLOCKED_TOOL_PATTERNS } from "../services/plan-templates.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -169,6 +170,23 @@ describe("tool-name glob matching", () => {
       expect(toolNamePatternMatches(`${"*a".repeat(59)}*b`, "a".repeat(length))).toBe(false);
     }
     expect(performance.now() - started).toBeLessThan(250);
+  });
+
+  it("matches a pathological pattern against a 200-character name in under 50ms", () => {
+    const name = "a".repeat(200);
+    const started = performance.now();
+    expect(toolNamePatternMatches("*a*a*a*a*a*a*a*a*a*a*b", name)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(50);
+  });
+
+  it("read-only template name patterns block money-moving verbs but not money reads", () => {
+    const blocked = (name: string) => READ_ONLY_BLOCKED_TOOL_PATTERNS.some((pattern) => toolNamePatternMatches(pattern, name));
+    for (const name of ["stripe_create_refund", "stripe_issue_refund", "refund_payment", "stripe_pay_invoice", "transfer_funds", "stripe_update_customer", "STRIPE_CREATE_REFUND"]) {
+      expect(blocked(name), name).toBe(true);
+    }
+    for (const name of ["stripe_list_charges", "stripe_list_refunds", "stripe_list_payouts", "stripe_get_invoice", "stripe_retrieve_balance"]) {
+      expect(blocked(name), name).toBe(false);
+    }
   });
 
   it("validates toolNamePatterns on policy selectors and trust-rule selectors", () => {
