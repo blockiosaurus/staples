@@ -23,6 +23,7 @@ import type {
 import {
   AGENT_TEMPLATE_TEAMS_CATALOG_REJECTION,
   isAgentTemplateCatalogEntry,
+  AGENT_TEMPLATE_CATALOG_CATEGORY,
   normalizeAgentUrlKey,
 } from "@paperclipai/shared";
 import { parseFrontmatterMarkdown } from "@paperclipai/shared/frontmatter";
@@ -999,6 +1000,13 @@ export function teamsCatalogService(db: Db) {
         agent.metadata as Record<string, unknown> | null,
       );
       if (!provenance) continue;
+      // Agent templates are hires, not installed teams (they install through plans).
+      const provenanceTeam = currentById.get(provenance.catalogId);
+      if (
+        (provenanceTeam && isAgentTemplateCatalogEntry(provenanceTeam))
+        || provenance.catalogId.startsWith(`paperclipai:optional:${AGENT_TEMPLATE_CATALOG_CATEGORY}:`)
+        || provenance.catalogKey?.startsWith(`paperclipai/optional/${AGENT_TEMPLATE_CATALOG_CATEGORY}/`)
+      ) continue;
       let entry = byCatalogId.get(provenance.catalogId);
       if (!entry) {
         entry = {

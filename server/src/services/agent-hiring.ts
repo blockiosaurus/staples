@@ -8,6 +8,7 @@ import { agentRecordQueries, isPlainRecord, configPatchFromApprovalPayload, norm
 import { normalizeAgentPermissions, permissionsImplyLowTrust, NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS,
   newStandardAgentGrantScope } from "../lib/agent-permissions.js";
 import { readBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
+import { withStoredStaplesTemplateMarker } from "../lib/staples-template-metadata.js";
 import { secretService, assertClaudeOAuthBindingInvariant } from "./secrets.js";
 import { agentCredentialService } from "./agent-credentials.js";
 import { agentIdentityService } from "./agent-identity.js";
@@ -83,6 +84,9 @@ export async function prepareAgentHireApproval(txDb: Db, existing: AgentHireReco
   const patch = { ...approvedPatch } as AgentConfigurationPatch;
   // An approval payload is caller-shaped; it may not add or alter a built-in marker.
   if (Object.prototype.hasOwnProperty.call(patch, "metadata")) {
+    // The payload was captured at hire, before plans/apply recorded the agent's
+    // template; keep the stored record (any other value is still refused below).
+    patch.metadata = withStoredStaplesTemplateMarker(existing.metadata, (patch.metadata ?? null) as Record<string, unknown> | null);
     agentRecordQueries(txDb).assertBuiltInAgentMetadataMutationAllowed(existing.metadata, patch.metadata);
   }
   const hasApprovedAdapterConfig = Object.prototype.hasOwnProperty.call(patch, "adapterConfig") && isPlainRecord(patch.adapterConfig);
