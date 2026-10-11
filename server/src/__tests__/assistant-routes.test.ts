@@ -80,6 +80,7 @@ describe("assistant routes", () => {
       agent: { id: assistantId, name: "Assistant", urlKey: "assistant", adapterType: "claude_local", status: "idle" },
       conversationIssueId: null,
       setup: { state: "ready", adapterType: "claude_local" },
+      canConfigure: true,
     });
     expect(mockBuiltInAgentService.ensureAssistant).toHaveBeenCalledWith(companyId);
     expect(mockIssueService.getConversation).toHaveBeenCalledWith(companyId, assistantId, "user-1");
@@ -103,7 +104,14 @@ describe("assistant routes", () => {
     const app = await createApp(boardActor);
     const res = await request(app).get(`/api/companies/${companyId}/assistant`);
     expect(res.status).toBe(200);
-    expect(res.body.setup).toEqual({ state: "needs_model", adapterType: "claude_local" });
+    expect(res.body.setup).toEqual({ state: "needs_model", adapterType: "claude_local", reason: "Claude isn't signed in on this computer." });
+  });
+
+  it("tells viewers they cannot configure the Assistant", async () => {
+    const app = await createApp({ ...boardActor, memberships: [{ companyId, status: "active", membershipRole: "viewer" }] });
+    const res = await request(app).get(`/api/companies/${companyId}/assistant`);
+    expect(res.status).toBe(200);
+    expect(res.body.canConfigure).toBe(false);
   });
 
   it("rejects agents and callers without company access", async () => {

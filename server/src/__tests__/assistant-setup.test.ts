@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { assistantSetupStatus, resolveAssistantSetupEngine } from "../services/assistant-setup.js";
+import { describe, expect, it, vi } from "vitest";
+import { assistantAdapterAvailability, assistantSetupStatus, canConfigureAssistant, resolveAssistantSetupEngine } from "../services/assistant-setup.js";
 
 const base = {
   adapterType: "claude_local",
@@ -34,24 +34,33 @@ describe("assistantSetupStatus", () => {
   });
 
   it.each([
-    ["claude_hello_probe_auth_required"],
-    ["claude_command_unresolvable"],
-    ["adapter_engine_unavailable"],
-    ["adapter_auth_missing"],
-    ["codex_hello_probe_auth_required"],
-  ])("needs a model when the harness test failed with %s", (code) => {
-    expect(assistantSetupStatus(failed([code]))).toMatchObject({ state: "needs_model", adapterType: "claude_local" });
+    ["claude_hello_probe_auth_required", "Claude isn't signed in on this computer."],
+    ["adapter_auth_missing", "Claude isn't signed in on this computer."],
+    ["claude_command_unresolvable", "Claude isn't installed on this computer."],
+    ["adapter_engine_unavailable", "Claude's engine isn't available on this computer."],
+  ])("needs a model when the harness test failed with %s, with a fixed reason", (code, reason) => {
+    expect(assistantSetupStatus(failed([code]))).toEqual({ state: "needs_model", adapterType: "claude_local", reason });
   });
 
-  it("is an error with the lifecycle message for other failures", () => {
+  it("explains other harness failures with fixed copy, never the raw lifecycle message", () => {
     expect(assistantSetupStatus(failed(["claude_hello_probe_timed_out"]))).toEqual({
+      state: "error", adapterType: "claude_local",
+      message: "The model couldn't be reached. Connect a model to continue.",
+      reason: "Claude didn't answer in time.",
+    });
+    expect(assistantSetupStatus(failed(["claude_hello_probe_usage_limited"]))).toMatchObject({ reason: "Claude has reached its usage limit." });
+    expect(assistantSetupStatus(failed(["claude_something_else"]))).toMatchObject({ reason: "Claude didn't pass its connection test." });
+  });
+
+  it("keeps the lifecycle message for failures other than the harness test", () => {
+    expect(assistantSetupStatus({ ...failed([]), lifecycleOperation: null })).toEqual({
       state: "error", adapterType: "claude_local", message: "The lifecycle step failed. Retry the operation.",
     });
   });
 
   it("ignores a harness test recorded for an earlier lifecycle version or another adapter", () => {
-    expect(assistantSetupStatus(failed(["claude_hello_probe_auth_required"], { lifecycleVersion: 4 }))).toMatchObject({ state: "error" });
-    expect(assistantSetupStatus(failed(["claude_hello_probe_auth_required"], { adapterType: "codex_local" }))).toMatchObject({ state: "error" });
+    expect(assistantSetupStatus(failed(["claude_hello_probe_auth_required"], { lifecycleVersion: 4 }))).toMatchObject({ state: "error", message: "The lifecycle step failed. Retry the operation." });
+    expect(assistantSetupStatus(failed(["claude_hello_probe_auth_required"], { adapterType: "codex_local" }))).toMatchObject({ state: "error", message: "The lifecycle step failed. Retry the operation." });
   });
 
   it("needs a model when the Assistant is on an adapter it cannot run on", () => {
@@ -83,5 +92,66 @@ describe("resolveAssistantSetupEngine", () => {
     expect(resolveAssistantSetupEngine(recorded("claude_local", ["claude_hello_probe_auth_required"]), "claude_local", undefined)).toBeUndefined();
     expect(resolveAssistantSetupEngine(recorded("claude_local", ["adapter_engine_unavailable"]), "codex_local", undefined)).toBeUndefined();
     expect(resolveAssistantSetupEngine(recorded("gemini_local", ["adapter_engine_unavailable"]), "gemini_local", undefined)).toBeUndefined();
+  });
+});
+
+describe("assistantAdapterAvailability", () => {
+  const deps = (overrides: Partial<Parameters<typeof assistantAdapterAvailability>[0]> = {}) => ({
+    nodeVersion: "v24.10.0",
+    commandResolvable: vi.fn(async (command: string) => command !== "kimi"),
+    authSignal: vi.fn(async (type: string) => (type === "codex_local" ? "absent" as const : "unknown" as const)),
+    geminiCredentialsPresent: vi.fn(async () => false),
+    ...overrides,
+  });
+
+  it("detects each runtime adapter without model calls", async () => {
+    const d = deps();
+    const result = await assistantAdapterAvailability(d);
+    expect(result).toEqual([
+      { adapterType: "claude_local", installed: true, available: true, engine: "cli", signedIn: null },
+      { adapterType: "codex_local", installed: true, available: true, engine: "cli", signedIn: false,
+        hint: "Sign in needed: run `codex login` in a terminal once, or connect an API key." },
+      { adapterType: "gemini_local", installed: true, available: false, engine: null, signedIn: null,
+        hint: "Needs Node 24.11 or newer on this computer." },
+      { adapterType: "kimi_local", installed: false, available: false, engine: null, signedIn: null,
+        hint: "Not installed: install the kimi CLI, then check again." },
+    ]);
+    expect(d.commandResolvable.mock.calls.map((call) => call[0]).sort()).toEqual(["claude", "codex", "gemini", "kimi"]);
+  });
+
+  it("uses ACP when Node is new enough and reports sign-in hints for CLI-only logins", async () => {
+    const result = await assistantAdapterAvailability(deps({
+      nodeVersion: "v24.11.0",
+      commandResolvable: vi.fn(async () => true),
+      authSignal: vi.fn(async (type: string) => (type === "claude_local" ? "present" as const : "unknown" as const)),
+    }));
+    expect(result.find((entry) => entry.adapterType === "claude_local")).toEqual(
+      { adapterType: "claude_local", installed: true, available: true, engine: null, signedIn: true });
+    expect(result.find((entry) => entry.adapterType === "gemini_local")).toEqual({
+      adapterType: "gemini_local", installed: true, available: true, engine: null, signedIn: null,
+      hint: "Sign in needed: run `gemini` in a terminal once and log in, then check again.",
+    });
+    expect(result.find((entry) => entry.adapterType === "kimi_local")).toMatchObject({ available: true, signedIn: null,
+      hint: "Sign in needed: run `kimi` in a terminal once and log in, then check again." });
+  });
+
+  it("treats found Gemini credentials as signed in", async () => {
+    const result = await assistantAdapterAvailability(deps({
+      nodeVersion: "v25.0.0", commandResolvable: vi.fn(async () => true), geminiCredentialsPresent: vi.fn(async () => true),
+    }));
+    expect(result.find((entry) => entry.adapterType === "gemini_local")).toEqual(
+      { adapterType: "gemini_local", installed: true, available: true, engine: null, signedIn: true });
+  });
+});
+
+describe("canConfigureAssistant", () => {
+  it("lets owners, operators, local and instance admins configure, but not viewers", () => {
+    const member = (membershipRole: string) => ({ type: "board", source: "session", memberships: [{ companyId: "c", status: "active", membershipRole }] });
+    expect(canConfigureAssistant(member("owner") as never, "c")).toBe(true);
+    expect(canConfigureAssistant(member("operator") as never, "c")).toBe(true);
+    expect(canConfigureAssistant(member("viewer") as never, "c")).toBe(false);
+    expect(canConfigureAssistant({ type: "board", source: "local_implicit" } as never, "c")).toBe(true);
+    expect(canConfigureAssistant({ type: "board", source: "session", isInstanceAdmin: true, memberships: [] } as never, "c")).toBe(true);
+    expect(canConfigureAssistant({ type: "agent" } as never, "c")).toBe(false);
   });
 });

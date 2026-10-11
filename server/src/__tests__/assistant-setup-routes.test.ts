@@ -79,6 +79,7 @@ const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockEnsureAssistant = vi.hoisted(() => vi.fn());
 const mockLifecycle = vi.hoisted(() => ({ retry: vi.fn(), updateAndTransition: vi.fn() }));
 const mockReadAssistantLifecycle = vi.hoisted(() => vi.fn());
+const mockAdapterAvailability = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
@@ -142,6 +143,7 @@ function registerModuleMocks() {
   vi.doMock("../services/assistant-setup.js", async (importOriginal) => ({
     ...(await importOriginal<typeof import("../services/assistant-setup.js")>()),
     readAssistantLifecycle: mockReadAssistantLifecycle,
+    assistantAdapterAvailability: mockAdapterAvailability,
   }));
 
   vi.doMock("../services/secrets.js", () => ({
@@ -340,6 +342,36 @@ describe("POST /companies/:companyId/assistant/setup", () => {
       .post("/api/companies/company-1/assistant/setup").send({ adapterType: "claude_local" }));
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(mockLifecycle.retry).not.toHaveBeenCalled();
+  });
+
+  it("checks access before validating the body", async () => {
+    const viewer = await createApp({
+      source: "session", userId: "viewer-1", companyIds: ["company-1"],
+      memberships: [{ companyId: "company-1", status: "active", membershipRole: "viewer" }],
+    });
+    const res = await requestApp(viewer, (baseUrl) => request(baseUrl)
+      .post("/api/companies/company-1/assistant/setup").send({ adapterType: "process", junk: true }));
+    expect(res.status).toBe(403);
+    expect(mockEnsureAssistant).not.toHaveBeenCalled();
+  });
+
+  it("lists the runtime adapters from cheap host detection, for people who can configure", async () => {
+    const entries = [{ adapterType: "claude_local", installed: true, available: true, engine: "cli", signedIn: null }];
+    mockAdapterAvailability.mockResolvedValue(entries);
+    const app = await createApp();
+    const res = await requestApp(app, (baseUrl) => request(baseUrl).get("/api/companies/company-1/assistant/adapters"));
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toEqual({ adapters: entries });
+    const deps = mockAdapterAvailability.mock.calls.at(-1)![0];
+    expect(typeof deps.commandResolvable).toBe("function");
+    expect(deps.nodeVersion).toBe(process.version);
+
+    const viewer = await createApp({
+      source: "session", userId: "viewer-1", companyIds: ["company-1"],
+      memberships: [{ companyId: "company-1", status: "active", membershipRole: "viewer" }],
+    });
+    const viewerRes = await requestApp(viewer, (baseUrl) => request(baseUrl).get("/api/companies/company-1/assistant/adapters"));
+    expect(viewerRes.status).toBe(403);
   });
 
   it("forbids viewers, agents, and other companies", async () => {

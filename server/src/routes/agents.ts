@@ -1,7 +1,7 @@
 import { cancellationRequestId } from "../services/native-runtime/native-cancellation-request.js";
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
-import { assistantSetupRequestSchema, assistantSetupStatus, readAssistantLifecycle, resolveAssistantSetupEngine, type AssistantSetupRequest } from "../services/assistant-setup.js";
+import { assistantAdapterAvailability, assistantSetupRequestSchema, assistantSetupStatus, canConfigureAssistant, geminiCredentialsPresent, readAssistantLifecycle, resolveAssistantSetupEngine, type AssistantSetupRequest } from "../services/assistant-setup.js";
 
 import { agentIdentityService } from "../services/agent-identity.js";
 import { aiConnectionRouterService, poolMemberRuntimeConfig } from "../services/ai-connection-router.js";
@@ -78,6 +78,8 @@ import {
   type AgentAdapterType,
 } from "@paperclipai/shared";
 import {
+  ensureCommandResolvable,
+  ensurePathInEnv,
   isForbiddenConfigEnvKey,
   normalizePaperclipRunnerAdapterConfig,
   PAPERCLIP_OPERATIONAL_SKILL_KEY,
@@ -5411,12 +5413,41 @@ export function agentRoutes(
    * retries a failed setup. Not gated by `enableBuiltInAgents`: every company
    * has an Assistant.
    */
-  router.post("/companies/:companyId/assistant/setup", validate(assistantSetupRequestSchema), async (req, res) => {
-    const companyId = req.params.companyId as string;
+  function assertCanConfigureAssistant(req: Request, companyId: string) {
     assertBoard(req);
     assertCompanyAccess(req, companyId);
     if (!req.actor.userId) throw forbidden("Board user access required");
-    const body = req.body as AssistantSetupRequest;
+    if (!canConfigureAssistant(req.actor, companyId)) throw forbidden("Ask an owner to connect a model");
+  }
+
+  /**
+   * The Assistant's runtime adapters on this host, from cheap detection only
+   * (command lookup, ACP Node prerequisite, host-local sign-in signals). No
+   * model calls: the chosen adapter gets the full environment test.
+   */
+  router.get("/companies/:companyId/assistant/adapters", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCanConfigureAssistant(req, companyId);
+    res.setHeader("Cache-Control", "no-store");
+    const adapters = await assistantAdapterAvailability({
+      nodeVersion: process.version,
+      commandResolvable: (command) => ensureCommandResolvable(command, process.cwd(), ensurePathInEnv({ ...process.env }))
+        .then(() => true, () => false),
+      authSignal: async (adapterType) => adapterType === "claude_local"
+        ? evaluateClaudeAuthSignal(req, companyId, null)
+        : adapterType === "codex_local" ? evaluateCodexAuthSignal(req, companyId, null) : "unknown",
+      geminiCredentialsPresent: () => geminiCredentialsPresent(),
+    });
+    res.json({ adapters });
+  });
+
+  router.post("/companies/:companyId/assistant/setup", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    // Access first, so callers who cannot configure learn nothing from validation.
+    assertCanConfigureAssistant(req, companyId);
+    const parsed = assistantSetupRequestSchema.safeParse(req.body);
+    if (!parsed.success) throw badRequest("Validation error", parsed.error.issues);
+    const body: AssistantSetupRequest = parsed.data;
     const assistant = await builtInAgentService(db).ensureAssistant(companyId);
     const existing = await svc.getById(assistant.id);
     if (!existing || existing.companyId !== companyId) throw notFound("Assistant not found");

@@ -3,7 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { forbidden } from "../errors.js";
 import { builtInAgentService } from "../services/built-in-agents.js";
 import { issueService } from "../services/issues.js";
-import { assistantSetupStatus, readAssistantLifecycle } from "../services/assistant-setup.js";
+import { assistantSetupStatus, canConfigureAssistant, readAssistantLifecycle } from "../services/assistant-setup.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 
 /**
@@ -39,6 +39,8 @@ export function assistantRoutes(db: Db) {
         adapterType: agent.adapterType, lifecycleState: agent.lifecycleState ?? "ready",
         lifecycleVersion: agent.lifecycleVersion ?? 0, lifecycleError: agent.lifecycleError ?? null,
       }),
+      // Viewers see the setup state but cannot connect a model.
+      canConfigure: canConfigureAssistant(req.actor, companyId),
     });
   });
 
