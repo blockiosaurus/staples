@@ -37,6 +37,7 @@ import { IssueDetail } from "./pages/IssueDetail";
 import { AgentChats } from "./pages/AgentChats";
 import { AgentChat } from "./pages/AgentChat";
 import { AssistantPage } from "./staples/assistant/AssistantPage";
+import { CompanyBriefPage } from "./staples/brief/CompanyBriefPage";
 import { Routines } from "./pages/Routines";
 import { Learnings, PipelineItemDetail, PipelineItemLegacyRedirect, Pipelines, ReviewQueue } from "./pages/Pipelines";
 import { PipelineSettings } from "./pages/PipelineSettings";
@@ -129,6 +130,7 @@ function boardRoutes(combinedInboxTasksEnabled: boolean) {
       />
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="companies" element={<Companies />} />
+      <Route path="company/brief" element={<CompanyBriefPage />} />
       <Route path="company/settings" element={<CompanySettings />} />
       <Route path="company/settings/environments" element={<Navigate to="/company/settings/instance/environments" replace />} />
       <Route path="company/settings/cloud-upstream" element={<Navigate to="/company/export" replace />} />

@@ -627,6 +627,7 @@ export const queryKeys = {
       ["sidebar-preferences", "project-order", companyId, userId] as const,
   },
   signals: (companyId: string) => ["company-signals", companyId] as const,
+  companyBrief: (companyId: string) => ["company-brief", companyId] as const,
   uiPreferences: (companyId: string, userId: string) =>
     ["ui-preferences", companyId, userId] as const,
   primaryAgent: {

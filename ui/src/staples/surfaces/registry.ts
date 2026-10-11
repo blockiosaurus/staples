@@ -1,4 +1,5 @@
 import {
+  BookOpen,
   Boxes,
   CircleCheck,
   DollarSign,
@@ -229,6 +230,18 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     tier: "grows",
     revealWhen: (ctx) => ctx.signals !== null && (ctx.signals.connections >= 1 || ctx.signals.connectionRequests >= 1),
     reason: "Connectors appeared because an app connection exists or was requested.",
+  },
+  {
+    id: "nav.brief",
+    label: "Company brief",
+    to: "/company/brief",
+    matchRoots: [],
+    matchPaths: ["company/brief"],
+    icon: BookOpen,
+    group: "org",
+    tier: "grows",
+    revealWhen: (ctx) => ctx.signals !== null && ctx.signals.hasBrief,
+    reason: "Company brief appeared because your company wrote one.",
   },
   {
     id: "nav.costs",

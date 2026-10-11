@@ -28,6 +28,7 @@ function signals(overrides: Partial<CompanySignals> = {}): CompanySignals {
     questionsEver: 0,
     budgetSet: false,
     monthSpendCents: 0,
+    hasBrief: false,
     generatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
@@ -208,6 +209,17 @@ describe("nav.chat", () => {
   it("does not depend on the retired enableAgentChat flag", () => {
     const flags = { enableAgentChat: false } as InstanceExperimentalSettings;
     expect(visibleIds(ctx({ signals: signals({ agents: 2 }), flags }), prefs())).toContain("nav.chat");
+  });
+});
+
+describe("nav.brief", () => {
+  it("is an org grows surface for /company/brief that reveals once a brief exists", () => {
+    const brief = byId("nav.brief");
+    expect(brief).toMatchObject({ label: "Company brief", to: "/company/brief", group: "org", tier: "grows", matchPaths: ["company/brief"] });
+    expect(surfaceForPath(SURFACE_REGISTRY, "/company/brief")?.id).toBe("nav.brief");
+    expect(surfaceForPath(SURFACE_REGISTRY, "/company/settings")?.id).not.toBe("nav.brief");
+    expect(visibleIds(ctx({ signals: signals() }), prefs())).not.toContain("nav.brief");
+    expect(visibleIds(ctx({ signals: signals({ hasBrief: true }) }), prefs())).toContain("nav.brief");
   });
 });
 

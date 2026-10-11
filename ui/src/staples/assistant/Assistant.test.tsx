@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/router", () => ({
   useLocation: () => mocks.location,
   useNavigate: () => mocks.navigate,
+  Link: ({ to, children, ...rest }: { to: string; children: React.ReactNode }) => <a href={to} {...rest}>{children}</a>,
 }));
 vi.mock("@/context/CompanyContext", () => ({
   useCompany: () => ({ selectedCompanyId: "company-1", selectedCompany: { id: "company-1", issuePrefix: "PAP", name: "Acme" } }),
@@ -163,6 +164,8 @@ describe("Assistant page and dock", () => {
     expect(mocks.chatGet).toHaveBeenCalledWith("company-1", "assistant-1");
     // The full page has no page to point at.
     expect(conversation.commentMetadata?.()).toBeUndefined();
+    const brief = [...container.querySelectorAll("a")].find((a) => a.textContent?.includes("Company brief"));
+    expect(brief?.getAttribute("href")).toBe("/company/brief");
   });
 
   it("shows an inline error with retry when the Assistant is unavailable", async () => {

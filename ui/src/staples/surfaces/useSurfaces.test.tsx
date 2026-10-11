@@ -89,7 +89,7 @@ describe("useSurfaces / SurfaceTracker", () => {
 
   it("keeps last-good signals when a later refetch fails", async () => {
     mocks.signals.mockReturnValue({
-      signals: { companyId: "company-1", agents: 0, tasks: 0, openTasks: 0, projects: 2, goals: 0, routines: 0, artifacts: 0, extraSkills: 0, connections: 0, connectionRequests: 0, approvalsEver: 0, questionsEver: 0, budgetSet: false, monthSpendCents: 0 },
+      signals: { companyId: "company-1", agents: 0, tasks: 0, openTasks: 0, projects: 2, goals: 0, routines: 0, artifacts: 0, extraSkills: 0, connections: 0, connectionRequests: 0, approvalsEver: 0, questionsEver: 0, budgetSet: false, monthSpendCents: 0, hasBrief: false },
       loaded: true,
       failed: true,
     });
@@ -111,7 +111,7 @@ describe("useSurfaces / SurfaceTracker", () => {
 
   it("persists a growth-fired reveal exactly once across re-renders", async () => {
     mocks.signals.mockReturnValue({
-      signals: { companyId: "company-1", agents: 0, tasks: 0, openTasks: 0, projects: 2, goals: 0, routines: 0, artifacts: 0, extraSkills: 0, connections: 0, connectionRequests: 0, approvalsEver: 0, questionsEver: 0, budgetSet: false, monthSpendCents: 0 },
+      signals: { companyId: "company-1", agents: 0, tasks: 0, openTasks: 0, projects: 2, goals: 0, routines: 0, artifacts: 0, extraSkills: 0, connections: 0, connectionRequests: 0, approvalsEver: 0, questionsEver: 0, budgetSet: false, monthSpendCents: 0, hasBrief: false },
       loaded: true,
       failed: false,
     });
@@ -139,7 +139,7 @@ describe("useSurfaces / SurfaceTracker", () => {
 
   it("re-sends reveal and see after switching company", async () => {
     mocks.signals.mockReturnValue({
-      signals: { companyId: "company-1", agents: 0, tasks: 0, openTasks: 0, projects: 2, goals: 0, routines: 0, artifacts: 0, extraSkills: 0, connections: 0, connectionRequests: 0, approvalsEver: 0, questionsEver: 0, budgetSet: false, monthSpendCents: 0 },
+      signals: { companyId: "company-1", agents: 0, tasks: 0, openTasks: 0, projects: 2, goals: 0, routines: 0, artifacts: 0, extraSkills: 0, connections: 0, connectionRequests: 0, approvalsEver: 0, questionsEver: 0, budgetSet: false, monthSpendCents: 0, hasBrief: false },
       loaded: true,
       failed: false,
     });
