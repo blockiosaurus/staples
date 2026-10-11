@@ -821,6 +821,53 @@ describeEmbeddedPostgres("briefing service", () => {
       expect(briefing.counts.doneRecently).toBe(3);
     });
 
+    it("uses a rolling 24-hour window by completion time", async () => {
+      const { companyId } = await seedCompany("BRW");
+      const now = Date.parse("2026-10-11T12:00:00.000Z");
+      const since = now - 24 * 60 * 60 * 1000;
+      const agentId = await insertTemplatedAgent(companyId, "Sam", EMAIL_TEMPLATE);
+      const mail = await insertConnection(companyId, "agentmail");
+      async function insertAt(createdAt: number, completedAt: number | null) {
+        await db.insert(toolInvocations).values({
+          companyId, agentId, connectionId: mail, toolName: "send_message", riskLevel: "write", status: "succeeded",
+          actorType: "agent", createdAt: new Date(createdAt), completedAt: completedAt === null ? null : new Date(completedAt),
+        });
+      }
+      await insertAt(since + 60_000, since + 60_000); // just inside
+      await insertAt(since - 30 * 60_000, since + 5 * 60_000); // created before, completed inside (within slack)
+      await insertAt(since + 2 * 60_000, null); // no completion time: created inside
+      await insertAt(since - 60_000, since - 60_000); // just outside
+      await insertAt(since - 60_000, null); // created outside, never completed
+
+      const briefing = await briefingService(db, { now: () => now }).get({ companyId, userId: "board-user", actor: boardActor(companyId) });
+      expect(briefing.doneRecently.map((item) => item.title)).toEqual(["Sam sent 3 emails"]);
+      expect(briefing.doneRecently[0]!.createdAt).toBe(new Date(since + 5 * 60_000).toISOString());
+    });
+
+    it("leaves out a templated agent the person may not read, per agent", async () => {
+      const { companyId } = await seedCompany("BRY");
+      const now = new Date(Date.now() - 60_000);
+      const shownId = await insertTemplatedAgent(companyId, "Shown", EMAIL_TEMPLATE);
+      const hiddenId = await insertTemplatedAgent(companyId, "Hidden", EMAIL_TEMPLATE);
+      const mail = await insertConnection(companyId, "agentmail");
+      for (const agentId of [shownId, hiddenId]) {
+        await insertInvocation({ companyId, agentId, connectionId: mail, toolName: "send_message", completedAt: now });
+      }
+      const asked: string[] = [];
+      const authorization = {
+        decide: async (input: { action: string; resource: { type: string; agentId?: string } }) => {
+          asked.push(`${input.action}:${input.resource.agentId}`);
+          return { allowed: input.resource.agentId !== hiddenId };
+        },
+      };
+      const briefing = await briefingService(db, { authorization: authorization as never }).get({
+        companyId, userId: "board-user", actor: boardActor(companyId),
+      });
+      expect(asked.sort()).toEqual([`agent:read:${hiddenId}`, `agent:read:${shownId}`].sort());
+      expect(briefing.doneRecently.map((item) => item.title)).toEqual(["Shown sent 1 email"]);
+      expect(JSON.stringify(briefing)).not.toContain(hiddenId);
+    });
+
     it("keeps other companies' agents and agents the person cannot see out of the roll-up", async () => {
       const own = await seedCompany("BRU");
       const other = await seedCompany("BRV");

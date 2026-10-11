@@ -1369,6 +1369,8 @@ export interface RequestConfirmationToolActionPayload {
   actionRequestId: string;
   invocationId: string;
   toolName: string;
+  /** The provider's own tool name when it differs from `toolName` (display matching only). */
+  upstreamToolName?: string | null;
   toolDisplayName: string;
   connectionId: string | null;
   applicationId: string | null;

@@ -2538,6 +2538,9 @@ export function createToolGatewayService(
             actionRequestId: actionRequest.id,
             invocationId: input.invocation.id,
             toolName: input.tool.name,
+            ...(input.tool.upstreamToolName && input.tool.upstreamToolName !== input.tool.name
+              ? { upstreamToolName: input.tool.upstreamToolName }
+              : {}),
             toolDisplayName: input.tool.displayName?.trim() || input.tool.name,
             connectionId: input.tool.connectionId ?? null,
             applicationId: input.tool.applicationId ?? null,

@@ -61,6 +61,7 @@ import { companiesApi } from "../api/companies";
 import { AI_CONNECTION_CAPABILITIES, applyPlanSchema, planTaskCreationOrder, type AiProvider, type ApplyPlan } from "@paperclipai/shared";
 import { queryKeys } from "../lib/queryKeys";
 import { agentTemplateRecord, outwardCategoryForTool } from "../staples/autopilot/templateRecord";
+import { agentDetailHref } from "../pages/agent-detail-navigation";
 import { buildLineDiff } from "../lib/line-diff";
 
 const OTHER_ANSWER_ID = "__paperclip_other__";
@@ -1814,11 +1815,11 @@ function ToolActionResolution({
 }
 
 /**
- * The "Always allow" label. For an agent hired from a template, when the tool
- * belongs to one of its outward categories: "Always allow <category> for this
- * agent". Copy only; remembering still creates the usual trust rule.
+ * The requesting agent, loaded only for a pending routine (write) action:
+ * names the "Always allow" option and, for an agent hired from a template,
+ * points at its Autopilot for the tool's outward category.
  */
-function useRememberActionLabel(interaction: RequestConfirmationInteraction, enabled: boolean): string {
+function useToolActionAgent(interaction: RequestConfirmationInteraction, enabled: boolean) {
   const agentId = interaction.createdByAgentId ?? null;
   const agent = useQuery({
     queryKey: [...queryKeys.agents.detail(agentId ?? ""), interaction.companyId],
@@ -1826,14 +1827,35 @@ function useRememberActionLabel(interaction: RequestConfirmationInteraction, ena
     enabled: enabled && Boolean(agentId),
     staleTime: 60 * 1000,
   });
-  return rememberActionLabel(agent.data?.metadata, interaction.payload.toolAction?.toolName ?? "");
+  return agent.data ?? null;
 }
 
-export function rememberActionLabel(agentMetadata: unknown, toolName: string): string {
-  const category = outwardCategoryForTool(agentTemplateRecord(agentMetadata), toolName);
-  if (!category) return "Always allow";
-  const label = `${category.label.charAt(0).toLowerCase()}${category.label.slice(1)}`;
-  return `Always allow ${label} for this agent`;
+/** The per-tool trust rule the remember option creates, named accurately. */
+export function rememberActionLabel(agentName: string | null | undefined): string {
+  const name = agentName?.trim();
+  return `Always allow this action for ${name || "this agent"}`;
+}
+
+/**
+ * The templated agent's outward category for this tool (by tool or upstream
+ * name, as the server matches), when exactly one matches.
+ */
+export function toolActionAutopilotCategory(
+  agentMetadata: unknown,
+  toolNames: Array<string | null | undefined>,
+): { label: string } | null {
+  const record = agentTemplateRecord(agentMetadata);
+  const found = new Map<string, { label: string }>();
+  for (const name of toolNames) {
+    if (!name) continue;
+    const category = outwardCategoryForTool(record, name);
+    if (category) found.set(category.capability, category);
+  }
+  return found.size === 1 ? [...found.values()][0]! : null;
+}
+
+function lowerFirst(text: string) {
+  return `${text.charAt(0).toLowerCase()}${text.slice(1)}`;
 }
 
 function RequestToolActionCard({
@@ -1855,7 +1877,11 @@ function RequestToolActionCard({
   const resolutionErrorMessage = useResolutionErrorMessage();
   const isPending = state === "pending";
   const variant = payload.risk === "destructive" ? "destructive" : "cta";
-  const rememberLabel = useRememberActionLabel(interaction, Boolean(isPending && payload.rememberActionScope));
+  const agent = useToolActionAgent(interaction, isPending && payload.risk === "write");
+  const rememberLabel = rememberActionLabel(agent?.name);
+  const autopilotCategory = agent
+    ? toolActionAutopilotCategory(agent.metadata, [payload.toolName, payload.upstreamToolName])
+    : null;
 
   useEffect(() => {
     if (!isPending) setWorking(null);
@@ -1909,6 +1935,16 @@ function RequestToolActionCard({
               </DropdownMenu>
             ) : null}
           </div>
+        </div>
+      ) : null}
+      {isPending && agent && autopilotCategory ? (
+        <div className="mt-2 flex justify-end">
+          <Link
+            to={agentDetailHref(agent.urlKey || agent.id, "autopilot")}
+            className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+          >
+            Or turn on Autopilot for {lowerFirst(autopilotCategory.label)}
+          </Link>
         </div>
       ) : null}
       <InteractionActionError message={actionError} />

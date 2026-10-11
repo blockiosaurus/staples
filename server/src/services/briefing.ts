@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -36,6 +36,8 @@ import { toolNamePatternMatches } from "./tool-access-policy.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+/** Calls created up to this long before the roll-up window may still complete inside it. */
+const AGENT_ACTIONS_CREATED_SLACK_MS = HOUR_MS;
 
 /** Attention source kinds shown under "Needs you", mapped to briefing kinds. */
 const NEEDS_YOU_KIND_BY_SOURCE: Partial<Record<AttentionSourceKind, BriefingItemKind>> = {
@@ -60,6 +62,8 @@ export interface BriefingServiceOptions {
   now?: () => number;
   /** Test seam: the attention feed source. Defaults to `attentionService(db)`. */
   attention?: Pick<ReturnType<typeof attentionService>, "list">;
+  /** Test seam: agent read decisions. Defaults to `authorizationService(db)`. */
+  authorization?: Pick<ReturnType<typeof authorizationService>, "decide">;
 }
 
 export interface BriefingGetInput {
@@ -459,7 +463,7 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
       .map((row) => ({ ...row, categories: autopilotCategoriesFromMetadata(row.metadata) }))
       .filter((row) => row.categories.length > 0);
     if (templated.length === 0) return [];
-    const authz = authorizationService(db);
+    const authz = serviceOptions.authorization ?? authorizationService(db);
     const decisions = await Promise.all(templated.map((row) => authz.decide({
       actor: input.actor,
       action: "agent:read",
@@ -468,23 +472,35 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     const visible = templated.filter((_, index) => decisions[index]?.allowed);
     if (visible.length === 0) return [];
 
+    // Grouped in SQL: one row per agent, tool and connection with its count and
+    // latest time. The created_at bound (with slack for calls that ran long)
+    // lets the (company_id, created_at) index narrow the scan; the completion
+    // time check keeps the rolling window exact.
+    const doneAt = sql<Date>`coalesce(${toolInvocations.completedAt}, ${toolInvocations.createdAt})`;
     const invocationRows = await db
       .select({
         agentId: toolInvocations.agentId,
         toolName: toolInvocations.toolName,
         upstreamToolName: toolInvocations.upstreamToolName,
         connectionId: toolInvocations.connectionId,
-        completedAt: toolInvocations.completedAt,
-        createdAt: toolInvocations.createdAt,
+        count: sql<number>`count(*)::int`,
+        latestAt: sql<string>`max(${doneAt})`,
       })
       .from(toolInvocations)
       .where(and(
         eq(toolInvocations.companyId, input.companyId),
+        gte(toolInvocations.createdAt, new Date(since.getTime() - AGENT_ACTIONS_CREATED_SLACK_MS)),
         inArray(toolInvocations.agentId, visible.map((row) => row.id)),
         eq(toolInvocations.riskLevel, "write"),
         eq(toolInvocations.status, "succeeded"),
-        sql`coalesce(${toolInvocations.completedAt}, ${toolInvocations.createdAt}) >= ${since.toISOString()}::timestamptz`,
-      ));
+        sql`${doneAt} >= ${since.toISOString()}::timestamptz`,
+      ))
+      .groupBy(
+        toolInvocations.agentId,
+        toolInvocations.toolName,
+        toolInvocations.upstreamToolName,
+        toolInvocations.connectionId,
+      );
     if (invocationRows.length === 0) return [];
 
     const connectionIds = [...new Set(invocationRows.map((row) => row.connectionId).filter((id): id is string => !!id))];
@@ -516,8 +532,8 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         // Patterns may overlap across categories (e.g. "*publish*"): prefer the one served by this app.
         const category = matching.find((candidate) => slug && candidate.anyOf.includes(slug)) ?? matching[0];
         if (!category) continue;
-        count += 1;
-        latest = Math.max(latest, toTime(row.completedAt ?? row.createdAt));
+        count += Number(row.count);
+        latest = Math.max(latest, toTime(row.latestAt));
         capabilities.add(category.capability);
         appNames.push(slug && category.anyOf.includes(slug)
           ? appDisplayName(slug)

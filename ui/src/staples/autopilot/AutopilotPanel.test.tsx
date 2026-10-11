@@ -159,6 +159,13 @@ describe("AutopilotPanel", () => {
     expect(email.textContent).toContain("Autopilot needs to be turned on again for AgentMail inbox");
   });
 
+  it("shows the stale note when the connection is gone", async () => {
+    mocks.get.mockResolvedValue({ categories: [{ ...EMAIL, connection: null, canToggle: false, mode: "ask", stale: true }] });
+    await render({ staplesTemplate: EMAIL_TEMPLATE });
+    expect(row("email")?.textContent).toContain("Autopilot needs to be turned on again once AgentMail or Gmail is connected");
+    expect(checkedLabel(row("email"))).toBe("Ask first");
+  });
+
   it("toggles optimistically, calls the API and refetches", async () => {
     mocks.get.mockResolvedValueOnce({ categories: [SOCIAL, CMS] });
     let resolveSet!: (value: AgentAutopilotCategory) => void;
@@ -189,6 +196,37 @@ describe("AutopilotPanel", () => {
     expect(checkedLabel(row("social"))).toBe("Ask first");
     expect(row("social")?.querySelector('[role="alert"]')?.textContent).toBe("Connect an app for this first");
     expect(row("cms")?.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("rolls back only the failed category when two changes are in flight", async () => {
+    const SECOND = { ...SOCIAL, capability: "news", label: "Sending newsletters" };
+    mocks.get.mockResolvedValue({ categories: [SOCIAL, SECOND] });
+    let rejectFirst!: (error: Error) => void;
+    let resolveSecond!: (value: AgentAutopilotCategory) => void;
+    mocks.setMode
+      .mockReturnValueOnce(new Promise((_, reject) => { rejectFirst = reject; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve; }));
+    await render({ staplesTemplate: CONTENT_TEMPLATE });
+
+    await act(async () => radio(row("social"), "Send without asking")!.click());
+    await act(async () => radio(row("news"), "Send without asking")!.click());
+    expect(radio(row("social"), "Ask first")?.disabled).toBe(true);
+    expect(radio(row("news"), "Ask first")?.disabled).toBe(true);
+
+    await act(async () => rejectFirst(new Error("Could not change")));
+    await settle();
+    expect(checkedLabel(row("social"))).toBe("Ask first");
+    expect(row("social")?.querySelector('[role="alert"]')?.textContent).toBe("Could not change");
+    // The other change is still in flight and keeps its optimistic value.
+    expect(checkedLabel(row("news"))).toBe("Send without asking");
+    expect(radio(row("news"), "Ask first")?.disabled).toBe(true);
+    expect(radio(row("social"), "Ask first")?.disabled).toBe(false);
+
+    mocks.get.mockResolvedValue({ categories: [SOCIAL, { ...SECOND, mode: "auto" }] });
+    await act(async () => resolveSecond({ ...SECOND, mode: "auto" }));
+    await settle();
+    expect(checkedLabel(row("news"))).toBe("Send without asking");
+    expect(row("news")?.querySelector('[role="alert"]')).toBeNull();
   });
 
   it("does not call the API when the current mode is clicked again", async () => {

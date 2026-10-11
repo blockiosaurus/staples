@@ -3,12 +3,12 @@
 import { act as reactAct, type ComponentProps, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Agent } from "@paperclipai/shared";
 import { ApiError } from "../api/client";
 import { agentsApi } from "../api/agents";
-import { IssueThreadInteractionCard, rememberActionLabel } from "./IssueThreadInteractionCard";
+import { IssueThreadInteractionCard, rememberActionLabel, toolActionAutopilotCategory } from "./IssueThreadInteractionCard";
 import { ThemeProvider } from "../context/ThemeContext";
 import { TooltipProvider } from "./ui/tooltip";
 import {
@@ -1202,6 +1202,14 @@ describe("IssueThreadInteractionCard", () => {
 });
 
 describe("IssueThreadInteractionCard tool-action card", () => {
+  beforeEach(() => {
+    // Pending write cards load the requesting agent; keep it local.
+    vi.spyOn(agentsApi, "get").mockResolvedValue(null as unknown as Awaited<ReturnType<typeof agentsApi.get>>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("shows only the request description, app icon, and decision controls", () => {
     const host = renderCard({ interaction: pendingToolActionWriteInteraction, onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
     expect(host.textContent).toContain("Add 1 row");
@@ -1214,7 +1222,7 @@ describe("IssueThreadInteractionCard tool-action card", () => {
     expect(host.textContent).not.toContain("args hash");
   });
 
-  describe("Always allow label", () => {
+  describe("Always allow and Autopilot", () => {
     const TEMPLATE_METADATA = {
       staplesTemplate: {
         ref: "staples/email-secretary",
@@ -1225,17 +1233,35 @@ describe("IssueThreadInteractionCard tool-action card", () => {
         requiredApps: [{ capability: "email", anyOf: ["agentmail"] }],
       },
     };
+    const SCOPE = "This agent may use this action with different arguments on this connection.";
+    type AgentResult = Awaited<ReturnType<typeof agentsApi.get>>;
+    const agentResult = (metadata: unknown) =>
+      ({ id: "agent-codex", urlKey: "sam", name: "Sam", metadata }) as unknown as AgentResult;
 
-    it("names the template category for templated agents and stays generic otherwise", () => {
-      expect(rememberActionLabel(TEMPLATE_METADATA, "agentmail.send_message")).toBe("Always allow sending email for this agent");
-      expect(rememberActionLabel(TEMPLATE_METADATA, "agentmail.list_messages")).toBe("Always allow");
-      expect(rememberActionLabel({}, "agentmail.send_message")).toBe("Always allow");
-      expect(rememberActionLabel(undefined, "agentmail.send_message")).toBe("Always allow");
+    afterEach(() => {
+      vi.restoreAllMocks();
     });
 
-    async function openOptions(interaction: typeof pendingToolActionWriteInteraction) {
+    it("names the remember option by what it really allows", () => {
+      expect(rememberActionLabel("Sam")).toBe("Always allow this action for Sam");
+      expect(rememberActionLabel(null)).toBe("Always allow this action for this agent");
+    });
+
+    it("finds the single outward category by tool or upstream name", () => {
+      expect(toolActionAutopilotCategory(TEMPLATE_METADATA, ["agentmail.send_message", null])?.label).toBe("Sending email");
+      expect(toolActionAutopilotCategory(TEMPLATE_METADATA, ["gateway_tool_7", "send_message"])?.label).toBe("Sending email");
+      expect(toolActionAutopilotCategory(TEMPLATE_METADATA, ["agentmail.list_messages", null])).toBeNull();
+      expect(toolActionAutopilotCategory(TEMPLATE_METADATA, ["trash_and_send", null])).toBeNull();
+      expect(toolActionAutopilotCategory({}, ["send_message"])).toBeNull();
+    });
+
+    async function renderSettled(interaction: typeof pendingToolActionWriteInteraction) {
       const host = renderCard({ interaction, onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
       for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      return host;
+    }
+
+    async function openOptions(host: HTMLElement) {
       const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="Approval options"]');
       expect(trigger).not.toBeNull();
       await act(async () => {
@@ -1244,31 +1270,53 @@ describe("IssueThreadInteractionCard tool-action card", () => {
       return [...document.body.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
     }
 
-    it("relabels the remember option for a templated agent's outward action", async () => {
-      const get = vi.spyOn(agentsApi, "get").mockResolvedValue({ id: "agent-codex", metadata: TEMPLATE_METADATA } as unknown as Awaited<ReturnType<typeof agentsApi.get>>);
+    function writeInteraction(toolName: string, upstreamToolName?: string) {
       const interaction = structuredClone(pendingToolActionWriteInteraction);
-      interaction.payload.toolAction!.toolName = "agentmail.send_message";
-      interaction.payload.toolAction!.rememberActionScope = "This agent may use this action with different arguments on this connection.";
-      expect(await openOptions(interaction)).toEqual(["Always allow sending email for this agent"]);
+      interaction.payload.toolAction!.risk = "write";
+      interaction.payload.toolAction!.toolName = toolName;
+      if (upstreamToolName) interaction.payload.toolAction!.upstreamToolName = upstreamToolName;
+      interaction.payload.toolAction!.rememberActionScope = SCOPE;
+      return interaction;
+    }
+
+    it("offers the per-action rule and links to the templated agent's Autopilot", async () => {
+      const get = vi.spyOn(agentsApi, "get").mockResolvedValue(agentResult(TEMPLATE_METADATA));
+      const interaction = writeInteraction("gateway_tool_7", "send_message");
+      const host = await renderSettled(interaction);
       expect(get).toHaveBeenCalledWith("agent-codex", interaction.companyId);
-      get.mockRestore();
+      const link = [...host.querySelectorAll("a")].find((a) => a.textContent === "Or turn on Autopilot for sending email");
+      expect(link?.getAttribute("href")).toBe("/agents/sam/autopilot");
+      expect(await openOptions(host)).toEqual(["Always allow this action for Sam"]);
     });
 
-    it("keeps the generic label for an untemplated agent", async () => {
-      const get = vi.spyOn(agentsApi, "get").mockResolvedValue({ id: "agent-codex", metadata: {} } as unknown as Awaited<ReturnType<typeof agentsApi.get>>);
-      const interaction = structuredClone(pendingToolActionWriteInteraction);
-      interaction.payload.toolAction!.toolName = "agentmail.send_message";
-      interaction.payload.toolAction!.rememberActionScope = "This agent may use this action with different arguments on this connection.";
-      expect(await openOptions(interaction)).toEqual(["Always allow"]);
-      get.mockRestore();
+    it("shows no Autopilot link for an untemplated agent or an unrelated tool", async () => {
+      vi.spyOn(agentsApi, "get").mockResolvedValue(agentResult({}));
+      const host = await renderSettled(writeInteraction("agentmail.send_message"));
+      expect(host.textContent).not.toContain("Autopilot");
+      expect(await openOptions(host)).toEqual(["Always allow this action for Sam"]);
+
+      act(() => root?.unmount());
+      host.remove();
+      root = null;
+      document.body.innerHTML = "";
+      vi.spyOn(agentsApi, "get").mockResolvedValue(agentResult(TEMPLATE_METADATA));
+      const other = await renderSettled(writeInteraction("agentmail.list_messages"));
+      expect(other.textContent).not.toContain("Autopilot");
     });
 
-    it("offers no remember option when the server does not", () => {
-      const get = vi.spyOn(agentsApi, "get");
-      const host = renderCard({ interaction: pendingToolActionWriteInteraction, onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+    it("offers no remember option when the server does not", async () => {
+      vi.spyOn(agentsApi, "get").mockResolvedValue(agentResult(TEMPLATE_METADATA));
+      const interaction = writeInteraction("agentmail.send_message");
+      delete interaction.payload.toolAction!.rememberActionScope;
+      const host = await renderSettled(interaction);
       expect(host.querySelector('button[aria-label="Approval options"]')).toBeNull();
+    });
+
+    it("never loads the agent for a destructive request", async () => {
+      const get = vi.spyOn(agentsApi, "get");
+      await renderSettled(pendingToolActionDestructiveInteraction);
       expect(get).not.toHaveBeenCalled();
-      get.mockRestore();
+      expect(document.body.textContent).not.toContain("Autopilot");
     });
   });
 

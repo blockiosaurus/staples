@@ -607,6 +607,11 @@ describeEmbeddedPostgres("tool gateway service", () => {
     expect(requests).toHaveLength(1);
     const [interaction] = await db.select().from(issueThreadInteractions);
     expect(interaction.payload).toMatchObject({ supersedeOnUserComment: false, toolAction: { risk: "read", rememberActionScope: expect.any(String) } });
+    // The provider's own name rides along for display matching (e.g. a template's outward category).
+    expect(tool.name).not.toBe(catalogEntry.toolName);
+    expect((interaction.payload as { toolAction: Record<string, unknown> }).toolAction).toMatchObject({
+      toolName: tool.name, upstreamToolName: catalogEntry.toolName,
+    });
     const approve = () => gateway.approveActionRequest({ companyId: company.id, actionRequestId: requests[0].id, rememberAction: true, actor: { userId: "reviewer" } });
     await Promise.all([approve(), approve()]);
     expect(calls).toBe(1);

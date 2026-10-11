@@ -92,9 +92,11 @@ function CategoryRow({
               Connect {connectLabel} first
             </Link>
           )}
-          {category.stale && category.connection ? (
+          {category.stale ? (
             <span className="text-xs text-muted-foreground">
-              Autopilot needs to be turned on again for {category.connection.displayName}
+              {category.connection
+                ? `Autopilot needs to be turned on again for ${category.connection.displayName}`
+                : `Autopilot needs to be turned on again once ${connectLabel} is connected`}
             </span>
           ) : null}
         </div>
@@ -129,7 +131,14 @@ export function AutopilotPanel({ agent }: { agent: { id: string; name: string; m
   const queryKey = queryKeys.agentAutopilot(agent.id);
   const record = agentTemplateRecord(agent.metadata);
   const [errors, setErrors] = useState<Record<string, string | null>>({});
-  const [pendingCapability, setPendingCapability] = useState<string | null>(null);
+  const [pendingCapabilities, setPendingCapabilities] = useState<ReadonlySet<string>>(() => new Set());
+  const setPending = (capability: string, pending: boolean) =>
+    setPendingCapabilities((current) => {
+      const next = new Set(current);
+      if (pending) next.add(capability);
+      else next.delete(capability);
+      return next;
+    });
 
   const state = useQuery({
     queryKey,
@@ -137,30 +146,38 @@ export function AutopilotPanel({ agent }: { agent: { id: string; name: string; m
     enabled: record !== null,
   });
 
+  const updateCategory = (capability: string, update: (category: AgentAutopilotCategory) => AgentAutopilotCategory) => {
+    queryClient.setQueryData<AgentAutopilotState>(queryKey, (current) => current && {
+      ...current,
+      categories: current.categories.map((category) => (category.capability === capability ? update(category) : category)),
+    });
+  };
+
+  const mutationKey = ["agent-autopilot-set", agent.id] as const;
   const toggle = useMutation({
+    mutationKey,
     mutationFn: ({ capability, mode }: { capability: string; mode: AgentAutopilotMode }) =>
       agentAutopilotApi.setMode(agent.id, capability, mode),
     onMutate: async ({ capability, mode }) => {
-      setPendingCapability(capability);
+      setPending(capability, true);
       setErrors((current) => ({ ...current, [capability]: null }));
       await queryClient.cancelQueries({ queryKey });
-      const previous = queryClient.getQueryData<AgentAutopilotState>(queryKey);
-      if (previous) {
-        queryClient.setQueryData<AgentAutopilotState>(queryKey, {
-          ...previous,
-          categories: previous.categories.map((category) =>
-            category.capability === capability ? { ...category, mode, stale: false } : category),
-        });
-      }
+      const previous = queryClient.getQueryData<AgentAutopilotState>(queryKey)
+        ?.categories.find((category) => category.capability === capability);
+      updateCategory(capability, (category) => ({ ...category, mode, stale: false }));
       return { previous };
     },
     onError: (error, { capability }, context) => {
-      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+      // Roll back only this category; other toggles may be in flight.
+      const previous = context?.previous;
+      if (previous) updateCategory(capability, () => previous);
       setErrors((current) => ({ ...current, [capability]: errorText(error, "Autopilot could not be changed. Try again.") }));
     },
-    onSettled: () => {
-      setPendingCapability(null);
-      void queryClient.invalidateQueries({ queryKey });
+    onSettled: (_data, _error, { capability }) => {
+      setPending(capability, false);
+      // Refetch once the last in-flight change settles, so a refetch never
+      // overwrites another category's optimistic value.
+      if (queryClient.isMutating({ mutationKey }) <= 1) void queryClient.invalidateQueries({ queryKey });
     },
   });
 
@@ -206,7 +223,7 @@ export function AutopilotPanel({ agent }: { agent: { id: string; name: string; m
               key={category.capability}
               category={category}
               anyOf={record.requiredApps.find((app) => app.capability === category.capability)?.anyOf ?? []}
-              pending={pendingCapability === category.capability}
+              pending={pendingCapabilities.has(category.capability)}
               error={errors[category.capability] ?? null}
               onChange={(mode) => toggle.mutate({ capability: category.capability, mode })}
             />
