@@ -19,7 +19,6 @@ const mockAuthApi = vi.hoisted(() => ({
   signOut: vi.fn(),
 }));
 const mockNavigate = vi.hoisted(() => vi.fn());
-const mockOpenOnboarding = vi.hoisted(() => vi.fn());
 const mockSetSelectedCompanyId = vi.hoisted(() => vi.fn());
 const mockSetSidebarOpen = vi.hoisted(() => vi.fn());
 const mockLocation = vi.hoisted(() => ({ pathname: "/PAP/dashboard" }));
@@ -89,12 +88,6 @@ vi.mock("@/context/CompanyContext", () => ({
       status: "active",
     },
     setSelectedCompanyId: mockSetSelectedCompanyId,
-  }),
-}));
-
-vi.mock("@/context/DialogContext", () => ({
-  useDialogActions: () => ({
-    openOnboarding: mockOpenOnboarding,
   }),
 }));
 
@@ -515,7 +508,7 @@ describe("SidebarCompanyMenu", () => {
     });
     await flushReact();
 
-    expect(mockOpenOnboarding).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).toHaveBeenCalledWith("/start");
     expect(mockNavigateTopLevel).not.toHaveBeenCalled();
 
     act(() => {
@@ -586,7 +579,7 @@ describe("SidebarCompanyMenu", () => {
       expect(document.body.textContent).toContain("Anachronist Wiki");
       expect(document.body.textContent).toContain("ANA");
       expect(document.body.textContent).not.toContain("Create organization");
-      expect(mockOpenOnboarding).not.toHaveBeenCalled();
+      expect(mockNavigate).not.toHaveBeenCalledWith("/start");
       const row = [...document.querySelectorAll('[data-slot="dropdown-menu-item"]')]
         .find(element => element.textContent?.includes("Anachronist Wiki"));
       act(() => row?.dispatchEvent(new MouseEvent("click", { bubbles: true })));

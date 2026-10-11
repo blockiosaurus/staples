@@ -208,11 +208,9 @@ vi.mock("../plugins/slots", async () => {
 vi.mock("../context/DialogContext", () => ({
   useDialog: () => ({
     openNewIssue: vi.fn(),
-    openOnboarding: vi.fn(),
   }),
   useDialogActions: () => ({
     openNewIssue: vi.fn(),
-    openOnboarding: vi.fn(),
   }),
 }));
 
@@ -505,6 +503,45 @@ describe("Layout", () => {
 
     await act(async () => {
       root.unmount();
+    });
+  });
+
+  describe("company-less start redirect", () => {
+    async function renderCompanyless(health: Record<string, unknown>) {
+      mockNavigate.mockClear();
+      mockCompanyState.companies = [];
+      mockCompanyState.selectedCompany = null as never;
+      mockCompanyState.selectedCompanyId = null as never;
+      mockHealthApi.get.mockResolvedValue({ status: "ok", version: "1.2.3", ...health });
+      const root = createRoot(container);
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <Layout />
+          </QueryClientProvider>,
+        );
+      });
+      await flushReact();
+      await flushReact();
+      await act(async () => {
+        root.unmount();
+      });
+    }
+
+    it("sends a self-hosted instance with no companies to /start", async () => {
+      await renderCompanyless({ deploymentMode: "local_trusted" });
+      expect(mockNavigate).toHaveBeenCalledWith("/start", { replace: true });
+    });
+
+    it("does not auto-start in authenticated mode", async () => {
+      await renderCompanyless({ deploymentMode: "authenticated" });
+      expect(mockNavigate).not.toHaveBeenCalledWith("/start", expect.anything());
+    });
+
+    it("does not auto-start on a Cloud-managed stack", async () => {
+      await renderCompanyless({ deploymentMode: "local_trusted", cloud: { managed: true } });
+      expect(mockNavigate).not.toHaveBeenCalledWith("/start", expect.anything());
     });
   });
 

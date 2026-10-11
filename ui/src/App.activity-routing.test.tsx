@@ -49,11 +49,6 @@ vi.mock("./components/Layout", async () => {
   return { Layout: () => <Outlet /> };
 });
 
-// Rendered by <App> outside <Routes> and needs DialogProvider; irrelevant here.
-vi.mock("./components/OnboardingWizardVariant", () => ({
-  OnboardingWizardVariant: () => null,
-}));
-
 // Cloud access is unrelated to the route-table regression. Let it fall through
 // synchronously so this test does not poll its query transitions.
 vi.mock("./components/CloudAccessGate", async () => {

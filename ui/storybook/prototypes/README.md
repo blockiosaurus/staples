@@ -28,17 +28,6 @@ with native duplicates omitted, and example saved accounts. Eight entries per pa
 keep review compact; the page-size control also offers 24. Setup and account
 mutations are outside this preview.
 
-## Existing onboarding
-
-**Onboarding → Agent arc** mounts the shipped `OnboardingWizard` against API
-fixtures. The four **Connect · ...** stories walk from naming the agent to the
-actual Claude/OpenAI subscription and API-key screens. Claude shows the returned
-authorization-code field; Codex/OpenAI shows its device code. They stop at the
-connection prompt for visual review. They do not authorize real provider accounts.
-
-**Onboarding → Connect a model** remains the older tile/mode design preview, not
-the shipped flow. Use Agent arc to inspect current onboarding behavior.
-
 ## New agent
 
 **Onboarding → New agent → Start here · Interactive flow** starts with naming the

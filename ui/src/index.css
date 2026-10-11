@@ -2511,7 +2511,6 @@ span.paperclip-mention-chip[data-mention-kind="external-object"] {
 */
 :root {
   --hex-959596: #959596; /* Muted feed actor/verb/title text (FeedCard.tsx) — PRIOR-ART-flagged gap cluster, no existing token match. */
-  --hex-1d1d1d: #1d1d1d; /* OnboardingWizard.tsx dark decorative panel background, singleton. */
   --hex-22d3ee: #22d3ee; /* OrgChart.tsx agent status dot — 'running' (independent palette from --status-agent-*, see TOKEN-AUDIT.md 1.2). */
   --hex-4ade80: #4ade80; /* OrgChart.tsx agent status dot — 'active'. */
   --hex-facc15: #facc15; /* OrgChart.tsx agent status dot — 'paused' / 'idle' (shared value). */
@@ -2702,7 +2701,7 @@ span.paperclip-mention-chip[data-mention-kind="external-object"] {
   --sz-50vh: 50vh; /* Extracted from ui/src/components/NewGoalDialog.tsx (max-h-[50vh]). */
   --sz-8_5rem: 8.5rem; /* Extracted from ui/src/components/NewIssueDialog.tsx (min-w-[8.5rem]). */
   --sz-160px: 160px; /* Extracted from ui/src/components/NewProjectDialog.tsx (max-w-[160px]). */
-  --sz-80px: 80px; /* Extracted from ui/src/components/OnboardingWizard.tsx (min-h-[80px]). */
+  --sz-80px: 80px; /* min-h-[80px] */
   --sz-calc-17: calc(100vh - 4rem); /* Extracted from ui/src/components/PageSkeleton.tsx (h-[calc(100vh-4rem)]). */
   --sz-2px: 2px; /* Extracted from ui/src/components/QuotaBar.tsx (w-[2px]). */
   --sz-calc-18: calc(100dvh - 2rem); /* Extracted from ui/src/components/RoutineRunVariablesDialog.test.tsx (max-h-[calc(100dvh-2rem)]). */
@@ -2912,7 +2911,7 @@ span.paperclip-mention-chip[data-mention-kind="external-object"] {
   --tp-max-height: max-height; /* Extracted from ui/src/components/FoldCurtain.tsx (transition-[max-height]). */
   --tp-border-color-background-color-box-shadow: border-color,background-color,box-shadow; /* Extracted from ui/src/components/IssueChatThread.tsx (transition-[border-color,background-color,box-shadow]). */
   --tp-width-min-width: width,min-width; /* Extracted from ui/src/components/KanbanBoard.tsx (transition-[width,min-width]). */
-  --tp-width-opacity: width,opacity; /* Extracted from ui/src/components/OnboardingWizard.tsx (transition-[width,opacity]). */
+  --tp-width-opacity: width,opacity; /* transition-[width,opacity] */
   --tp-background-color-right: background-color,right; /* Extracted from ui/src/components/ScrollToBottom.tsx (transition-[background-color,right]). */
   --tp-background-color-border-color-color: background-color,border-color,color; /* Extracted from ui/src/components/SystemNotice.tsx (transition-[background-color,border-color,color]). */
   --tp-transform-opacity: transform,opacity; /* Extracted from ui/src/components/ToastViewport.tsx (transition-[transform,opacity]). */

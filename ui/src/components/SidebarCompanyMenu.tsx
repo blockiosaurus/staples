@@ -32,7 +32,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useCompany } from "@/context/CompanyContext";
-import { useDialogActions } from "@/context/DialogContext";
 import { useCloudInstance } from "@/hooks/useCloudInstance";
 import { useHiddenSettings } from "@/hooks/useHiddenSettings";
 import { useCompanyOrder } from "@/hooks/useCompanyOrder";
@@ -157,7 +156,6 @@ function BuiltinCompanyMenu({ open: controlledOpen, onOpenChange }: SidebarCompa
   const [isEditingOrder, setIsEditingOrder] = useState(false);
   const { companies, selectedCompany, setSelectedCompanyId, companyListUnavailable, retryCompanies } =
     useCompany();
-  const { openOnboarding } = useDialogActions();
   const { isMobile, setSidebarOpen, collapsed, peeking } = useSidebar();
   const rail = collapsed && !peeking;
   const location = useLocation();
@@ -231,10 +229,7 @@ function BuiltinCompanyMenu({ open: controlledOpen, onOpenChange }: SidebarCompa
     if (companyCreationManaged) return;
     setOpen(false);
     if (isMobile) setSidebarOpen(false);
-    // Skip the front-door "how would you like to get started?" choice and land
-    // directly on "Name your organization" — this entry point is unambiguously
-    // "create a new company" (PAP-431).
-    openOnboarding({ initialStep: 1 });
+    navigate("/start");
   }
 
   const handleDragEnd = useCallback(

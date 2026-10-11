@@ -8,11 +8,10 @@ import { announcementPreview } from "@/lib/announcement-preview";
 
 const state = vi.hoisted(() => ({
   userId: "alice" as string | null, settled: true, companyId: "company", loading: false,
-  onboardingOpen: false, toasts: [] as unknown[], dismiss: vi.fn(), hook: vi.fn(),
+  toasts: [] as unknown[], dismiss: vi.fn(), hook: vi.fn(),
 }));
 vi.mock("@/api/companies-query", () => ({ useAccountIdentity: () => ({ userId: state.userId, settled: state.settled }) }));
 vi.mock("@/context/CompanyContext", () => ({ useCompany: () => ({ selectedCompanyId: state.companyId, loading: state.loading }) }));
-vi.mock("@/context/DialogContext", () => ({ useDialogState: () => ({ onboardingOpen: state.onboardingOpen }) }));
 vi.mock("@/context/ToastContext", () => ({ useOptionalToastActions: () => null, useOptionalToastState: () => state.toasts }));
 vi.mock("@/hooks/useAnnouncement", () => ({ useAnnouncement: (options: { enabled: boolean }) => {
   state.hook(options);
@@ -28,17 +27,16 @@ describe("announcement placement gates", () => {
   const render = async () => { await act(async () => root.render(<AnnouncementWell health={health} />)); };
   const visible = () => Boolean(container.querySelector('[aria-label="Paperclip announcements"]'));
   beforeEach(() => {
-    Object.assign(state, { userId: "alice", settled: true, companyId: "company", loading: false, onboardingOpen: false, toasts: [] });
+    Object.assign(state, { userId: "alice", settled: true, companyId: "company", loading: false, toasts: [] });
     vi.clearAllMocks();
     health = { deploymentMode: "authenticated" } as HealthStatus;
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   });
   afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
-  it("waits for identity, company and onboarding, and uses local-board in no-login mode", async () => {
+  it("waits for identity and company, and uses local-board in no-login mode", async () => {
     state.settled = false; await render(); expect(visible()).toBe(false);
     state.settled = true; state.loading = true; await render(); expect(visible()).toBe(false);
-    state.loading = false; state.onboardingOpen = true; await render(); expect(visible()).toBe(false);
-    state.onboardingOpen = false; await render(); expect(visible()).toBe(true);
+    state.loading = false; await render(); expect(visible()).toBe(true);
     state.userId = null; await render(); expect(visible()).toBe(false);
     health = { deploymentMode: "local_trusted" } as HealthStatus; await render(); expect(visible()).toBe(true);
     expect(state.hook).toHaveBeenLastCalledWith(expect.objectContaining({ userId: "local-board", enabled: true }));

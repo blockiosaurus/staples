@@ -105,7 +105,7 @@ function LayoutShell({ sidebarSections }: { sidebarSections?: ReactNode }) {
     setPeeking,
     isMobile,
   } = useSidebar();
-  const { openNewIssue, openOnboarding } = useDialogActions();
+  const { openNewIssue } = useDialogActions();
   const { togglePanelVisible } = usePanel();
   // Optional: Layout also renders in harnesses without a ToastProvider.
   const pushToast = useOptionalToastActions()?.pushToast ?? null;
@@ -150,7 +150,7 @@ function LayoutShell({ sidebarSections }: { sidebarSections?: ReactNode }) {
     isAppsRoute && companyPathSegments[1]?.toLowerCase() === "app" && companyPathSegments[2]
       ? companyPathSegments[2]
       : null;
-  const onboardingTriggered = useRef(false);
+  const startTriggered = useRef(false);
   const previousPathname = useRef<string | null>(null);
   const mainContentRef = useRef<HTMLElement | null>(null);
   const scrollMemory = useRef(new NavigationScrollMemory());
@@ -287,16 +287,19 @@ function LayoutShell({ sidebarSections }: { sidebarSections?: ReactNode }) {
   }, [companyPrefix, contextualSurface, location.pathname]);
 
   useEffect(() => {
-    if (companiesLoading || onboardingTriggered.current) return;
+    if (companiesLoading || startTriggered.current) return;
+    // Deployment mode and Cloud-managed state decide whether /start can work at
+    // all; until health is in, "no company" could still be a managed stack.
+    if (!health) return;
     if (health?.deploymentMode === "authenticated") return;
     // Cloud provisions the single company for a stack, and POST /companies is a
-    // 403 floor there — auto-opening the wizard could only dead-end.
+    // 403 floor there — sending the user to /start could only dead-end.
     if (health?.cloud) return;
     if (companies.length === 0) {
-      onboardingTriggered.current = true;
-      openOnboarding();
+      startTriggered.current = true;
+      navigate("/start", { replace: true });
     }
-  }, [companies, companiesLoading, openOnboarding, health?.cloud, health?.deploymentMode]);
+  }, [companies, companiesLoading, navigate, health]);
 
   useEffect(() => {
     if (!companyPrefix || companiesLoading || companies.length === 0) return;
