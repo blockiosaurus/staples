@@ -354,7 +354,7 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
     bypassHireApproval: true,
     inheritCompanyAdapterType: true,
     bundle: {
-      stockVersion: "2026-10-10",
+      stockVersion: "2026-10-11",
       instructions: {
         entryFile: "AGENTS.md",
         files: {

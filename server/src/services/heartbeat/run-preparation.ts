@@ -1,5 +1,7 @@
 import { spekoToolsForSession } from "../voice/speko-agent-tools.js";
 import { readPageContext } from "../assistant-page-context.js";
+import { companyBriefService } from "../company-brief.js";
+import { logger } from "../../middleware/logger.js";
 import { githubConfiguredInstructionSources } from "../chat-github-review-policy.js";
 import { CONFIGURED_ENVIRONMENT_KEYS } from "../../vendor/paperclip-runner/index.js";
 import { ASSIGNED_MCP_SERVER_NAME } from "../mcp-tool-names.js";
@@ -2597,6 +2599,12 @@ export async function buildPaperclipWakePayload(input: {
   const proposedAction = await loadProposedActionOutcome(input.db, {
     companyId: input.companyId, issueId, interactionId, interactionKind, interactionStatus,
   });
+  // Company-authored context every agent sees; capped so it never crowds the wake.
+  // Supplementary: a failed lookup must not fail the wake.
+  const companyBrief = await companyBriefService(input.db).wakeExcerpt(input.companyId).catch((error: unknown) => {
+    logger.warn({ err: error, companyId: input.companyId }, "company brief lookup failed; waking without it");
+    return null;
+  });
   // A resolved plan review is new user input, including in chat. Ordinary chat
   // wakes must still exclude historical plan context across /new boundaries.
   const resolvedPlanInteraction = interactionId && interactionKind === "request_confirmation" &&
@@ -2795,6 +2803,7 @@ export async function buildPaperclipWakePayload(input: {
     interactionStatus,
     interactionId,
     proposedAction,
+    companyBrief,
     sourceRunId: readNonEmptyString(input.contextSnapshot.sourceRunId),
     externalChatQuestionResponse: externalChatProvider
       ? (input.contextSnapshot[EXTERNAL_CHAT_QUESTION_RESPONSE_KEY] ?? null)

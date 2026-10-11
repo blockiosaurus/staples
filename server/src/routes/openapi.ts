@@ -144,6 +144,7 @@ import {
   // Sidebar
   upsertSidebarOrderPreferenceSchema,
   patchUiPreferencesSchema,
+  updateCompanyBriefSchema,
   // Announcements
   announcementIdSchema,
   announcementSchema,
@@ -5926,6 +5927,26 @@ registry.registerPath({
   summary: "Get company usage signals",
   request: { params: z.object({ companyId: z.string().uuid() }) },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/brief",
+  tags: ["companies"],
+  summary: "Get the company brief",
+  description: "The company brief (mission, glossary, key decisions) shared with every agent. Returns null when no brief exists. Readable by company members and the company's agents.",
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/companies/{companyId}/brief",
+  tags: ["companies"],
+  summary: "Create or revise the company brief",
+  description: "Board members except viewers. Pass baseRevisionId (the revision you edited) to get a 409 instead of overwriting someone else's change. Logged as company.brief_updated.",
+  request: { params: z.object({ companyId: z.string().uuid() }), body: jsonBody(updateCompanyBriefSchema) },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 409: r.conflict },
 });
 
 registry.registerPath({

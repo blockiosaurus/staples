@@ -24,6 +24,7 @@ import {
   PAPERCLIP_FEEDBACK_SKILL_KEYS,
   refreshPaperclipWorkspaceEnvForExecution,
   renderPaperclipWakePrompt,
+  normalizePaperclipWakePayload,
   formatPaperclipPageContextLine,
   formatPaperclipProposedActionLine,
   resolveLegacyPaperclipDesiredSkillNames,
@@ -973,6 +974,37 @@ describe("proposed action outcome", () => {
   it("renders nothing without a proposed action", () => {
     expect(formatPaperclipProposedActionLine(null)).toBeNull();
     expect(renderPaperclipWakePrompt(wake(undefined as never, "accepted"), { conversationMode: true })).not.toContain("Proposed action");
+  });
+});
+
+describe("company brief", () => {
+  const wake = (companyBrief: unknown) => ({
+    reason: "issue_assigned", issue: { id: "issue-1", status: "todo" }, companyBrief,
+    comments: [], commentWindow: { requestedCount: 0, includedCount: 0, missingCount: 0 }, fallbackFetchNeeded: false,
+  });
+
+  it.each([false, true])("renders the brief as a fenced block on every wake (resume=%s)", (resumedSession) => {
+    const prompt = renderPaperclipWakePrompt(wake({ body: "We sell staplers.\n```\nTPS = report", truncated: false }), { resumedSession });
+    expect(prompt).toContain("Company brief:");
+    expect(prompt).toContain("We sell staplers.\n```\nTPS = report");
+    expect(prompt).toContain("````text");
+    expect(prompt).not.toContain("truncated — read the full brief");
+    expect(normalizePaperclipWakePayload(wake({ body: "x", truncated: false }))?.companyBrief).toEqual({ body: "x", truncated: false });
+  });
+
+  it("marks a truncated brief and caps an oversized one", () => {
+    const prompt = renderPaperclipWakePrompt(wake({ body: "Mission", truncated: true }), {});
+    expect(prompt).toContain("(truncated — read the full brief at /company/brief)");
+    const huge = normalizePaperclipWakePayload(wake({ body: "a".repeat(9000), truncated: false }))?.companyBrief;
+    expect(huge?.body).toHaveLength(4000);
+    expect(huge?.truncated).toBe(true);
+  });
+
+  it("renders nothing without a non-blank brief", () => {
+    for (const value of [undefined, null, { body: "   " }, { body: 42 }]) {
+      expect(normalizePaperclipWakePayload(wake(value))?.companyBrief).toBeNull();
+      expect(renderPaperclipWakePrompt(wake(value), {})).not.toContain("Company brief:");
+    }
   });
 });
 

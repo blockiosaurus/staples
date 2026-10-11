@@ -114,6 +114,30 @@ describe("assistant tools", () => {
     expect(invalid.content[0]!.text).toMatch(/^Invalid arguments: surfaceId/);
   });
 
+  it("reads and updates the company brief as the person through the brief routes", async () => {
+    const brief = { body: "Mission", revisionId: requestId, revisionNumber: 1, updatedAt: "2026-10-11T00:00:00.000Z" };
+    const dispatch = vi.fn<ApiDispatch>(async () => brief);
+    const t = tools(dispatch);
+    expect(ASSISTANT_READ_TOOL_NAMES).toContain("staples_get_company_brief");
+    expect(ASSISTANT_WRITE_TOOL_NAMES).toContain("staples_update_company_brief");
+    const read = await t.call(context(), "staples_get_company_brief", {});
+    expect(read.isError).toBeUndefined();
+    expect(read.structuredContent).toEqual({ brief });
+    expect(dispatch).toHaveBeenLastCalledWith(expect.anything(), "GET", `/companies/${companyId}/brief`);
+
+    const written = await t.call(context(), "staples_update_company_brief", { body: "Mission v2", baseRevisionId: requestId });
+    expect(written.isError).toBeUndefined();
+    expect(dispatch).toHaveBeenLastCalledWith(expect.anything(), "PUT", `/companies/${companyId}/brief`, { body: "Mission v2", baseRevisionId: requestId });
+
+    dispatch.mockClear();
+    const tooLong = await t.call(context(), "staples_update_company_brief", { body: "x".repeat(20_001) });
+    expect(tooLong).toMatchObject({ isError: true });
+    expect(tooLong.content[0]!.text).toMatch(/^Invalid arguments: body/);
+    const viewer = await t.call(context("viewer"), "staples_update_company_brief", { body: "Mission" });
+    expect(viewer).toMatchObject({ isError: true });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("exposes read tools only to viewers and refuses their writes", async () => {
     const dispatch = vi.fn<ApiDispatch>(async () => ({}));
     const t = tools(dispatch);

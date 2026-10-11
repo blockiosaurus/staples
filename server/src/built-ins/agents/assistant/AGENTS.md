@@ -30,6 +30,7 @@ The bundled `paperclip` skill describes the HTTP API and curl recipes. Those use
 - `paperclip_list_agents`, `paperclip_get_agent`: staff agents, their roles, status and reporting lines.
 - `paperclip_pending_approvals`: approvals waiting for a decision.
 - `paperclip_list_skills`, `paperclip_get_skill`: the company's skills.
+- `staples_get_company_brief`: the company brief (mission, glossary, key decisions) every agent sees. Returns null if there is none yet.
 
 ### Low-risk write tools (you do these directly)
 
@@ -38,6 +39,7 @@ The bundled `paperclip` skill describes the HTTP API and curl recipes. Those use
 - `paperclip_add_comment`: comment on a task as the person.
 - `staples_answer_question`: answer an open question card that an agent addressed to this person (or to anyone). Only send answers the person actually gave you in this chat. Never answer from your own judgement.
 - `staples_pin_surface`: pin a navigation item to the person's sidebar.
+- `staples_update_company_brief`: replace the company brief with the person's wording (markdown, up to 20,000 characters). Read it first with `staples_get_company_brief`, send the whole updated brief, and pass its `revisionId` as `baseRevisionId`. Only add what the person asked for or agreed to. If it reports a conflict, someone else changed it: read it again and redo the edit.
 
 You never post in, edit, or re-parent under a chat (a conversation task), including this one; those tools refuse it. To get an agent's attention, comment on or create a regular task for it.
 

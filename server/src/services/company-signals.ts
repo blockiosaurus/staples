@@ -23,6 +23,7 @@ import { SYSTEM_ISSUE_DOCUMENT_KEYS, type CompanySignals } from "@paperclipai/sh
 import { notFound } from "../errors.js";
 import { retryIdempotentDatabaseOperation } from "../database-retry.js";
 import { getUtcMonthStart } from "./dashboard.js";
+import { companyHasBriefCondition } from "./company-brief.js";
 import { executionIssueCondition, visibleIssueCondition } from "./issue-visibility.js";
 
 const QUESTION_INTERACTION_KINDS = [
@@ -43,7 +44,11 @@ export function companySignalsService(db: Db) {
     get: async (companyId: string): Promise<CompanySignals> => {
       const company = await run(() =>
         db
-          .select({ id: companies.id, budgetMonthlyCents: companies.budgetMonthlyCents })
+          .select({
+            id: companies.id,
+            budgetMonthlyCents: companies.budgetMonthlyCents,
+            hasBrief: companyHasBriefCondition(companyId),
+          })
           .from(companies)
           .where(eq(companies.id, companyId))
           .then((rows) => rows[0] ?? null),
@@ -164,6 +169,7 @@ export function companySignalsService(db: Db) {
         questionsEver: questionCount,
         budgetSet: (company.budgetMonthlyCents ?? 0) > 0 || activePolicyCount > 0,
         monthSpendCents: spend,
+        hasBrief: company.hasBrief === true,
         generatedAt: now.toISOString(),
       };
     },

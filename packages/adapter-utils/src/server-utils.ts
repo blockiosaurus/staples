@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, promises as fs, type Dirent } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CONNECTION_INTENT_AGENT_GUIDANCE } from "@paperclipai/shared";
+import { COMPANY_BRIEF_PATH, COMPANY_BRIEF_WAKE_EXCERPT_CHARS, CONNECTION_INTENT_AGENT_GUIDANCE } from "@paperclipai/shared";
 import { sanitizeRemoteExecutionEnv } from "./remote-execution-env.js";
 import {
   buildLocalProcessSandboxSpawnTarget,
@@ -628,6 +628,22 @@ export function normalizePaperclipWakeProposedAction(value: unknown): PaperclipW
   };
 }
 
+/**
+ * The company brief (mission, glossary, key decisions) every agent sees on
+ * wake. Company-authored, so no bracket neutralization; only length-capped.
+ */
+export type PaperclipWakeCompanyBrief = { body: string; truncated: boolean };
+
+export function normalizePaperclipWakeCompanyBrief(value: unknown): PaperclipWakeCompanyBrief | null {
+  const raw = parseObject(value);
+  if (typeof raw.body !== "string" || !raw.body.trim()) return null;
+  const capped = raw.body.length > COMPANY_BRIEF_WAKE_EXCERPT_CHARS;
+  return {
+    body: capped ? raw.body.slice(0, COMPANY_BRIEF_WAKE_EXCERPT_CHARS) : raw.body,
+    truncated: capped || raw.truncated === true,
+  };
+}
+
 /** e.g. "Proposed action POST /api/approvals/<id>/approve: confirmed — executed (HTTP 200)". */
 export function formatPaperclipProposedActionLine(value: unknown): string | null {
   const action = normalizePaperclipWakeProposedAction(value);
@@ -908,6 +924,7 @@ type PaperclipWakePayload = {
   interactionKind: string | null;
   interactionStatus: string | null;
   proposedAction: PaperclipWakeProposedAction | null;
+  companyBrief: PaperclipWakeCompanyBrief | null;
   externalInteractionContinuation: boolean;
   checkboxSelection: PaperclipWakeCheckboxSelection | null;
   questionResponse: PaperclipWakeQuestionResponse | null;
@@ -1975,6 +1992,7 @@ export function normalizePaperclipWakePayload(
     interactionKind: asString(payload.interactionKind, "").trim() || null,
     interactionStatus: asString(payload.interactionStatus, "").trim() || null,
     proposedAction: normalizePaperclipWakeProposedAction(payload.proposedAction),
+    companyBrief: normalizePaperclipWakeCompanyBrief(payload.companyBrief),
     externalInteractionContinuation: asBoolean(
       payload.externalInteractionContinuation,
       false,
@@ -2685,6 +2703,18 @@ function renderPaperclipWakePromptBody(
     lines.push(
       "- issue description: omitted from this resume delta; fetch the issue if you need the latest brief",
     );
+  }
+  if (normalized.companyBrief) {
+    lines.push(
+      "",
+      "Company brief:",
+      "[company-authored context shared with every agent: mission, glossary and key decisions]",
+      markdownFencedText(normalized.companyBrief.body),
+    );
+    if (normalized.companyBrief.truncated) {
+      lines.push(`(truncated — read the full brief at ${COMPANY_BRIEF_PATH}) Agents can fetch it with GET /api/companies/{companyId}/brief.`);
+    }
+    lines.push("");
   }
   const proposedActionLine = formatPaperclipProposedActionLine(normalized.proposedAction);
   if (proposedActionLine) lines.push(`- ${proposedActionLine}`);

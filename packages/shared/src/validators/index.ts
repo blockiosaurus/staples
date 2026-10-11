@@ -137,6 +137,13 @@ export {
   type PatchUiPreferences,
 } from "./ui-preferences.js";
 export {
+  COMPANY_BRIEF_MAX_CHARS,
+  COMPANY_BRIEF_PATH,
+  COMPANY_BRIEF_WAKE_EXCERPT_CHARS,
+  updateCompanyBriefSchema,
+  type UpdateCompanyBrief,
+} from "./company-brief.js";
+export {
   resourceMembershipStateSchema,
   updateDocumentResourceMembershipSchema,
   updateResourceMembershipSchema,

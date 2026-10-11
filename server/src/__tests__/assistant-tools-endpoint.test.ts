@@ -146,6 +146,24 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(preferences.pinned).toContain("projects");
   }, 60_000);
 
+  it("edits the company brief as the person, with revision conflicts as tool errors", async () => {
+    const f = await assistantFixture();
+    const empty = await call(f, "staples_get_company_brief", {});
+    expect(empty.body.result.structuredContent, JSON.stringify(empty.body)).toEqual({ brief: null });
+    const written = await call(f, "staples_update_company_brief", { body: "# Mission\nMake staples." });
+    expect(written.body.result.isError, JSON.stringify(written.body)).toBeUndefined();
+    const brief = written.body.result.structuredContent.brief;
+    expect(brief).toMatchObject({ body: "# Mission\nMake staples.", revisionNumber: 1 });
+    const revised = await call(f, "staples_update_company_brief", { body: "# Mission\nMake great staples.", baseRevisionId: brief.revisionId });
+    expect(revised.body.result.isError, JSON.stringify(revised.body)).toBeUndefined();
+    const stale = await call(f, "staples_update_company_brief", { body: "Stale", baseRevisionId: brief.revisionId });
+    expect(stale.body.result).toMatchObject({ isError: true });
+    expect(stale.body.result.content[0].text).toMatch(/conflict/i);
+    const [activity] = await server.db.select().from(activityLog)
+      .where(and(eq(activityLog.companyId, f.companyId), eq(activityLog.action, "company.brief_updated")));
+    expect(activity).toMatchObject({ actorType: "user", actorId: f.responsibleUserId });
+  }, 60_000);
+
   it("answers only questions addressed to this person", async () => {
     const f = await assistantFixture();
     const payload = { version: 1, questions: [{ id: "q1", prompt: "Ship Friday?", selectionMode: "single", options: [{ id: "yes", label: "Yes" }, { id: "no", label: "No" }] }] };

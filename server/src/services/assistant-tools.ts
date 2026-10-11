@@ -2,7 +2,7 @@ import type { Request } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { agents, approvals, authUsers, companies, companyMemberships, issueThreadInteractions, issues, type Db } from "@paperclipai/db";
-import { PROPOSED_ACTION_CATEGORIES, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, isAssistantAgent, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
+import { COMPANY_BRIEF_MAX_CHARS, PROPOSED_ACTION_CATEGORIES, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, isAssistantAgent, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
@@ -18,13 +18,13 @@ export const ASSISTANT_READ_TOOL_NAMES = [
   "paperclip_connection", "paperclip_list_agents", "paperclip_list_projects", "paperclip_search_tasks",
   "paperclip_read_task", "paperclip_list_deliverables", "paperclip_read_document", "paperclip_list_document_revisions",
   "paperclip_pending_approvals", "paperclip_get_agent", "paperclip_get_project", "paperclip_list_skills",
-  "paperclip_get_skill", "staples_company_signals", "staples_briefing_inputs",
+  "paperclip_get_skill", "staples_company_signals", "staples_briefing_inputs", "staples_get_company_brief",
 ] as const;
 
 /** Low-risk writes. Governed actions (finish, block, delete, configure, approvals) are not exposed. */
 export const ASSISTANT_WRITE_TOOL_NAMES = [
   "paperclip_create_task", "paperclip_add_comment", "paperclip_update_task", "staples_answer_question", "staples_pin_surface",
-  "staples_propose_action",
+  "staples_propose_action", "staples_update_company_brief",
 ] as const;
 
 /** `paperclip_update_task` may only touch these fields. */
@@ -268,6 +268,26 @@ function assistantCapabilities(db: Db): Capability[] {
       }).strict(),
       // Dispatched in createAssistantTools: it needs the run's conversation, not just the principal.
       run: async () => { throw new McpCapabilityError("Tool is unavailable to the Assistant."); },
+    },
+    {
+      name: "staples_get_company_brief",
+      description: "Read the company brief (mission, glossary, key decisions) that every agent sees. Returns null when there is none. Read it before editing so you can pass its revisionId as baseRevisionId.",
+      schema: z.object(companyField).strict(),
+      run: async (p, _a, api) => ({ brief: await api(p, "GET", `/companies/${pathId(p.company.id)}/brief`) }),
+    },
+    {
+      name: "staples_update_company_brief", write: true,
+      description: `Replace the company brief with new markdown (at most ${COMPANY_BRIEF_MAX_CHARS} characters) as this person. Every agent sees it on its next wake. Send the whole brief, not a diff, and only content the person asked for or agreed to. Pass baseRevisionId from staples_get_company_brief; a conflict means someone else changed it, so read it again.`,
+      schema: z.object({
+        ...companyField,
+        body: z.string().max(COMPANY_BRIEF_MAX_CHARS),
+        baseRevisionId: z.uuid().optional(),
+      }).strict(),
+      run: async (p, a, api) => ({
+        brief: await api(p, "PUT", `/companies/${pathId(p.company.id)}/brief`, {
+          body: a.body, ...(a.baseRevisionId ? { baseRevisionId: a.baseRevisionId } : {}),
+        }),
+      }),
     },
     {
       name: "staples_pin_surface", write: true,

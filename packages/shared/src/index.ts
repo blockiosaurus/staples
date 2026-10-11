@@ -1345,6 +1345,7 @@ export type {
   SidebarBadges,
   SidebarOrderPreference,
   CompanySignals,
+  CompanyBrief,
   UiPreferences,
   InboxDismissal,
   InboxDismissalKind,
@@ -1761,6 +1762,13 @@ export {
   patchUiPreferencesSchema,
   type PatchUiPreferences,
 } from "./validators/ui-preferences.js";
+export {
+  COMPANY_BRIEF_MAX_CHARS,
+  COMPANY_BRIEF_PATH,
+  COMPANY_BRIEF_WAKE_EXCERPT_CHARS,
+  updateCompanyBriefSchema,
+  type UpdateCompanyBrief,
+} from "./validators/company-brief.js";
 export {
   applyUiPreferencesPatch,
   DEFAULT_UI_PREFERENCES,

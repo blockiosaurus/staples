@@ -28,5 +28,7 @@ export interface CompanySignals {
   budgetSet: boolean;
   /** Sum of cost_events.cost_cents since the start of the current UTC month. */
   monthSpendCents: number;
+  /** True when the company brief exists and is not blank. */
+  hasBrief: boolean;
   generatedAt: string;
 }
