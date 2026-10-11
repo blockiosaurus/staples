@@ -2,15 +2,18 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, gt, isNull, lt, or } from "drizzle-orm";
 import { agents, planApplications, type Db } from "@paperclipai/db";
 import {
+  aiRuntimeConnectionBindingSchema,
   planAgentCreationOrder,
   planStructureErrors,
   planTaskCreationOrder,
+  type AiRuntimeConnectionBinding,
   type ApplyPlan,
   type ApplyPlanResult,
 } from "@paperclipai/shared";
 import { conflict, HttpError, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
+import { resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { canonicalJson, currentBriefRevisionId, planExistingAssigneeViolation, planRuleViolation } from "./assistant-proposed-actions.js";
 import { writeCompanyBrief } from "./company-brief.js";
 import { getDefaultCompanyGoal, goalService } from "./goals.js";
@@ -47,6 +50,54 @@ export type AppliedPlan = {
   project: { id: string; name: string } | null;
   tasks: Array<{ clientKey: string; id: string; identifier: string | null; title: string; status: string; assigneeAgentId: string | null }>;
 };
+
+/**
+ * What a hire on the Assistant's own adapter inherits from it: the model
+ * connection the person set up for the Assistant (only a `responsible_user` or
+ * `router` binding, which carry no credentials or other identity) and its
+ * engine. Without this, first hires in a new company would not run on the
+ * model the person just connected.
+ */
+export type AssistantHireDefaults = {
+  adapterType: string;
+  aiConnection?: AiRuntimeConnectionBinding;
+  engine?: string;
+};
+
+export async function assistantHireDefaults(db: Db, companyId: string): Promise<AssistantHireDefaults | null> {
+  const assistantId = await resolveCompanyAssistantAgentId(db, companyId);
+  if (!assistantId) return null;
+  const [row] = await db.select({ adapterType: agents.adapterType, adapterConfig: agents.adapterConfig, runtimeConfig: agents.runtimeConfig })
+    .from(agents).where(and(eq(agents.id, assistantId), eq(agents.companyId, companyId)));
+  if (!row) return null;
+  const defaults: AssistantHireDefaults = { adapterType: row.adapterType };
+  const runtimeConfig = (row.runtimeConfig ?? {}) as Record<string, unknown>;
+  const binding = aiRuntimeConnectionBindingSchema.safeParse(runtimeConfig.aiConnection);
+  if (binding.success && (binding.data.mode === "responsible_user" || binding.data.mode === "router")) {
+    defaults.aiConnection = binding.data;
+  }
+  const engine = ((row.adapterConfig ?? {}) as Record<string, unknown>).engine;
+  if (typeof engine === "string" && engine.length > 0) defaults.engine = engine;
+  return defaults;
+}
+
+/** The agent-hire body for one planned agent, with the Assistant's model when it shares its adapter. */
+export function planHireBody(
+  agent: ApplyPlan["agents"][number],
+  reportsTo: string | undefined,
+  assistant: AssistantHireDefaults | null,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = { name: agent.name, role: agent.role, adapterType: agent.adapterType };
+  if (agent.title !== undefined) body.title = agent.title;
+  if (agent.capabilities !== undefined) body.capabilities = agent.capabilities;
+  if (agent.budgetMonthlyCents !== undefined) body.budgetMonthlyCents = agent.budgetMonthlyCents;
+  if (reportsTo) body.reportsTo = reportsTo;
+  if (assistant && assistant.adapterType === agent.adapterType) {
+    if (assistant.engine) body.adapterConfig = { engine: assistant.engine };
+    if (assistant.aiConnection) body.runtimeConfig = { aiConnection: assistant.aiConnection };
+  }
+  return body;
+}
 
 /** How long one apply holds its idempotency key; a crashed apply frees it after this. */
 const PLAN_APPLY_LEASE_MS = 5 * 60_000;
@@ -328,15 +379,12 @@ export async function applyPlan(db: Db, input: {
   };
 
   try {
+    const assistant = plan.agents.length ? await assistantHireDefaults(db, companyId) : null;
     for (const agent of planAgentCreationOrder(plan.agents)) {
       if (hired[agent.clientKey]) continue;
       // Stop before hiring if a newer request took the plan over.
       await holdLease();
-      const body: Record<string, unknown> = { name: agent.name, role: agent.role, adapterType: agent.adapterType };
-      if (agent.title !== undefined) body.title = agent.title;
-      if (agent.capabilities !== undefined) body.capabilities = agent.capabilities;
-      if (agent.budgetMonthlyCents !== undefined) body.budgetMonthlyCents = agent.budgetMonthlyCents;
-      if (agent.reportsToClientKey) body.reportsTo = hired[agent.reportsToClientKey]!.id;
+      const body = planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant);
       let response: Awaited<ReturnType<PlanHireAgent>>;
       try {
         response = await input.hireAgent(body);

@@ -141,6 +141,25 @@ async function assistantAgentIds(db: Db, companyId: string) {
   return ids;
 }
 
+/**
+ * The Assistant's own adapter (and engine, when set), so it can recommend the
+ * model the person already connected for new hires. Credentials and other
+ * config never leave the server.
+ */
+async function assistantRuntimeSummary(db: Db, companyId: string) {
+  const id = await resolveCompanyAssistantAgentId(db, companyId);
+  if (!id) return null;
+  const [row] = await db.select({ adapterType: agents.adapterType, adapterConfig: agents.adapterConfig })
+    .from(agents).where(and(eq(agents.id, id), eq(agents.companyId, companyId)));
+  if (!row) return null;
+  const engine = object(row.adapterConfig).engine;
+  return {
+    adapterType: row.adapterType,
+    ...(engine === "cli" || engine === "acp" ? { engine } : {}),
+    note: "New hires on this adapter get the Assistant's connected model when the plan is applied.",
+  };
+}
+
 function capability(name: string) {
   const found = publicMcpCapabilities.find((c) => c.name === name);
   if (!found) throw new Error(`Missing public MCP capability ${name}`);
@@ -162,6 +181,7 @@ function assistantCapabilities(db: Db): Capability[] {
         user: { id: p.actor.userId }, companyId: p.company.id, company: p.company,
         permissions: p.grant.scopes, runId: p.actor.assistantRunId,
         execution: "The Assistant acts as this person with their company permissions. Tasks run through Paperclip scheduling, budgets and approvals.",
+        assistant: await assistantRuntimeSummary(db, p.company.id),
       }),
     }),
     reused("paperclip_list_agents", {
@@ -559,7 +579,9 @@ export function createAssistantTools(db: Db, options: { dispatch: ApiDispatch; o
             throw new McpCapabilityError(`The Assistant cannot set status to ${changes.status}. Ask the person to do it in Paperclip.`);
           }
         }
-        const args = c.schema.parse({ ...raw, companyId: context.companyId });
+        // Tools without a companyId input (e.g. paperclip_connection) are strict, so only inject it where declared.
+        const { companyId: _requestedCompanyId, ...rest } = raw;
+        const args = c.schema.parse("companyId" in c.schema.shape ? { ...rest, companyId: context.companyId } : rest);
         if (name === "paperclip_add_comment" || name === "paperclip_update_task" || name === "paperclip_create_task") {
           await rejectConversationIssues(db, context.companyId, [args.taskId, args.parentId, object(args.changes).parentId]);
         }

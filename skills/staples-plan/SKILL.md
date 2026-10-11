@@ -30,7 +30,7 @@ Use the company's glossary words everywhere in the plan.
 - `clientKey`: short lowercase id such as `writer` or `researcher` (letters, digits and dashes).
 - `name`, optional `title`, and `capabilities`: one or two sentences on what this agent does and what it does not do.
 - `role`: one of `cto`, `cmo`, `cfo`, `security`, `engineer`, `designer`, `pm`, `qa`, `devops`, `researcher`, `general`. **Never `ceo`**: CEO-level hires are done by the person on the Agents page.
-- `adapterType`: must be one of the proposable local adapters: `claude_local`, `codex_local`, `cursor`, `gemini_local`, `grok_local`, `kimi_local`, `opencode_local` or `pi_local`. Reuse the one the company's existing agents use when it is in that list; otherwise ask the person which of these to use.
+- `adapterType`: must be one of the proposable local adapters: `claude_local`, `codex_local`, `cursor`, `gemini_local`, `grok_local`, `kimi_local`, `opencode_local` or `pi_local`. Reuse the one the company's existing agents use when it is in that list. In a new company (no staff agents yet), recommend the Assistant's own adapter: `paperclip_connection` returns it as `assistant.adapterType`, and hires on that adapter get the model connection the person already set up for you. Otherwise ask the person which of these to use, with that recommendation.
 - Optional `budgetMonthlyCents` if a budget was agreed, and `reportsToClientKey` when one new agent reports to another.
 
 No other fields. Do not put instructions, secrets, commands or credentials in a hire.
@@ -89,6 +89,6 @@ Use `staples_propose_plan` with the whole plan and a one-sentence `summary`:
 
 ## After it is applied
 
-Summarize what was created in two or three lines and point to the first task that can start. If a hire or task failed, say which one and why, and offer to fix it. If it stopped partway, the result names the agents already hired; proposing the same plan again reuses them instead of hiring twice.
+Summarize what was created in two or three lines (the Assistant's instructions list what to cover) and point to the first task that can start. If a hire or task failed, say which one and why, and offer to fix it. If it stopped partway, the result names the agents already hired; proposing the same plan again reuses them instead of hiring twice.
 
 Adapted from the to-spec and to-tickets skills in mattpocock/skills (MIT License, Copyright (c) 2026 Matt Pocock).

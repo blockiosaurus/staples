@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
   agents,
+  builtInManagedResources,
   approvals,
   authUsers,
   companies,
@@ -23,6 +24,7 @@ import {
 import { ASSISTANT_BUILT_IN_AGENT_KEY } from "@paperclipai/shared";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { errorHandler } from "../middleware/index.js";
+import { withBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
 import { agentRoutes } from "../routes/agents.js";
 import { planRoutes } from "../routes/plans.js";
 import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
@@ -163,6 +165,38 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
     expect(applied!.details).toMatchObject({ goalId: goal!.id, projectId: project!.id, briefRevisionId: result.brief.revisionId });
     const wokenIssueIds = wakeup.mock.calls.map((call) => ((call as unknown[])[1] as { payload: { issueId: string } }).payload.issueId);
     expect(wokenIssueIds.sort()).toEqual([byKey("first").id, byKey("style").id, byKey("outline").id].sort());
+  }, 120_000);
+
+  it("gives hires on the Assistant's adapter its model connection and engine, and leaves other adapters alone", async () => {
+    const s = await seed();
+    // Make the seeded Assistant the provisioned one, connected through Codex on the CLI engine.
+    await db.update(agents).set({
+      adapterType: "codex_local",
+      adapterConfig: { engine: "cli", model: "gpt-5.4" },
+      runtimeConfig: { aiConnection: { provider: "openai", method: "api_key", mode: "responsible_user" } },
+      metadata: withBuiltInAgentMarker({}, { key: ASSISTANT_BUILT_IN_AGENT_KEY, featureKeys: [] }),
+    }).where(eq(agents.id, s.assistantId));
+    await db.insert(builtInManagedResources).values({
+      companyId: s.companyId, bundleKey: ASSISTANT_BUILT_IN_AGENT_KEY, resourceKind: "instructions", resourceKey: "AGENTS.md",
+      resourceId: s.assistantId, stockVersion: "test", stockHash: "test",
+    });
+    const { app } = buildApp(sessionActor(s));
+    const response = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).send({
+      agents: [
+        { clientKey: "editor", name: "Editor", role: "pm", adapterType: "codex_local" },
+        { clientKey: "writer", name: "Writer", role: "general", adapterType: "claude_local" },
+      ],
+      tasks: [{ clientKey: "t", title: "Write the style guide", assigneeClientKey: "editor" }],
+    });
+    expect(response.status, JSON.stringify(response.body)).toBe(201);
+    const [editor] = await db.select().from(agents).where(eq(agents.id, response.body.agents.editor.id));
+    const [writer] = await db.select().from(agents).where(eq(agents.id, response.body.agents.writer.id));
+    expect((editor!.runtimeConfig as Record<string, unknown>).aiConnection).toEqual({ provider: "openai", method: "api_key", mode: "responsible_user" });
+    expect((editor!.adapterConfig as Record<string, unknown>).engine).toBe("cli");
+    // The model is the adapter's default, not copied from the Assistant.
+    expect((editor!.adapterConfig as Record<string, unknown>).model).not.toBe("gpt-5.4");
+    expect((writer!.runtimeConfig as Record<string, unknown>).aiConnection).toBeUndefined();
+    expect((writer!.adapterConfig as Record<string, unknown>).engine).toBeUndefined();
   }, 120_000);
 
   it("uses a task-level goal under the company goal when one exists, and works without brief/project/agents", async () => {

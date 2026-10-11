@@ -51,6 +51,20 @@ describe("assistant tools", () => {
     });
   });
 
+  it("tells the Assistant its own adapter and engine in paperclip_connection, never its config", async () => {
+    const { withBuiltInAgentMarker } = await import("../lib/built-in-agent-metadata.js");
+    const results = [
+      [{ agentId: "assistant-agent" }],
+      [{ id: "assistant-agent", metadata: withBuiltInAgentMarker({}, { key: "assistant", featureKeys: [] }) }],
+      [{ adapterType: "codex_local", adapterConfig: { engine: "cli", env: { OPENAI_API_KEY: "sk-secret" } } }],
+    ];
+    const db = { select: () => ({ from: () => ({ where: async () => results.shift() ?? [] }) }) } as unknown as Db;
+    const result = await tools(vi.fn<ApiDispatch>(), db).call(context(), "paperclip_connection", {});
+    expect(result.isError, JSON.stringify(result.content)).toBeUndefined();
+    expect((result.structuredContent as Record<string, unknown>).assistant).toMatchObject({ adapterType: "codex_local", engine: "cli" });
+    expect(JSON.stringify(result.structuredContent)).not.toContain("sk-secret");
+  });
+
   it("always uses the run's company and rejects any other", async () => {
     const dispatch = vi.fn<ApiDispatch>(async () => []);
     const result = await tools(dispatch).call(context(), "paperclip_list_projects", { companyId: "55555555-5555-4555-8555-555555555555" });
