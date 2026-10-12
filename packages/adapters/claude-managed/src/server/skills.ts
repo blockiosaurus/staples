@@ -21,7 +21,7 @@ import {
   buildRuntimeMountedSkillSnapshot,
   isPaperclipSkillSourceMissing,
   readPaperclipRuntimeSkillEntries,
-  resolvePaperclipDesiredSkillNames,
+  resolveLegacyPaperclipDesiredSkillNames,
   type PaperclipSkillEntry,
 } from "@paperclipai/adapter-utils/server-utils";
 import { buildSkillLibraryManifestMarkdown } from "@paperclipai/adapter-utils/skill-library-manifest";
@@ -75,7 +75,11 @@ export interface SkillsResolution {
 // Reading local skills
 // ---------------------------------------------------------------------------
 
-/** Desired, available runtime skill entries for this agent (configurable set only). */
+/**
+ * Desired, available runtime skill entries for this agent: the operational
+ * Staples skill (`paperclip`) and the feedback skills, plus the agent's desired
+ * company skills. Same resolver as claude_local.
+ */
 export async function readDesiredSkillEntries(
   config: Record<string, unknown>,
   onLog: OnLog,
@@ -84,10 +88,10 @@ export async function readDesiredSkillEntries(
   // skills: the adapter-utils fallback (this package's bundled skills directory)
   // means nothing for an agent that runs in Anthropic's cloud.
   const all = Array.isArray(config.paperclipRuntimeSkills) ? await readPaperclipRuntimeSkillEntries(config, __moduleDir) : [];
-  // claude_managed reaches Staples through proxied tools (like native runners), so it
-  // uses the configurable desired set, not the legacy one that forces the
-  // curl-based operational skill.
-  const desiredKeys = new Set(resolvePaperclipDesiredSkillNames(config, all));
+  // claude_managed is not a native runner: nothing else gives it the Staples
+  // operating contract (heartbeats, task updates, questions, the Company Brief),
+  // so the required operational skill is always attached, as for claude_local.
+  const desiredKeys = new Set(resolveLegacyPaperclipDesiredSkillNames(config, all));
   const desired: PaperclipSkillEntry[] = [];
   for (const entry of all) {
     if (!desiredKeys.has(entry.key)) continue;
@@ -441,7 +445,7 @@ export async function resolveAgentSkills(input: {
 
 async function buildSnapshot(config: Record<string, unknown>): Promise<AdapterSkillSnapshot> {
   const availableEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
-  const desiredSkills = resolvePaperclipDesiredSkillNames(config, availableEntries);
+  const desiredSkills = resolveLegacyPaperclipDesiredSkillNames(config, availableEntries);
   return buildRuntimeMountedSkillSnapshot({
     adapterType: "claude_managed",
     availableEntries,

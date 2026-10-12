@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fakeEvents, startFakeManagedAgentsServer, type FakeManagedAgentsServer, type TurnScript } from "../testing/fake-managed-agents-server.js";
 import { execute } from "./execute.js";
 import { sessionCodec } from "./session.js";
-import { buildInlineSkillsSection, readLocalSkill, resetSkillsCache, skillTitle } from "./skills.js";
+import { buildInlineSkillsSection, listClaudeManagedSkills, readLocalSkill, resetSkillsCache, skillTitle } from "./skills.js";
 
 let fake: FakeManagedAgentsServer;
 let tmpDir: string;
@@ -281,6 +281,44 @@ describe("claude_managed native skills", () => {
     expect(result).toMatchObject({ exitCode: 1, errorCode: "claude_managed_skills_failed", errorFamily: "transient_upstream" });
     expect(req("POST", /^\/v1\/agents$/)).toHaveLength(0);
   }, 20_000);
+
+  it("always attaches the required paperclip skill alongside the agent's company skills", async () => {
+    const paperclip = await writeSkill("paperclip", "Staples operating contract.");
+    const brief = await writeSkill("market-brief", "Write a market brief.");
+    const unused = await writeSkill("unused", "Not desired.");
+    fake.queueTurns(turn("ok"));
+    const config = {
+      paperclipRuntimeSkills: [
+        { key: "paperclipai/paperclip/paperclip", runtimeName: "paperclip", source: paperclip, required: true },
+        { key: "company/market-brief", runtimeName: "market-brief", source: brief },
+        { key: "company/unused", runtimeName: "unused", source: unused },
+      ],
+      // Only the template's company skill is desired; the hire never named paperclip.
+      paperclipSkillSync: { desiredSkills: ["company/market-brief"] },
+    };
+    const result = await execute(harness({ config }).ctx);
+    expect(result.exitCode).toBe(0);
+
+    const titles = req("POST", /^\/v1\/skills$/).map((r) => (r.body as FormData).get("display_name"));
+    expect(titles).toHaveLength(2);
+    expect(titles).toEqual(expect.arrayContaining([expect.stringMatching(/^staples-paperclip-/), expect.stringMatching(/^staples-market-brief-/)]));
+    const agentBody = req("POST", /^\/v1\/agents$/)[0].body as Record<string, unknown>;
+    expect(agentBody.skills).toHaveLength(2);
+    expect(String(agentBody.system)).toContain("paperclipai/paperclip/paperclip — enabled");
+    expect(String(agentBody.system)).toContain("company/unused — installed, not enabled for you");
+
+    // The skills listing (GET /api/agents/:id/skills) shows it the same way.
+    const snapshot = await listClaudeManagedSkills({ agentId: "agent-1", companyId: "company-1", adapterType: "claude_managed", config });
+    const byKey = new Map(snapshot.entries.map((e) => [e.key, e]));
+    expect(byKey.get("paperclipai/paperclip/paperclip")).toMatchObject({ desired: true, state: "configured" });
+    expect(byKey.get("company/market-brief")).toMatchObject({ desired: true, state: "configured" });
+    expect(byKey.get("company/unused")).toMatchObject({ desired: false, state: "available" });
+    expect(snapshot.desiredSkills).toEqual(expect.arrayContaining(["paperclipai/paperclip/paperclip", "company/market-brief"]));
+
+    // Without any stored preference the operational skill is still enabled.
+    const bare = await listClaudeManagedSkills({ agentId: "agent-1", companyId: "company-1", adapterType: "claude_managed", config: { paperclipRuntimeSkills: config.paperclipRuntimeSkills } });
+    expect(bare.entries.find((e) => e.key === "paperclipai/paperclip/paperclip")).toMatchObject({ desired: true });
+  });
 
   it("agents without skills keep their previous fingerprint", async () => {
     fake.queueTurns(turn("ok"));

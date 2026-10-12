@@ -50,11 +50,10 @@ export function planRoutes(db: Db, options: PlanRoutesOptions) {
     assertCompanyAccess(req, companyId);
     const plan = applyPlanSchema.parse(req.body);
     // The browser sends the proposal's interaction id as the Idempotency-Key header.
+    // It wins over a body key: the body is authored by the Assistant, which may
+    // invent its own key, and must not make a confirmed plan unapplicable.
     const headerKey = req.header("idempotency-key")?.trim() || null;
     if (headerKey !== null && !/^[A-Za-z0-9:_-]{1,200}$/.test(headerKey)) throw badRequest("Invalid Idempotency-Key header");
-    if (headerKey && plan.idempotencyKey && headerKey !== plan.idempotencyKey) {
-      throw badRequest("The Idempotency-Key header and body idempotencyKey differ");
-    }
     const idempotencyKey = headerKey ?? plan.idempotencyKey ?? null;
     // Fail before creating anything when the person cannot hire.
     if (plan.agents.length) {

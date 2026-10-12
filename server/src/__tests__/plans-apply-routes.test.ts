@@ -380,10 +380,12 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       const other = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", KEY)
         .send({ tasks: [{ clientKey: "x", title: "Different" }] });
       expect(other.status).toBe(409);
-      // A body key that disagrees with the header is refused.
-      const mismatch = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", KEY)
-        .send({ ...plan, idempotencyKey: "other-key" });
-      expect(mismatch.status).toBe(400);
+      // The header wins over a body key the Assistant invented: same plan, replayed.
+      const bodyKey = await request(app).post(`/api/companies/${s.companyId}/plans/apply`).set("Origin", ORIGIN).set("Idempotency-Key", KEY)
+        .send({ ...plan, idempotencyKey: "assistant-made-up-key" });
+      expect(bodyKey.status, JSON.stringify(bodyKey.body)).toBe(200);
+      expect(bodyKey.body.agents).toEqual(first.body.agents);
+      expect(await db.select().from(agents).where(eq(agents.companyId, s.companyId))).toHaveLength(4);
     }, 120_000);
 
     it("a retry after a partial failure reuses the agents already hired and completes", async () => {
