@@ -80,12 +80,11 @@ describe("AssistantSetupCard", () => {
   async function render(
     setup: { state: "ready" | "starting" | "needs_model" | "error"; message?: string; reason?: string; adapterType?: string },
     canConfigure = true,
-    hostedInferenceAvailable = false,
   ) {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <AssistantSetupCard companyId="company-1" agentId="assistant-1" canConfigure={canConfigure} hostedInferenceAvailable={hostedInferenceAvailable}
+          <AssistantSetupCard companyId="company-1" agentId="assistant-1" canConfigure={canConfigure}
             setup={{ adapterType: "claude_local", ...setup }} />
         </QueryClientProvider>,
       );
@@ -266,17 +265,33 @@ describe("AssistantSetupCard", () => {
     };
 
     it("renders nothing when ready, even with hosted inference", async () => {
-      await render({ state: "ready", adapterType: "claude_managed" }, true, true);
+      await render({ state: "ready", adapterType: "claude_managed" });
       expect(container.querySelector('[data-testid="assistant-setup-card"]')).toBeNull();
     });
 
     it("shows the finishing state, not the picker, while a hosted Assistant provisions", async () => {
-      await render({ state: "needs_model", adapterType: "claude_managed" }, true, true);
+      await render({ state: "starting", adapterType: "claude_managed", message: "Finishing Assistant setup…" });
       expect(container.textContent).toContain("Finishing Assistant setup…");
       expect(container.querySelector('[data-testid="adapter-picker"]')).toBeNull();
       expect(mocks.adapters).not.toHaveBeenCalled();
-      await render({ state: "starting", adapterType: "claude_managed", message: "Finishing Assistant setup…" }, true, true);
-      expect(container.textContent).toContain("Finishing Assistant setup…");
+    });
+
+    it("shows the hosted tile as needing a key, or unavailable, with the status colour matching", async () => {
+      const status = () => button("Claude (hosted)")?.querySelector('[data-testid="adapter-status"]');
+      withHosted();
+      await render({ state: "needs_model" });
+      expect(status()?.textContent).toBe("Needs a key");
+      expect(status()?.className).toContain("text-muted-foreground");
+      expect(button("Claude (hosted)")?.disabled).toBe(false);
+      withHosted({ needsKey: false });
+      await queryClient.invalidateQueries();
+      await render({ state: "needs_model" });
+      expect(status()?.textContent).toBe("Unavailable");
+      withHosted({ available: true, signedIn: true, needsKey: false });
+      await queryClient.invalidateQueries();
+      await render({ state: "needs_model" });
+      expect(status()?.textContent).toBe("Available");
+      expect(status()?.className).toContain("text-foreground");
     });
 
     it("offers the hosted tile with key copy, and a password field that submits once and clears", async () => {

@@ -67,14 +67,11 @@ export function AssistantSetupCard({
   agentId,
   setup,
   canConfigure = true,
-  hostedInferenceAvailable = false,
 }: {
   companyId: string;
   agentId: string;
   setup: AssistantSetup;
   canConfigure?: boolean;
-  /** The server can run the Assistant on Claude (hosted) without a person's key. */
-  hostedInferenceAvailable?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [retrying, setRetrying] = useState(false);
@@ -82,15 +79,12 @@ export function AssistantSetupCard({
   const summaryKey = queryKeys.assistant.detail(companyId);
 
   if (setup.state === "ready") return null;
-  // A hosted Assistant still provisioning (no failure reason yet) is finishing, not waiting for a model.
-  const hostedFinishing = hostedInferenceAvailable && setup.adapterType === "claude_managed"
-    && setup.state === "needs_model" && !setup.reason;
-  if (setup.state === "starting" || hostedFinishing) {
+  if (setup.state === "starting") {
     return (
       <SetupFrame>
         <p role="status" className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-          {hostedFinishing || setup.adapterType === "claude_managed" ? (setup.message ?? HOSTED_FINISHING_MESSAGE) : "Getting the Assistant ready…"}
+          {setup.adapterType === "claude_managed" ? (setup.message ?? HOSTED_FINISHING_MESSAGE) : "Getting the Assistant ready…"}
         </p>
       </SetupFrame>
     );
@@ -402,7 +396,7 @@ function ConnectModel({
         {(["claude_local", "codex_local", "gemini_local", "kimi_local", "claude_managed"] as const).map((adapterType) => {
           const item = entry(adapterType);
           const hosted = adapterType === "claude_managed";
-          const status = hosted ? (adapters.isPending ? "Checking…" : !item ? "Couldn't check" : item.available || item.needsKey !== false ? "Available" : "Unavailable") : adapters.isPending ? "Checking…"
+          const status = hosted ? (adapters.isPending ? "Checking…" : !item ? "Couldn't check" : item.available ? "Available" : item.needsKey !== false ? "Needs a key" : "Unavailable") : adapters.isPending ? "Checking…"
             : !item ? "Couldn't check"
             : !item.installed ? "Not installed"
             : !item.available ? "Unavailable"
