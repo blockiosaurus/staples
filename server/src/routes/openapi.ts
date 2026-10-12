@@ -1763,7 +1763,7 @@ function resolveOperationAuthLevel(
   if (/^\/api\/companies\/\{companyId\}\/agents\/\{agentId\}\/dot-binding(?:\/event-test)?$/.test(path)) return "board";
   if (path === "/api/companies/{companyId}/dot-invitations") return "board";
   if (PUBLIC_OPERATIONS.has(key)) return "public";
-  if (key === "POST /api/companies/{companyId}/agent-commentary") return "agent_heartbeat";
+  if (key === "POST /api/companies/{companyId}/agent-commentary" || key === "POST /api/mcp/paperclip-tools") return "agent_heartbeat";
   if (key === "POST /api/mcp/project-tools" || key === "POST /api/mcp/assistant-tools" || key === "POST /api/companies/{companyId}/slack/tasks/{issueId}/tools") return "agent_run";
   if (RUNTIME_TOOLS_OPERATIONS.has(key)) return "runtime_tools";
   if (INSTANCE_ADMIN_OPERATIONS.has(key)) return "instance_admin";
@@ -10985,6 +10985,20 @@ registerCurrentRoute({
     params: z.record(z.string(), z.unknown()).optional(),
   }),
   responses: { 200: r.ok(), 202: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 409: r.conflict },
+});
+
+registerCurrentRoute({
+  method: "post",
+  path: "/api/mcp/paperclip-tools",
+  tags: ["agents"],
+  summary: "Call the Paperclip tool set (issues, comments, documents, approvals, questions) as the run's agent through its MCP transport",
+  body: z.object({
+    jsonrpc: z.literal("2.0"),
+    id: z.union([z.string(), z.number()]).nullable().optional(),
+    method: z.string(),
+    params: z.record(z.string(), z.unknown()).optional(),
+  }),
+  responses: { 200: r.ok(), 202: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
 });
 
 registerCurrentRoute({

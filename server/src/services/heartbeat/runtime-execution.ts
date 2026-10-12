@@ -60,6 +60,7 @@ import { PROVIDER_TRACE_MAX_BYTES } from "../provider-trace-store.js";
 import type { AdapterExecutionResult } from "../../adapters/index.js";
 import { createLocalAgentJwt } from "../../agent-auth-jwt.js";
 import { assistantRuntimeMcpServer } from "./assistant-mcp-server.js";
+import { paperclipRuntimeMcpServer } from "./paperclip-mcp-server.js";
 import { parseObject, asNumber } from "../../adapters/utils.js";
 import { NativeRunnerOwnershipUnverifiedError } from "../native-runtime/native-runner-ownership.js";
 import {
@@ -777,6 +778,14 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
         agent, authToken, apiBaseUrl: configuredPaperclipApiBaseUrl() ? paperclipApiBaseUrl() : null, runId: run.id,
       });
       if (assistantServer) runtimeMcpServers.unshift(assistantServer);
+      const paperclipServer = paperclipRuntimeMcpServer({
+        adapterType: agent.adapterType, authToken, apiBaseUrl: configuredPaperclipApiBaseUrl() ? paperclipApiBaseUrl() : null,
+      });
+      if (paperclipServer) runtimeMcpServers.push(paperclipServer);
+      else if (agent.adapterType === "claude_managed") {
+        logger.warn({ companyId: agent.companyId, agentId: agent.id, runId: run.id },
+          "Hosted run started without the Paperclip tools: no run JWT or no configured API base URL");
+      }
       // Server-owned: only the provisioned Assistant (or every agent, when the
       // operator opts in) may use the server's own provider key.
       const hostedInferenceAllowed = await hostedInferenceAllowedFor(db, agent);

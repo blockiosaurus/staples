@@ -25,6 +25,7 @@ import { agentAvatarRoutes } from "./routes/agent-avatars.js";
 import { decisionModelRoutes } from "./routes/decision-models.js";
 import { aiConnectionRoutes } from "./routes/ai-connections.js";
 import { projectToolRoutes } from "./routes/project-tools.js";
+import { paperclipToolRoutes } from "./routes/paperclip-tools.js";
 import { assistantToolRoutes } from "./routes/assistant-tools.js";
 import { createAssistantTools } from "./services/assistant-tools.js";
 import { emailChannelService } from "./services/email-channels.js";
@@ -830,6 +831,7 @@ export async function createApp(
   api.use(assetRoutes(db, opts.storageService));
   api.use(agentProfileAvatarRoutes(db, opts.storageService));
   api.use(projectToolRoutes(db));
+  api.use(paperclipToolRoutes());
   // In-process dispatch through this same router: each tool call runs as the
   // run's person with full route authorization, validation and audit.
   api.use(assistantToolRoutes(db, createAssistantTools(db, {

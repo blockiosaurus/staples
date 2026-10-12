@@ -11,7 +11,7 @@ import {
   type TurnScript,
 } from "../testing/fake-managed-agents-server.js";
 import { startFakeMcpServer, type FakeMcpServer } from "../testing/fake-mcp-server.js";
-import { execute, resolveNetworking } from "./execute.js";
+import { execute, HOSTED_STAPLES_API_NOTE, resolveNetworking } from "./execute.js";
 import { sessionCodec } from "./session.js";
 import { DEFAULT_MANAGED_AGENTS_BASE_URL } from "../types.js";
 import { testEnvironment } from "./test-environment.js";
@@ -173,6 +173,25 @@ describe("claude_managed execute", () => {
     expect(secondParams.managedAgentVersion).toBe(2);
     expect(secondParams.sessionId).not.toBe(firstParams.sessionId);
     expect(secondParams.fingerprint).not.toBe(firstParams.fingerprint);
+  });
+
+  it("tells the agent to use the paperclip__ tools only when the Staples API tool server is attached", async () => {
+    mcp = await startFakeMcpServer({
+      token: RUN_TOKEN,
+      tools: [{ name: "paperclipGetIssue", description: "Get an issue", inputSchema: { type: "object", properties: { issueId: { type: "string" } } }, handler: () => ({ content: [{ type: "text", text: "{}" }] }) }],
+    });
+    const file = path.join(tmpDir, "AGENTS.md");
+    await fs.writeFile(file, "Be brief.");
+    fake.queueTurns(turn("one", 1), turn("two", 1));
+    await execute(harness({ config: { instructionsFilePath: file }, servers: [{ name: "paperclip", url: mcp.url, token: RUN_TOKEN, connectionId: "paperclip-tools" }] }).ctx);
+    const created = requestsMatching("POST", /^\/v1\/agents$/)[0].body as { system: string; tools: Array<{ name?: string }> };
+    expect(created.system).toBe(`Be brief.\n\n${HOSTED_STAPLES_API_NOTE}`);
+    expect(created.tools.map((t) => t.name)).toContain("paperclip__paperclipGetIssue");
+    expect(JSON.stringify(fake.requests)).not.toContain(RUN_TOKEN);
+
+    await execute(harness({ config: { instructionsFilePath: file }, servers: [{ name: "Other tools", url: mcp.url, token: RUN_TOKEN, connectionId: "c1" }] }).ctx);
+    const systems = fake.requests.filter((r) => r.method === "POST" && /^\/v1\/agents/.test(r.path)).map((r) => (r.body as { system?: string }).system);
+    expect(systems.at(-1)).toBe("Be brief.");
   });
 
   it("starts a new session when the stored one was archived", async () => {

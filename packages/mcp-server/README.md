@@ -88,3 +88,12 @@ Escape hatch:
 
 `paperclipApiRequest` is limited to paths under `/api` and JSON bodies. It is
 meant for endpoints that do not yet have a dedicated MCP tool.
+
+## Hosted runs
+
+`@paperclipai/mcp-server/runtime` exposes the same tool definitions for a server-hosted
+endpoint. Staples serves them as the run-scoped `paperclip` runtime MCP server
+(`POST /api/mcp/paperclip-tools`, authenticated with the run JWT) for agents that cannot
+reach `PAPERCLIP_API_URL`, such as `claude_managed` runs. Each call goes to the REST API
+with the run's own token. The connection tools and the execution-workspace tools are
+left out of that set. Failed tool calls return `isError: true`.

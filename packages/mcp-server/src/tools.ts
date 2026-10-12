@@ -26,6 +26,7 @@ export interface ToolDefinition {
   schema: z.ZodObject;
   execute: (input: Record<string, unknown>) => Promise<{
     content: Array<{ type: "text"; text: string }>;
+    isError?: boolean;
   }>;
 }
 

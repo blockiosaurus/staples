@@ -42,6 +42,20 @@ export const ADAPTER_TYPE = "claude_managed";
 /** Default model (the current model id used throughout the Managed Agents docs, 2026-10-12). */
 export const DEFAULT_MODEL = "claude-opus-5-5";
 export const AGENT_TOOLSET_TYPE = "agent_toolset_20260401";
+/** Runtime MCP server that carries the Staples API tool set (served as `paperclip__<tool>`). */
+export const STAPLES_API_TOOLS_SERVER_NAME = "paperclip";
+/**
+ * Appended to the system prompt when the Staples API tools are attached. The
+ * sandbox cannot reach the Staples API, so the paperclip skill's curl steps map
+ * onto these tools instead.
+ */
+export const HOSTED_STAPLES_API_NOTE = [
+  "## Staples API access (hosted run)",
+  "You run in a cloud sandbox that cannot reach the Staples API, so `PAPERCLIP_API_URL` and curl calls to it do not work here.",
+  "Use the `paperclip__*` tools for every Staples API step the paperclip skill describes. For example: `paperclip__paperclipGetIssue` and `paperclip__paperclipGetHeartbeatContext` to read your task, `paperclip__paperclipAddComment` to comment, `paperclip__paperclipUpdateIssue` to change status, `paperclip__paperclipAskUserQuestions` to ask a question, and `paperclip__paperclipGetDocument` / `paperclip__paperclipUpsertIssueDocument` for documents.",
+  "For any other endpoint, `paperclip__paperclipApiRequest` takes a method and a path relative to `/api` (for example `GET /companies/{companyId}/issues`); `paperclip__paperclipMe` returns your agent and company ids.",
+  "These tools act as you: your agent id, company and run are applied automatically, so you never need an API key or a run id header.",
+].join("\n");
 const DEFAULT_CANCEL_GRACE_MS = 3_000;
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -509,6 +523,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
   }
 
   const tools: AgentTool[] = [{ type: AGENT_TOOLSET_TYPE }, ...proxy.definitions()];
+  const hostedNote = proxy.tools().some((tool) => tool.serverName === STAPLES_API_TOOLS_SERVER_NAME) ? HOSTED_STAPLES_API_NOTE : null;
   const instructions = await readInstructions(config, onLog);
 
   // ---- Skills (native custom skills, or inlined on refusal) -------------------
@@ -548,7 +563,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
   let definitionFp = "";
   const applySkills = (resolution: SkillsResolution) => {
     skills = resolution;
-    system = [instructions, resolution.systemAppendix].filter(Boolean).join("\n\n") || null;
+    system = [instructions, hostedNote, resolution.systemAppendix].filter(Boolean).join("\n\n") || null;
     fingerprint = coreFingerprint({ model, system, skills: resolution.refs });
     definitionFp = `${fingerprint}:${toolsFp}`.slice(0, 200);
   };
