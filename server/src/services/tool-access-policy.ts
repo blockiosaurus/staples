@@ -428,9 +428,10 @@ function argumentFiltersMatch(filters: ToolTrustRuleArgumentFilters | null | und
     for (const [path, pattern] of Object.entries(filters.fieldMatches)) {
       const actual = readPath(ctx.arguments, path);
       if (typeof actual !== "string") return false;
-      // Bounded work per call: never test an over-long string or a pattern
-      // the write-time check would refuse (legacy rows).
-      if (actual.length > POLICY_REGEX_MAX_INPUT_LENGTH || !isSafePolicyRegex(pattern)) return false;
+      // Bounded work per call: never test an over-long string. Stored
+      // patterns run under this cap even if today's write-time check would
+      // refuse them; the cap bounds their cost.
+      if (actual.length > POLICY_REGEX_MAX_INPUT_LENGTH) return false;
       let re: RegExp;
       try {
         re = new RegExp(pattern);
@@ -739,6 +740,30 @@ function policyConditions(policy: typeof toolPolicies.$inferSelect): ToolPolicyC
     : null;
 }
 
+/**
+ * An ask-first policy's conditions with every `fieldMatches` entry whose
+ * argument is too long to test removed, so the rest of its conditions still
+ * decide whether it applies and the over-long argument counts as matching.
+ */
+function withoutOverLongRegexConditions(conditions: ToolPolicyConditions | null, ctx: ToolAccessContext): ToolPolicyConditions | null {
+  if (!conditions) return conditions;
+  const next: Record<string, unknown> = { ...conditions };
+  for (const key of ["arguments", "args"]) {
+    const group = conditionRecord(next[key]);
+    const fieldMatches = group ? conditionRecord(group.fieldMatches) : null;
+    if (!group || !fieldMatches) continue;
+    const kept = Object.fromEntries(Object.entries(fieldMatches).filter(([path]) => {
+      const actual = readPath(ctx.arguments, path);
+      return !(typeof actual === "string" && actual.length > POLICY_REGEX_MAX_INPUT_LENGTH);
+    }));
+    const rest: Record<string, unknown> = { ...group, fieldMatches: kept };
+    if (!Object.keys(kept).length) delete rest.fieldMatches;
+    if (Object.values(rest).some((value) => value !== undefined && value !== null)) next[key] = rest;
+    else delete next[key];
+  }
+  return next as ToolPolicyConditions;
+}
+
 function conditionGroupFail(group: string, reason: string): PolicyConditionEvaluation {
   return { matched: false, matchedGroups: [], failedGroup: group, reason };
 }
@@ -897,13 +922,13 @@ function assertGenericPolicyType(policyType: string) {
 /** Longest string a policy `fieldMatches` regex is ever tested against. */
 export const POLICY_REGEX_MAX_INPUT_LENGTH = 2_000;
 
-type RegexScanAtom = { text: string | null; quantifier: "none" | "bounded" | "unbounded" };
+type RegexScanAtom = { text: string | null; optional: boolean; unbounded: boolean };
 
 /** Upper repeat count above which `{n,m}` is treated like `+`. */
 const REGEX_LARGE_REPEAT = 16;
 const REGEX_OVERLAP_SAMPLE = [
   ...Array.from({ length: 0x7f - 0x20 }, (_, index) => String.fromCharCode(0x20 + index)),
-  "\t", "\n", "\r", "\u00a0", "\u00e9", "\u03bb",
+  "\t", "\n", "\r", " ", "é", "λ",
 ];
 
 function regexAtomsOverlap(left: RegexScanAtom, right: RegexScanAtom): boolean {
@@ -917,37 +942,44 @@ function regexAtomsOverlap(left: RegexScanAtom, right: RegexScanAtom): boolean {
   }
 }
 
+type RegexScanQuantifier = { present: boolean; min: number; max: number };
+
 /**
  * A small structural scan of a policy regex. Returns null when the pattern
- * has a quantified group whose body is itself quantified (`(a+)+`,
- * `(a?){25}`), otherwise the flat list of atoms with their quantifiers
- * (groups appear as a wildcard atom after their contents).
+ * has a repeated group whose body is itself quantified (`(a+)+`,
+ * `(a?){25}`), otherwise the flat list of atoms in order. Each atom records
+ * whether it may match nothing (`?`, `*`, `{0,n}`, inside an optional group
+ * or a lookaround) and whether it repeats without a small bound. A
+ * quantified group appears as a wildcard atom after its contents.
  */
 function scanPolicyRegex(pattern: string): RegexScanAtom[] | null {
   const atoms: RegexScanAtom[] = [];
-  // Per open group: index into atoms where it started and whether it has a quantifier.
-  const groups: Array<{ start: number; quantified: boolean }> = [];
+  // Per open group: index into atoms where it started, whether its body is
+  // quantified, and whether it is a zero-width lookaround.
+  const groups: Array<{ start: number; quantified: boolean; lookaround: boolean }> = [];
   let i = 0;
-  const readQuantifier = (): "none" | "bounded" | "unbounded" | "optional" => {
+  const readQuantifier = (): RegexScanQuantifier => {
     const ch = pattern[i];
-    let kind: "none" | "bounded" | "unbounded" | "optional" = "none";
-    if (ch === "*" || ch === "+") { kind = "unbounded"; i += 1; }
-    else if (ch === "?") { kind = "optional"; i += 1; }
+    let quantifier: RegexScanQuantifier = { present: false, min: 1, max: 1 };
+    if (ch === "*") { quantifier = { present: true, min: 0, max: Infinity }; i += 1; }
+    else if (ch === "+") { quantifier = { present: true, min: 1, max: Infinity }; i += 1; }
+    else if (ch === "?") { quantifier = { present: true, min: 0, max: 1 }; i += 1; }
     else if (ch === "{") {
       const m = /^\{(\d+)(,(\d*))?\}/.exec(pattern.slice(i));
       if (m) {
-        const max = m[2] === undefined ? Number(m[1]) : m[3] === "" ? Infinity : Number(m[3]);
-        kind = max > REGEX_LARGE_REPEAT ? "unbounded" : max > 1 ? "bounded" : "optional";
+        const min = Number(m[1]);
+        const max = m[2] === undefined ? min : m[3] === "" ? Infinity : Number(m[3]);
+        quantifier = { present: true, min, max };
         i += m[0].length;
       }
     }
-    if (kind !== "none" && (pattern[i] === "?" || pattern[i] === "+")) i += 1;
-    return kind;
+    if (quantifier.present && (pattern[i] === "?" || pattern[i] === "+")) i += 1;
+    return quantifier;
   };
   const pushAtom = (text: string | null) => {
     const quantifier = readQuantifier();
-    if (quantifier !== "none" && groups.length) groups[groups.length - 1]!.quantified = true;
-    atoms.push({ text, quantifier: quantifier === "optional" ? "bounded" : quantifier });
+    if (quantifier.present && groups.length) groups[groups.length - 1]!.quantified = true;
+    atoms.push({ text, optional: quantifier.min === 0, unbounded: quantifier.max > REGEX_LARGE_REPEAT });
   };
   while (i < pattern.length) {
     const ch = pattern[i]!;
@@ -964,6 +996,7 @@ function scanPolicyRegex(pattern: string): RegexScanAtom[] | null {
     } else if (ch === "[") {
       let j = i + 1;
       if (pattern[j] === "^") j += 1;
+      if (pattern[j] === "]") j += 1;
       while (j < pattern.length && pattern[j] !== "]") j += pattern[j] === "\\" ? 2 : 1;
       const text = pattern.slice(i, j + 1);
       i = j + 1;
@@ -971,17 +1004,21 @@ function scanPolicyRegex(pattern: string): RegexScanAtom[] | null {
     } else if (ch === "(") {
       const prefix = /^\((?:\?:|\?=|\?!|\?<=|\?<!|\?<[A-Za-z_][A-Za-z0-9_]*>)?/.exec(pattern.slice(i))!;
       i += prefix[0].length;
-      groups.push({ start: atoms.length, quantified: false });
+      groups.push({ start: atoms.length, quantified: false, lookaround: /^\(\?(?:=|!|<=|<!)$/.test(prefix[0]) });
     } else if (ch === ")") {
       i += 1;
       const group = groups.pop();
       const quantifier = readQuantifier();
-      if (quantifier === "unbounded" || quantifier === "bounded") {
-        if (group?.quantified) return null;
+      // A repeated group whose body can itself vary in length backtracks
+      // exponentially: (a+)+, (a?){25}, (.*)*.
+      if (quantifier.present && quantifier.max > 1 && group?.quantified) return null;
+      if (group && (group.lookaround || quantifier.min === 0)) {
+        for (let index = group.start; index < atoms.length; index += 1) atoms[index]!.optional = true;
       }
-      if (quantifier !== "none" && groups.length) groups[groups.length - 1]!.quantified = true;
-      if (group?.quantified && groups.length) groups[groups.length - 1]!.quantified = true;
-      if (quantifier !== "none") atoms.push({ text: null, quantifier: quantifier === "optional" ? "bounded" : quantifier });
+      if ((quantifier.present || group?.quantified) && groups.length) groups[groups.length - 1]!.quantified = true;
+      if (quantifier.present && quantifier.max > 1) {
+        atoms.push({ text: null, optional: quantifier.min === 0, unbounded: quantifier.max > REGEX_LARGE_REPEAT });
+      }
     } else if (ch === "^" || ch === "$" || ch === "|") {
       i += 1;
     } else {
@@ -995,16 +1032,18 @@ function scanPolicyRegex(pattern: string): RegexScanAtom[] | null {
 /**
  * Whether a policy `fieldMatches` regex is safe to run on agent-supplied
  * arguments (which are also capped at POLICY_REGEX_MAX_INPUT_LENGTH). Refuses
- * backreferences, alternation, nested quantifiers (`(a+)+`, `(a?){25}`),
- * adjacent overlapping repeats (`\w+\w+`) and three or more overlapping
- * repeats anywhere (`[\w.-]+\.[\w.-]+\.\w+`), which backtrack
- * exponentially or polynomially.
+ * backreferences, alternation, nested quantifiers (`(a+)+`, `(a?){25}`) and
+ * unbounded repeats that can trade characters with each other: two whose
+ * character classes intersect and that are adjacent, separated only by atoms
+ * that may match nothing (`\w+\w+`, `\d+-?\d+`), or separated only by
+ * atoms both repeats could consume (`[\w.-]+\.[\w.-]+`). Repeats split by
+ * a separator one side cannot consume (`^\d+-\d+-\d+$`,
+ * `^[\w.-]+@[\w.-]+\.\w+$`) are accepted; the input cap bounds their cost.
  */
 export function isSafePolicyRegex(pattern: string): boolean {
   if (pattern.length > 256) return false;
   if (/\\[1-9]/.test(pattern)) return false;
   if (/(^|[^\\])\|/.test(pattern)) return false;
-  if (/\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*{]/.test(pattern)) return false;
   try {
     new RegExp(pattern);
   } catch {
@@ -1012,14 +1051,25 @@ export function isSafePolicyRegex(pattern: string): boolean {
   }
   const atoms = scanPolicyRegex(pattern);
   if (!atoms) return false;
-  for (let index = 1; index < atoms.length; index += 1) {
-    const previous = atoms[index - 1]!;
-    const current = atoms[index]!;
-    if (previous.quantifier === "unbounded" && current.quantifier === "unbounded" && regexAtomsOverlap(previous, current)) return false;
+  for (let index = 0; index < atoms.length; index += 1) {
+    const repeat = atoms[index]!;
+    if (!repeat.unbounded) continue;
+    // Required atoms between this repeat and a later one that this repeat
+    // could also consume (the `\.` in `[\w.-]+\.[\w.-]+`).
+    const absorbed: RegexScanAtom[] = [];
+    for (let next = index + 1; next < atoms.length; next += 1) {
+      const candidate = atoms[next]!;
+      if (
+        candidate.unbounded
+        && regexAtomsOverlap(repeat, candidate)
+        && absorbed.every((between) => regexAtomsOverlap(between, candidate))
+      ) return false;
+      if (candidate.optional) continue;
+      if (!regexAtomsOverlap(repeat, candidate)) break;
+      absorbed.push(candidate);
+    }
   }
-  const repeats = atoms.filter((atom) => atom.quantifier === "unbounded");
-  const overlapping = repeats.filter((atom, index) => repeats.some((other, otherIndex) => otherIndex !== index && regexAtomsOverlap(atom, other)));
-  return overlapping.length < 3;
+  return true;
 }
 
 function assertSupportedPolicyConditions(conditions: Record<string, unknown> | null | undefined) {
@@ -1055,12 +1105,13 @@ function assertSupportedGenericPolicyShape(
   policyType: string,
   conditions: Record<string, unknown> | null | undefined,
   config: Record<string, unknown> | null | undefined,
+  options: { validateConditions?: boolean } = {},
 ) {
   assertGenericPolicyType(policyType);
   if (isRecord(config) && typeof config.source === "string" && RESERVED_TOOL_POLICY_SOURCES.includes(config.source)) {
     throw unprocessable(`Tool policy config source '${config.source}' is managed by Staples and cannot be set directly`);
   }
-  assertSupportedPolicyConditions(conditions);
+  if (options.validateConditions !== false) assertSupportedPolicyConditions(conditions);
   if (policyType !== "rate_limit" && hasConfig(config)) {
     throw unprocessable(`Tool policy type '${policyType}' does not support config`);
   }
@@ -1299,7 +1350,10 @@ export function toolAccessPolicyService(db: Db) {
     const nextPolicyType = input.body.policyType ?? existing.policyType;
     const nextConditions = input.body.conditions !== undefined ? input.body.conditions ?? null : existing.conditions ?? null;
     const nextConfig = input.body.config !== undefined ? input.body.config ?? null : existing.config ?? null;
-    assertSupportedGenericPolicyShape(nextPolicyType, nextConditions, nextConfig);
+    // Stored conditions are re-validated only when this update supplies them:
+    // renaming, disabling or re-prioritizing a policy never fails on a
+    // pattern an older check accepted.
+    assertSupportedGenericPolicyShape(nextPolicyType, nextConditions, nextConfig, { validateConditions: input.body.conditions !== undefined });
     const now = new Date();
     const [policy] = await db
       .update(toolPolicies)
@@ -1775,6 +1829,7 @@ export function toolAccessPolicyService(db: Db) {
     // Conditions (argument regexes included) are evaluated only for policies
     // whose selectors match this call.
     const selectedPolicies = policies.filter((policy) => policySelectorMatches(policy, ctx));
+    const forcedMatchPolicyIds = new Set<string>();
     for (const policy of selectedPolicies) {
       const conditions = policyConditions(policy);
       if (conditions) {
@@ -1800,29 +1855,38 @@ export function toolAccessPolicyService(db: Db) {
             },
           );
         }
-        // A regex condition is never run on an over-long argument or with a
-        // pattern that is no longer considered safe. For an allow such a
-        // condition simply does not match; for a restricting policy (block,
-        // ask first, rate limit) the call fails closed instead of slipping past.
-        const regexArgs = policy.policyType === "allow" ? [] : Object.entries(parsed.data.arguments?.fieldMatches ?? {});
-        const unsafeRegexArg = regexArgs.find(([path, pattern]) => {
+        // A regex condition is never run on an over-long argument. For an
+        // allow or trust rule such a condition simply does not match (the
+        // call falls through to whatever else applies, e.g. ask first). An
+        // ask-first policy treats it as matching, so the call is asked about
+        // rather than denied. Block and rate-limit policies fail closed.
+        const overLongRegexArg = Object.entries(parsed.data.arguments?.fieldMatches ?? {}).find(([path]) => {
           const actual = readPath(ctx.arguments, path);
-          return !isSafePolicyRegex(pattern) || (typeof actual === "string" && actual.length > POLICY_REGEX_MAX_INPUT_LENGTH);
+          return typeof actual === "string" && actual.length > POLICY_REGEX_MAX_INPUT_LENGTH;
         });
-        if (unsafeRegexArg) {
-          return decision(
-            "deny",
-            "deny_policy_block",
-            `Tool access denied because the "${unsafeRegexArg[0]}" argument is too long (over ${POLICY_REGEX_MAX_INPUT_LENGTH} characters) or its policy pattern is unsafe to check.`,
-            effectiveProfileIds,
-            [policy.id],
-            { redactionPlan: redaction.redactionPlan, policyExplanation: { policyId: policy.id, policyType: policy.policyType, selectorMatched: true } },
-          );
+        if (!overLongRegexArg || policy.policyType === "allow" || policy.policyType === "trust_rule") continue;
+        if (policy.policyType === "require_approval") {
+          forcedMatchPolicyIds.add(policy.id);
+          continue;
         }
+        return decision(
+          "deny",
+          "deny_policy_block",
+          `Tool access denied because the "${overLongRegexArg[0]}" argument is too long to check (over ${POLICY_REGEX_MAX_INPUT_LENGTH} characters).`,
+          effectiveProfileIds,
+          [policy.id],
+          { redactionPlan: redaction.redactionPlan, policyExplanation: { policyId: policy.id, policyType: policy.policyType, selectorMatched: true } },
+        );
       }
     }
     const matchingPolicies = selectedPolicies
-      .map((policy) => ({ policy, conditionEvaluation: evaluatePolicyConditions(policyConditions(policy), ctx) }))
+      .map((policy) => ({
+        policy,
+        conditionEvaluation: evaluatePolicyConditions(
+          forcedMatchPolicyIds.has(policy.id) ? withoutOverLongRegexConditions(policyConditions(policy), ctx) : policyConditions(policy),
+          ctx,
+        ),
+      }))
       .filter(({ conditionEvaluation }) => conditionEvaluation.matched);
     // Template guards are applied by type below, not as ordinary blocks.
     const explicitBlock = matchingPolicies.find(({ policy }) => policy.policyType === "block" && !agentTemplateGuardKind(policy));

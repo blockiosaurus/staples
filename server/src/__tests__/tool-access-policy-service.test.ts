@@ -1336,14 +1336,20 @@ describeEmbeddedPostgres("tool access policy service", () => {
   it("rejects fieldMatches patterns that backtrack exponentially or polynomially", async () => {
     const company = await createCompany(db);
     const svc = toolAccessPolicyService(db);
-    for (const pattern of ["(a?){25}a{25}", "^\\w+\\w+\\w+$", "\\w+\\w+$", "[\\w.-]+\\.[\\w.-]+\\.\\w+$", "((a)+)+", "(?:a*)*", ".*.*=.*"]) {
+    for (const pattern of [
+      "(a?){25}a{25}", "^\\w+\\w+\\w+$", "\\w+\\w+\\w+$", "\\w+\\w+$", "[\\w.-]+\\.[\\w.-]+\\.\\w+$", "((a)+)+", "(a+)+$",
+      "(.*)*", "(?:a*)*", ".*.*=.*", "\\d+-?\\d+", "\\d+\\d\\d+",
+    ]) {
       await expect(svc.createPolicy(company.id, {
         name: "Unsafe regex",
         policyType: "block",
         conditions: { arguments: { fieldMatches: { body: pattern } } },
       }), pattern).rejects.toThrow("unsafe regular expression");
     }
-    for (const pattern of ["^[\\s\\S]{1,200}$", "^[a-z0-9_-]+$", "^acct_\\w+$", "^(?:foo)?bar\\d{2,4}$", "^[^@]+@example\\.com$"]) {
+    for (const pattern of [
+      "^[\\s\\S]{1,200}$", "^[a-z0-9_-]+$", "^acct_\\w+$", "^(?:foo)?bar\\d{2,4}$", "^[^@]+@example\\.com$",
+      "^\\d+-\\d+-\\d+$", "^[a-z]+_[a-z]+_[a-z]+$", "^[^@]+@[^@]+\\.[a-z]+$", "^[\\w.-]+@[\\w.-]+\\.\\w+$",
+    ]) {
       await expect(svc.createPolicy(company.id, {
         name: `Safe regex ${pattern}`,
         policyType: "block",
@@ -1381,6 +1387,79 @@ describeEmbeddedPostgres("tool access policy service", () => {
     await expect(decide("the secret word")).resolves.toMatchObject({ decision: "deny", matchedPolicyIds: [block.id] });
     // An over-long argument is never tested; a restricting policy fails closed.
     await expect(decide("x".repeat(10_000))).resolves.toMatchObject({ decision: "deny", matchedPolicyIds: [block.id] });
+  });
+
+  it("revalidates stored conditions on update only when the update supplies conditions", async () => {
+    const company = await createCompany(db);
+    const svc = toolAccessPolicyService(db);
+    // A row an older, looser check accepted.
+    const legacy = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Legacy", policyType: "require_approval", priority: 10,
+      selectors: { toolName: "send_email" }, conditions: { arguments: { fieldMatches: { body: "^\\w+\\w+$" } } },
+    }).returning().then((rows) => rows[0]!);
+    await expect(svc.updatePolicy({ companyId: company.id, policyId: legacy.id, body: { name: "Renamed" } }))
+      .resolves.toMatchObject({ name: "Renamed" });
+    await expect(svc.updatePolicy({ companyId: company.id, policyId: legacy.id, body: { enabled: false } }))
+      .resolves.toMatchObject({ enabled: false });
+    await expect(svc.updatePolicy({ companyId: company.id, policyId: legacy.id, body: { priority: 5 } }))
+      .resolves.toMatchObject({ priority: 5 });
+    await expect(svc.updatePolicy({
+      companyId: company.id, policyId: legacy.id,
+      body: { conditions: { arguments: { fieldMatches: { body: "^\\w+\\w+$" } } } },
+    })).rejects.toThrow("unsafe regular expression");
+    await expect(svc.updatePolicy({
+      companyId: company.id, policyId: legacy.id,
+      body: { conditions: { arguments: { fieldMatches: { body: "^\\d+-\\d+-\\d+$" } } } },
+    })).resolves.toBeTruthy();
+  });
+
+  it("runs stored patterns under the input cap and never turns ask first into a deny over them", async () => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { connection } = await createTool(db, company.id);
+    await db.insert(principalPermissionGrants).values({
+      companyId: company.id, principalType: "agent", principalId: agent.id, permissionKey: "tools:use", scope: {},
+    });
+    // Legacy ask-first row whose pattern today's check refuses: it still runs.
+    const ask = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Ask for words", policyType: "require_approval", priority: 10,
+      selectors: { toolName: "send_email" }, conditions: { arguments: { fieldMatches: { body: "^\\w+\\w+$" } } },
+    }).returning().then((rows) => rows[0]!);
+    const decide = (body: string) => toolAccessPolicyService(db).decide({
+      companyId: company.id,
+      actor: { actorType: "agent", actorId: agent.id, agentId: agent.id },
+      request: { connectionId: connection.id, toolName: "send_email", riskLevel: "write", arguments: { body } },
+    });
+    await expect(decide("hello")).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [ask.id] });
+    await expect(decide("hello world")).resolves.toMatchObject({ decision: "allow" });
+    // Too long to test: asked about, not denied.
+    await expect(decide("x".repeat(10_000))).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [ask.id] });
+  });
+
+  it("falls back to ask first when a trust rule's matched argument is too long", async () => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { connection } = await createTool(db, company.id);
+    await db.insert(principalPermissionGrants).values({
+      companyId: company.id, principalType: "agent", principalId: agent.id, permissionKey: "tools:use", scope: {},
+    });
+    const trust = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Remembered", policyType: "trust_rule", priority: 1,
+      selectors: { agentId: agent.id, toolName: "send_email" },
+      conditions: { arguments: { fieldMatches: { body: "^hi" } } },
+      config: { trustRule: { argumentFilters: { fieldMatches: { body: "^hi" } } } },
+    }).returning().then((rows) => rows[0]!);
+    const ask = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Ask first", policyType: "require_approval", priority: 10,
+      selectors: { toolName: "send_email" },
+    }).returning().then((rows) => rows[0]!);
+    const decide = (body: string) => toolAccessPolicyService(db).decide({
+      companyId: company.id,
+      actor: { actorType: "agent", actorId: agent.id, agentId: agent.id },
+      request: { connectionId: connection.id, toolName: "send_email", riskLevel: "write", arguments: { body } },
+    });
+    await expect(decide("hi there")).resolves.toMatchObject({ decision: "allow", matchedPolicyIds: [trust.id] });
+    await expect(decide(`hi ${"x".repeat(10_000)}`)).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [ask.id] });
   });
 
   it("rejects fieldMatches patterns with ambiguous alternation", async () => {
