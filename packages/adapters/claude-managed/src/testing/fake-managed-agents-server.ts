@@ -11,9 +11,9 @@
  *   and the session goes idle (usage + `session.status_idle` end_turn).
  * - Fault injection: `failNext()` answers matching requests with an error status.
  *
- * Delivery: events go to every open stream for the session. Events emitted while
- * no stream is open are buffered and flushed to the next stream that opens (the
- * real API drops them; buffering keeps tests free of open-before-send races).
+ * Delivery: events go to every open stream for the session. Like the real API,
+ * events emitted while no stream is open are dropped from the stream (they stay in
+ * `emittedEvents()`); opt into `bufferUntilStream` to flush them to the next stream.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -23,7 +23,10 @@ export interface RecordedRequest {
   method: string;
   path: string;
   query: string;
+  /** Request headers; `x-api-key` is replaced with "[redacted]" when present. */
   headers: Record<string, string | string[] | undefined>;
+  /** Whether `x-api-key` matched the fake's key. */
+  hasValidKey: boolean;
   body: unknown;
 }
 
@@ -64,6 +67,11 @@ export interface FakeManagedAgentsServerOptions {
   multilineData?: boolean;
   /** Send `event: ping` keep-alive frames and comment lines between events. */
   keepAlives?: boolean;
+  /**
+   * Buffer events emitted while no stream is open and flush them to the next stream.
+   * Default false: like the real API, such events are dropped from the stream.
+   */
+  bufferUntilStream?: boolean;
 }
 
 interface FakeSession {
@@ -551,7 +559,7 @@ export class FakeManagedAgentsServer {
     session.emitted.push(event);
     const frame = this.formatFrame(event);
     if (session.streams.size === 0) {
-      session.pending.push(frame);
+      if (this.options.bufferUntilStream) session.pending.push(frame);
       return;
     }
     for (const stream of session.streams) stream.write(frame);
@@ -623,7 +631,10 @@ export class FakeManagedAgentsServer {
   }
 
   private record(req: IncomingMessage, path: string, query: string, body: unknown): void {
-    this.requests.push({ method: req.method ?? "GET", path, query, headers: { ...req.headers }, body });
+    const headers = { ...req.headers };
+    const hasValidKey = headers["x-api-key"] === this.apiKey;
+    if (headers["x-api-key"] !== undefined) headers["x-api-key"] = "[redacted]";
+    this.requests.push({ method: req.method ?? "GET", path, query, headers, hasValidKey, body });
   }
 
   private sendJson(res: ServerResponse, status: number, body: unknown): void {

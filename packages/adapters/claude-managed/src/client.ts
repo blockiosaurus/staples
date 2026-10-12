@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import {
   decodeManagedAgentsEvent,
   readSseFrames,
@@ -40,8 +41,18 @@ export interface ManagedAgentsClientOptions {
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
+/**
+ * Retry policy for one call.
+ * - "safe" (default): GET retries 429/5xx/connection errors; POST retries only 429
+ *   (the request was rejected, so it cannot have been applied).
+ * - "none": never retry.
+ * - "all": treat the call as idempotent and retry 429/5xx/connection errors.
+ */
+export type RetryPolicy = "safe" | "none" | "all";
+
 export interface RequestOptions {
   signal?: AbortSignal;
+  retry?: RetryPolicy;
 }
 
 export interface StreamOptions {
@@ -122,7 +133,8 @@ export function budgetFromUsd(usd: number): BudgetLimit | null {
 }
 
 export class ManagedAgentsClient {
-  private readonly apiKey: string;
+  // ECMAScript private field: not enumerable, not reachable via JSON or inspect.
+  readonly #apiKey: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
   private readonly maxRetries: number;
@@ -134,13 +146,21 @@ export class ManagedAgentsClient {
     if (!options.apiKey || !options.apiKey.trim()) {
       throw new Error("ManagedAgentsClient requires an API key");
     }
-    this.apiKey = options.apiKey.trim();
+    this.#apiKey = options.apiKey.trim();
     this.baseUrl = (options.baseUrl?.trim() || DEFAULT_MANAGED_AGENTS_BASE_URL).replace(/\/+$/, "");
     this.fetchImpl = options.fetch ?? ((input, init) => fetch(input, init));
     this.maxRetries = Math.max(0, options.maxRetries ?? 3);
     this.retryBaseDelayMs = Math.max(0, options.retryBaseDelayMs ?? 500);
     this.retryMaxDelayMs = Math.max(0, options.retryMaxDelayMs ?? 30_000);
     this.sleep = options.sleep ?? defaultSleep;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return { baseUrl: this.baseUrl, apiKey: "[redacted]" };
+  }
+
+  [inspect.custom](): string {
+    return `ManagedAgentsClient { baseUrl: '${this.baseUrl}', apiKey: '[redacted]' }`;
   }
 
   // ---- Agents -------------------------------------------------------------
@@ -182,17 +202,26 @@ export class ManagedAgentsClient {
     return this.request("POST", `/sessions/${enc(sessionId)}/archive`, undefined, options);
   }
 
+  /**
+   * Sends user events. Retries default to "safe" (POST: 429 only). Callers may pass
+   * `retry: "all"` for batches that are idempotent per the docs (e.g. only
+   * `user.custom_tool_result`, where a duplicate result has no effect); a batch
+   * containing `user.message` is never retried on 5xx, whatever is requested.
+   */
   sendEvents(sessionId: string, events: UserEventParams[], options?: RequestOptions): Promise<unknown> {
-    return this.request("POST", `/sessions/${enc(sessionId)}/events`, { events }, options);
+    let retry = options?.retry ?? "safe";
+    if (retry === "all" && events.some((event) => event.type === "user.message")) retry = "safe";
+    return this.request("POST", `/sessions/${enc(sessionId)}/events`, { events }, { ...options, retry });
   }
 
   /**
-   * Opens the session's SSE stream and yields typed events until the server closes
-   * the stream or `signal` aborts (abort ends iteration without throwing). The stream
-   * only carries events emitted after it opens, so open it before sending events.
-   * No retries and no reconnect: callers reconcile via the events list if needed.
+   * Opens the session's SSE stream and resolves once the response headers arrive,
+   * i.e. once the server is attached. The stream only carries events emitted after
+   * it opens, so await this BEFORE sending events. Iterate the result for typed
+   * events; iteration ends when the server closes the stream or `signal` aborts
+   * (abort ends iteration without throwing). No retries and no reconnect.
    */
-  async *streamEvents(sessionId: string, options: StreamOptions = {}): AsyncGenerator<ManagedAgentsEvent> {
+  async openEventStream(sessionId: string, options: StreamOptions = {}): Promise<AsyncIterable<ManagedAgentsEvent>> {
     const { signal } = options;
     const path = `/sessions/${enc(sessionId)}/events/stream`;
     let response: Response;
@@ -203,13 +232,23 @@ export class ManagedAgentsClient {
         signal,
       });
     } catch (error) {
-      if (signal?.aborted) return;
+      if (signal?.aborted) return emptyIterable();
       throw this.connectionError("GET", path, error);
     }
     if (!response.ok) throw await this.httpError("GET", path, response);
-    if (!response.body) return;
+    const body = response.body;
+    if (!body) return emptyIterable();
+    return this.iterateStream(path, body, signal);
+  }
+
+  /** Lazy convenience wrapper around `openEventStream` (opens on first iteration). */
+  async *streamEvents(sessionId: string, options: StreamOptions = {}): AsyncGenerator<ManagedAgentsEvent> {
+    yield* await this.openEventStream(sessionId, options);
+  }
+
+  private async *iterateStream(path: string, body: ReadableStream<Uint8Array>, signal?: AbortSignal): AsyncGenerator<ManagedAgentsEvent> {
     try {
-      for await (const frame of readSseFrames(response.body)) {
+      for await (const frame of readSseFrames(body)) {
         if (frame.event && SSE_KEEPALIVE_EVENTS.has(frame.event)) continue;
         const streamError = sseErrorFromFrame(frame);
         if (streamError) {
@@ -249,7 +288,7 @@ export class ManagedAgentsClient {
 
   private headers(): Record<string, string> {
     return {
-      "x-api-key": this.apiKey,
+      "x-api-key": this.#apiKey,
       "anthropic-version": ANTHROPIC_VERSION,
       "anthropic-beta": MANAGED_AGENTS_BETA,
     };
@@ -257,6 +296,13 @@ export class ManagedAgentsClient {
 
   private async request<T>(method: "GET" | "POST", path: string, body: unknown, options?: RequestOptions): Promise<T> {
     const signal = options?.signal;
+    const policy = options?.retry ?? "safe";
+    const idempotent = policy === "all" || (policy === "safe" && method === "GET");
+    const canRetry = (status: number | null) => {
+      if (policy === "none") return false;
+      if (status === 429) return true; // rejected: never applied
+      return idempotent; // 5xx or connection error
+    };
     let attempt = 0;
     for (;;) {
       let response: Response;
@@ -273,8 +319,8 @@ export class ManagedAgentsClient {
         });
       } catch (error) {
         if (signal?.aborted) throw error;
-        // Connection failures are retried only for reads: a POST may have been applied.
-        if (method === "GET" && attempt < this.maxRetries) {
+        // A connection failure may have reached the server: retry only idempotent calls.
+        if (canRetry(null) && attempt < this.maxRetries) {
           await this.sleep(this.backoffMs(attempt, null), signal);
           attempt += 1;
           continue;
@@ -283,9 +329,19 @@ export class ManagedAgentsClient {
       }
       if (response.ok) {
         const text = await response.text();
-        return (text ? JSON.parse(text) : {}) as T;
+        if (!text) return {} as T;
+        try {
+          return JSON.parse(text) as T;
+        } catch {
+          throw new ManagedAgentsApiError({
+            // Redact before truncating so a key cut at the boundary cannot leak a prefix.
+            message: `Managed Agents API ${method} ${path} returned invalid JSON (${response.status}): ${this.redact(text).slice(0, 200)}`,
+            status: response.status,
+            errorType: "invalid_response",
+          });
+        }
       }
-      if (isRetryableStatus(response.status) && attempt < this.maxRetries) {
+      if (isRetryableStatus(response.status) && canRetry(response.status) && attempt < this.maxRetries) {
         const retryAfter = response.headers.get("retry-after");
         await response.body?.cancel().catch(() => undefined);
         await this.sleep(this.backoffMs(attempt, retryAfter), signal);
@@ -331,10 +387,14 @@ export class ManagedAgentsClient {
   }
 
   private redact(message: string): string {
-    return message.split(this.apiKey).join("[redacted]");
+    return message.split(this.#apiKey).join("[redacted]");
   }
 }
 
 function enc(id: string): string {
   return encodeURIComponent(id);
+}
+
+function emptyIterable(): AsyncIterable<ManagedAgentsEvent> {
+  return (async function* () {})();
 }

@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { budgetFromUsd, ManagedAgentsApiError, ManagedAgentsClient, type ManagedAgentsEvent } from "./client.js";
 import {
@@ -26,7 +27,7 @@ async function setup(fake: FakeManagedAgentsServer, client: ManagedAgentsClient)
   return { agent, env, session };
 }
 
-async function collectUntilIdle(stream: AsyncGenerator<ManagedAgentsEvent>, onEvent?: (e: ManagedAgentsEvent) => Promise<void>) {
+async function collectUntilIdle(stream: AsyncIterable<ManagedAgentsEvent>, onEvent?: (e: ManagedAgentsEvent) => Promise<void>) {
   const events: ManagedAgentsEvent[] = [];
   for await (const event of stream) {
     events.push(event);
@@ -52,7 +53,7 @@ describe("ManagedAgentsClient against the fake server", () => {
   it("sends the required headers on every request, including the stream", async () => {
     const { session } = await setup(fake, client);
     fake.queueTurns(simpleTurn("hi"));
-    const stream = client.streamEvents(session.id);
+    const stream = await client.openEventStream(session.id);
     await client.sendEvents(session.id, [{ type: "user.message", content: [{ type: "text", text: "hello" }] }]);
     await collectUntilIdle(stream);
     await client.getSession(session.id);
@@ -60,7 +61,8 @@ describe("ManagedAgentsClient against the fake server", () => {
 
     expect(fake.requests.length).toBeGreaterThanOrEqual(7);
     for (const request of fake.requests) {
-      expect(request.headers["x-api-key"]).toBe(fake.apiKey);
+      expect(request.hasValidKey).toBe(true);
+      expect(request.headers["x-api-key"]).toBe("[redacted]");
       expect(request.headers["anthropic-version"]).toBe("2023-06-01");
       expect(request.headers["anthropic-beta"]).toBe("managed-agents-2026-04-01");
       expect(request.query).toBe("?beta=true");
@@ -92,7 +94,7 @@ describe("ManagedAgentsClient against the fake server", () => {
       { kind: "emit", event: fakeEvents.usage({ inputTokens: 500, outputTokens: 50, listCostCents: 12 }) },
       { kind: "emit", event: fakeEvents.idle() },
     ]);
-    const stream = client.streamEvents(session.id);
+    const stream = await client.openEventStream(session.id);
     await client.sendEvents(session.id, [{ type: "user.message", content: [{ type: "text", text: "go" }] }]);
     const events = await collectUntilIdle(stream, async (event) => {
       if (event.type === "agent.custom_tool_use") {
@@ -128,7 +130,7 @@ describe("ManagedAgentsClient against the fake server", () => {
     client = new ManagedAgentsClient({ apiKey: fake.apiKey, baseUrl: fake.baseUrl, sleep: noSleep });
     const { session } = await setup(fake, client);
     fake.queueTurns(simpleTurn("multi, \"quoted\" line"));
-    const stream = client.streamEvents(session.id);
+    const stream = await client.openEventStream(session.id);
     await client.sendEvents(session.id, [{ type: "user.message", content: [{ type: "text", text: "go" }] }]);
     const events = await collectUntilIdle(stream);
     expect(events.map((e) => e.type)).toEqual(["session.status_running", "agent.message", "session.usage", "session.status_idle"]);
@@ -143,7 +145,7 @@ describe("ManagedAgentsClient against the fake server", () => {
     const session = await client.createSession({ agent: agent.id, environment_id: env.id, budget });
     expect(session.budget).toEqual(budget);
     fake.queueTurns(budgetReachedTurn(127, budget));
-    const stream = client.streamEvents(session.id);
+    const stream = await client.openEventStream(session.id);
     await client.sendEvents(session.id, [{ type: "user.message", content: [{ type: "text", text: "go" }] }]);
     const events = await collectUntilIdle(stream);
     const idle = events.at(-1);
@@ -154,7 +156,7 @@ describe("ManagedAgentsClient against the fake server", () => {
   it("interrupts a running turn and the session goes idle", async () => {
     const { session } = await setup(fake, client);
     fake.queueTurns([{ kind: "emit", event: fakeEvents.running() }, { kind: "hang" }, { kind: "emit", event: fakeEvents.agentMessage("never") }]);
-    const stream = client.streamEvents(session.id);
+    const stream = await client.openEventStream(session.id);
     await client.sendEvents(session.id, [{ type: "user.message", content: [{ type: "text", text: "go" }] }]);
     const events = await collectUntilIdle(stream, async (event) => {
       if (event.type === "session.status_running") await client.sendEvents(session.id, [{ type: "user.interrupt" }]);
@@ -169,7 +171,7 @@ describe("ManagedAgentsClient against the fake server", () => {
     const { session } = await setup(fake, client);
     fake.queueTurns([{ kind: "emit", event: fakeEvents.running() }, { kind: "hang" }]);
     const controller = new AbortController();
-    const stream = client.streamEvents(session.id, { signal: controller.signal });
+    const stream = await client.openEventStream(session.id, { signal: controller.signal });
     await client.sendEvents(session.id, [{ type: "user.message", content: [{ type: "text", text: "go" }] }]);
     const seen: string[] = [];
     for await (const event of stream) {
@@ -179,13 +181,50 @@ describe("ManagedAgentsClient against the fake server", () => {
     expect(seen).toEqual(["session.status_running"]);
   });
 
+  it("drops events emitted before the stream opens (mirrors the real API)", async () => {
+    const { session } = await setup(fake, client);
+    fake.queueTurns(simpleTurn("early"), simpleTurn("late"));
+    await client.sendEvents(session.id, [{ type: "user.message", content: [{ type: "text", text: "first" }] }]);
+    await fake.settled();
+    expect(fake.emittedEvents(session.id).map((e) => e.type)).toContain("agent.message");
+    const stream = await client.openEventStream(session.id);
+    await client.sendEvents(session.id, [{ type: "user.message", content: [{ type: "text", text: "second" }] }]);
+    const events = await collectUntilIdle(stream);
+    const texts = events.flatMap((e) => (e.type === "agent.message" ? e.content.map((c) => (c as { text?: string }).text) : []));
+    expect(texts).toEqual(["late"]);
+  });
+
+  it("can buffer events until a stream opens when opted in", async () => {
+    await fake.close();
+    fake = await startFakeManagedAgentsServer({ bufferUntilStream: true });
+    client = new ManagedAgentsClient({ apiKey: fake.apiKey, baseUrl: fake.baseUrl, sleep: noSleep });
+    const { session } = await setup(fake, client);
+    fake.queueTurns(simpleTurn("buffered"));
+    await client.sendEvents(session.id, [{ type: "user.message", content: [{ type: "text", text: "go" }] }]);
+    await fake.settled();
+    const events = await collectUntilIdle(await client.openEventStream(session.id));
+    expect(events.map((e) => e.type)).toEqual(["session.status_running", "agent.message", "session.usage", "session.status_idle"]);
+  });
+
+  it("streamEvents is a lazy wrapper over openEventStream", async () => {
+    const { session } = await setup(fake, client);
+    fake.queueTurns(simpleTurn("lazy"));
+    const stream = client.streamEvents(session.id);
+    const first = stream.next(); // opens the stream
+    while (!fake.requests.some((r) => r.path.endsWith("/events/stream"))) await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 20));
+    await client.sendEvents(session.id, [{ type: "user.message", content: [{ type: "text", text: "go" }] }]);
+    expect((await first).value).toMatchObject({ type: "session.status_running" });
+    await stream.return(undefined);
+  });
+
   it("passes unknown event types through", async () => {
     const { session } = await setup(fake, client);
     fake.queueTurns([
       { kind: "emit", event: { type: "span.model_request_start" } },
       { kind: "emit", event: fakeEvents.idle() },
     ]);
-    const stream = client.streamEvents(session.id);
+    const stream = await client.openEventStream(session.id);
     await client.sendEvents(session.id, [{ type: "user.message", content: [{ type: "text", text: "go" }] }]);
     const events = await collectUntilIdle(stream);
     expect(events[0]).toMatchObject({ type: "unknown", eventType: "span.model_request_start" });
@@ -203,7 +242,7 @@ describe("ManagedAgentsClient errors and retries", () => {
     await fake.close();
   });
 
-  it("retries 429 and 5xx up to 3 times with backoff, honoring retry-after", async () => {
+  it("retries GETs on 429 and 5xx up to 3 times with backoff, honoring retry-after", async () => {
     const delays: number[] = [];
     const client = new ManagedAgentsClient({
       apiKey: fake.apiKey,
@@ -213,17 +252,51 @@ describe("ManagedAgentsClient errors and retries", () => {
         delays.push(ms);
       },
     });
-    fake.failNext({ method: "POST", path: "/v1/agents", status: 429, retryAfterSeconds: 2 });
-    fake.failNext({ method: "POST", path: "/v1/agents", status: 503 });
-    fake.failNext({ method: "POST", path: "/v1/agents", status: 529 });
     const agent = await client.createAgent({ name: "a", model: "m" });
-    expect(agent.id).toMatch(/^agent_/);
-    expect(fake.requests.filter((r) => r.path === "/v1/agents")).toHaveLength(4);
+    fake.failNext({ method: "GET", status: 429, retryAfterSeconds: 2 });
+    fake.failNext({ method: "GET", status: 503 });
+    fake.failNext({ method: "GET", status: 529 });
+    expect((await client.getAgent(agent.id)).id).toBe(agent.id);
+    expect(fake.requests.filter((r) => r.method === "GET")).toHaveLength(4);
     expect(delays[0]).toBe(2000);
     expect(delays[1]).toBeGreaterThanOrEqual(200);
     expect(delays[1]).toBeLessThan(250);
     expect(delays[2]).toBeGreaterThanOrEqual(400);
     expect(delays[2]).toBeLessThan(500);
+  });
+
+  it("retries POSTs only on 429 by default, never on 5xx", async () => {
+    const client = new ManagedAgentsClient({ apiKey: fake.apiKey, baseUrl: fake.baseUrl, sleep: noSleep });
+    fake.failNext({ method: "POST", path: "/v1/agents", status: 429 });
+    fake.failNext({ method: "POST", path: "/v1/agents", status: 429 });
+    expect((await client.createAgent({ name: "a", model: "m" })).id).toMatch(/^agent_/);
+    expect(fake.requests.filter((r) => r.path === "/v1/agents")).toHaveLength(3);
+
+    fake.failNext({ method: "POST", path: "/v1/agents", status: 503 });
+    await expect(client.createAgent({ name: "b", model: "m" })).rejects.toMatchObject({ status: 503, retryable: true });
+    expect(fake.requests.filter((r) => r.path === "/v1/agents")).toHaveLength(4);
+  });
+
+  it("sendEvents: user.message is never retried on 5xx; custom tool results may opt in", async () => {
+    const client = new ManagedAgentsClient({ apiKey: fake.apiKey, baseUrl: fake.baseUrl, sleep: noSleep });
+    const agent = await client.createAgent({ name: "a", model: "m" });
+    const env = await client.createEnvironment({ name: "e" });
+    const session = await client.createSession({ agent: agent.id, environment_id: env.id });
+    const eventPosts = () => fake.requests.filter((r) => r.path === `/v1/sessions/${session.id}/events`).length;
+
+    fake.failNext({ method: "POST", path: /\/events$/, status: 500 });
+    await expect(
+      client.sendEvents(session.id, [{ type: "user.message", content: [{ type: "text", text: "x" }] }], { retry: "all" }),
+    ).rejects.toMatchObject({ status: 500 });
+    expect(eventPosts()).toBe(1);
+
+    fake.failNext({ method: "POST", path: /\/events$/, status: 502, times: 2 });
+    await client.sendEvents(session.id, [{ type: "user.custom_tool_result", custom_tool_use_id: "sevt_x", content: [] }], { retry: "all" });
+    expect(eventPosts()).toBe(4);
+
+    fake.failNext({ method: "POST", path: /\/events$/, status: 429 });
+    await expect(client.sendEvents(session.id, [{ type: "user.interrupt" }], { retry: "none" })).rejects.toMatchObject({ status: 429 });
+    expect(eventPosts()).toBe(5);
   });
 
   it("gives up after 3 retries with a typed error", async () => {
@@ -281,6 +354,28 @@ describe("ManagedAgentsClient errors and retries", () => {
     const connError = (await offline.getAgent("agent_x").catch((e: unknown) => e)) as ManagedAgentsApiError;
     expect(connError).toMatchObject({ status: 0, errorType: "connection_error" });
     expect(connError.message).not.toContain(fake.apiKey);
+  });
+
+  it("never exposes the API key through JSON.stringify or util.inspect", () => {
+    const secret = "sk-ant-serialization-secret-999";
+    const client = new ManagedAgentsClient({ apiKey: secret, baseUrl: fake.baseUrl });
+    expect(JSON.stringify(client)).not.toContain(secret);
+    expect(JSON.stringify({ nested: { client } })).not.toContain(secret);
+    expect(inspect(client, { depth: 10, showHidden: true })).not.toContain(secret);
+    expect(inspect({ client }, { depth: 10 })).not.toContain(secret);
+    expect(Object.values(client).map(String).join(" ")).not.toContain(secret);
+  });
+
+  it("wraps an invalid JSON 2xx body in a redacted, truncated error", async () => {
+    const client = new ManagedAgentsClient({
+      apiKey: "sk-ant-json-secret",
+      fetch: async () => new Response(`not json sk-ant-json-secret ${"x".repeat(500)}`, { status: 200 }),
+    });
+    const error = (await client.getAgent("agent_x").catch((e: unknown) => e)) as ManagedAgentsApiError;
+    expect(error).toBeInstanceOf(ManagedAgentsApiError);
+    expect(error).toMatchObject({ status: 200, errorType: "invalid_response" });
+    expect(error.message).not.toContain("sk-ant-json-secret");
+    expect(error.message.length).toBeLessThan(400);
   });
 
   it("rejects an empty API key up front", () => {
