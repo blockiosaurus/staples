@@ -1,12 +1,19 @@
+import { hasAnthropicKeyBinding } from "./assistant-setup.js";
+
 /**
- * Hosted inference: the Staples server holds an Anthropic API key, so a new
- * company's Assistant can run on Claude (hosted, Managed Agents) without any
- * setup. Only a boolean leaves this module; the key itself is never returned,
- * logged, or copied into an agent's config (the claude_managed adapter reads
- * the server env itself, and only for the default API base URL).
+ * Hosted inference: the Staples operator gives the server a dedicated Anthropic
+ * API key, `STAPLES_HOSTED_ANTHROPIC_API_KEY`, so a new company's Assistant (and
+ * its hires) can run on Claude (hosted, Managed Agents) without any setup, under
+ * hard-stop spending caps. A plain `ANTHROPIC_API_KEY` in the server env never
+ * turns hosted inference on (many local users export it for other tools).
+ * Only a boolean leaves this module; the key itself is never returned, logged,
+ * or copied into an agent's config (the claude_managed adapter reads the server
+ * env itself, and only for the default API base URL).
  */
 export const HOSTED_INFERENCE_ADAPTER_TYPE = "claude_managed" as const;
 export const HOSTED_INFERENCE_MODEL = "claude-opus-5-5";
+/** The server env var holding the operator's hosted-inference key. */
+export const HOSTED_ANTHROPIC_API_KEY_ENV = "STAPLES_HOSTED_ANTHROPIC_API_KEY";
 
 export interface HostedInference {
   available: boolean;
@@ -14,11 +21,16 @@ export interface HostedInference {
   model: string;
 }
 
-/** Available iff ANTHROPIC_API_KEY is set (non-blank) and STAPLES_HOSTED_INFERENCE is not "off". */
+/**
+ * Available iff STAPLES_HOSTED_ANTHROPIC_API_KEY is set (non-blank) and
+ * STAPLES_HOSTED_INFERENCE is not "off". The opt-out disables only this hosted
+ * key path; the adapter's pre-existing plain ANTHROPIC_API_KEY fallback is
+ * unaffected (and uncapped).
+ */
 export function hostedInference(env: NodeJS.ProcessEnv = process.env): HostedInference {
   const optedOut = env.STAPLES_HOSTED_INFERENCE?.trim().toLowerCase() === "off";
   return {
-    available: !optedOut && Boolean(env.ANTHROPIC_API_KEY?.trim()),
+    available: !optedOut && Boolean(env[HOSTED_ANTHROPIC_API_KEY_ENV]?.trim()),
     adapterType: HOSTED_INFERENCE_ADAPTER_TYPE,
     model: HOSTED_INFERENCE_MODEL,
   };
@@ -61,4 +73,18 @@ export function hostedAgentBudgetCents(env: NodeJS.ProcessEnv = process.env): nu
  */
 export function hostedCompanyBudgetCents(env: NodeJS.ProcessEnv = process.env): number {
   return centsFromEnv(env.STAPLES_HOSTED_COMPANY_BUDGET_CENTS, DEFAULT_HOSTED_COMPANY_BUDGET_CENTS);
+}
+
+/**
+ * Whether this agent would run on the operator's hosted-inference key: hosted
+ * inference is available, and the agent is on the hosted adapter without its
+ * own Anthropic key. (Using the key still needs the server's per-run grant,
+ * `hostedInferenceAllowedFor`, which also ensures the caps.)
+ */
+export function usesHostedInferenceKey(
+  agent: { adapterType: string; adapterConfig?: unknown },
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return agent.adapterType === HOSTED_INFERENCE_ADAPTER_TYPE && hostedInference(env).available
+    && !hasAnthropicKeyBinding(agent.adapterConfig);
 }

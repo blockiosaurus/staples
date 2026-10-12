@@ -25,7 +25,7 @@ import { getEmbeddedPostgresTestSupport } from "./helpers/embedded-postgres.js";
  * (native_mcp delivery, run JWT) with only its execute stubbed or pointed at a
  * fake Managed Agents API, so the run preparation path is the production one.
  */
-type CapturedRun = { agentId: string; servers: AdapterRuntimeMcpServer[]; projectTools: string[] };
+type CapturedRun = { agentId: string; servers: AdapterRuntimeMcpServer[]; projectTools: string[]; budgetUsd?: unknown; hosted?: boolean };
 
 type JsonRpcResult = { result?: Record<string, unknown> & { tools?: Array<{ name: string }> }; error?: { code: number; message: string } };
 
@@ -77,7 +77,7 @@ const support = await getEmbeddedPostgresTestSupport();
           const { body } = await rpc(projects.url, projects.token, "tools/list");
           projectTools = (body?.result?.tools ?? []).map((t) => t.name);
         }
-        runs.push({ agentId: ctx.agent.id, servers, projectTools });
+        runs.push({ agentId: ctx.agent.id, servers, projectTools, budgetUsd: ctx.context.paperclipBudgetRemainingUsd, hosted: ctx.hostedInferenceAllowed });
         return { exitCode: 0, signal: null, timedOut: false, summary: "Done." };
       },
     });
@@ -131,6 +131,32 @@ const support = await getEmbeddedPostgresTestSupport();
       await vi.waitFor(async () => expect((await heartbeat.getRun(run!.id))?.status).toBe("succeeded"), { timeout: 30_000, interval: 100 });
     } finally {
       await heartbeat.drainActiveRunExecutions();
+    }
+  }, 120_000);
+
+  it("sets the per-session spending limit from the smallest remaining hard stop and marks hosted-key runs", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "sk-ant-test-dummy-hosted");
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE", "");
+    const { userId, agent, issue } = await hostedHire("Capped researcher");
+    const heartbeat = heartbeatService(server.db);
+    try {
+      // A wake context cannot raise the limit or spoof the hosted marker.
+      const run = await heartbeat.wakeup(agent.id, {
+        source: "assignment", reason: "issue_assigned", triggerDetail: "system",
+        payload: { issueId: issue.id },
+        contextSnapshot: { issueId: issue.id, wakeReason: "issue_assigned", responsibleUserId: userId, paperclipBudgetRemainingUsd: 9999, hostedInference: false },
+      });
+      await vi.waitFor(() => expect(runs.filter((r) => r.agentId === agent.id)).toHaveLength(1), { timeout: 30_000, interval: 100 });
+      const captured = runs.find((r) => r.agentId === agent.id)!;
+      expect(captured.hosted).toBe(true);
+      // The hosted caps were ensured first: agent $20, hosted company $50 -> $20.
+      expect(captured.budgetUsd).toBe(20);
+      await vi.waitFor(async () => expect((await heartbeat.getRun(run!.id))?.status).toBe("succeeded"), { timeout: 30_000, interval: 100 });
+      const [row] = await server.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run!.id));
+      expect(row!.contextSnapshot).toMatchObject({ hostedInference: true });
+    } finally {
+      await heartbeat.drainActiveRunExecutions();
+      vi.unstubAllEnvs();
     }
   }, 120_000);
 

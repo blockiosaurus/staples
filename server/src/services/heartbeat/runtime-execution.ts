@@ -1,5 +1,6 @@
 import { parseNativeSessionGoalControl } from "./scheduling.js";
 import { hostedInferenceAllowedFor } from "../hosted-inference-access.js";
+import { remainingHardStopCentsForRun } from "../budgets.js";
 import { isHeartbeatRunTerminalStatus } from "./run-lifecycle.js";
 import {
   PAPERCLIP_WAKE_PAYLOAD_KEY,
@@ -786,9 +787,33 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
         logger.warn({ companyId: agent.companyId, agentId: agent.id, runId: run.id },
           "Hosted run started without the Paperclip tools: no run JWT or no configured API base URL");
       }
-      // Server-owned: only the provisioned Assistant (or every agent, when the
-      // operator opts in) may use the server's own provider key.
+      // Server-owned: any claude_managed agent without its own key may use the
+      // operator's hosted-inference key, once its hard-stop caps are ensured.
       const hostedInferenceAllowed = await hostedInferenceAllowedFor(db, agent);
+      // Mark the run so its cost events count toward the hosted company cap
+      // (hosted_billed_cents). Server-owned: a value carried in from a wake
+      // context is overwritten, so it cannot be spoofed either way.
+      if (hostedInferenceAllowed || context.hostedInference !== undefined) {
+        context.hostedInference = hostedInferenceAllowed;
+        adapterContext.hostedInference = hostedInferenceAllowed;
+        await db.update(heartbeatRuns).set({
+          contextSnapshot: sql`coalesce(${heartbeatRuns.contextSnapshot}, '{}'::jsonb) || ${JSON.stringify({ hostedInference: hostedInferenceAllowed })}::jsonb`,
+        }).where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.companyId, agent.companyId)));
+      }
+      // Per-session spending limit: the smallest remaining hard-stop amount of
+      // the run's applicable budget policies. Server-owned: never taken from
+      // the wake context.
+      delete adapterContext.paperclipBudgetRemainingUsd;
+      try {
+        const remainingCents = await remainingHardStopCentsForRun(db, {
+          companyId: agent.companyId, agentId: agent.id, projectId: issueRef?.projectId ?? null, hostedInference: hostedInferenceAllowed,
+        });
+        // Admission already refused an exhausted scope; never send "no cap" for one.
+        if (remainingCents !== null) adapterContext.paperclipBudgetRemainingUsd = Math.max(remainingCents, 1) / 100;
+      } catch (error) {
+        logger.warn({ err: error, companyId: agent.companyId, agentId: agent.id, runId: run.id },
+          "Could not compute the remaining budget for the run's spending limit");
+      }
       const runtimeMcp = createAdapterRuntimeMcpAccess(runtimeMcpServers);
       if (runtimeTools && runtimeToolDelivery === "invocation_context") {
         adapterContext.paperclipRuntimeTools = runtimeTools;

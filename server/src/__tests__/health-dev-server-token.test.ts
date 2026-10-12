@@ -20,7 +20,7 @@ function createDevServerStatusFile(payload: unknown) {
 }
 
 beforeEach(() => {
-  vi.stubEnv("ANTHROPIC_API_KEY", "");
+  vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "");
 });
 
 afterEach(() => {

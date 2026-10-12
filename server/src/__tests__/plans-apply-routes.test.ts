@@ -1413,7 +1413,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       afterEach(() => { vi.unstubAllEnvs(); });
       const hostedOn = () => {
         vi.stubEnv("STAPLES_HOSTED_INFERENCE", "");
-        vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-dummy");
+        vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "sk-ant-test-dummy");
       };
       async function assistantOnHosted(s: Seed, adapterConfig: Record<string, unknown> = { model: "claude-opus-5-5" }) {
         await db.update(agents).set({
@@ -1488,7 +1488,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         expect((hired!.adapterConfig as { env?: Record<string, unknown> }).env?.ANTHROPIC_API_KEY).toMatchObject({ type: "secret_ref", secretId: secret.id });
         expect(await monthlyPolicy("company", s.companyId)).toBeNull();
         vi.stubEnv("STAPLES_HOSTED_INFERENCE", "");
-        vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-dummy");
+        vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "sk-ant-test-dummy");
         expect(await hostedInferenceAllowedFor(db, hired!)).toBe(false);
         expect(await monthlyPolicy("company", s.companyId)).toBeNull();
       }, 120_000);
@@ -1512,7 +1512,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         expect(hosted).toMatchObject({ hostedInference: true, recommendedAdapterType: "claude_managed" });
         expect(hosted.adapterTypes).toContain("claude_managed");
         expect(JSON.stringify(hosted)).not.toContain("sk-ant-test-dummy");
-        vi.stubEnv("ANTHROPIC_API_KEY", "");
+        vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "");
         const local = await connection(await seed());
         expect(local.hostedInference).toBe(false);
         expect(local.adapterTypes).not.toContain("claude_managed");
@@ -1521,7 +1521,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       it("proposals: claude_managed hires are proposable only where they can run; a hosted templated plan resolves to claude_managed", async () => {
         const { pinPlanProposalBody, validateGovernedAction } = await import("../services/assistant-proposed-actions.js");
         const hireBody = { name: "Researcher", role: "researcher", adapterType: "claude_managed" };
-        vi.stubEnv("ANTHROPIC_API_KEY", "");
+        vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "");
         const local = await seed();
         await expect(validateGovernedAction(db as never, { method: "POST", path: `/api/companies/${local.companyId}/agent-hires`, body: hireBody }, local.companyId))
           .rejects.toThrow(/claude_managed is not available in this company/);
@@ -1572,7 +1572,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       }, 120_000);
 
       it("without hosted inference or a company key, claude_managed is not hireable and templated hires keep the Assistant's adapter", async () => {
-        vi.stubEnv("ANTHROPIC_API_KEY", "");
+        vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "");
         const s = await seed();
         const { app } = buildApp(sessionActor(s));
         const refused = await apply(app, s.companyId, { agents: [{ clientKey: "w", name: "W", role: "general", adapterType: "claude_managed" }], tasks: [{ clientKey: "t", title: "Start", assigneeClientKey: "w" }] });

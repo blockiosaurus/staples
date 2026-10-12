@@ -1,7 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { agents, budgetPolicies, companySecrets, type Db } from "@paperclipai/db";
 import { ASSISTANT_BUILT_IN_AGENT_KEY } from "@paperclipai/shared";
-import { budgetService } from "./budgets.js";
+import { HOSTED_BILLED_CENTS_METRIC, budgetService } from "./budgets.js";
+import { isUniqueViolation } from "../db-errors.js";
 import {
   HOSTED_INFERENCE_ADAPTER_TYPE,
   HOSTED_INFERENCE_MODEL,
@@ -9,46 +10,53 @@ import {
   hostedAssistantBudgetCents,
   hostedCompanyBudgetCents,
   hostedInference,
+  usesHostedInferenceKey,
 } from "./hosted-inference.js";
 import { PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
-import { hasAnthropicKeyBinding } from "./assistant-setup.js";
 import { readBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
 import { logger } from "../middleware/logger.js";
 
 type BudgetScope = { scopeType: "agent" | "company"; scopeId: string };
+type HostedPolicyMetric = "billed_cents" | typeof HOSTED_BILLED_CENTS_METRIC;
+
+/** Activity-log actor for the policies the server creates for hosted inference. */
+const HOSTED_INFERENCE_ACTOR = { actorType: "system", actorId: "hosted_inference" } as const;
 
 /**
- * Ensure an ACTIVE hard-stop monthly `billed_cents` policy on one scope.
+ * Ensure an ACTIVE hard-stop monthly policy on one scope and metric.
  * Idempotent: an existing active hard-stop policy with a positive amount is
  * kept as is (never lowered, never raised); a disabled, soft or zeroed one is
  * re-activated as a hard stop with its positive amount, else `cents`.
- * `cents` 0 means uncapped (nothing is written).
+ * `cents` 0 means uncapped (nothing is written). The write is recorded in the
+ * activity log with a system actor.
  */
-async function ensureHardStopMonthlyPolicy(db: Db, companyId: string, scope: BudgetScope, cents: number): Promise<void> {
+async function ensureHardStopMonthlyPolicy(db: Db, companyId: string, scope: BudgetScope, metric: HostedPolicyMetric, cents: number): Promise<void> {
   if (cents === 0) return;
   const attempt = async () => {
     const [existing] = await db.select().from(budgetPolicies).where(and(
       eq(budgetPolicies.companyId, companyId),
       eq(budgetPolicies.scopeType, scope.scopeType),
       eq(budgetPolicies.scopeId, scope.scopeId),
-      eq(budgetPolicies.metric, "billed_cents"),
+      eq(budgetPolicies.metric, metric),
       eq(budgetPolicies.windowKind, "calendar_month_utc"),
     ));
     if (existing && existing.isActive && existing.hardStopEnabled && existing.amount > 0) return;
     await budgetService(db).upsertPolicy(companyId, {
       scopeType: scope.scopeType,
       scopeId: scope.scopeId,
-      metric: "billed_cents",
+      metric,
       windowKind: "calendar_month_utc",
       amount: existing && existing.amount > 0 ? existing.amount : cents,
       hardStopEnabled: true,
       isActive: true,
-    }, null);
+    }, null, { actor: HOSTED_INFERENCE_ACTOR });
   };
   try {
     await attempt();
-  } catch {
-    // A concurrent first run may have inserted the same policy: check again once.
+  } catch (error) {
+    // Only the race with a concurrent first run inserting the same policy is
+    // retried (once, which then finds and keeps that policy).
+    if (!isUniqueViolation(error)) throw error;
     await attempt();
   }
 }
@@ -56,12 +64,15 @@ async function ensureHardStopMonthlyPolicy(db: Db, companyId: string, scope: Bud
 /**
  * An agent on hosted inference spends the operator's key, so before that key
  * is used it must carry an ACTIVE hard-stop monthly budget, and so must its
- * company. Agent cap: the Assistant's `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS`
- * (default $20) or, for any other agent, `STAPLES_HOSTED_AGENT_BUDGET_CENTS`
- * (default $20). Company cap: `STAPLES_HOSTED_COMPANY_BUDGET_CENTS` (default
- * $50); an existing active company budget is kept, never lowered. An explicit
- * 0 in an env var leaves that scope uncapped. Disabled or deleted policies are
- * re-activated or recreated. Throws when a policy cannot be ensured.
+ * company's hosted spend. Agent cap (`billed_cents`): the Assistant's
+ * `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS` (default $20) or, for any other
+ * agent, `STAPLES_HOSTED_AGENT_BUDGET_CENTS` (default $20). Company cap
+ * (`hosted_billed_cents`, counting only spend billed to the hosted key):
+ * `STAPLES_HOSTED_COMPANY_BUDGET_CENTS` (default $50); an existing active
+ * hosted company cap is kept, never lowered. A person-set company budget
+ * (`billed_cents`) is never touched. An explicit 0 in an env var leaves that
+ * scope uncapped. Disabled or deleted policies are re-activated or recreated.
+ * Throws when a policy cannot be ensured.
  */
 export async function ensureHostedAgentBudgets(
   db: Db,
@@ -72,10 +83,10 @@ export async function ensureHostedAgentBudgets(
   // An unsaved agent (an environment test before create) has no agent scope yet.
   if (agent.id) {
     const assistant = options.assistant ?? await isProvisionedAssistant(db, agent);
-    await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "agent", scopeId: agent.id },
+    await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "agent", scopeId: agent.id }, "billed_cents",
       assistant ? hostedAssistantBudgetCents(env) : hostedAgentBudgetCents(env));
   }
-  await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "company", scopeId: agent.companyId },
+  await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "company", scopeId: agent.companyId }, HOSTED_BILLED_CENTS_METRIC,
     hostedCompanyBudgetCents(env));
 }
 
@@ -103,10 +114,9 @@ export async function hostedInferenceAllowedFor(
   env: NodeJS.ProcessEnv = process.env,
   deps: { ensureBudget?: typeof ensureHostedAgentBudgets; probeOnly?: boolean } = {},
 ): Promise<boolean> {
-  if (agent.adapterType !== HOSTED_INFERENCE_ADAPTER_TYPE) return false;
-  if (!hostedInference(env).available) return false;
-  // Its own key is used first; the server's key is not needed.
-  if (agent.adapterConfig !== undefined && hasAnthropicKeyBinding(agent.adapterConfig)) return false;
+  // Hosted inference must be on, and the agent on the hosted adapter without
+  // its own key (its own key is used first; the server's key is not needed).
+  if (!usesHostedInferenceKey(agent, env)) return false;
   // A connection test (one free list call) needs no caps and writes none:
   // testing a draft agent must not create budget policies.
   if (deps.probeOnly) return true;

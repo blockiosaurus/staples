@@ -282,16 +282,16 @@ let savedHostedFlag: string | undefined;
 
 describe("POST /companies/:companyId/assistant/setup", () => {
   afterEach(() => {
-    if (savedAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = savedAnthropicKey;
+    if (savedAnthropicKey === undefined) delete process.env.STAPLES_HOSTED_ANTHROPIC_API_KEY;
+    else process.env.STAPLES_HOSTED_ANTHROPIC_API_KEY = savedAnthropicKey;
     if (savedHostedFlag === undefined) delete process.env.STAPLES_HOSTED_INFERENCE;
     else process.env.STAPLES_HOSTED_INFERENCE = savedHostedFlag;
   });
 
   beforeEach(() => {
-    savedAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    savedAnthropicKey = process.env.STAPLES_HOSTED_ANTHROPIC_API_KEY;
     savedHostedFlag = process.env.STAPLES_HOSTED_INFERENCE;
-    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.STAPLES_HOSTED_ANTHROPIC_API_KEY;
     delete process.env.STAPLES_HOSTED_INFERENCE;
     mockSecretService.create.mockImplementation(async (_companyId: string, input: { name: string }) => ({
       id: "22222222-2222-4222-8222-222222222222", name: input.name, provider: "local_encrypted",
@@ -430,7 +430,7 @@ describe("POST /companies/:companyId/assistant/setup", () => {
   }, 60_000);
 
   it("connects Claude (hosted) without a key when the server has hosted inference", async () => {
-    process.env.ANTHROPIC_API_KEY = DUMMY_KEY;
+    process.env.STAPLES_HOSTED_ANTHROPIC_API_KEY = DUMMY_KEY;
     const app = await createApp();
     const res = await requestApp(app, (baseUrl) => request(baseUrl)
       .post("/api/companies/company-1/assistant/setup")
@@ -570,7 +570,7 @@ describe("POST /companies/:companyId/assistant/setup", () => {
   it("tells adapter detection about hosted inference and a bound key", async () => {
     mockAdapterAvailability.mockResolvedValue([]);
     mockSecretService.getById.mockResolvedValue({ id: "secret-1", companyId: "company-1", key: "MY_ANTHROPIC", status: "active" });
-    process.env.ANTHROPIC_API_KEY = DUMMY_KEY;
+    process.env.STAPLES_HOSTED_ANTHROPIC_API_KEY = DUMMY_KEY;
     mockEnsureAssistant.mockResolvedValue({
       ...assistantRow,
       adapterConfig: { ...assistantRow.adapterConfig, env: { ANTHROPIC_API_KEY: { type: "secret_ref", secretId: "secret-1" } } },

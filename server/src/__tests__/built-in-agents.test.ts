@@ -4,6 +4,7 @@ import { assistantSetupStatus, readAssistantLifecycle } from "../services/assist
 import { requireServerAdapter } from "../adapters/index.js";
 import { isConversationAdapter } from "../services/conversation-continuation.js";
 import { ensureHostedAssistantBudget, hostedInferenceAllowedFor } from "../services/hosted-inference-access.js";
+import { budgetService, remainingHardStopCentsForRun } from "../services/budgets.js";
 import fs from "node:fs/promises";
 import { fileHash } from "../services/agent-file-store.js";
 import { stockHash } from "../services/managed-resource-drift.js";
@@ -21,12 +22,14 @@ import {
   agentConfigRevisions,
   agents,
   approvals,
+  budgetIncidents,
   budgetPolicies,
   builtInManagedResources,
   companies,
   companyMemberships,
   companySkillVersions,
   companySkills,
+  costEvents,
   createDb,
   issueThreadInteractions,
   issues,
@@ -175,10 +178,10 @@ describeEmbeddedPostgres("built-in agents", () => {
     lifecycleWorker = configureAgentLifecycle(db, { requiredPluginIds: async () => [], runPlugin: async () => "complete", runHost: async () => "complete" });
   }, 20_000);
 
-  // Hosted inference follows the server's ANTHROPIC_API_KEY: keep it off
+  // Hosted inference follows the server's STAPLES_HOSTED_ANTHROPIC_API_KEY: keep it off
   // unless a test opts in (with a dummy value), whatever the host shell has.
   beforeEach(() => {
-    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "");
     vi.stubEnv("STAPLES_HOSTED_INFERENCE", "");
   });
 
@@ -196,6 +199,8 @@ describeEmbeddedPostgres("built-in agents", () => {
     await db.delete(companyMemberships);
     await db.delete(agentConfigRevisions);
     await db.delete(activityLog);
+    await db.delete(costEvents);
+    await db.delete(budgetIncidents);
     await db.delete(approvals);
     await db.delete(heartbeatRuns);
     await db.delete(agents);
@@ -640,7 +645,7 @@ describeEmbeddedPostgres("built-in agents", () => {
   }
 
   it("provisions a new Assistant on Claude (hosted) over sibling inheritance, verified by the adapter's environment test", async () => {
-    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     const companyId = await seedCompany({ requireApproval: false });
     await hire(companyId, "codex_local", "gpt-5.4", "CEO");
     const adapter = requireServerAdapter("claude_managed");
@@ -669,7 +674,7 @@ describeEmbeddedPostgres("built-in agents", () => {
   });
 
   it("caps a hosted Assistant with an active hard-stop monthly budget", async () => {
-    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     const companyId = await seedCompany({ requireApproval: false });
     const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
     expect(assistant.budgetMonthlyCents).toBe(2000);
@@ -688,13 +693,13 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect(await db.select().from(budgetPolicies).where(eq(budgetPolicies.scopeId, uncappedAssistant.id))).toHaveLength(0);
 
     // Without hosted inference the Assistant keeps no budget (unchanged).
-    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "");
     const local = await seedCompany({ requireApproval: false });
     expect((await createBuiltInAgentService(db).ensureAssistant(local)).budgetMonthlyCents).toBe(0);
   });
 
   it("lets any claude_managed agent without its own key use the server key, once its agent and company caps are ensured", async () => {
-    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     vi.stubEnv("STAPLES_HOSTED_AGENT_BUDGET_CENTS", "750");
     const companyId = await seedCompany({ requireApproval: false });
     const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
@@ -718,35 +723,92 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect(await hostedInferenceAllowedFor(db, staff)).toBe(false);
   });
 
-  it("re-activates a disabled company cap at its own amount, and an explicit 0 leaves the company uncapped", async () => {
-    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+  it("ensures a separate hosted company cap: a person's company budget is untouched, an existing hosted cap is never lowered, and an explicit 0 leaves it uncapped", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     const companyId = await seedCompany({ requireApproval: false });
     const staff = await hire(companyId, "claude_managed", "claude-opus-5-5");
     await db.insert(budgetPolicies).values({ companyId, scopeType: "company", scopeId: companyId, metric: "billed_cents", windowKind: "calendar_month_utc",
       amount: 900, hardStopEnabled: false, isActive: false });
     expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
-    const companyPolicy = async (id: string) => (await db.select().from(budgetPolicies)
-      .where(and(eq(budgetPolicies.scopeType, "company"), eq(budgetPolicies.scopeId, id))))[0];
-    expect(await companyPolicy(companyId)).toMatchObject({ amount: 900, isActive: true, hardStopEnabled: true });
+    const companyPolicy = async (id: string, metric: string) => (await db.select().from(budgetPolicies)
+      .where(and(eq(budgetPolicies.scopeType, "company"), eq(budgetPolicies.scopeId, id), eq(budgetPolicies.metric, metric))))[0];
+    expect(await companyPolicy(companyId, "billed_cents")).toMatchObject({ amount: 900, isActive: false, hardStopEnabled: false });
+    expect(await companyPolicy(companyId, "hosted_billed_cents")).toMatchObject({ amount: 5000, isActive: true, hardStopEnabled: true });
+    // The person's company budget amount is not overwritten by the hosted cap.
+    const [company] = await db.select().from(companies).where(eq(companies.id, companyId));
+    expect(company!.budgetMonthlyCents).not.toBe(5000);
+    // Recorded as a system action, not a person's.
+    const upserts = await db.select().from(activityLog).where(and(eq(activityLog.companyId, companyId), eq(activityLog.action, "budget.policy_upserted")));
+    expect(upserts.length).toBeGreaterThan(0);
+    for (const row of upserts) expect(row).toMatchObject({ actorType: "system", actorId: "hosted_inference" });
+
+    // A lower existing hosted cap is kept (never raised), a higher one is never lowered; a disabled one is re-activated at its amount.
+    for (const amount of [3000, 7000]) {
+      await db.update(budgetPolicies).set({ amount, isActive: true, hardStopEnabled: true })
+        .where(and(eq(budgetPolicies.scopeId, companyId), eq(budgetPolicies.metric, "hosted_billed_cents")));
+      expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
+      expect(await companyPolicy(companyId, "hosted_billed_cents")).toMatchObject({ amount, isActive: true });
+    }
+    await db.update(budgetPolicies).set({ amount: 900, isActive: false, hardStopEnabled: false })
+      .where(and(eq(budgetPolicies.scopeId, companyId), eq(budgetPolicies.metric, "hosted_billed_cents")));
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
+    expect(await companyPolicy(companyId, "hosted_billed_cents")).toMatchObject({ amount: 900, isActive: true, hardStopEnabled: true });
 
     vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_CENTS", "0");
     const uncapped = await seedCompany({ requireApproval: false });
     const other = await hire(uncapped, "claude_managed", "claude-opus-5-5");
     expect(await hostedInferenceAllowedFor(db, other)).toBe(true);
-    expect(await companyPolicy(uncapped)).toBeUndefined();
+    expect(await companyPolicy(uncapped, "hosted_billed_cents")).toBeUndefined();
+  });
+
+  it("counts only hosted spend toward the hosted company cap: local spend never pauses anything", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const local = await hire(companyId, "claude_local", "claude-sonnet-4-5", "Local");
+    const staff = await hire(companyId, "claude_managed", "claude-opus-5-5", "Hosted");
+    const spend = async (agentId: string, cents: number, hosted: boolean) => {
+      const [event] = await db.insert(costEvents).values({ companyId, agentId, provider: "anthropic", biller: "anthropic", billingType: "metered_api",
+        model: "claude", costCents: cents, occurredAt: new Date(), hostedInference: hosted }).returning();
+      await budgetService(db).evaluateCostEvent(event!);
+    };
+    // More than $50 of non-hosted (local) spend this month.
+    await spend(local.id, 6000, false);
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
+    const [hostedCap] = await db.select().from(budgetPolicies).where(and(eq(budgetPolicies.scopeId, companyId), eq(budgetPolicies.metric, "hosted_billed_cents")));
+    expect(hostedCap).toMatchObject({ amount: 5000, isActive: true, hardStopEnabled: true });
+    const companyStatus = async () => (await db.select().from(companies).where(eq(companies.id, companyId)))[0]!.status;
+    expect(await companyStatus()).toBe("active");
+    expect(await budgetService(db).getInvocationBlock(companyId, local.id)).toBeNull();
+    expect(await budgetService(db).getInvocationBlock(companyId, staff.id)).toBeNull();
+    // The session limit for the hosted agent ignores the local spend: min(agent $20, hosted company $50).
+    expect(await remainingHardStopCentsForRun(db, { companyId, agentId: staff.id, projectId: null, hostedInference: true })).toBe(2000);
+    expect(await remainingHardStopCentsForRun(db, { companyId, agentId: local.id, projectId: null, hostedInference: false })).toBeNull();
+
+    // Hosted spend past the hosted cap blocks only hosted-key runs; the company and local agents keep working.
+    await db.update(budgetPolicies).set({ amount: 100000 }).where(and(eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, staff.id)));
+    await spend(staff.id, 4000, true);
+    expect(await remainingHardStopCentsForRun(db, { companyId, agentId: staff.id, projectId: null, hostedInference: true })).toBe(1000);
+    await spend(staff.id, 1500, true);
+    expect(await companyStatus()).toBe("active");
+    expect(await budgetService(db).getInvocationBlock(companyId, local.id)).toBeNull();
+    expect(await budgetService(db).getInvocationBlock(companyId, staff.id))
+      .toMatchObject({ scopeType: "company", reason: expect.stringContaining("hosted inference") });
+    expect((await db.select().from(agents).where(eq(agents.id, local.id)))[0]!.status).not.toBe("paused");
   });
 
   const hostedPolicy = async (agentId: string) => (await db.select().from(budgetPolicies)
     .where(and(eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, agentId))))[0];
 
   it("enforces the hosted Assistant's hard-stop budget at the point of use", async () => {
+    // A plain ANTHROPIC_API_KEY in the server env does not turn hosted inference on.
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     const companyId = await seedCompany({ requireApproval: false });
     const local = await createBuiltInAgentService(db).ensureAssistant(companyId);
     expect(local.adapterType).toBe("claude_local");
     expect(await hostedPolicy(local.id)).toBeUndefined();
 
     // Switched to Claude (hosted) after provisioning (as the setup card does): no policy yet.
-    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     await db.update(agents).set({ adapterType: "claude_managed", adapterConfig: { model: "claude-opus-5-5" } }).where(eq(agents.id, local.id));
     const [switched] = await db.select().from(agents).where(eq(agents.id, local.id));
     expect(await hostedInferenceAllowedFor(db, switched!)).toBe(true);
@@ -770,7 +832,7 @@ describeEmbeddedPostgres("built-in agents", () => {
   });
 
   it("re-defaulting an existing Assistant onto hosted inference through ensure() gives it the budget", async () => {
-    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     const companyId = await seedCompany({ requireApproval: false });
     const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
     await db.delete(budgetPolicies).where(eq(budgetPolicies.scopeId, assistant.id));
@@ -782,7 +844,7 @@ describeEmbeddedPostgres("built-in agents", () => {
   });
 
   it("surfaces a hosted Assistant stuck waiting on its provisioning record, then fails it", async () => {
-    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     const companyId = await seedCompany({ requireApproval: false });
     const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
     await lifecycleWorker.process(assistant.id);
@@ -804,7 +866,7 @@ describeEmbeddedPostgres("built-in agents", () => {
   });
 
   it("reports needs_model when Claude (hosted) has no usable key", async () => {
-    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     const companyId = await seedCompany({ requireApproval: false });
     const adapter = requireServerAdapter("claude_managed");
     const testEnvironment = vi.spyOn(adapter, "testEnvironment").mockResolvedValue(managedTestResult([
@@ -830,7 +892,7 @@ describeEmbeddedPostgres("built-in agents", () => {
     const service = createBuiltInAgentService(db);
     const before = await service.ensureAssistant(companyId);
     expect(before.adapterType).toBe("claude_local");
-    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     const again = await service.ensureAssistant(companyId);
     expect(again.adapterType).toBe("claude_local");
     await service.ensure(companyId, "assistant");
@@ -843,7 +905,7 @@ describeEmbeddedPostgres("built-in agents", () => {
   });
 
   it("does not move a hosted Assistant onto a staff agent's adapter", async () => {
-    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     const companyId = await seedCompany({ requireApproval: false });
     const service = createBuiltInAgentService(db);
     const assistant = await service.ensureAssistant(companyId);
@@ -854,7 +916,7 @@ describeEmbeddedPostgres("built-in agents", () => {
   });
 
   it("ignores hosted inference when opted out", async () => {
-    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     vi.stubEnv("STAPLES_HOSTED_INFERENCE", "off");
     const companyId = await seedCompany({ requireApproval: false });
     const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);

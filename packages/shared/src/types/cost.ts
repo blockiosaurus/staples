@@ -18,6 +18,8 @@ export interface CostEvent {
   biller: string;
   billingType: BillingType;
   costStatus: CostStatus;
+  /** Server-derived: billed to the operator's hosted-inference key (counts toward `hosted_billed_cents`). */
+  hostedInference?: boolean;
   model: string;
   inputTokens: number;
   cachedInputTokens: number;
