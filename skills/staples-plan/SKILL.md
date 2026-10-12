@@ -1,6 +1,6 @@
 ---
 name: staples-plan
-description: Turn a finished interview into a plan (brief, goal, project, agent roles, 0 to 12 starter tasks with blocking order) and propose it for the person to confirm in one card. Use right after staples-interview ends with a confirmed understanding, or to turn an agreed idea into a team and tasks.
+description: Turn a finished interview into a plan (brief, goal, project, agent roles, 0 to 12 starter tasks with blocking order; 0 when a template brings its own) and propose it for the person to confirm in one card. Use right after staples-interview ends with a confirmed understanding, or to turn an agreed idea into a team and tasks.
 ---
 
 # Plan
@@ -37,7 +37,7 @@ Use the company's glossary words everywhere in the plan.
 
 No other fields. Do not put instructions, secrets, commands or credentials in a hire.
 
-**Tasks**: 3 to 12 starter tasks, cut as **tracer bullets**:
+**Tasks**: 0 to 12 starter tasks (0 when every hire is a template that brings its own; otherwise usually 3 or more), cut as **tracer bullets**:
 
 - Each task delivers a thin but complete, visible result end to end, not one layer of the work. "Publish one short article from topic to published page" beats "write all the outlines".
 - Each task can be checked on its own when done. Put a short "Done when:" list in the `description`.
