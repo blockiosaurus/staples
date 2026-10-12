@@ -195,5 +195,7 @@ To exercise the script without a key, add `--fake`: it runs the same flow agains
 package's local fake Managed Agents server. `SMOKE_FAKE_SCENARIO=never_idle` with
 `--fake` simulates a session that never goes idle, to check the timeout path.
 
-To check the resumed-session cost baseline, run the live smoke test twice and
-compare the reported costs; this is not automated yet.
+Note on the resumed-session cost check (see Limitations): the script starts a new
+session on every run, so running it twice checks cost reporting but does not yet
+resume a session. Verifying the resumed baseline needs a second run that reuses
+the first run's session; the script does not do that yet.
