@@ -42,7 +42,7 @@ Package: `packages/adapters/claude-managed`.
 
 | Field | Where | Notes |
 | --- | --- | --- |
-| `env.ANTHROPIC_API_KEY` | Agent setup credential field, or Environment variables | A company secret binding (recommended) or a plain value. When empty, the server's `ANTHROPIC_API_KEY` is used, but only when `apiBaseUrl` is the default. |
+| `env.ANTHROPIC_API_KEY` | Agent setup credential field, or Environment variables | A company secret binding (recommended) or a plain value. When empty, the server's `ANTHROPIC_API_KEY` is used only for the company Assistant (or every agent with `STAPLES_HOSTED_INFERENCE_ALL_AGENTS=on`), and only when `apiBaseUrl` is the default. |
 | `model` | Model picker | Default `claude-opus-5-5`. Any Managed Agents model id can be typed. |
 | `environmentId` | Configuration | Optional. An existing Managed Agents environment. When empty, Staples creates one per agent. |
 | `instructionsFilePath` | Instructions | Used as the agent's system prompt. |
@@ -70,7 +70,13 @@ calls `GET /v1/agents?limit=1`; it never echoes the key.
   to be reachable from the internet for this adapter.
 - **The Anthropic API key** is resolved through the normal secrets path, sent
   only to the configured API base URL, and never logged or returned. The
-  server's `ANTHROPIC_API_KEY` fallback is used only with the default base URL
+  server's `ANTHROPIC_API_KEY` fallback ("hosted inference") is used only for the
+  company's provisioned Assistant (decided by the server per run, never from
+  agent config), or for every agent when the operator sets
+  `STAPLES_HOSTED_INFERENCE_ALL_AGENTS=on`; other agents need their own key.
+  `STAPLES_HOSTED_INFERENCE=off` turns the fallback off entirely. A hosted
+  Assistant gets a hard-stop monthly budget (default $20,
+  `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS`). The fallback is used only with the default base URL
   (`https://api.anthropic.com/v1`). `apiBaseUrl` is per-agent config, so an agent
   with a custom base URL must carry its own key; otherwise a board user could
   point an agent at their own host and capture the instance key. The run and the

@@ -73,6 +73,7 @@ import {
   EXECUTION_REVIEW_PARTICIPANT_RECOVERY_WAKE_REASON,
   deriveTaskKeyWithHeartbeatFallback,
   getAdapterSessionCodec,
+  supersededSessionParamsForRun,
   shouldResetTaskSessionForWake,
   normalizeSessionParams,
   normalizeResumeParamsForAdapter,
@@ -3655,6 +3656,15 @@ export function heartbeatService(
       const sessionResetReason =
         sessionConfigFreshness.reasons.join("; ") || null;
       const taskSessionForRun = resetTaskSession ? null : taskSession;
+      const supersededSessionParams = supersededSessionParamsForRun({
+        adapterType: agent.adapterType,
+        resetTaskSession,
+        sessionParams: stripPaperclipSessionMetadataFromSessionParams(
+          sessionCodec.deserialize(taskSession?.sessionParamsJson ?? null),
+        ),
+      });
+      if (supersededSessionParams) context.paperclipSupersededSessionParams = supersededSessionParams;
+      else delete context.paperclipSupersededSessionParams;
       const getFreshSessionHandoff = issueRef ? createNativeSessionHandoffLoader({
         db, companyId: agent.companyId, issueId: issueRef.id, agentId: agent.id, before: run.createdAt,
         throughCommentId: readNonEmptyString(context.conversationReplayThroughCommentId) ?? (context.interactionKind ? null : wakeCommentId),

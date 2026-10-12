@@ -18,3 +18,15 @@ describe("hostedInference", () => {
     expect(JSON.stringify(result)).not.toContain("sk-ant-test-dummy");
   });
 });
+
+describe("hostedAssistantBudgetCents", () => {
+  it("defaults to $20 and accepts an explicit non-negative integer override", async () => {
+    const { hostedAssistantBudgetCents } = await import("../services/hosted-inference.js");
+    expect(hostedAssistantBudgetCents({})).toBe(2000);
+    expect(hostedAssistantBudgetCents({ STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS: "500" })).toBe(500);
+    expect(hostedAssistantBudgetCents({ STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS: "0" })).toBe(0);
+    for (const invalid of ["", "-5", "12.5", "lots"]) {
+      expect(hostedAssistantBudgetCents({ STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS: invalid })).toBe(2000);
+    }
+  });
+});

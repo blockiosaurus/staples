@@ -1,5 +1,6 @@
 import { createAgentLifecycle, createAgentLifecycleEffects, scheduleAgentLifecycle } from "./agent-lifecycle.js";
-import { HOSTED_INFERENCE_ADAPTER_TYPE, hostedInference } from "./hosted-inference.js";
+import { HOSTED_INFERENCE_ADAPTER_TYPE, hostedAssistantBudgetCents, hostedInference } from "./hosted-inference.js";
+import { budgetService } from "./budgets.js";
 import { updateAgentConfiguration } from "../modules/agent-lifecycle/adapters/configuration.js";
 import { ASSISTANT_RUNTIME_ADAPTER_TYPES } from "./assistant-identity.js";
 import fs from "node:fs/promises";
@@ -986,7 +987,14 @@ export function builtInAgentService(db: Db) {
       && hosted.available
       && definition.allowedAdapterTypes?.includes(hosted.adapterType)
     ) {
-      return { ...input, adapterType: hosted.adapterType, adapterConfig: { model: hosted.model } };
+      // The operator's key pays: cap it with a hard-stop monthly budget.
+      return {
+        ...input,
+        adapterType: hosted.adapterType,
+        adapterConfig: { model: hosted.model },
+        budgetMonthlyCents: hostedAssistantBudgetCents(),
+        hostedInference: true,
+      };
     }
     if (definition.inheritCompanyAdapterType) {
       const rows = await db
@@ -2088,8 +2096,20 @@ export function builtInAgentService(db: Db) {
       throw error;
     }
 
+    if ((resolvedInput as { hostedInference?: boolean }).hostedInference && created.budgetMonthlyCents > 0) {
+      await budgetService(db).upsertPolicy(companyId, {
+        scopeType: "agent",
+        scopeId: created.id,
+        amount: created.budgetMonthlyCents,
+        windowKind: "calendar_month_utc",
+        hardStopEnabled: true,
+        isActive: true,
+      }, null);
+    }
     await ensureBuiltInAgentDefaultGrants(created, definition);
     const resources = await reconcileBundleResources(created, definition, "reconcile");
+    // Its verification waits for the provisioning record just written; resume it now.
+    if ((resolvedInput as { hostedInference?: boolean }).hostedInference) void scheduleAgentLifecycle(db, created.id);
     return state(definition, await agentSvc.getById(created.id) as Agent, resources);
   }
 
@@ -2345,11 +2365,11 @@ export function builtInAgentService(db: Db) {
     const assistant = await findSingleAgent(companyId, definition);
     if (!assistant || assistant.status === "pending_approval" || assistant.status === "terminated") return null;
     // Best-effort: a failed or slow model lookup must skip the write, never block the hire.
+    // Never moves an existing Assistant onto (or off) Claude (hosted).
+    if (assistant.adapterType === HOSTED_INFERENCE_ADAPTER_TYPE) return null;
     const lookup = { degraded: false };
     let inherited: Awaited<ReturnType<typeof defaultProvisionInput>>;
     try {
-      // Never moves an existing Assistant onto (or off) Claude (hosted).
-      if (assistant.adapterType === HOSTED_INFERENCE_ADAPTER_TYPE) return null;
       inherited = await defaultProvisionInput(companyId, definition, {}, lookup, { preferHosted: false });
     } catch (error) {
       logger.warn({ err: error, companyId }, "Assistant re-inheritance skipped: adapter lookup failed");

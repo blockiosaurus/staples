@@ -199,9 +199,14 @@ export const assistantSetupRequestSchema = z.object({
    * secret and bound to adapterConfig.env.ANTHROPIC_API_KEY; never echoed.
    */
   apiKey: z.string().trim().min(1).max(1000).optional(),
+  /** claude_managed only: bind an existing company secret as the Anthropic API key. */
+  apiKeySecretId: z.string().uuid().optional(),
 }).strict().superRefine((value, ctx) => {
+  if (value.apiKey !== undefined && value.apiKeySecretId !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["apiKeySecretId"], message: "Send either apiKey or apiKeySecretId, not both" });
+  }
   if (value.adapterType === CLAUDE_MANAGED_ADAPTER_TYPE) return;
-  for (const key of ["model", "apiKey"] as const) {
+  for (const key of ["model", "apiKey", "apiKeySecretId"] as const) {
     if (value[key] !== undefined) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is only accepted for claude_managed` });
     }

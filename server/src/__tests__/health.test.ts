@@ -75,6 +75,7 @@ describe("GET /health", () => {
   });
   it("reports hosted inference as a boolean only, never the key", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-dummy-health");
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE", "");
     const db = { execute: vi.fn().mockResolvedValue([{ "?column?": 1 }]) } as unknown as Db;
     const app = createApp(db);
     const res = await request(app).get("/health");

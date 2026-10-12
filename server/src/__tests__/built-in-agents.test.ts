@@ -3,6 +3,7 @@ import { agentHarnessVerificationService } from "../services/agent-harness-verif
 import { assistantSetupStatus, readAssistantLifecycle } from "../services/assistant-setup.js";
 import { requireServerAdapter } from "../adapters/index.js";
 import { isConversationAdapter } from "../services/conversation-continuation.js";
+import { hostedInferenceAllowedFor } from "../services/hosted-inference.js";
 import fs from "node:fs/promises";
 import { fileHash } from "../services/agent-file-store.js";
 import { stockHash } from "../services/managed-resource-drift.js";
@@ -659,11 +660,55 @@ describeEmbeddedPostgres("built-in agents", () => {
         const lifecycle = await readAssistantLifecycle(db, assistant.id);
         expect(lifecycle?.lifecycleState).toBe("ready");
         expect(assistantSetupStatus(lifecycle!)).toEqual({ state: "ready", adapterType: "claude_managed" });
-        expect(testEnvironment).toHaveBeenCalledWith(expect.objectContaining({ adapterType: "claude_managed" }));
+        // The server, not agent config, allows the server key for the provisioned Assistant.
+        expect(testEnvironment).toHaveBeenCalledWith(expect.objectContaining({ adapterType: "claude_managed", hostedInferenceAllowed: true }));
       });
     } finally {
       testEnvironment.mockRestore();
     }
+  });
+
+  it("caps a hosted Assistant with an active hard-stop monthly budget", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(assistant.budgetMonthlyCents).toBe(2000);
+    const [policy] = await db.select().from(budgetPolicies).where(and(eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, assistant.id)));
+    expect(policy).toMatchObject({ amount: 2000, hardStopEnabled: true, isActive: true, windowKind: "calendar_month_utc" });
+
+    vi.stubEnv("STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS", "500");
+    const other = await seedCompany({ requireApproval: false });
+    expect((await createBuiltInAgentService(db).ensureAssistant(other)).budgetMonthlyCents).toBe(500);
+
+    // An explicit 0 means no cap: no active policy.
+    vi.stubEnv("STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS", "0");
+    const uncapped = await seedCompany({ requireApproval: false });
+    const uncappedAssistant = await createBuiltInAgentService(db).ensureAssistant(uncapped);
+    expect(uncappedAssistant.budgetMonthlyCents).toBe(0);
+    expect(await db.select().from(budgetPolicies).where(eq(budgetPolicies.scopeId, uncappedAssistant.id))).toHaveLength(0);
+
+    // Without hosted inference the Assistant keeps no budget (unchanged).
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    const local = await seedCompany({ requireApproval: false });
+    expect((await createBuiltInAgentService(db).ensureAssistant(local)).budgetMonthlyCents).toBe(0);
+  });
+
+  it("allows the server key only for the provisioned Assistant unless the operator opts every agent in", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    const staff = await hire(companyId, "claude_managed", "claude-opus-5-5");
+    expect(await hostedInferenceAllowedFor(db, assistant)).toBe(true);
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(false);
+    // A marker copied into a staff agent's metadata is not the provisioning record.
+    await db.update(agents).set({ metadata: withBuiltInAgentMarker({}, { key: "assistant", featureKeys: ["assistant"] }) }).where(eq(agents.id, staff.id))
+      .catch(() => undefined);
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(false);
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE_ALL_AGENTS", "on");
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE", "off");
+    expect(await hostedInferenceAllowedFor(db, assistant)).toBe(false);
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(false);
   });
 
   it("reports needs_model when Claude (hosted) has no usable key", async () => {

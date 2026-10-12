@@ -108,25 +108,40 @@ export function usesDefaultApiBaseUrl(config: Record<string, unknown>): boolean 
 
 /**
  * Resolves the Anthropic API key: adapter env (plain or resolved secret) first, then
- * the server env. The server-env key is only ever sent to the default Anthropic API
- * base URL: `apiBaseUrl` is per-agent config, so a custom base URL needs the agent's
- * own key (otherwise any board user could point it at their host and capture the
- * instance key).
+ * the server env. The server-env key ("hosted inference") is used only when the
+ * server allows it for this agent (`serverKeyAllowed`, decided server-side: the
+ * provisioned Assistant, or every agent when the operator opts in), and is only
+ * ever sent to the default Anthropic API base URL: `apiBaseUrl` is per-agent
+ * config, so a custom base URL needs the agent's own key (otherwise any board user
+ * could point it at their host and capture the instance key).
  */
 export function resolveApiKey(
   config: Record<string, unknown>,
   env: Record<string, string | undefined> = process.env,
+  options: { serverKeyAllowed?: boolean } = {},
 ): { apiKey: string; source: "adapter_config" | "server_env" } | null {
   const fromConfig = readConfigEnvValue(config, "ANTHROPIC_API_KEY");
   if (fromConfig) return { apiKey: fromConfig, source: "adapter_config" };
+  if (options.serverKeyAllowed !== true) return null;
   if (!usesDefaultApiBaseUrl(config)) return null;
   const fromEnv = (env.ANTHROPIC_API_KEY ?? "").trim();
   if (fromEnv) return { apiKey: fromEnv, source: "server_env" };
   return null;
 }
 
-/** Explains a missing key; names the custom-base-URL rule when it is the reason. */
-export function missingApiKeyMessage(config: Record<string, unknown>): string {
+export const HOSTED_ONLY_FOR_ASSISTANT_MESSAGE =
+  "This agent needs its own Anthropic API key; hosted inference is only provided for the Assistant.";
+
+/**
+ * Explains a missing key; names the custom-base-URL rule or the Assistant-only
+ * hosted-inference rule when one of them is the reason.
+ */
+export function missingApiKeyMessage(
+  config: Record<string, unknown>,
+  env: Record<string, string | undefined> = {},
+  options: { serverKeyAllowed?: boolean } = {},
+): string {
+  if (options.serverKeyAllowed !== true && (env.ANTHROPIC_API_KEY ?? "").trim()) return HOSTED_ONLY_FOR_ASSISTANT_MESSAGE;
   return usesDefaultApiBaseUrl(config)
     ? "ANTHROPIC_API_KEY is required for claude_managed. Add it to this agent's environment variables (or set it on the Staples server)."
     : "This agent uses a custom API base URL, so it needs its own ANTHROPIC_API_KEY in its environment variables. The Staples server's key is only sent to the default Anthropic API.";
@@ -432,7 +447,8 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
   const priorResult = prior ? { sessionParams: { ...prior }, sessionDisplayId: prior.sessionId, sessionId: prior.sessionId } : {};
   const cancelGraceMs = deps.cancelGraceMs ?? DEFAULT_CANCEL_GRACE_MS;
 
-  const key = resolveApiKey(config, deps.env ?? process.env);
+  const serverKeyOptions = { serverKeyAllowed: ctx.hostedInferenceAllowed === true };
+  const key = resolveApiKey(config, deps.env ?? process.env, serverKeyOptions);
   if (!key) {
     return {
       ...base,
@@ -442,7 +458,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
       timedOut: false,
       errorCode: "claude_managed_api_key_missing",
       errorFamily: "configuration",
-      errorMessage: missingApiKeyMessage(config),
+      errorMessage: missingApiKeyMessage(config, deps.env ?? process.env, serverKeyOptions),
       costUsd: 0,
       costStatus: "reported",
       clearSession: false,
@@ -790,8 +806,40 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
     }
   }
 
+  /**
+   * Before a new session starts, stops a session this run is not resuming
+   * that is still working: the stored session when it cannot be resumed, or
+   * the one the server superseded with a fresh session (a continuation turn
+   * after a failed or interrupted conversation run). Interrupts and waits for
+   * it to settle, then archives it, so it cannot keep running unattended.
+   * Only sessions owned by this agent and instance; never fails the run.
+   */
+  async function retireSupersededSessions(ids: string[]): Promise<void> {
+    for (const id of [...new Set(ids)]) {
+      if (signal?.aborted) return;
+      let session: ManagedSession;
+      try {
+        session = await client.getSession(id, { signal });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        continue;
+      }
+      if (!ownedByThisAgent(session.metadata) || session.archived_at || session.status === "terminated") continue;
+      if (!sessionNeedsSettle(session)) continue;
+      await onLog("stdout", line({ type: "claude_managed.status", status: "settling", message: `Interrupting unfinished work in superseded session ${id}.` }));
+      await settleSession(id);
+      await abandonSession(id);
+    }
+  }
+
   async function resolveSession(): Promise<void> {
     const canResume = prior !== null && prior.fingerprint === fingerprint && prior.managedAgentId === managedAgentId && prior.environmentId === environmentId;
+    const superseded = readSessionParams(context.paperclipSupersededSessionParams);
+    const retireIds = [
+      ...(prior && !canResume ? [prior.sessionId] : []),
+      ...(superseded && superseded.sessionId !== prior?.sessionId ? [superseded.sessionId] : []),
+    ];
+    if (retireIds.length > 0) await retireSupersededSessions(retireIds);
     if (canResume && prior) {
       let existing: ManagedSession | null = null;
       try {

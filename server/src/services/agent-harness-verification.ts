@@ -9,6 +9,7 @@ import { aiConnectionRouterService } from "./ai-connection-router.js";
 import { withManagedAiProbe, stripAiAuthBindings } from "./ai-connection-runtime.js";
 import { environmentService } from "./environments.js";
 import { secretService } from "./secrets.js";
+import { hostedAssistantProvisioningPending, hostedInferenceAllowedFor } from "./hosted-inference.js";
 import { dotRunnerBroker } from "./dot-runner-broker.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 import type { LifecycleAgent } from "../modules/agent-lifecycle/index.js";
@@ -78,12 +79,15 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
         { ...context, consumerType: "environment", consumerId: environmentId });
       config = { ...config, env: { ...resolved.env, ...parseObject(config.env) } };
     }
+    const hostedInferenceAllowed = await hostedInferenceAllowedFor(db, agent);
+    if (!hostedInferenceAllowed && await hostedAssistantProvisioningPending(db, agent)) return "pending";
     const target = await tests.resolveAdapterTestExecutionContext({ agentId: agent.id, companyId: agent.companyId, adapterType: agent.adapterType, environmentId });
     let status: "released" | "failed" = "failed";
     try {
       if (target.fallbackChecks.length) throw Object.assign(new Error("The test environment is unavailable"), { code: "test_environment_unavailable" });
       const input = { companyId: agent.companyId, adapterType: agent.adapterType, config,
-        executionTarget: target.executionTarget, environmentName: target.environmentName };
+        executionTarget: target.executionTarget, environmentName: target.environmentName,
+        hostedInferenceAllowed };
       const result = binding ? await withManagedAiProbe(db, { ...input, agentId: agent.id, responsibleUserId, binding },
         managed => tests.testManagedEnvironment(agent.adapterType, { ...input, config: managed.config }, binding!, managed, agent.id))
         : await requireServerAdapter(agent.adapterType).testEnvironment(input);

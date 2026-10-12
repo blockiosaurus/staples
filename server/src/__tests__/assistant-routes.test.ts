@@ -99,6 +99,7 @@ describe("assistant routes", () => {
 
   it("reports hosted inference as a boolean, never the key", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-dummy-assistant");
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE", "");
     const app = await createApp(boardActor);
     const res = await request(app).get(`/api/companies/${companyId}/assistant`);
     expect(res.status).toBe(200);

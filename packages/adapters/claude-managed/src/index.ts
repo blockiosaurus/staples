@@ -24,7 +24,7 @@ Use when:
 - You have an Anthropic API key and accept per-use API billing
 
 Core fields:
-- env.ANTHROPIC_API_KEY (secret binding or plain, optional): Anthropic API key; falls back to the server's ANTHROPIC_API_KEY only when apiBaseUrl is the default
+- env.ANTHROPIC_API_KEY (secret binding or plain, optional): Anthropic API key; falls back to the server's ANTHROPIC_API_KEY (hosted inference) only for the company Assistant (or every agent when the operator sets STAPLES_HOSTED_INFERENCE_ALL_AGENTS=on) and only when apiBaseUrl is the default
 - model (string, optional): Claude model id (default claude-opus-5-5)
 - environmentId (string, optional): existing Managed Agents environment to run in; Staples creates one when empty
 - instructionsFilePath (string, optional): instructions file used as the agent's system prompt

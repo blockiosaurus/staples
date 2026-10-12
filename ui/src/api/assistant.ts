@@ -54,6 +54,8 @@ export interface AssistantSetupRequest {
   model?: string;
   /** claude_managed only: a person's Anthropic API key, stored as a company secret (never echoed back). */
   apiKey?: string;
+  /** claude_managed only: bind an existing company secret as the Anthropic API key. */
+  apiKeySecretId?: string;
 }
 
 export const assistantApi = {

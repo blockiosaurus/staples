@@ -237,6 +237,12 @@ export interface AgentRuntimeIdentity {
 export interface AdapterExecutionContext {
   /** Server-owned credentials. Never persist this object or merge it into config. */
   agentIdentity?: AgentRuntimeIdentity;
+  /**
+   * Server-owned: whether this agent may use instance-level provider
+   * credentials (e.g. the server's ANTHROPIC_API_KEY, "hosted inference").
+   * Decided by the server per run; never read from agent config.
+   */
+  hostedInferenceAllowed?: boolean;
   /** Synchronous, content-free diagnostic scope; never stop or collection authority. */
   onExecutionPhase?: AdapterExecutionPhaseSink;
   /** Run-scoped operator cancellation; adapters must settle before returning. */
@@ -370,6 +376,8 @@ export interface AdapterEnvironmentTestContext {
   companyId: string;
   adapterType: string;
   config: Record<string, unknown>;
+  /** Server-owned: see AdapterExecutionContext.hostedInferenceAllowed. Never read from agent config. */
+  hostedInferenceAllowed?: boolean;
   /**
    * Optional execution target the adapter should run probes against.
    *

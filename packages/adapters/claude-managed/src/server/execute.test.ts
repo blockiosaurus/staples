@@ -325,24 +325,48 @@ describe("claude_managed execute", () => {
     expect(fake.requests).toHaveLength(0);
   });
 
-  it("falls back to the server ANTHROPIC_API_KEY only for the default API base URL", async () => {
+  it("falls back to the server ANTHROPIC_API_KEY only when the server allows it, for the default API base URL", async () => {
     fake.queueTurns(turn("ok", 1));
     // Default base URL: requests are rerouted to the fake by the fetch seam.
     const toFake: typeof fetch = (input, init) => fetch(String(input).replace(DEFAULT_MANAGED_AGENTS_BASE_URL, fake.baseUrl), init);
     const h = harness({ config: { env: {}, apiBaseUrl: "" } });
+    h.ctx.hostedInferenceAllowed = true;
     const result = await execute(h.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiFetch: toFake });
     expect(result.exitCode).toBe(0);
   });
 
+  it("refuses the server key for an agent the server did not allow hosted inference for", async () => {
+    const toFake: typeof fetch = (input, init) => fetch(String(input).replace(DEFAULT_MANAGED_AGENTS_BASE_URL, fake.baseUrl), init);
+    const h = harness({ config: { env: {}, apiBaseUrl: "" } });
+    const requestsBefore = fake.requests.length;
+    const result = await execute(h.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiFetch: toFake });
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "claude_managed_api_key_missing", errorFamily: "configuration",
+      errorMessage: "This agent needs its own Anthropic API key; hosted inference is only provided for the Assistant." });
+    expect(fake.requests.length).toBe(requestsBefore);
+    // A config flag cannot grant it: only the server-owned context field counts.
+    const spoofed = harness({ config: { env: {}, apiBaseUrl: "", hostedInferenceAllowed: true } });
+    expect(await execute(spoofed.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiFetch: toFake }))
+      .toMatchObject({ errorCode: "claude_managed_api_key_missing" });
+
+    const check = await testEnvironment(
+      { companyId: "company-1", adapterType: "claude_managed", config: { hostedInferenceAllowed: true } },
+      { env: { ANTHROPIC_API_KEY: fake.apiKey } },
+    );
+    expect(check.checks).toEqual([expect.objectContaining({ code: "claude_managed_api_key_missing",
+      message: "This agent needs its own Anthropic API key; hosted inference is only provided for the Assistant." })]);
+    expect(JSON.stringify(check)).not.toContain(fake.apiKey);
+  });
+
   it("never sends the server key to a custom API base URL", async () => {
     const h = harness({ config: { env: {} } }); // apiBaseUrl is the fake (custom)
+    h.ctx.hostedInferenceAllowed = true;
     const result = await execute(h.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey } });
     expect(result).toMatchObject({ exitCode: 1, errorCode: "claude_managed_api_key_missing", errorFamily: "configuration" });
     expect(result.errorMessage).toContain("custom API base URL");
     expect(fake.requests).toHaveLength(0);
 
     const check = await testEnvironment(
-      { companyId: "company-1", adapterType: "claude_managed", config: { apiBaseUrl: fake.baseUrl } },
+      { companyId: "company-1", adapterType: "claude_managed", config: { apiBaseUrl: fake.baseUrl }, hostedInferenceAllowed: true },
       { env: { ANTHROPIC_API_KEY: fake.apiKey } },
     );
     expect(check.status).toBe("fail");
@@ -574,6 +598,37 @@ describe("claude_managed cancellation and recovery", () => {
     expect(fake.sessionIds()).toHaveLength(1);
     expect(fake.receivedEvents(sessionId).map((e) => e.type)).toEqual(["user.message", "user.message", "user.interrupt", "user.message"]);
     expect(second.costUsd).toBeCloseTo(0.03, 10);
+  });
+
+  it("settles and archives the session a continuation turn supersedes before starting a fresh one", async () => {
+    // A conversation run failed while its session kept working; the server then
+    // forces a fresh session for the continuation turn and names the old one.
+    fake.queueTurns(turn("first", 1), [{ kind: "emit", event: fakeEvents.running() }, { kind: "hang" }], turn("continued", 1));
+    const first = await execute(harness().ctx);
+    const oldSession = fake.sessionIds()[0];
+    await sendUserMessage(oldSession);
+    await vi.waitFor(() => expect(fake.getSessionStatus(oldSession)).toBe("running"));
+
+    const h = harness({ sessionParams: null, context: { paperclipSupersededSessionParams: first.sessionParams } });
+    const second = await execute(h.ctx, { settlePollMs: 20 });
+    expect(second).toMatchObject({ exitCode: 0, summary: "continued" });
+    const sessions = fake.sessionIds();
+    expect(sessions).toHaveLength(2);
+    // The old session was interrupted (and settled) before the new turn was sent.
+    expect(fake.receivedEvents(oldSession).map((e) => e.type)).toEqual(["user.message", "user.message", "user.interrupt", "user.interrupt"]);
+    expect(fake.getSessionStatus(oldSession)).not.toBe("running");
+    expect((await api("GET", `/sessions/${oldSession}`)).archived_at).toEqual(expect.any(String));
+    expect(fake.receivedEvents(sessions[1]).map((e) => e.type)).toEqual(["user.message"]);
+    expect(h.logs.join("")).toContain("superseded session");
+  });
+
+  it("leaves an idle superseded session alone", async () => {
+    fake.queueTurns(turn("first", 1), turn("fresh", 1));
+    const first = await execute(harness().ctx);
+    const oldSession = fake.sessionIds()[0];
+    const second = await execute(harness({ sessionParams: null, context: { paperclipSupersededSessionParams: first.sessionParams } }).ctx, { settlePollMs: 20 });
+    expect(second.exitCode).toBe(0);
+    expect(fake.receivedEvents(oldSession).map((e) => e.type)).toEqual(["user.message"]);
   });
 
   it("settles a resumed session waiting on tool results from a crashed run", async () => {

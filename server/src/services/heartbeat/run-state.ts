@@ -767,6 +767,28 @@ export function deriveTaskKeyWithHeartbeatFallback(
   return null;
 }
 
+/**
+ * Adapters whose sessions live on a provider and keep running after a run
+ * ends (a crashed or interrupted run does not stop them).
+ */
+const REMOTE_SESSION_ADAPTER_TYPES: ReadonlySet<string> = new Set(["claude_managed"]);
+
+/**
+ * When a run starts a fresh session (a continuation turn after a failed or
+ * interrupted conversation run, or any other reset), a remote-session adapter
+ * gets the superseded session's params as `context.paperclipSupersededSessionParams`
+ * so it can stop that session before sending the new turn.
+ */
+export function supersededSessionParamsForRun(input: {
+  adapterType: string;
+  resetTaskSession: boolean;
+  sessionParams: Record<string, unknown> | null | undefined;
+}): Record<string, unknown> | null {
+  if (!input.resetTaskSession || !REMOTE_SESSION_ADAPTER_TYPES.has(input.adapterType)) return null;
+  const params = input.sessionParams;
+  return params && typeof params === "object" && Object.keys(params).length > 0 ? params : null;
+}
+
 export function shouldResetTaskSessionForWake(
   contextSnapshot: Record<string, unknown> | null | undefined,
 ) {

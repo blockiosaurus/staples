@@ -5,7 +5,7 @@ import type {
 } from "@paperclipai/adapter-utils";
 import { parseObject } from "@paperclipai/adapter-utils/server-utils";
 import { ManagedAgentsApiError, ManagedAgentsClient } from "../client.js";
-import { resolveApiBaseUrl, resolveApiKey, usesDefaultApiBaseUrl } from "./execute.js";
+import { HOSTED_ONLY_FOR_ASSISTANT_MESSAGE, resolveApiBaseUrl, resolveApiKey, usesDefaultApiBaseUrl } from "./execute.js";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -83,10 +83,20 @@ export async function testEnvironment(
 ): Promise<AdapterEnvironmentTestResult> {
   const checks: AdapterEnvironmentCheck[] = [];
   const config = parseObject(ctx.config);
-  const key = resolveApiKey(config, deps.env ?? process.env);
+  const env = deps.env ?? process.env;
+  const serverKeyAllowed = ctx.hostedInferenceAllowed === true;
+  const key = resolveApiKey(config, env, { serverKeyAllowed });
 
   if (!key) {
-    checks.push(usesDefaultApiBaseUrl(config)
+    const hostedOnlyForAssistant = !serverKeyAllowed && Boolean((env.ANTHROPIC_API_KEY ?? "").trim());
+    checks.push(hostedOnlyForAssistant
+      ? {
+          code: "claude_managed_api_key_missing",
+          level: "error",
+          message: HOSTED_ONLY_FOR_ASSISTANT_MESSAGE,
+          hint: "Add ANTHROPIC_API_KEY to this agent's environment variables (a company secret works).",
+        }
+      : usesDefaultApiBaseUrl(config)
       ? {
           code: "claude_managed_api_key_missing",
           level: "error",

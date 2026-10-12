@@ -1,4 +1,5 @@
 import { parseNativeSessionGoalControl } from "./scheduling.js";
+import { hostedInferenceAllowedFor } from "../hosted-inference.js";
 import { isHeartbeatRunTerminalStatus } from "./run-lifecycle.js";
 import {
   PAPERCLIP_WAKE_PAYLOAD_KEY,
@@ -776,6 +777,9 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
         agent, authToken, apiBaseUrl: configuredPaperclipApiBaseUrl() ? paperclipApiBaseUrl() : null, runId: run.id,
       });
       if (assistantServer) runtimeMcpServers.unshift(assistantServer);
+      // Server-owned: only the provisioned Assistant (or every agent, when the
+      // operator opts in) may use the server's own provider key.
+      const hostedInferenceAllowed = await hostedInferenceAllowedFor(db, agent);
       const runtimeMcp = createAdapterRuntimeMcpAccess(runtimeMcpServers);
       if (runtimeTools && runtimeToolDelivery === "invocation_context") {
         adapterContext.paperclipRuntimeTools = runtimeTools;
@@ -798,6 +802,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
             return withAdapterExecutionPhase(executionPhaseContext, "adapter_execution", () => adapter.execute({
               getFreshSessionHandoff,
               agentIdentity,
+              hostedInferenceAllowed,
               runId: run.id,
               agent,
               runtime: runtimeForAdapter,
