@@ -1,7 +1,7 @@
 import type { AdapterConfigSchema } from "@paperclipai/adapter-utils";
 import { DEFAULT_MODEL } from "./execute.js";
 
-export { execute, coreFingerprint, toolsFingerprint, resolveApiKey, usesDefaultApiBaseUrl, resolveNetworking, resolveRemainingBudgetUsd, resolveInstanceId, DEFAULT_MODEL } from "./execute.js";
+export { execute, coreFingerprint, toolsFingerprint, resolveApiKey, usesDefaultApiBaseUrl, resolveNetworking, resolveRemainingBudgetUsd, resolveInstanceId, resolveInactivityTimeoutMs, DEFAULT_INACTIVITY_TIMEOUT_MS, DEFAULT_MODEL } from "./execute.js";
 export type { ClaudeManagedLogEvent, ExecuteDeps } from "./execute.js";
 export { testEnvironment } from "./test-environment.js";
 export { sessionCodec, readSessionParams } from "./session.js";
@@ -29,7 +29,15 @@ export function getConfigSchema(): AdapterConfigSchema {
         label: "API base URL",
         type: "text",
         group: "advanced",
-        hint: "Optional. Defaults to https://api.anthropic.com/v1.",
+        hint: "Optional. Defaults to https://api.anthropic.com/v1. A custom URL needs this agent's own ANTHROPIC_API_KEY; the server's key is only sent to the default API.",
+      },
+      {
+        key: "inactivityTimeoutSec",
+        label: "Inactivity timeout (seconds)",
+        type: "number",
+        default: 900,
+        group: "advanced",
+        hint: "A run fails and interrupts its session after this long with no activity from Anthropic. Default 900 (15 minutes).",
       },
       {
         key: "networkingMode",

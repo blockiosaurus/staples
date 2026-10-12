@@ -18,7 +18,7 @@ Use when:
 - You have an Anthropic API key and accept per-use API billing
 
 Core fields:
-- env.ANTHROPIC_API_KEY (secret binding or plain, optional): Anthropic API key; falls back to the server's ANTHROPIC_API_KEY
+- env.ANTHROPIC_API_KEY (secret binding or plain, optional): Anthropic API key; falls back to the server's ANTHROPIC_API_KEY only when apiBaseUrl is the default
 - model (string, optional): Claude model id (default claude-opus-5-5)
 - environmentId (string, optional): existing Managed Agents environment to run in; Staples creates one when empty
 - instructionsFilePath (string, optional): instructions file used as the agent's system prompt
@@ -26,7 +26,8 @@ Core fields:
 - bootstrapPromptTemplate (string, optional): first-run-only bootstrap prompt template
 
 Advanced fields:
-- apiBaseUrl (string, optional): Managed Agents API base URL (default https://api.anthropic.com/v1)
+- apiBaseUrl (string, optional): Managed Agents API base URL (default https://api.anthropic.com/v1); a custom URL requires env.ANTHROPIC_API_KEY
+- inactivityTimeoutSec (number, optional): fail and interrupt the session after this many seconds without events (default 900)
 - networkingMode ("unrestricted" | "limited", optional): sandbox egress (default unrestricted)
 - networkAllowedHosts (string, optional): hosts the sandbox may reach when networkingMode is limited, one per line
 - networkAllowPackageManagers (boolean, optional): also allow package registries when limited

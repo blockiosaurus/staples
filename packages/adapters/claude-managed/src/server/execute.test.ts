@@ -364,6 +364,47 @@ describe("claude_managed execute", () => {
   });
 });
 
+describe("claude_managed stuck sessions", () => {
+  it("fails and interrupts after the inactivity timeout", async () => {
+    fake.queueTurns([
+      { kind: "emit", event: fakeEvents.running() },
+      { kind: "emit", event: fakeEvents.usage({ listCostCents: 1 }) },
+      { kind: "hang" },
+    ]);
+    const h = harness();
+    const started = Date.now();
+    const result = await execute(h.ctx, { inactivityTimeoutMs: 300 });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "claude_managed_inactive", errorFamily: "transient_upstream" });
+    expect(result.errorMessage).toContain("No activity");
+    expect(result.costUsd).toBeCloseTo(0.01, 10);
+    expect(fake.receivedEvents(fake.sessionIds()[0]).map((e) => e.type)).toContain("user.interrupt");
+  });
+
+  it("reads inactivityTimeoutSec from the adapter config", async () => {
+    const { resolveInactivityTimeoutMs, DEFAULT_INACTIVITY_TIMEOUT_MS } = await import("./execute.js");
+    expect(resolveInactivityTimeoutMs({})).toBe(DEFAULT_INACTIVITY_TIMEOUT_MS);
+    expect(DEFAULT_INACTIVITY_TIMEOUT_MS).toBe(15 * 60_000);
+    expect(resolveInactivityTimeoutMs({ inactivityTimeoutSec: 60 })).toBe(60_000);
+    expect(resolveInactivityTimeoutMs({ inactivityTimeoutSec: "90" })).toBe(90_000);
+    expect(resolveInactivityTimeoutMs({ inactivityTimeoutSec: 0 })).toBe(DEFAULT_INACTIVITY_TIMEOUT_MS);
+    expect(resolveInactivityTimeoutMs({ inactivityTimeoutSec: 60 }, 5)).toBe(5);
+  });
+
+  it("fails and interrupts when requires_action names events the adapter cannot answer", async () => {
+    fake.queueTurns([
+      { kind: "emit", event: fakeEvents.running() },
+      { kind: "emit", event: fakeEvents.idle({ type: "requires_action", event_ids: ["sevt_builtin_confirm_1"] }) },
+      { kind: "hang" },
+    ]);
+    const h = harness();
+    const result = await execute(h.ctx, { inactivityTimeoutMs: 10_000 });
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "claude_managed_unsupported_action", errorFamily: "configuration" });
+    expect(result.errorMessage).toContain("sevt_builtin_confirm_1");
+    expect(fake.receivedEvents(fake.sessionIds()[0]).map((e) => e.type)).toContain("user.interrupt");
+  });
+});
+
 describe("environment names", () => {
   it("differ by a networking fingerprint suffix", async () => {
     fake.queueTurns(turn("one", 1), turn("two", 1));

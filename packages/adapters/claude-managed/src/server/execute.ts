@@ -61,6 +61,8 @@ export interface ExecuteDeps {
   settleTimeoutMs?: number;
   /** Poll interval while waiting for a resumed session to settle. */
   settlePollMs?: number;
+  /** Overrides the inactivity timeout (config `inactivityTimeoutSec`, default 15 min). */
+  inactivityTimeoutMs?: number;
   /**
    * Stable id of the Staples instance running this adapter. The server passes
    * `resolvePaperclipInstanceId()` (PAPERCLIP_INSTANCE_ID, default "default").
@@ -323,6 +325,16 @@ function messageOf(error: unknown): string {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_SETTLE_TIMEOUT_MS = 15_000;
+/** A run fails (and interrupts its session) after this long without a stream event. */
+export const DEFAULT_INACTIVITY_TIMEOUT_MS = 15 * 60_000;
+
+/** Inactivity timeout: deps override, else `config.inactivityTimeoutSec`, else 15 minutes. */
+export function resolveInactivityTimeoutMs(config: Record<string, unknown>, override?: number): number {
+  if (typeof override === "number" && Number.isFinite(override) && override > 0) return override;
+  const raw = config.inactivityTimeoutSec;
+  const seconds = typeof raw === "string" ? Number(raw) : typeof raw === "number" ? raw : NaN;
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : DEFAULT_INACTIVITY_TIMEOUT_MS;
+}
 const DEFAULT_SETTLE_POLL_MS = 250;
 const LIST_PAGE_LIMIT = 100;
 const LIST_MAX_PAGES = 20;
@@ -853,6 +865,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
     sessionId: sessionId!,
     prompt,
     cancelGraceMs,
+    inactivityTimeoutMs: resolveInactivityTimeoutMs(config, deps.inactivityTimeoutMs),
     onUsageTotals: async (totals) => {
       latest = totals;
       const run = runUsage();
@@ -962,6 +975,7 @@ async function runTurn(input: {
   sessionId: string;
   prompt: string;
   cancelGraceMs: number;
+  inactivityTimeoutMs: number;
   onUsageTotals: (totals: UsageTotals) => Promise<void>;
   refreshUsage: (timeoutMs: number) => Promise<void>;
   finish: (outcome: TurnOutcome) => Promise<AdapterExecutionResult>;
@@ -977,6 +991,23 @@ async function runTurn(input: {
   let lastMessage = "";
   let lastError: string | null = null;
   let graceTimer: ReturnType<typeof setTimeout> | null = null;
+  let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
+  let inactive = false;
+  /** Ids of custom tool uses this run answers (or is answering). */
+  const customToolUseIds = new Set<string>();
+
+  /** (Re)starts the inactivity clock; when it fires the stream is closed and the run fails. */
+  const touch = () => {
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    inactivityTimer = setTimeout(() => {
+      if (cancelled) return;
+      inactive = true;
+      streamAbort.abort();
+    }, input.inactivityTimeoutMs);
+  };
+  const inactivityError = () =>
+    `No activity from the Managed Agents session for ${Math.round(input.inactivityTimeoutMs / 1000)}s; the session was interrupted. ` +
+    "Raise inactivityTimeoutSec in the adapter config if this agent's turns are legitimately quiet for longer.";
 
   /** Best-effort, idempotent interrupt: retried on transient failures, time-boxed. */
   const interrupt = (timeoutMs: number): Promise<void> =>
@@ -1039,24 +1070,31 @@ async function runTurn(input: {
     if (ctx.signal?.aborted) onAbort();
     await onLog("stdout", line({ type: "claude_managed.status", status: "running", message: "Task sent to the Managed Agents session." }));
 
+    touch();
     try {
       for await (const event of stream) {
+        touch();
         outcome = await handleEvent(event);
         if (outcome) break;
       }
     } catch (error) {
       if (!cancelled) {
-        outcome = { status: "failed", error: `Event stream failed: ${messageOf(error)}`, errorFamily: "transient_upstream" };
+        outcome = inactive
+          ? { status: "failed", error: inactivityError(), errorCode: "claude_managed_inactive", errorFamily: "transient_upstream" }
+          : { status: "failed", error: `Event stream failed: ${messageOf(error)}`, errorFamily: "transient_upstream" };
       }
     }
     if (!outcome) {
       outcome = cancelled
         ? { status: "cancelled" }
-        : { status: "failed", error: lastError ?? "The Managed Agents event stream closed before the session went idle.", errorFamily: "transient_upstream" };
+        : inactive
+          ? { status: "failed", error: inactivityError(), errorCode: "claude_managed_inactive", errorFamily: "transient_upstream" }
+          : { status: "failed", error: lastError ?? "The Managed Agents event stream closed before the session went idle.", errorFamily: "transient_upstream" };
     }
   } finally {
     ctx.signal?.removeEventListener("abort", onAbort);
     if (graceTimer) clearTimeout(graceTimer);
+    if (inactivityTimer) clearTimeout(inactivityTimer);
     streamAbort.abort();
     toolAbort.abort();
   }
@@ -1096,6 +1134,7 @@ async function runTurn(input: {
         await onLog("stdout", line({ type: "claude_managed.tool_use", id: event.id, kind: "mcp", name: event.name, server: event.mcp_server_name, input: event.input }));
         return null;
       case "agent.custom_tool_use": {
+        customToolUseIds.add(event.id);
         const tool = proxy.get(event.name);
         await onLog(
           "stdout",
@@ -1124,7 +1163,24 @@ async function runTurn(input: {
       }
       case "session.status_idle": {
         const reason = event.stop_reason?.type ?? "unknown";
-        if (reason === "requires_action" && !cancelled) return null; // waiting on our custom tool results
+        if (reason === "requires_action" && !cancelled) {
+          // Waiting on our custom tool results, unless it names events this adapter cannot answer
+          // (e.g. a built-in tool confirmation): those would leave the run waiting forever.
+          const rawIds = (event.stop_reason as { event_ids?: unknown } | undefined)?.event_ids;
+          const ids = Array.isArray(rawIds) ? rawIds.filter((id): id is string => typeof id === "string") : [];
+          const unknown = ids.filter((id) => !customToolUseIds.has(id));
+          if (unknown.length === 0) return null;
+          await interrupt(STREAM_FAILURE_INTERRUPT_TIMEOUT_MS);
+          return {
+            status: "failed",
+            stopReason: reason,
+            error:
+              `The Managed Agents session is waiting on action(s) the adapter cannot answer (event ids: ${unknown.join(", ")}). ` +
+              "Only Staples custom tool calls are answered; built-in tool confirmations are not supported. The session was interrupted.",
+            errorCode: "claude_managed_unsupported_action",
+            errorFamily: "configuration",
+          };
+        }
         if (cancelled) {
           if (reason === "requires_action") return null;
           idleObserved = true;
