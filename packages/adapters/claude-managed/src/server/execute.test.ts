@@ -386,3 +386,194 @@ describe("claude_managed testEnvironment", () => {
     expect(unreachable.checks.at(-1)?.code).toBe("claude_managed_unreachable");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fix round 1: cancellation contract, stream failure, settling, adoption
+// ---------------------------------------------------------------------------
+
+async function api(method: string, apiPath: string, body?: unknown): Promise<Record<string, unknown>> {
+  const response = await fetch(`${fake.baseUrl}${apiPath}`, {
+    method,
+    headers: {
+      "x-api-key": fake.apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-beta": "managed-agents-2026-04-01",
+      ...(body !== undefined ? { "content-type": "application/json" } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  return (await response.json()) as Record<string, unknown>;
+}
+
+async function sendUserMessage(sessionId: string): Promise<void> {
+  await api("POST", `/sessions/${sessionId}/events`, { events: [{ type: "user.message", content: [{ type: "text", text: "leftover" }] }] });
+}
+
+describe("claude_managed cancellation and recovery", () => {
+  it("acknowledges a cancellation that arrives before any provider work", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const h = harness({ signal: controller.signal });
+    const result = await execute(h.ctx);
+    expect(result).toMatchObject({
+      exitCode: null,
+      errorCode: "cancelled",
+      executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
+      resultJson: { executionCancellation: { state: "acknowledged" } },
+    });
+    expect(fake.requests).toHaveLength(0);
+    expect(logEvents(h.logs).at(-1)).toMatchObject({ type: "claude_managed.result", status: "cancelled" });
+  });
+
+  it("without an observed idle, a cancelled run omits interrupted evidence and still bills usage", async () => {
+    fake.ignoreInterrupts = true;
+    fake.queueTurns([
+      { kind: "emit", event: fakeEvents.running() },
+      { kind: "emit", event: fakeEvents.agentMessage("Working") },
+      { kind: "emit", event: fakeEvents.usage({ listCostCents: 2 }) },
+      { kind: "hang" },
+    ]);
+    const controller = new AbortController();
+    const h = harness({ signal: controller.signal });
+    const running = execute(h.ctx, { cancelGraceMs: 400 });
+    await vi.waitFor(() => expect(h.logs.join("")).toContain("Working"), { timeout: 2_000 });
+    const sessionId = fake.sessionIds()[0];
+    const started = Date.now();
+    controller.abort();
+    const result = await running;
+
+    expect(Date.now() - started).toBeLessThan(1_200);
+    expect(result).toMatchObject({ exitCode: null, errorCode: "cancelled", costUsd: 0.02, resultJson: { executionCancellation: { state: "acknowledged" } } });
+    expect(result.executionRecovery).toBeUndefined();
+    expect(fake.receivedEvents(sessionId).map((e) => e.type)).toEqual(["user.message", "user.interrupt"]);
+    expect(h.usage.at(-1)).toMatchObject({ complete: true, costUsd: 0.02 });
+  });
+
+  it("a dropped stream sends an interrupt and bills the session's final usage", async () => {
+    fake.queueTurns([
+      { kind: "emit", event: fakeEvents.running() },
+      { kind: "emit", event: fakeEvents.agentMessage("Halfway") },
+      { kind: "emit", event: fakeEvents.usage({ listCostCents: 3 }) },
+      { kind: "hang" },
+    ]);
+    const h = harness();
+    const running = execute(h.ctx);
+    await vi.waitFor(() => expect(h.logs.join("")).toContain("Halfway"), { timeout: 2_000 });
+    const sessionId = fake.sessionIds()[0];
+    fake.dropStreams(sessionId);
+    // Spend that happened after the stream dropped: only the session resource shows it.
+    fake.emit(sessionId, fakeEvents.usage({ listCostCents: 9 }));
+    const result = await running;
+
+    expect(result).toMatchObject({ exitCode: 1, errorFamily: "transient_upstream", costUsd: 0.09 });
+    expect(fake.receivedEvents(sessionId).map((e) => e.type)).toEqual(["user.message", "user.interrupt"]);
+    expect(h.usage.at(-1)).toMatchObject({ complete: true, costUsd: 0.09 });
+  });
+
+  it("an abort while the task is being sent still interrupts the session", async () => {
+    fake.failNext({ method: "POST", path: /\/events$/, status: 200, delayMs: 400, passThrough: true });
+    const controller = new AbortController();
+    const h = harness({ signal: controller.signal });
+    const running = execute(h.ctx, { cancelGraceMs: 500 });
+    await vi.waitFor(() => expect(requestsMatching("POST", /\/events$/)).toHaveLength(1), { timeout: 2_000 });
+    controller.abort();
+    const result = await running;
+
+    expect(result).toMatchObject({ exitCode: null, errorCode: "cancelled", resultJson: { executionCancellation: { state: "acknowledged" } } });
+    const bodies = requestsMatching("POST", /\/events$/).map((r) => (r.body as { events: Array<{ type: string }> }).events[0].type);
+    expect(bodies).toEqual(["user.message", "user.interrupt"]);
+  });
+
+  it("settles a resumed session left running by a crashed run, then resumes it", async () => {
+    fake.queueTurns(turn("first", 1), [{ kind: "emit", event: fakeEvents.running() }, { kind: "hang" }], turn("second", 4));
+    const first = await execute(harness().ctx);
+    const sessionId = fake.sessionIds()[0];
+    await sendUserMessage(sessionId);
+    await vi.waitFor(() => expect(fake.getSessionStatus(sessionId)).toBe("running"));
+
+    const h = harness({ sessionParams: first.sessionParams });
+    const second = await execute(h.ctx, { settlePollMs: 20 });
+    expect(second).toMatchObject({ exitCode: 0, sessionDisplayId: sessionId, summary: "second" });
+    expect(fake.sessionIds()).toHaveLength(1);
+    expect(fake.receivedEvents(sessionId).map((e) => e.type)).toEqual(["user.message", "user.message", "user.interrupt", "user.message"]);
+    expect(second.costUsd).toBeCloseTo(0.03, 10);
+  });
+
+  it("settles a resumed session waiting on tool results from a crashed run", async () => {
+    fake.queueTurns(turn("first", 1), [{ kind: "custom_tool_call", name: "gone__tool" }], turn("second", 2));
+    const first = await execute(harness().ctx);
+    const sessionId = fake.sessionIds()[0];
+    await sendUserMessage(sessionId);
+    await vi.waitFor(async () => expect((await api("GET", `/sessions/${sessionId}`)).stop_reason).toMatchObject({ type: "requires_action" }));
+
+    const second = await execute(harness({ sessionParams: first.sessionParams }).ctx, { settlePollMs: 20 });
+    expect(second).toMatchObject({ exitCode: 0, sessionDisplayId: sessionId });
+    expect(fake.receivedEvents(sessionId).map((e) => e.type)).toEqual(["user.message", "user.message", "user.interrupt", "user.message"]);
+  });
+
+  it("starts a new session when the resumed one will not settle", async () => {
+    fake.queueTurns(turn("first", 1), [{ kind: "emit", event: fakeEvents.running() }, { kind: "hang" }], turn("second", 1));
+    const first = await execute(harness().ctx);
+    const stuck = fake.sessionIds()[0];
+    await sendUserMessage(stuck);
+    await vi.waitFor(() => expect(fake.getSessionStatus(stuck)).toBe("running"));
+    fake.ignoreInterrupts = true;
+
+    const second = await execute(harness({ sessionParams: first.sessionParams }).ctx, { settlePollMs: 20, settleTimeoutMs: 200 });
+    expect(second.exitCode).toBe(0);
+    expect(fake.sessionIds()).toHaveLength(2);
+    expect(second.sessionDisplayId).not.toBe(stuck);
+  });
+});
+
+describe("claude_managed agent and environment reuse", () => {
+  it("adopts the Staples agent's existing Managed Agents agent and environment for a new task", async () => {
+    fake.queueTurns(turn("task one", 1), turn("task two", 1));
+    const one = await execute(harness().ctx);
+    const two = await execute(harness().ctx); // another task: no sessionParams
+    expect(two.exitCode).toBe(0);
+    expect(requestsMatching("POST", /^\/v1\/agents/)).toHaveLength(1);
+    expect(requestsMatching("POST", /^\/v1\/environments$/)).toHaveLength(1);
+    expect(fake.sessionIds()).toHaveLength(2);
+    const a = sessionCodec.deserialize(one.sessionParams)!;
+    const b = sessionCodec.deserialize(two.sessionParams)!;
+    expect(b.managedAgentId).toBe(a.managedAgentId);
+    expect(b.environmentId).toBe(a.environmentId);
+  });
+
+  it("applies tool changes to the resumed session in place and to a new agent version", async () => {
+    const tools: Array<{ name: string; inputSchema: Record<string, unknown> }> = [
+      { name: "lookup", inputSchema: { type: "object", properties: { q: { type: "string" } } } },
+    ];
+    mcp = await startFakeMcpServer({ token: RUN_TOKEN, tools });
+    const servers = [{ name: "Staples tools", url: mcp.url, token: RUN_TOKEN, connectionId: "c1" }];
+    fake.queueTurns(turn("one", 1), turn("two", 2));
+    const first = await execute(harness({ servers }).ctx);
+    const sessionId = fake.sessionIds()[0];
+
+    tools[0].inputSchema = { type: "object", properties: { q: { type: "string" }, limit: { type: "number" } } };
+    tools.push({ name: "create", inputSchema: { type: "object", properties: {} } });
+    const second = await execute(harness({ servers, sessionParams: first.sessionParams }).ctx);
+
+    expect(second).toMatchObject({ exitCode: 0, sessionDisplayId: sessionId });
+    expect(fake.sessionIds()).toHaveLength(1);
+    const sessionUpdate = requestsMatching("POST", new RegExp(`^/v1/sessions/${sessionId}$`));
+    expect(sessionUpdate).toHaveLength(1);
+    const updatedNames = (fake.sessionAgent(sessionId)!.tools as Array<{ name?: string }>).map((t) => t.name);
+    expect(updatedNames).toEqual([undefined, "staples-tools__lookup", "staples-tools__create"]);
+    expect(requestsMatching("POST", /^\/v1\/agents\/[^/]+$/)).toHaveLength(1);
+    expect(sessionCodec.deserialize(second.sessionParams)).toMatchObject({ managedAgentVersion: 2 });
+  });
+
+  it("creates a new agent when the stored one was archived", async () => {
+    fake.queueTurns(turn("one", 1), turn("two", 1));
+    const first = await execute(harness().ctx);
+    const stored = sessionCodec.deserialize(first.sessionParams)!;
+    fake.archiveAgent(String(stored.managedAgentId));
+    const second = await execute(harness({ sessionParams: first.sessionParams }).ctx);
+    expect(second.exitCode).toBe(0);
+    expect(requestsMatching("POST", /^\/v1\/agents$/)).toHaveLength(2);
+    expect(sessionCodec.deserialize(second.sessionParams)!.managedAgentId).not.toBe(stored.managedAgentId);
+    expect(fake.sessionIds()).toHaveLength(2);
+  });
+});

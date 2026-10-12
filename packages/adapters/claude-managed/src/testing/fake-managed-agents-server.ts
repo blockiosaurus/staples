@@ -245,6 +245,12 @@ export class FakeManagedAgentsServer {
     return this.sessions.get(sessionId)?.status ?? null;
   }
 
+  /** Marks an agent archived (the fake has no archive endpoint for agents). */
+  archiveAgent(agentId: string): void {
+    const agent = this.agents.get(agentId);
+    if (agent) agent.archived_at = new Date().toISOString();
+  }
+
   /** Ends every open stream for a session without an idle event (a dropped connection). */
   dropStreams(sessionId: string): void {
     const session = this.sessions.get(sessionId);
