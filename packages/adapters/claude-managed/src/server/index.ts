@@ -1,4 +1,5 @@
 import type { AdapterConfigSchema } from "@paperclipai/adapter-utils";
+import { DEFAULT_MODEL } from "./execute.js";
 
 export { execute, coreFingerprint, toolsFingerprint, resolveApiKey, resolveNetworking, resolveRemainingBudgetUsd, resolveInstanceId, DEFAULT_MODEL } from "./execute.js";
 export type { ClaudeManagedLogEvent, ExecuteDeps } from "./execute.js";
@@ -14,20 +15,50 @@ export function getConfigSchema(): AdapterConfigSchema {
         key: "model",
         label: "Model",
         type: "text",
-        default: "claude-opus-5-5",
+        default: DEFAULT_MODEL,
         hint: "Claude model id for this agent.",
       },
       {
         key: "environmentId",
         label: "Environment ID",
         type: "text",
-        hint: "Optional. Use an existing Managed Agents cloud environment instead of letting Staples create one.",
+        hint: "Optional. Use an existing Anthropic cloud environment instead of letting Staples create one.",
       },
       {
         key: "apiBaseUrl",
         label: "API base URL",
         type: "text",
+        group: "advanced",
         hint: "Optional. Defaults to https://api.anthropic.com/v1.",
+      },
+      {
+        key: "networkingMode",
+        label: "Sandbox networking",
+        type: "select",
+        default: "unrestricted",
+        group: "advanced",
+        options: [
+          { value: "unrestricted", label: "Unrestricted" },
+          { value: "limited", label: "Limited to allowed hosts" },
+        ],
+        hint: "Unrestricted lets the agent browse and fetch from any site. Limited blocks everything except the hosts listed below (web search and fetch are limited too).",
+      },
+      {
+        key: "networkAllowedHosts",
+        label: "Allowed hosts",
+        type: "textarea",
+        group: "advanced",
+        hint: "One host per line, for example api.github.com.",
+        meta: { visibleWhen: { key: "networkingMode", value: "limited" } },
+      },
+      {
+        key: "networkAllowPackageManagers",
+        label: "Allow package registries",
+        type: "toggle",
+        default: false,
+        group: "advanced",
+        hint: "Also allow npm, PyPI and other package registries.",
+        meta: { visibleWhen: { key: "networkingMode", value: "limited" } },
       },
     ],
   };

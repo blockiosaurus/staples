@@ -83,6 +83,9 @@ importers:
       '@paperclipai/adapter-claude-local':
         specifier: workspace:*
         version: link:../packages/adapters/claude-local
+      '@paperclipai/adapter-claude-managed':
+        specifier: workspace:*
+        version: link:../packages/adapters/claude-managed
       '@paperclipai/adapter-codex-local':
         specifier: workspace:*
         version: link:../packages/adapters/codex-local
@@ -200,6 +203,9 @@ importers:
       '@paperclipai/adapter-utils':
         specifier: workspace:*
         version: link:../../adapter-utils
+      picocolors:
+        specifier: ^1.1.1
+        version: 1.1.1
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -939,6 +945,9 @@ importers:
       '@paperclipai/adapter-claude-local':
         specifier: workspace:*
         version: link:../packages/adapters/claude-local
+      '@paperclipai/adapter-claude-managed':
+        specifier: workspace:*
+        version: link:../packages/adapters/claude-managed
       '@paperclipai/adapter-codex-local':
         specifier: workspace:*
         version: link:../packages/adapters/codex-local
@@ -1172,6 +1181,9 @@ importers:
       '@paperclipai/adapter-claude-local':
         specifier: workspace:*
         version: link:../packages/adapters/claude-local
+      '@paperclipai/adapter-claude-managed':
+        specifier: workspace:*
+        version: link:../packages/adapters/claude-managed
       '@paperclipai/adapter-codex-local':
         specifier: workspace:*
         version: link:../packages/adapters/codex-local

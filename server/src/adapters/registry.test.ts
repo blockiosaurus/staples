@@ -66,6 +66,7 @@ describe("built-in runtime connection tool delivery", () => {
     ["claude_local", "native_mcp"],
     ["codex_local", "native_mcp"],
     ["cursor_cloud", "invocation_context"],
+    ["claude_managed", "native_mcp"],
     ["cursor", "environment"],
     ["gemini_local", "environment"],
     ["grok_local", "environment"],
@@ -79,6 +80,25 @@ describe("built-in runtime connection tool delivery", () => {
     ["process", "environment"],
     ["http", "invocation_context"],
   ] as const);
+
+  it("registers claude_managed with a run JWT for the host-side tools proxy and a config schema", async () => {
+    const adapter = requireServerAdapter("claude_managed");
+    expect(adapter).toMatchObject({
+      type: "claude_managed",
+      supportsLocalAgentJwt: true,
+      runtimeToolDelivery: "native_mcp",
+      requiresMaterializedRuntimeSkills: false,
+    });
+    expect(adapter?.sessionCodec).toBeDefined();
+    expect(adapter?.sessionManagement?.supportsSessionResume).toBe(true);
+    expect(adapter?.models?.map((model) => model.id)).toContain("claude-opus-5-5");
+    const schema = await adapter!.getConfigSchema!();
+    expect(schema.fields.map((field) => field.key)).toEqual(
+      expect.arrayContaining(["model", "environmentId", "apiBaseUrl", "networkingMode", "networkAllowedHosts"]),
+    );
+    expect(adapter?.agentConfigurationDoc).toContain("ANTHROPIC_API_KEY");
+    expect(adapter?.agentConfigurationDoc).not.toContain("Claude Code");
+  });
 
   it("requires every built-in adapter to declare its expected delivery strategy", () => {
     const builtIns = listServerAdapters().filter((adapter) => BUILTIN_ADAPTER_TYPES.has(adapter.type));

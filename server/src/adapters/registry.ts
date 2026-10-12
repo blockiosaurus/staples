@@ -60,6 +60,16 @@ import {
 } from "@paperclipai/adapter-cursor-cloud/server";
 import { agentConfigurationDoc as cursorCloudAgentConfigurationDoc } from "@paperclipai/adapter-cursor-cloud";
 import {
+  execute as claudeManagedExecute,
+  getConfigSchema as getClaudeManagedConfigSchema,
+  sessionCodec as claudeManagedSessionCodec,
+  testEnvironment as claudeManagedTestEnvironment,
+} from "@paperclipai/adapter-claude-managed/server";
+import {
+  agentConfigurationDoc as claudeManagedAgentConfigurationDoc,
+  models as claudeManagedModels,
+} from "@paperclipai/adapter-claude-managed";
+import {
   execute as geminiExecute,
   listGeminiSkills,
   syncGeminiSkills,
@@ -132,6 +142,7 @@ import {
 import { agentConfigurationDoc as piAgentConfigurationDoc } from "@paperclipai/adapter-pi-local";
 import { BUILTIN_ADAPTER_TYPES } from "./builtin-adapter-types.js";
 import { buildExternalAdapters } from "./plugin-loader.js";
+import { resolvePaperclipInstanceId } from "../home-paths.js";
 import { getDisabledAdapterTypes } from "../services/adapter-plugin-store.js";
 import { processAdapter } from "./process/index.js";
 import { httpAdapter } from "./http/index.js";
@@ -734,6 +745,29 @@ const cursorCloudAdapter: ServerAdapterModule = {
   getConfigSchema: getCursorCloudConfigSchema,
 };
 
+const claudeManagedAdapter: ServerAdapterModule = {
+  type: "claude_managed",
+  // Runtime tools arrive as MCP servers the adapter proxies from this host.
+  runtimeToolDelivery: "native_mcp",
+  // The instance id keeps Managed Agents resources of worktree/fork instances
+  // (which copy company and agent ids) apart from the original instance's.
+  execute: (ctx) => claudeManagedExecute(ctx, { instanceId: resolvePaperclipInstanceId() }),
+  testEnvironment: claudeManagedTestEnvironment,
+  sessionCodec: claudeManagedSessionCodec,
+  sessionManagement: getAdapterSessionManagement("claude_managed") ?? undefined,
+  // Tool definitions are re-discovered and applied to the session on every run.
+  supportsToolRefreshOnResume: true,
+  models: claudeManagedModels,
+  // The run JWT authenticates the host-side tools proxy to Staples MCP servers;
+  // it is never sent to Anthropic.
+  supportsLocalAgentJwt: true,
+  supportsInstructionsBundle: true,
+  instructionsPathKey: "instructionsFilePath",
+  requiresMaterializedRuntimeSkills: false,
+  agentConfigurationDoc: claudeManagedAgentConfigurationDoc,
+  getConfigSchema: getClaudeManagedConfigSchema,
+};
+
 const geminiLocalAdapter: ServerAdapterModule = {
   type: "gemini_local",
   runtimeToolDelivery: "environment",
@@ -898,6 +932,7 @@ function registerBuiltInAdapters() {
     openCodeLocalAdapter,
     piLocalAdapter,
     cursorCloudAdapter,
+    claudeManagedAdapter,
     cursorLocalAdapter,
     geminiLocalAdapter,
     grokLocalAdapter,

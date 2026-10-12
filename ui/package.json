@@ -37,6 +37,7 @@
     "@mdxeditor/editor": "^4.2.3",
     "@paperclipai/adapter-claude-local": "workspace:*",
     "@paperclipai/adapter-codex-local": "workspace:*",
+    "@paperclipai/adapter-claude-managed": "workspace:*",
     "@paperclipai/adapter-cursor-cloud": "workspace:*",
     "@paperclipai/adapter-cursor-local": "workspace:*",
     "@paperclipai/adapter-gemini-local": "workspace:*",

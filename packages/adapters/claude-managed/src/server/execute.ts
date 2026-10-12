@@ -117,15 +117,26 @@ export function resolveApiBaseUrl(config: Record<string, unknown>): string {
  * which limits what an unrestricted sandbox can leak. Operators can opt into
  * `limited` via `adapterConfig.networking = { type: "limited", allowedHosts, allowPackageManagers }`.
  */
+function parseHostList(value: unknown): string[] {
+  const items = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[\s,]+/) : [];
+  return items.filter((h): h is string => typeof h === "string" && h.trim().length > 0).map((h) => h.trim());
+}
+
+/**
+ * Sandbox networking. Reads the nested `networking: {type, allowedHosts, allowPackageManagers}`
+ * object, or the flat keys the config form writes: `networkingMode` ("unrestricted" | "limited"),
+ * `networkAllowedHosts` (newline/comma separated or an array) and `networkAllowPackageManagers`.
+ * The nested object wins when present.
+ */
 export function resolveNetworking(config: Record<string, unknown>): CloudNetworking {
-  const raw = parseObject(config.networking);
+  const nested = parseObject(config.networking);
+  const raw = typeof nested.type === "string"
+    ? nested
+    : { type: config.networkingMode, allowedHosts: config.networkAllowedHosts, allowPackageManagers: config.networkAllowPackageManagers };
   if (raw.type === "limited") {
-    const allowedHosts = Array.isArray(raw.allowedHosts)
-      ? raw.allowedHosts.filter((h): h is string => typeof h === "string" && h.trim().length > 0).map((h) => h.trim())
-      : [];
     return {
       type: "limited",
-      allowed_hosts: allowedHosts,
+      allowed_hosts: parseHostList(raw.allowedHosts),
       allow_package_managers: raw.allowPackageManagers === true,
       allow_mcp_servers: false,
     };

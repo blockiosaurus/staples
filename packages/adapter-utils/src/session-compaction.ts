@@ -40,6 +40,7 @@ export const LEGACY_SESSIONED_ADAPTER_TYPES = new Set([
   "claude_local",
   "codex_local",
   "cursor_cloud",
+  "claude_managed",
   "cursor",
   "gemini_local",
   "grok_local",
@@ -61,6 +62,13 @@ export const ADAPTER_SESSION_MANAGEMENT: Record<string, AdapterSessionManagement
     defaultSessionCompaction: ADAPTER_MANAGED_SESSION_POLICY,
   },
   cursor_cloud: {
+    supportsSessionResume: true,
+    nativeContextManagement: "unknown",
+    defaultSessionCompaction: DEFAULT_SESSION_COMPACTION_POLICY,
+  },
+  claude_managed: {
+    // Managed Agents sessions compact their own context server-side, but this is
+    // not confirmed for long-lived Staples task sessions yet: keep the default policy.
     supportsSessionResume: true,
     nativeContextManagement: "unknown",
     defaultSessionCompaction: DEFAULT_SESSION_COMPACTION_POLICY,
