@@ -1,9 +1,10 @@
 # Claude (hosted) adapter (`claude_managed`)
 
-Status: proof of concept (2026-10-12). **Not yet run against the live Managed
-Agents API.** Every test so far uses a local fake server; treat the request and
-event shapes as unverified until someone runs the [live smoke test](#live-smoke-test)
-with a real key.
+Status: proof of concept (2026-10-12). **The [live smoke test](#live-smoke-test)
+passed against the Managed Agents API on 2026-10-12** (`claude-opus-5-5`: one
+turn, one proxied custom tool call, $0.03 reported, session archived). Not yet
+verified live: session resume across runs (and its usage baseline), cancellation,
+budget-capped sessions, limited networking, and models other than Opus 5.5.
 
 ## What it is
 
