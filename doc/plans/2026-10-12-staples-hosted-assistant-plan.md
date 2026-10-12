@@ -59,3 +59,18 @@ Research: `.superpowers/sdd/2026-10-12-staples-hosted-assistant-plan/research.md
 - [ ] Controller: start the dev server with the hosted key in the server environment (launch config that sources `.env.local` without printing it), create a fresh company via `/start`, confirm the Assistant is `claude_managed` and ready, send "Set up a Researcher" on the Assistant chat, and confirm a real reply that uses Staples tools (template tools/questions). Screenshots to `tmp/screenshots/phase8/`.
 - [ ] Run `smoke --scenario skills` live.
 - [ ] Typecheck, touched tests, UI build, token gates; ledger.
+
+---
+
+### Task 5: Hosted hires with caps, and a persisted run-token secret (added after live verification)
+
+Decisions (2026-10-12, person): hosted hires use the operator key with caps; auto-generate the run-token signing secret.
+
+- [ ] **Hosted hires.** When hosted inference is available:
+  - `claude_managed` becomes a proposable hire adapter (PROPOSABLE_HIRE_ADAPTER_TYPES, plan validator, plan skill/AGENTS.md guidance, templates' `recommendedAdapterType` resolution) and the default for plan hires that don't specify one (`{ adapterType: "claude_managed", adapterConfig: { model } }`).
+  - The server key may be used by any `claude_managed` agent in the company that has no own key, but only after the server ensures (idempotently, at point of use, like the Assistant) an active agent-scope monthly hard-stop policy (default `STAPLES_HOSTED_AGENT_BUDGET_CENTS` = 2000) AND an active company-scope monthly hard-stop policy (default `STAPLES_HOSTED_COMPANY_BUDGET_CENTS` = 5000; never lowers an existing operator/person-set company budget; explicit env 0 = uncapped). Ensure failure → server key withheld. `STAPLES_HOSTED_INFERENCE_ALL_AGENTS` is retired (remove; document).
+  - Agents with their own key binding never use the server key and get no forced caps.
+  - Tests: plan with a templated hire in hosted mode → hire is claude_managed + model, policies exist before first run; company cap respected; own-key hire unaffected; non-hosted mode unchanged (claude_managed not proposable without hosted unless the company has a key — keep today's behavior).
+  - Bump the Assistant `stockVersion` if AGENTS.md/skills change.
+- [ ] **Run-token secret.** On server start, if neither `PAPERCLIP_AGENT_JWT_SECRET` nor `BETTER_AUTH_SECRET` is set, read `<instance data dir>/secrets/agent-jwt-secret` or generate 32 random bytes (hex) into it (mode 0600, directory 0700), set `process.env.PAPERCLIP_AGENT_JWT_SECRET`, and log once that a local secret was generated (never the value). Configured secrets always win. Tests with a temp data dir: generated once, reused on restart, not overwriting env, file permissions.
+- [ ] Live: restart the hosted dev server WITHOUT the launch-config secret, confirm tools work, and complete "Set up a Researcher" end to end (plan card → Researcher hired on claude_managed with caps → its first run uses the Researcher skills).
