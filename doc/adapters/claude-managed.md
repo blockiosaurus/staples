@@ -111,10 +111,40 @@ Networking settings apply only to environments Staples creates. When
   sandbox.
 - **No workspace sync.** The sandbox does not see the Staples project
   workspace; the agent works through Staples tools and its own sandbox files.
+- **Unsettled sessions are abandoned.** If a previous session can't be settled, it's
+  interrupted and archived on a best-effort basis; any spend it incurs after that
+  isn't attributed to a Staples run or budget.
 - **Not offered as the Assistant's runtime** during the proof of concept.
 - **Not published to npm** yet (`publishFromCi: false` in the release manifest).
 
 ## Live smoke test
 
-_To be filled in by Task 4: steps, the key and model used, observed run log,
-cost and tool round trip._
+A script that runs the real adapter once against your own Anthropic account:
+
+```sh
+export ANTHROPIC_API_KEY=...        # your key; never commit it
+pnpm --filter @paperclipai/adapter-claude-managed smoke
+```
+
+Optional: `MANAGED_AGENTS_MODEL` (default is the adapter's default model) and
+`MANAGED_AGENTS_BASE_URL`. Without a key the script exits 1 and tells you to set one.
+
+What it does:
+
+- Starts one in-process fake Staples MCP server exposing a tool `echo_note`.
+- Calls `execute()` with a minimal run context; the prompt asks the agent to call
+  `echo_note` exactly once.
+- Prints a compact transcript (messages, tool calls and results, usage), the cost,
+  and the session, environment and agent ids. It fails unless `echo_note` was
+  called through the tools proxy.
+- Archives the session at the end (best effort).
+
+Cost: it creates one small agent, one environment and one short session; expect a
+few cents.
+
+Cleanup: the session is archived automatically. The agent and environment are kept
+(the adapter reuses them on later runs); the script prints their ids so you can
+archive or delete them in the Anthropic Console if you want.
+
+To exercise the script without a key, add `--fake`: it runs the same flow against the
+package's local fake Managed Agents server.

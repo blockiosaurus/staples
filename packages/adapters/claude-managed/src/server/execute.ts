@@ -45,6 +45,9 @@ const DEFAULT_CANCEL_GRACE_MS = 3_000;
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 /** Test seams; production calls `execute(ctx)`. */
+/** Time box for each best-effort call that stops and archives an abandoned session. */
+const ABANDON_TIMEOUT_MS = 5_000;
+
 export interface ExecuteDeps {
   /** fetch for Staples MCP servers (tools proxy). */
   mcpFetch?: FetchLike;
@@ -651,6 +654,25 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
     }
   }
 
+  /**
+   * Best-effort: stops and archives a session the run is walking away from, so it
+   * cannot keep running unattended. Never throws and never fails the run.
+   */
+  async function abandonSession(id: string): Promise<void> {
+    if (signal?.aborted) return;
+    try {
+      await client.sendEvents(id, [{ type: "user.interrupt" }], { retry: "all", signal: AbortSignal.timeout(ABANDON_TIMEOUT_MS) });
+    } catch (error) {
+      notes.push(`Could not interrupt abandoned session ${id} (${messageOf(error)}).`);
+    }
+    try {
+      await client.archiveSession(id, { signal: AbortSignal.timeout(ABANDON_TIMEOUT_MS) });
+      notes.push(`Interrupted and archived abandoned session ${id}.`);
+    } catch (error) {
+      notes.push(`Could not archive abandoned session ${id} (${messageOf(error)}).`);
+    }
+  }
+
   async function resolveSession(): Promise<void> {
     const canResume = prior !== null && prior.fingerprint === fingerprint && prior.managedAgentId === managedAgentId && prior.environmentId === environmentId;
     if (canResume && prior) {
@@ -664,7 +686,10 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
         if (sessionNeedsSettle(existing)) {
           await onLog("stdout", line({ type: "claude_managed.status", status: "settling", message: `Interrupting unfinished work in session ${existing.id}.` }));
           existing = await settleSession(existing.id);
-          if (!existing) notes.push(`Session ${prior.sessionId} did not settle after an interrupt; starting a new session.`);
+          if (!existing) {
+            notes.push(`Session ${prior.sessionId} did not settle after an interrupt; starting a new session.`);
+            await abandonSession(prior.sessionId);
+          }
         }
       } else {
         existing = null;

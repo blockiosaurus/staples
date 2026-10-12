@@ -526,6 +526,22 @@ describe("claude_managed cancellation and recovery", () => {
     expect(second.exitCode).toBe(0);
     expect(fake.sessionIds()).toHaveLength(2);
     expect(second.sessionDisplayId).not.toBe(stuck);
+    // The abandoned session is interrupted and archived (best effort).
+    expect((await api("GET", `/sessions/${stuck}`)).archived_at).toBeTruthy();
+    expect(fake.receivedEvents(stuck).filter((e) => e.type === "user.interrupt").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("an abandoned session that cannot be archived does not fail the run", async () => {
+    fake.queueTurns(turn("first", 1), [{ kind: "emit", event: fakeEvents.running() }, { kind: "hang" }], turn("second", 1));
+    const first = await execute(harness().ctx);
+    const stuck = fake.sessionIds()[0];
+    await sendUserMessage(stuck);
+    await vi.waitFor(() => expect(fake.getSessionStatus(stuck)).toBe("running"));
+    fake.ignoreInterrupts = true;
+    fake.failNext({ method: "POST", path: `/v1/sessions/${stuck}/archive`, status: 500, times: 5 });
+    const second = await execute(harness({ sessionParams: first.sessionParams }).ctx, { settlePollMs: 20, settleTimeoutMs: 100 });
+    expect(second.exitCode).toBe(0);
+    expect(fake.sessionIds()).toHaveLength(2);
   });
 });
 
