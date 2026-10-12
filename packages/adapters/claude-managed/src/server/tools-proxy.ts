@@ -300,12 +300,17 @@ function contentToText(block: Record<string, unknown>): string {
 }
 
 /** Converts an MCP `tools/call` result into custom-tool-result text, capped in size. */
-export function mcpResultToToolContent(result: Record<string, unknown>, maxChars = DEFAULT_MAX_RESULT_CHARS): ToolCallOutcome {
+export function mcpResultToToolContent(
+  result: Record<string, unknown>,
+  maxChars = DEFAULT_MAX_RESULT_CHARS,
+  redact: (text: string) => string = (text) => text,
+): ToolCallOutcome {
   const blocks = Array.isArray(result.content) ? result.content.map(asRecord).filter((b): b is Record<string, unknown> => Boolean(b)) : [];
   let text = blocks.map(contentToText).join("\n");
   if (!text && result.structuredContent !== undefined) text = JSON.stringify(result.structuredContent);
   if (!text) text = "(no output)";
-  return capText(text, result.isError === true, maxChars);
+  // Redact before capping so truncation cannot split (and so leak part of) a secret.
+  return capText(redact(text), result.isError === true, maxChars);
 }
 
 function capText(text: string, isError: boolean, maxChars: number): ToolCallOutcome {
@@ -418,7 +423,8 @@ export class ToolsProxy {
     const signal = AbortSignal.any([timeout, ...(options.signal ? [options.signal] : []), ...(this.options.signal ? [this.options.signal] : [])]);
     try {
       const result = await entry.connection.request("tools/call", { name: entry.tool.toolName, arguments: input ?? {} }, signal);
-      return mcpResultToToolContent(result, maxChars);
+      // A tool that echoes request headers must not hand the run token to Anthropic.
+      return mcpResultToToolContent(result, maxChars, (text) => entry.connection.redact(text));
     } catch (error) {
       const detail = entry.connection.redact(error instanceof Error ? error.message : String(error));
       const reason = timeout.aborted ? `Tool "${entry.tool.toolName}" timed out.` : `Tool "${entry.tool.toolName}" failed: ${detail}`;

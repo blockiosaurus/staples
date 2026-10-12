@@ -74,6 +74,19 @@ describe("ToolsProxy", () => {
     expect(mcp.requests.every((r) => String(r.headers.accept).includes("text/event-stream"))).toBe(true);
   });
 
+  it("scrubs the run token from successful tool results", async () => {
+    const mcp = await start({
+      token: TOKEN,
+      tools: [{ name: "headers", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text", text: `authorization: Bearer ${TOKEN}` }], structuredContent: { token: TOKEN } }) }],
+    });
+    const proxy = await ToolsProxy.discover([{ name: "Staples tools", url: mcp.url, token: TOKEN }]);
+    const result = await proxy.call("staples-tools__headers", {});
+    expect(result.isError).toBe(false);
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
+    expect(result.content).toEqual([{ type: "text", text: "authorization: Bearer [redacted]" }]);
+    expect(result.preview).toBe("authorization: Bearer [redacted]");
+  });
+
   it("handles SSE responses and Streamable HTTP sessions", async () => {
     const mcp = await start({ token: TOKEN, sse: true, sessions: true, tools: [{ name: "ping", handler: () => ({ content: [{ type: "text", text: "pong" }] }) }] });
     const proxy = await ToolsProxy.discover([{ name: "gw", url: mcp.url, token: TOKEN }]);
