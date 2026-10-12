@@ -116,6 +116,7 @@ import { isLoopbackHost, rewriteLoopbackUrlPort } from "./url-utils.js";
 import { createPluginWorkerManager } from "./services/plugin-worker-manager.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
+import { ensureAgentJwtSecret } from "./agent-jwt-secret.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { initTelemetry, getTelemetryClient } from "./telemetry.js";
@@ -223,6 +224,9 @@ async function startServerWithDatabaseTeardown(
   await sentryReady;
   ensureDecisionSigningSecret();
   let config = loadConfig();
+  // Before anything reads the agent JWT config: without a run-token secret,
+  // agents run with no Staples tools. Configured secrets always win.
+  ensureAgentJwtSecret({ log: (message) => logger.info(message) });
   initTelemetry({ enabled: config.telemetryEnabled });
   if (process.env.PAPERCLIP_SECRETS_PROVIDER === undefined) {
     process.env.PAPERCLIP_SECRETS_PROVIDER = config.secretsProvider;
