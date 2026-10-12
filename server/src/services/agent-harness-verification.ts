@@ -9,7 +9,8 @@ import { aiConnectionRouterService } from "./ai-connection-router.js";
 import { withManagedAiProbe, stripAiAuthBindings } from "./ai-connection-runtime.js";
 import { environmentService } from "./environments.js";
 import { secretService } from "./secrets.js";
-import { hostedAssistantProvisioningPending, hostedInferenceAllowedFor } from "./hosted-inference.js";
+import { ASSISTANT_PROVISIONING_INCOMPLETE_CHECK_CODE } from "./assistant-setup.js";
+import { hostedAssistantProvisioningPending, hostedInferenceAllowedFor } from "./hosted-inference-access.js";
 import { dotRunnerBroker } from "./dot-runner-broker.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 import type { LifecycleAgent } from "../modules/agent-lifecycle/index.js";
@@ -40,6 +41,22 @@ async function recordHarnessTest(db: Db, agent: { id: string; lifecycleVersion: 
     : sql`${agents.lifecycleOperation} - 'lastHarnessTest'`;
   await db.update(agents).set({ lifecycleOperation: value })
     .where(and(eq(agents.id, agent.id), eq(agents.lifecycleVersion, agent.lifecycleVersion), isNotNull(agents.lifecycleOperation)))
+    .catch(() => {});
+}
+
+/** Lifecycle sweeps (about 5s apart) a new hosted Assistant may wait for its provisioning record. */
+export const HOSTED_PROVISIONING_MAX_WAITS = 24;
+
+function readProvisioningWaits(operation: unknown): number {
+  const value = (operation as { hostedProvisioningWaits?: unknown } | null | undefined)?.hostedProvisioningWaits;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+/** Counts waits on the lifecycle operation (the setup card shows "Finishing Assistant setup…"). Best effort. */
+async function recordProvisioningWait(db: Db, agent: { id: string; lifecycleVersion: number }, waits: number) {
+  await db.update(agents).set({
+    lifecycleOperation: sql`coalesce(${agents.lifecycleOperation}, '{}'::jsonb) || jsonb_build_object('hostedProvisioningWaits', ${waits}::int)`,
+  }).where(and(eq(agents.id, agent.id), eq(agents.lifecycleVersion, agent.lifecycleVersion), isNotNull(agents.lifecycleOperation)))
     .catch(() => {});
 }
 
@@ -80,7 +97,18 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
       config = { ...config, env: { ...resolved.env, ...parseObject(config.env) } };
     }
     const hostedInferenceAllowed = await hostedInferenceAllowedFor(db, agent);
-    if (!hostedInferenceAllowed && await hostedAssistantProvisioningPending(db, agent)) return "pending";
+    if (!hostedInferenceAllowed && await hostedAssistantProvisioningPending(db, agent)) {
+      // Waiting on the provisioning record: say so, and give up (a setup error
+      // the person can retry) instead of verifying silently forever.
+      const waits = readProvisioningWaits(agent.lifecycleOperation) + 1;
+      if (waits > HOSTED_PROVISIONING_MAX_WAITS) {
+        const checks = [{ code: ASSISTANT_PROVISIONING_INCOMPLETE_CHECK_CODE, level: "error" }];
+        await recordHarnessTest(db, agent, checks);
+        throw Object.assign(new Error("The Assistant's setup did not finish"), { code: "harness_test_failed", checks });
+      }
+      await recordProvisioningWait(db, agent, waits);
+      return "pending";
+    }
     const target = await tests.resolveAdapterTestExecutionContext({ agentId: agent.id, companyId: agent.companyId, adapterType: agent.adapterType, environmentId });
     let status: "released" | "failed" = "failed";
     try {

@@ -1,9 +1,9 @@
 import { createAgentLifecycle, configureAgentLifecycle } from "../services/agent-lifecycle.js";
-import { agentHarnessVerificationService } from "../services/agent-harness-verification.js";
+import { agentHarnessVerificationService, HOSTED_PROVISIONING_MAX_WAITS } from "../services/agent-harness-verification.js";
 import { assistantSetupStatus, readAssistantLifecycle } from "../services/assistant-setup.js";
 import { requireServerAdapter } from "../adapters/index.js";
 import { isConversationAdapter } from "../services/conversation-continuation.js";
-import { hostedInferenceAllowedFor } from "../services/hosted-inference.js";
+import { ensureHostedAssistantBudget, hostedInferenceAllowedFor } from "../services/hosted-inference-access.js";
 import fs from "node:fs/promises";
 import { fileHash } from "../services/agent-file-store.js";
 import { stockHash } from "../services/managed-resource-drift.js";
@@ -709,6 +709,73 @@ describeEmbeddedPostgres("built-in agents", () => {
     vi.stubEnv("STAPLES_HOSTED_INFERENCE", "off");
     expect(await hostedInferenceAllowedFor(db, assistant)).toBe(false);
     expect(await hostedInferenceAllowedFor(db, staff)).toBe(false);
+  });
+
+  const hostedPolicy = async (agentId: string) => (await db.select().from(budgetPolicies)
+    .where(and(eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, agentId))))[0];
+
+  it("enforces the hosted Assistant's hard-stop budget at the point of use", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const local = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(local.adapterType).toBe("claude_local");
+    expect(await hostedPolicy(local.id)).toBeUndefined();
+
+    // Switched to Claude (hosted) after provisioning (as the setup card does): no policy yet.
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    await db.update(agents).set({ adapterType: "claude_managed", adapterConfig: { model: "claude-opus-5-5" } }).where(eq(agents.id, local.id));
+    const [switched] = await db.select().from(agents).where(eq(agents.id, local.id));
+    expect(await hostedInferenceAllowedFor(db, switched!)).toBe(true);
+    expect(await hostedPolicy(local.id)).toMatchObject({ amount: 2000, hardStopEnabled: true, isActive: true });
+
+    // Deleted or disabled by hand: the next use recreates / re-activates it.
+    await db.delete(budgetPolicies).where(eq(budgetPolicies.scopeId, local.id));
+    expect(await hostedInferenceAllowedFor(db, switched!)).toBe(true);
+    expect(await hostedPolicy(local.id)).toMatchObject({ amount: 2000, isActive: true });
+    await db.update(budgetPolicies).set({ isActive: false, hardStopEnabled: false }).where(eq(budgetPolicies.scopeId, local.id));
+    await ensureHostedAssistantBudget(db, switched!);
+    expect(await hostedPolicy(local.id)).toMatchObject({ isActive: true, hardStopEnabled: true });
+
+    // If the budget cannot be ensured, the server key is withheld.
+    expect(await hostedInferenceAllowedFor(db, switched!, process.env, { ensureBudget: async () => { throw new Error("db down"); } })).toBe(false);
+
+    // With its own key the server key is not needed (and no budget is forced).
+    await db.delete(budgetPolicies).where(eq(budgetPolicies.scopeId, local.id));
+    expect(await hostedInferenceAllowedFor(db, { ...switched!, adapterConfig: { model: "claude-opus-5-5", env: { ANTHROPIC_API_KEY: { type: "secret_ref", secretId: randomUUID() } } } })).toBe(false);
+    expect(await hostedPolicy(local.id)).toBeUndefined();
+  });
+
+  it("re-defaulting an existing Assistant onto hosted inference through ensure() gives it the budget", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    await db.delete(budgetPolicies).where(eq(budgetPolicies.scopeId, assistant.id));
+    // An incomplete config on a non-runtime adapter is re-defaulted by ensure().
+    await db.update(agents).set({ adapterType: "process", adapterConfig: {} }).where(eq(agents.id, assistant.id));
+    const ensured = await createBuiltInAgentService(db).ensure(companyId, "assistant");
+    expect(ensured.agent?.adapterType).toBe("claude_managed");
+    expect(await hostedPolicy(assistant.id)).toMatchObject({ amount: 2000, hardStopEnabled: true, isActive: true });
+  });
+
+  it("surfaces a hosted Assistant stuck waiting on its provisioning record, then fails it", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    await lifecycleWorker.process(assistant.id);
+    // The provisioning record never got written (e.g. bundle reconciliation keeps failing).
+    await db.delete(builtInManagedResources).where(eq(builtInManagedResources.companyId, companyId));
+    await db.update(agents).set({ lifecycleState: "verifying", lifecycleError: null,
+      lifecycleOperation: { id: "op-wait", hostComplete: false, completedPluginIds: [], attempts: 1 } }).where(eq(agents.id, assistant.id));
+    const [row] = await db.select().from(agents).where(eq(agents.id, assistant.id));
+    const { verify } = agentHarnessVerificationService(db, {} as never);
+    expect(await verify(row as never)).toBe("pending");
+    let lifecycle = await readAssistantLifecycle(db, assistant.id);
+    expect(assistantSetupStatus(lifecycle!)).toEqual({ state: "starting", adapterType: "claude_managed", message: "Finishing Assistant setup…" });
+    for (let index = 1; index < HOSTED_PROVISIONING_MAX_WAITS; index += 1) expect(await verify(row as never)).toBe("pending");
+    await expect(verify(row as never)).rejects.toMatchObject({ code: "harness_test_failed" });
+    await db.update(agents).set({ lifecycleError: "The lifecycle step failed. Retry the operation." }).where(eq(agents.id, assistant.id));
+    lifecycle = await readAssistantLifecycle(db, assistant.id);
+    expect(assistantSetupStatus(lifecycle!)).toEqual({ state: "error", adapterType: "claude_managed",
+      message: "The Assistant's setup didn't finish. Try again.", reason: "The Assistant's setup didn't finish. Try again." });
   });
 
   it("reports needs_model when Claude (hosted) has no usable key", async () => {

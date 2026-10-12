@@ -84,6 +84,7 @@ const mockEnsureAssistant = vi.hoisted(() => vi.fn());
 const mockLifecycle = vi.hoisted(() => ({ retry: vi.fn(), updateAndTransition: vi.fn() }));
 const mockReadAssistantLifecycle = vi.hoisted(() => vi.fn());
 const mockAdapterAvailability = vi.hoisted(() => vi.fn());
+const mockEnsureHostedAssistantBudget = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
@@ -152,6 +153,11 @@ function registerModuleMocks() {
 
   vi.doMock("../services/secrets.js", () => ({
     secretService: () => mockSecretService,
+  }));
+
+  vi.doMock("../services/hosted-inference-access.js", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../services/hosted-inference-access.js")>()),
+    ensureHostedAssistantBudget: mockEnsureHostedAssistantBudget,
   }));
 
   vi.doMock("../services/managed-agent-profiles.js", () => ({
@@ -293,6 +299,7 @@ describe("POST /companies/:companyId/assistant/setup", () => {
     mockSecretService.remove.mockResolvedValue(null);
     mockSecretService.getById.mockResolvedValue(null);
     mockSecretService.listBindings.mockResolvedValue([]);
+    mockEnsureHostedAssistantBudget.mockResolvedValue(undefined);
     vi.resetModules();
     registerModuleMocks();
     vi.clearAllMocks();
@@ -419,6 +426,7 @@ describe("POST /companies/:companyId/assistant/setup", () => {
     expect(JSON.stringify(res.body)).not.toContain(DUMMY_KEY);
     expect(JSON.stringify(mockLogActivity.mock.calls)).not.toContain(DUMMY_KEY);
     expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "secret.created", entityType: "secret" }));
+    expect(mockEnsureHostedAssistantBudget).not.toHaveBeenCalled();
   }, 60_000);
 
   it("connects Claude (hosted) without a key when the server has hosted inference", async () => {
@@ -433,6 +441,8 @@ describe("POST /companies/:companyId/assistant/setup", () => {
     expect(patch.adapterType).toBe("claude_managed");
     expect(patch.adapterConfig.model).toBe("claude-sonnet-5-5");
     expect(JSON.stringify(patch)).not.toContain(DUMMY_KEY);
+    // On the operator's key: its hard-stop budget is ensured before the first run.
+    expect(mockEnsureHostedAssistantBudget).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: assistantId, adapterType: "claude_managed" }));
   });
 
   it("asks for a key when there is no hosted inference and none is bound", async () => {
@@ -472,7 +482,7 @@ describe("POST /companies/:companyId/assistant/setup", () => {
     expect(foreign.status).toBe(422);
     expect(mockAgentService.update).not.toHaveBeenCalled();
 
-    mockSecretService.getById.mockResolvedValue({ id: secretId, companyId: "company-1", key: "MY_ANTHROPIC" });
+    mockSecretService.getById.mockResolvedValue({ id: secretId, companyId: "company-1", key: "MY_ANTHROPIC", status: "active" });
     const res = await requestApp(app, (baseUrl) => request(baseUrl)
       .post("/api/companies/company-1/assistant/setup").send({ adapterType: "claude_managed", apiKeySecretId: secretId }));
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -488,13 +498,15 @@ describe("POST /companies/:companyId/assistant/setup", () => {
     mockAgentService.getById.mockResolvedValue(current);
     mockEnsureAssistant.mockResolvedValue(current);
     mockSecretService.getById.mockImplementation(async (id: string) => id === oldId
-      ? { id: oldId, companyId: "company-1", key: "ANTHROPIC_API_KEY.assistant-setup.old" } : null);
+      ? { id: oldId, companyId: "company-1", key: "ANTHROPIC_API_KEY.assistant-setup.old", status: "active" } : null);
+    mockSecretService.remove.mockResolvedValue({ id: oldId });
     const app = await createApp();
     const res = await requestApp(app, (baseUrl) => request(baseUrl)
       .post("/api/companies/company-1/assistant/setup").send({ adapterType: "claude_managed", apiKey: DUMMY_KEY }));
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(mockSecretService.remove).toHaveBeenCalledWith(oldId);
     expect(mockSecretService.remove).not.toHaveBeenCalledWith("22222222-2222-4222-8222-222222222222");
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "secret.deleted", entityType: "secret", entityId: oldId }));
   });
 
   it("keeps a superseded secret the setup card did not create, or that something still uses", async () => {
@@ -503,13 +515,13 @@ describe("POST /companies/:companyId/assistant/setup", () => {
       adapterConfig: { model: "claude-opus-5-5", env: { ANTHROPIC_API_KEY: { type: "secret_ref", secretId: oldId, version: "latest" } } } };
     mockAgentService.getById.mockResolvedValue(current);
     mockEnsureAssistant.mockResolvedValue(current);
-    mockSecretService.getById.mockResolvedValue({ id: oldId, companyId: "company-1", key: "ANTHROPIC_API_KEY.setup.shared" });
+    mockSecretService.getById.mockResolvedValue({ id: oldId, companyId: "company-1", key: "ANTHROPIC_API_KEY.setup.shared", status: "active" });
     const app = await createApp();
     await requestApp(app, (baseUrl) => request(baseUrl)
       .post("/api/companies/company-1/assistant/setup").send({ adapterType: "claude_managed", apiKey: DUMMY_KEY }));
     expect(mockSecretService.remove).not.toHaveBeenCalled();
 
-    mockSecretService.getById.mockResolvedValue({ id: oldId, companyId: "company-1", key: "ANTHROPIC_API_KEY.assistant-setup.old" });
+    mockSecretService.getById.mockResolvedValue({ id: oldId, companyId: "company-1", key: "ANTHROPIC_API_KEY.assistant-setup.old", status: "active" });
     mockSecretService.listBindings.mockResolvedValue([{ id: "binding-1" }]);
     await requestApp(app, (baseUrl) => request(baseUrl)
       .post("/api/companies/company-1/assistant/setup").send({ adapterType: "claude_managed", apiKey: DUMMY_KEY }));
@@ -526,6 +538,23 @@ describe("POST /companies/:companyId/assistant/setup", () => {
     expect(mockAgentService.update).not.toHaveBeenCalled();
   });
 
+  it("treats a deleted secret as unusable for binding and availability", async () => {
+    const secretId = "33333333-3333-4333-8333-333333333333";
+    mockSecretService.getById.mockResolvedValue({ id: secretId, companyId: "company-1", key: "MY_ANTHROPIC", status: "deleted" });
+    const app = await createApp();
+    const bind = await requestApp(app, (baseUrl) => request(baseUrl)
+      .post("/api/companies/company-1/assistant/setup").send({ adapterType: "claude_managed", apiKeySecretId: secretId }));
+    expect(bind.status).toBe(422);
+    mockAdapterAvailability.mockResolvedValue([]);
+    mockEnsureAssistant.mockResolvedValue({
+      ...assistantRow,
+      adapterConfig: { ...assistantRow.adapterConfig, env: { ANTHROPIC_API_KEY: { type: "secret_ref", secretId } } },
+    });
+    const res = await requestApp(app, (baseUrl) => request(baseUrl).get("/api/companies/company-1/assistant/adapters"));
+    expect(mockAdapterAvailability.mock.calls.at(-1)![0]).toMatchObject({ anthropicKeyBound: false });
+    expect(res.status).toBe(200);
+  });
+
   it("does not count a key binding whose secret no longer exists", async () => {
     mockAdapterAvailability.mockResolvedValue([]);
     mockEnsureAssistant.mockResolvedValue({
@@ -540,7 +569,7 @@ describe("POST /companies/:companyId/assistant/setup", () => {
 
   it("tells adapter detection about hosted inference and a bound key", async () => {
     mockAdapterAvailability.mockResolvedValue([]);
-    mockSecretService.getById.mockResolvedValue({ id: "secret-1", companyId: "company-1", key: "MY_ANTHROPIC" });
+    mockSecretService.getById.mockResolvedValue({ id: "secret-1", companyId: "company-1", key: "MY_ANTHROPIC", status: "active" });
     process.env.ANTHROPIC_API_KEY = DUMMY_KEY;
     mockEnsureAssistant.mockResolvedValue({
       ...assistantRow,

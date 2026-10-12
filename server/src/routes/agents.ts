@@ -3,7 +3,8 @@ import { isHeldForTemplateSetup, TEMPLATE_SETUP_RESUME_MESSAGE } from "../lib/st
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
 import { assistantAdapterAvailability, assistantConfigureRoleAllowed, assistantSetupRequestSchema, assistantSetupStatus, canConfigureAssistant, CLAUDE_MANAGED_ADAPTER_TYPE, geminiCredentialsPresent, hasAnthropicKeyBinding, readAssistantLifecycle, resolveAssistantSetupEngine, type AssistantSetupRequest } from "../services/assistant-setup.js";
-import { hostedInference, hostedInferenceAllowedFor } from "../services/hosted-inference.js";
+import { hostedInference } from "../services/hosted-inference.js";
+import { ensureHostedAssistantBudget, hostedInferenceAllowedFor } from "../services/hosted-inference-access.js";
 import { getConfiguredSecretProvider } from "../secrets/configured-provider.js";
 
 import { agentIdentityService } from "../services/agent-identity.js";
@@ -3306,7 +3307,7 @@ export function agentRoutes(
           return tested;
         }) : await adapter.testEnvironment({ companyId, adapterType: type, config: effectiveAdapterConfig, executionTarget, environmentName,
           // Server-owned: the server's key is only for the provisioned Assistant (or all agents when the operator opts in).
-          hostedInferenceAllowed: await hostedInferenceAllowedFor(db, { id: savedAgentId ?? "", companyId, adapterType: type }) });
+          hostedInferenceAllowed: await hostedInferenceAllowedFor(db, { id: savedAgentId ?? "", companyId, adapterType: type, adapterConfig: effectiveAdapterConfig }) });
 
         const prefixChecks = [
           ...(sandboxIdentityCheck ? [sandboxIdentityCheck] : []),
@@ -5463,7 +5464,7 @@ export function agentRoutes(
     const secretId = anthropicKeySecretId(adapterConfig);
     if (!secretId) return true;
     const secret = await secretsSvc.getById(secretId).catch(() => null);
-    return Boolean(secret && secret.companyId === companyId);
+    return Boolean(secret && secret.companyId === companyId && secret.status === "active");
   }
 
   /**
@@ -5493,13 +5494,23 @@ export function agentRoutes(
    * After setup binds a different key, deletes the key secret the setup card
    * created earlier, once nothing references it any more. Best effort.
    */
-  async function removeSupersededAssistantKeySecret(companyId: string, previousSecretId: string | null, currentSecretId: string | null) {
+  async function removeSupersededAssistantKeySecret(companyId: string, actorUserId: string, previousSecretId: string | null, currentSecretId: string | null) {
     if (!previousSecretId || previousSecretId === currentSecretId) return;
     try {
       const previous = await secretsSvc.getById(previousSecretId);
       if (!previous || previous.companyId !== companyId || !previous.key?.startsWith(ASSISTANT_KEY_SECRET_PREFIX)) return;
       if ((await secretsSvc.listBindings(companyId, previousSecretId)).length > 0) return;
-      await secretsSvc.remove(previousSecretId);
+      const removed = await secretsSvc.remove(previousSecretId);
+      if (!removed) return;
+      await logActivity(db, {
+        companyId,
+        actorType: "user",
+        actorId: actorUserId,
+        action: "secret.deleted",
+        entityType: "secret",
+        entityId: previousSecretId,
+        details: { name: previous.name, source: "assistant_setup_replaced" },
+      });
     } catch (error) {
       logger.warn({ err: error, companyId }, "Could not remove a superseded Assistant key secret");
     }
@@ -5530,7 +5541,9 @@ export function agentRoutes(
       if (body.apiKeySecretId) {
         // An existing company secret: only bound after checking it belongs to this company.
         const secret = await secretsSvc.getById(body.apiKeySecretId).catch(() => null);
-        if (!secret || secret.companyId !== companyId) throw unprocessable("That secret was not found in this company.", { code: "assistant_anthropic_key_secret_not_found" });
+        if (!secret || secret.companyId !== companyId || secret.status !== "active") {
+          throw unprocessable("That secret was not found in this company.", { code: "assistant_anthropic_key_secret_not_found" });
+        }
         keyBinding = { type: "secret_ref", secretId: secret.id, version: "latest" };
       }
       const keyAlreadyBound = !keyBinding && await assistantAnthropicKeyUsable(companyId, { env: { ...existingEnv, ...(requestedEnv ?? {}) } });
@@ -5592,7 +5605,14 @@ export function agentRoutes(
       throw error;
     }
     if (!updated) throw notFound("Assistant not found");
-    await removeSupersededAssistantKeySecret(companyId, previousKeySecretId, anthropicKeySecretId(updated.adapterConfig));
+    await removeSupersededAssistantKeySecret(companyId, req.actor.userId ?? "board", previousKeySecretId, anthropicKeySecretId(updated.adapterConfig));
+    // On the operator's key: the hard-stop budget exists before the first run
+    // (the run path enforces it again and withholds the key if it can't).
+    if (updated.adapterType === CLAUDE_MANAGED_ADAPTER_TYPE && hostedInference().available && !hasAnthropicKeyBinding(updated.adapterConfig)) {
+      await ensureHostedAssistantBudget(db, updated).catch((error) => {
+        logger.warn({ err: error, companyId, agentId: updated.id }, "Could not ensure the hosted Assistant's budget at setup");
+      });
+    }
     // A config change already restarts an in-flight setup; an unchanged one
     // (e.g. the person just signed in) needs the failed attempt retried now.
     const agent = ["preparing", "verifying", "resuming"].includes(updated.lifecycleState ?? "")

@@ -1,5 +1,5 @@
 import { parseNativeSessionGoalControl } from "./scheduling.js";
-import { hostedInferenceAllowedFor } from "../hosted-inference.js";
+import { hostedInferenceAllowedFor } from "../hosted-inference-access.js";
 import { isHeartbeatRunTerminalStatus } from "./run-lifecycle.js";
 import {
   PAPERCLIP_WAKE_PAYLOAD_KEY,

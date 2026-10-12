@@ -1,6 +1,7 @@
 import { createAgentLifecycle, createAgentLifecycleEffects, scheduleAgentLifecycle } from "./agent-lifecycle.js";
 import { HOSTED_INFERENCE_ADAPTER_TYPE, hostedAssistantBudgetCents, hostedInference } from "./hosted-inference.js";
-import { budgetService } from "./budgets.js";
+import { ensureHostedAssistantBudget } from "./hosted-inference-access.js";
+import { hasAnthropicKeyBinding } from "./assistant-setup.js";
 import { updateAgentConfiguration } from "../modules/agent-lifecycle/adapters/configuration.js";
 import { ASSISTANT_RUNTIME_ADAPTER_TYPES } from "./assistant-identity.js";
 import fs from "node:fs/promises";
@@ -967,6 +968,21 @@ export function builtInAgentService(db: Db) {
       ensured += await ensureBuiltInAgentDefaultGrants(agent as Agent, definition);
     }
     return ensured;
+  }
+
+  /**
+   * An Assistant on Claude (hosted) without its own key runs on the operator's
+   * key: give it its hard-stop budget now. Best effort here; the run and
+   * verification paths enforce it again before the key is used.
+   */
+  async function ensureHostedAssistantBudgetIfNeeded(definition: BuiltInAgentDefinition, agent: Pick<Agent, "id" | "companyId" | "adapterType" | "adapterConfig">) {
+    if (definition.key !== ASSISTANT_BUILT_IN_AGENT_KEY || agent.adapterType !== HOSTED_INFERENCE_ADAPTER_TYPE) return;
+    if (!hostedInference().available || hasAnthropicKeyBinding(agent.adapterConfig)) return;
+    try {
+      await ensureHostedAssistantBudget(db, agent);
+    } catch (error) {
+      logger.warn({ err: error, companyId: agent.companyId, agentId: agent.id }, "Could not ensure the hosted Assistant's budget; it is enforced again before use");
+    }
   }
 
   async function defaultProvisionInput(
@@ -2062,6 +2078,7 @@ export function builtInAgentService(db: Db) {
       if (existingPendingApproval) {
         return state(definition, updated as Agent);
       }
+      await ensureHostedAssistantBudgetIfNeeded(definition, updated as Agent);
       await ensureBuiltInAgentDefaultGrants(updated as Agent, definition);
       const resources = await reconcileBundleResources(updated as Agent, definition, "reconcile");
       return state(definition, await agentSvc.getById(existing.id) as Agent, resources);
@@ -2096,16 +2113,7 @@ export function builtInAgentService(db: Db) {
       throw error;
     }
 
-    if ((resolvedInput as { hostedInference?: boolean }).hostedInference && created.budgetMonthlyCents > 0) {
-      await budgetService(db).upsertPolicy(companyId, {
-        scopeType: "agent",
-        scopeId: created.id,
-        amount: created.budgetMonthlyCents,
-        windowKind: "calendar_month_utc",
-        hardStopEnabled: true,
-        isActive: true,
-      }, null);
-    }
+    await ensureHostedAssistantBudgetIfNeeded(definition, created);
     await ensureBuiltInAgentDefaultGrants(created, definition);
     const resources = await reconcileBundleResources(created, definition, "reconcile");
     // Its verification waits for the provisioning record just written; resume it now.

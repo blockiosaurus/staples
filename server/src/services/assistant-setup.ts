@@ -39,6 +39,10 @@ const SETTING_UP_STATES = new Set(["preparing", "verifying", "resuming"]);
 /** Emitted beside `adapter_engine_unavailable` only when the Node version is the cause. */
 export const ENGINE_NODE_UNSUPPORTED_CHECK_CODE = "adapter_engine_node_unsupported";
 
+/** A new hosted Assistant's provisioning never completed (see agent-harness-verification). */
+export const ASSISTANT_PROVISIONING_INCOMPLETE_CHECK_CODE = "assistant_provisioning_incomplete";
+export const FINISHING_SETUP_MESSAGE = "Finishing Assistant setup…";
+
 /** claude_managed checks a person fixes by adding (or replacing) an Anthropic API key. */
 const CLAUDE_MANAGED_KEY_MISSING_CHECK_CODE = "claude_managed_api_key_missing";
 const CLAUDE_MANAGED_AUTH_INVALID_CHECK_CODE = "claude_managed_auth_invalid";
@@ -105,6 +109,7 @@ function engineUnavailableReason(adapterType: string, label: string, nodeIsCause
  */
 export function harnessFailureReason(adapterType: string, codes: readonly string[]): string {
   const label = adapterLabel(adapterType);
+  if (codes.includes(ASSISTANT_PROVISIONING_INCOMPLETE_CHECK_CODE)) return "The Assistant's setup didn't finish. Try again.";
   if (codes.includes(CLAUDE_MANAGED_KEY_MISSING_CHECK_CODE)) return "Add an Anthropic API key to use Claude (hosted).";
   if (codes.includes(CLAUDE_MANAGED_AUTH_INVALID_CHECK_CODE)) return "That Anthropic API key was rejected.";
   if (codes.some((code) => code === ADAPTER_AUTH_MISSING_CHECK_CODE || /_auth_required$/.test(code))) {
@@ -132,12 +137,18 @@ export function assistantSetupStatus(agent: AssistantLifecycleView): AssistantSe
   if (agent.lifecycleState === "ready") return { state: "ready", adapterType };
   const holds = agent.lifecycleHolds ?? [];
   if (SETTING_UP_STATES.has(agent.lifecycleState) && holds.length === 0) {
-    if (!agent.lifecycleError) return { state: "starting", adapterType };
+    if (!agent.lifecycleError) {
+      const waits = (agent.lifecycleOperation as { hostedProvisioningWaits?: unknown } | null | undefined)?.hostedProvisioningWaits;
+      return typeof waits === "number" && waits > 0
+        ? { state: "starting", adapterType, message: FINISHING_SETUP_MESSAGE }
+        : { state: "starting", adapterType };
+    }
     const test = lastHarnessTest(agent);
     if (test && test.version === agent.lifecycleVersion && test.adapterType === adapterType) {
       const codes = test.checks.map((check) => check.code);
       const reason = harnessFailureReason(adapterType, codes);
       if (codes.some((code) => isNeedsModelCheck(code))) return { state: "needs_model", adapterType, reason };
+      if (codes.includes(ASSISTANT_PROVISIONING_INCOMPLETE_CHECK_CODE)) return { state: "error", adapterType, message: reason, reason };
       return { state: "error", adapterType, message: HARNESS_FAILED_MESSAGE, reason };
     }
     return { state: "error", adapterType, message: agent.lifecycleError };
