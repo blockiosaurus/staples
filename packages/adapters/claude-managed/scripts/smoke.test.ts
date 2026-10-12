@@ -24,5 +24,21 @@ describe("smoke script", () => {
     expect(text).toContain("echo_note calls: 1");
     expect(text).toContain("PASS");
     expect(text).toMatch(/Archived session /);
+    expect(text).toMatch(/Session started: sesn_/);
+  });
+
+  it("cancels a never-idle session on the timeout and still archives it", async () => {
+    const c = capture();
+    const started = Date.now();
+    const code = await runSmoke(["--fake"], { SMOKE_FAKE_SCENARIO: "never_idle", SMOKE_TIMEOUT_MS: "500" }, c.io);
+    expect(code).toBe(1);
+    expect(Date.now() - started).toBeLessThan(15_000);
+    const text = c.out.join("\n");
+    const initId = /Session started: (\S+)/.exec(text)?.[1];
+    expect(initId).toBeTruthy();
+    expect(text).toContain(`Archived session ${initId}.`);
+    expect(c.err.join("\n")).toMatch(/Timed out after/);
+    expect(c.err.join("\n")).toMatch(/did not finish within/);
+    expect(process.listenerCount("SIGINT")).toBe(0);
   });
 });

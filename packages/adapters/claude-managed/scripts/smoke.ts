@@ -11,6 +11,12 @@
  *
  * Environment: ANTHROPIC_API_KEY (required unless --fake), MANAGED_AGENTS_BASE_URL
  * and MANAGED_AGENTS_MODEL (optional). The key is never printed.
+ *
+ * Safety: the run is cancelled after SMOKE_TIMEOUT_MS (default 5 minutes) or on
+ * Ctrl-C; the adapter then interrupts the session and the script still archives it.
+ * The session id is printed as soon as the session starts, so it is known even if
+ * the process is killed hard. SMOKE_FAKE_SCENARIO=never_idle (with --fake) simulates
+ * a session that never goes idle, to exercise the timeout path.
  */
 import { pathToFileURL } from "node:url";
 import type { AdapterExecutionContext } from "@paperclipai/adapter-utils";
@@ -24,6 +30,7 @@ export const MISSING_KEY_MESSAGE =
   "Set ANTHROPIC_API_KEY to run the live smoke test. It creates a small agent, environment and session on your Anthropic account and archives the session afterwards (a few cents).";
 
 const NOTE = "staples-smoke-note";
+export const DEFAULT_SMOKE_TIMEOUT_MS = 5 * 60_000;
 const RUN_TOKEN = "smoke-run-token";
 
 const PROMPT =
@@ -35,6 +42,11 @@ export interface SmokeIo {
   err: (line: string) => void;
 }
 
+function resolveTimeoutMs(env: Record<string, string | undefined>): number {
+  const raw = Number(env.SMOKE_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_SMOKE_TIMEOUT_MS;
+}
+
 export async function runSmoke(argv: string[], env: Record<string, string | undefined>, io: SmokeIo): Promise<number> {
   const useFake = argv.includes("--fake");
   let apiKey = env.ANTHROPIC_API_KEY?.trim() ?? "";
@@ -44,7 +56,14 @@ export async function runSmoke(argv: string[], env: Record<string, string | unde
   }
 
   const fake = useFake ? await startFakeManagedAgentsServer() : null;
-  if (fake) {
+  if (fake && env.SMOKE_FAKE_SCENARIO === "never_idle") {
+    apiKey = fake.apiKey;
+    fake.queueTurns([
+      { kind: "emit", event: fakeEvents.running() },
+      { kind: "emit", event: fakeEvents.agentMessage("Thinking...") },
+      { kind: "hang" },
+    ]);
+  } else if (fake) {
     apiKey = fake.apiKey;
     fake.queueTurns([
       { kind: "emit", event: fakeEvents.running() },
@@ -74,6 +93,25 @@ export async function runSmoke(argv: string[], env: Record<string, string | unde
   let sessionId: string | null = null;
   let agentId: string | null = null;
   let environmentId: string | null = null;
+  /** Ids from the `claude_managed.init` line: known even if execute() never returns a result. */
+  let initSessionId: string | null = null;
+  let timedOut = false;
+  const timeoutMs = resolveTimeoutMs(env);
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    timedOut = true;
+    io.err(`Timed out after ${Math.round(timeoutMs / 1000)}s; cancelling the run (the session will be interrupted and archived).`);
+    controller.abort();
+  }, timeoutMs);
+  const onSigint = () => {
+    if (controller.signal.aborted) {
+      io.err(`Interrupted again; exiting without cleanup.${initSessionId ? ` Archive session ${initSessionId} in the Anthropic Console.` : ""}`);
+      process.exit(130);
+    }
+    io.err("Ctrl-C: cancelling the run (the session will be interrupted and archived). Press Ctrl-C again to exit immediately.");
+    controller.abort();
+  };
+  process.on("SIGINT", onSigint);
   try {
     client = new ManagedAgentsClient({ apiKey, ...(baseUrl ? { baseUrl } : {}) });
     const transcript: string[] = [];
@@ -88,12 +126,19 @@ export async function runSmoke(argv: string[], env: Record<string, string | unde
         promptTemplate: PROMPT,
       },
       context: {},
+      signal: controller.signal,
       runtimeMcp: { getServers: () => [{ name: "Staples smoke", url: mcp.url, token: RUN_TOKEN, connectionId: "smoke" }] },
       onLog: async (_stream, chunk) => {
         for (const raw of chunk.split("\n")) {
           if (!raw.startsWith("{")) continue;
           try {
             const event = JSON.parse(raw) as Record<string, unknown>;
+            if (event.type === "claude_managed.init" && typeof event.sessionId === "string") {
+              initSessionId = event.sessionId;
+              agentId = typeof event.agentId === "string" ? event.agentId : agentId;
+              environmentId = typeof event.environmentId === "string" ? event.environmentId : environmentId;
+              io.out(`Session started: ${event.sessionId} (if this script is killed, archive it in the Anthropic Console).`);
+            }
             const text = formatEvent(event);
             if (text) transcript.push(text);
           } catch {
@@ -112,9 +157,9 @@ export async function runSmoke(argv: string[], env: Record<string, string | unde
     for (const line of transcript) io.out(`  ${line}`);
 
     const params = readSessionParams(result.sessionParams);
-    sessionId = params?.sessionId ?? null;
-    agentId = params?.managedAgentId ?? null;
-    environmentId = params?.environmentId ?? null;
+    sessionId = params?.sessionId ?? initSessionId;
+    agentId = params?.managedAgentId ?? agentId;
+    environmentId = params?.environmentId ?? environmentId;
     const called = mcp.calls().filter((c) => c.name === "echo_note");
 
     io.out("");
@@ -125,7 +170,9 @@ export async function runSmoke(argv: string[], env: Record<string, string | unde
     io.out(`agent id:       ${agentId ?? "-"}`);
     io.out(`echo_note calls: ${called.length}`);
 
-    if (result.exitCode !== 0) {
+    if (timedOut) {
+      io.err(`FAIL: the run did not finish within ${Math.round(timeoutMs / 1000)}s.`);
+    } else if (result.exitCode !== 0) {
       io.err("FAIL: the run did not succeed.");
     } else if (called.length < 1) {
       io.err("FAIL: the agent never called echo_note.");
@@ -136,6 +183,9 @@ export async function runSmoke(argv: string[], env: Record<string, string | unde
   } catch (error) {
     io.err(`FAIL: ${redact(error instanceof Error ? error.message : String(error), apiKey)}`);
   } finally {
+    clearTimeout(timer);
+    process.removeListener("SIGINT", onSigint);
+    sessionId = sessionId ?? initSessionId;
     if (client && sessionId) {
       try {
         await client.archiveSession(sessionId, { signal: AbortSignal.timeout(15_000) });
