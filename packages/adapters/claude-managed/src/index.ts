@@ -2,11 +2,17 @@ export const type = "claude_managed";
 export const label = "Claude (hosted)";
 export const description = "Runs in Anthropic's cloud sandbox. Uses your Anthropic API key; billed per use.";
 
-/** Models offered in the picker; any Managed Agents model id can be typed in the agent config. */
+/**
+ * Models offered in the picker; any Managed Agents model id can still be typed in
+ * the agent config. Verified 2026-10-12 against the docs: Managed Agents "Define your
+ * agent" says Claude 4.5 and later models are supported and uses claude-opus-5-5 in
+ * every example; the Models overview lists claude-opus-5-5, claude-sonnet-5-5 and
+ * claude-haiku-5-5 as current Claude API ids. Not yet exercised live.
+ */
 export const models = [
   { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
   { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
-  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+  { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
 ];
 
 export const agentConfigurationDoc = `# claude_managed agent configuration
