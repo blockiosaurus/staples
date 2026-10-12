@@ -282,8 +282,10 @@ const support = await getEmbeddedPostgresTestSupport();
         const ok = toolText((await rpc(url(), token, "tools/call", { name: "paperclipApiRequest", arguments: { method: "GET", path: `/issues/${f.issueId}` } })).body);
         expect(ok).toMatchObject({ isError: false, value: { id: f.issueId } });
         // The endpoint cannot be used to call itself.
-        const self = toolText((await rpc(url(), token, "tools/call", { name: "paperclipApiRequest", arguments: { method: "POST", path: "/mcp/paperclip-tools", jsonBody: "{}" } })).body);
-        expect(self.isError).toBe(true);
+        for (const path of ["/mcp/paperclip-tools", "/MCP/Paperclip-Tools", "/mcp/paperclip-tools/", "/Mcp/assistant-tools"]) {
+          const self = toolText((await rpc(url(), token, "tools/call", { name: "paperclipApiRequest", arguments: { method: "POST", path, jsonBody: "{}" } })).body);
+          expect(self.isError, path).toBe(true);
+        }
       } finally {
         await new Promise<void>((resolve) => attacker.close(() => resolve()));
       }

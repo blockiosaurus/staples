@@ -16,7 +16,7 @@ import { injectApiRequest } from "../services/public-mcp/capabilities.js";
  * guard (`resolveApiRequestUrl`), which keeps every call under `/api`.
  */
 const IN_PROCESS_API_URL = "http://paperclip.in-process/api";
-const SELF_PATH = "/mcp/paperclip-tools";
+const MCP_PREFIX = "/mcp/";
 
 type ToolList = ReturnType<typeof listRuntimeTools>;
 const toolLists = new Map<boolean, ToolList>();
@@ -80,9 +80,12 @@ export function paperclipToolRoutes(db: Db, api: Router) {
     }
     const actor = req.actor;
     const transport: PaperclipApiTransport = async (request) => {
-      const path = request.path.split("?")[0]!;
-      if (path === SELF_PATH || path.startsWith(`${SELF_PATH}/`)) {
-        return { status: 400, body: { error: "The Paperclip tools endpoint cannot call itself" } };
+      // Express matches routes case-insensitively and ignores a trailing slash,
+      // so compare a normalized path. No MCP endpoint (this one included) is
+      // reachable through the in-process REST proxy.
+      const path = request.path.split(/[?#]/)[0]!.toLowerCase();
+      if (path === MCP_PREFIX.slice(0, -1) || path.startsWith(MCP_PREFIX)) {
+        return { status: 400, body: { error: "MCP endpoints cannot be called through the Paperclip tools" } };
       }
       const response = await injectApiRequest(api, actor, request.method, request.path, request.body);
       return { status: response.statusCode, body: response.json };
