@@ -243,7 +243,7 @@ export const READ_ONLY_TOOL_VERBS = [
 ] as const;
 const READ_ONLY_TOOL_VERB_SET = new Set<string>(READ_ONLY_TOOL_VERBS);
 
-/** Verbs that make a tool name not read-only wherever they appear in it. */
+/** Verbs that make a tool name not read-only when they lead it or follow a conjunction; elsewhere they are nouns (`get_post`, `retrieve_charge`). */
 export const MUTATING_TOOL_VERBS = [
   "create", "update", "delete", "send", "post", "pay", "refund", "charge", "transfer", "cancel", "capture", "close",
   "merge", "push", "publish", "deploy", "write", "remove", "attach", "apply", "submit",
@@ -267,15 +267,20 @@ function toolNameWords(name: string): string[] {
     .map((word) => word.toLowerCase());
 }
 
+/** Words after which the next word is in verb position (`get_and_charge`, `fetch_then_delete`). */
+const TOOL_NAME_CONJUNCTIONS = new Set(["and", "then", "or", "plus"]);
+
 /**
  * Whether a tool name is plainly read-only. Words are split case-insensitively
  * on separators and namespaces (`_`, `-`, `.`, `/`, `:`...) and camelCase.
  * The first verb-like word (after any namespace prefix such as `stripe_` or
- * `mcp__stripe__`) must be a read verb, and no word anywhere may be a
- * mutating verb (`set`, `add`, `issue` and `record` count only when they come
- * first). `stripe_list_charges`, `listRefunds`, `get-invoice` and `get_issue`
- * qualify; `refund_list`, `delete_saved_search`, `get_and_charge`,
- * `refundPayment`, `record_payment` and `listing` do not.
+ * `mcp__stripe__`) must be a read verb, and no mutating verb may appear in a
+ * verb position: leading, or right after a conjunction (`and`, `then`, `or`,
+ * `plus`). Mutating words elsewhere are nouns: `get_post`,
+ * `list_post_comments`, `get_merge_request`, `retrieve_charge`, `get_refund`,
+ * `get_upload_url`, `stripe_list_charges` and `get_issue` qualify;
+ * `refund_list`, `delete_saved_search`, `get_and_charge`,
+ * `fetch_then_delete`, `refundPayment`, `record_payment` and `listing` do not.
  */
 export function toolNameIsReadOnlyVerb(name: string): boolean {
   if (!name || name.length > 512) return false;
@@ -283,13 +288,16 @@ export function toolNameIsReadOnlyVerb(name: string): boolean {
   const firstVerb = words.find((word) =>
     READ_ONLY_TOOL_VERB_SET.has(word) || MUTATING_TOOL_VERB_SET.has(word) || LEADING_MUTATING_TOOL_VERB_SET.has(word));
   if (!firstVerb || !READ_ONLY_TOOL_VERB_SET.has(firstVerb)) return false;
-  return !words.some((word) => MUTATING_TOOL_VERB_SET.has(word));
+  return !words.some((word, index) =>
+    index > 0
+    && TOOL_NAME_CONJUNCTIONS.has(words[index - 1]!)
+    && (MUTATING_TOOL_VERB_SET.has(word) || LEADING_MUTATING_TOOL_VERB_SET.has(word)));
 }
 
 /**
  * Allowlist for read-only template agents: the catalog must rate the tool
  * `read` and every name it is known by must be plainly read-only (first verb
- * a read verb, no mutating verb). Anything else (unknown risk, a write, a
+ * a read verb, no mutating verb in a verb position). Anything else (unknown risk, a write, a
  * misclassified `stripe_create_refund`) is denied.
  */
 export function readOnlyTemplateAllowsTool(input: { riskLevel: ToolRiskLevel | null; toolName: string | null; upstreamToolName?: string | null }): boolean {

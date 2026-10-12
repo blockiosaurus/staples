@@ -1022,7 +1022,22 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       const decide = await toolFixture(s.companyId, [
         ["create_refund", "write"], ["create_payment_link", "write"], ["delete_customer", "destructive"], ["list_charges", "read"],
         ["stripe_create_refund", "read"], ["list_refunds", "read"], ["list_payouts", "read"], ["list_invoices", "read"],
+        ["get_post", "read"], ["list_post_comments", "read"], ["get_merge_request", "read"], ["retrieve_charge", "read"],
+        ["get_refund", "read"], ["get_transfer", "read"], ["get_upload_url", "read"], ["stripe_list_charges", "read"],
+        ["get_and_charge", "read"], ["refund_charge", "read"], ["create_post", "read"], ["merge_pull_request", "read"],
+        ["delete_saved_search", "read"],
       ]);
+      // Mutating words used as nouns after a read verb are reads.
+      for (const read of [
+        "get_post", "list_post_comments", "get_merge_request", "retrieve_charge", "get_refund", "get_transfer",
+        "get_upload_url", "stripe_list_charges",
+      ]) {
+        await expect(decide(books, read), read).resolves.toMatchObject({ decision: "allow" });
+      }
+      // A mutating verb leading the name or after a conjunction is not.
+      for (const write of ["get_and_charge", "refund_charge", "create_post", "merge_pull_request", "delete_saved_search"]) {
+        await expect(decide(books, write), write).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_template_read_only" });
+      }
       // A misclassified money-moving tool is still blocked; money reads still work.
       await expect(decide(books, "stripe_create_refund")).resolves.toMatchObject({ decision: "deny", reasonCode: "deny_template_read_only" });
       for (const read of ["list_refunds", "list_payouts", "list_invoices"]) {

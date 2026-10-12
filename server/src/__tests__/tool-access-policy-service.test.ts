@@ -30,6 +30,8 @@ import {
 } from "./helpers/embedded-postgres.js";
 import {
   readOnlyTemplateAllowsTool,
+  templateDestructiveGuardApplies,
+  templateOutwardRiskApplies,
   toolAccessPolicyService,
   toolNamePatternMatches,
   toolNameIsReadOnlyVerb,
@@ -194,6 +196,9 @@ describe("tool-name glob matching", () => {
       "list_and_send", "getAndUpdateCustomer",
       // set/add/issue/record are verbs when they lead the name.
       "issue_refund", "set_price", "add_line_item", "recordPayment", "issue_invoice", "get_issue_and_close",
+      // A mutating verb right after a conjunction is in verb position.
+      "fetch_then_delete", "get_and_set_price", "list_or_create_customer",
+      "refund_charge", "create_post", "merge_pull_request",
     ];
     for (const name of blocked) {
       expect(toolNameIsReadOnlyVerb(name), name).toBe(false);
@@ -204,6 +209,9 @@ describe("tool-name glob matching", () => {
       "stripe.get-invoice", "mcp__stripe__list_payouts", "LIST_CHARGES", "lookup_customer", "countInvoices",
       // Nouns after a read verb.
       "get_issue", "get_record", "list_records", "list_issues", "getIssue", "get_settings", "get_add_ons",
+      // Mutating words used as nouns after a read verb.
+      "get_post", "list_post_comments", "get_merge_request", "retrieve_charge", "get_refund", "get_transfer",
+      "get_upload_url", "getPushSubscription", "list_terms_and_conditions",
     ];
     for (const name of allowed) {
       expect(toolNameIsReadOnlyVerb(name), name).toBe(true);
@@ -215,6 +223,24 @@ describe("tool-name glob matching", () => {
     }
     // Every name the call is known by must qualify.
     expect(readOnlyTemplateAllowsTool({ riskLevel: "read", toolName: "list_charges", upstreamToolName: "create_refund" })).toBe(false);
+  });
+
+  it("read-verb names with mutating nouns are exempt from template outward and destructive patterns", () => {
+    const guard = { config: { destructiveToolPatterns: ["*charge*", "*refund*", "*transfer*", "*delete*", "*merge*", "*post*", "*upload*"] } };
+    for (const name of [
+      "get_post", "list_post_comments", "get_merge_request", "retrieve_charge", "get_refund", "get_transfer",
+      "get_upload_url", "stripe_list_charges",
+    ]) {
+      expect(templateOutwardRiskApplies("read", [name]), name).toBe(false);
+      expect(templateOutwardRiskApplies(null, [name]), name).toBe(false);
+      expect(templateDestructiveGuardApplies(guard, "read", [name]), name).toBe(false);
+    }
+    for (const name of ["get_and_charge", "fetch_then_delete", "refund_charge", "create_post", "merge_pull_request", "delete_saved_search"]) {
+      expect(templateOutwardRiskApplies("read", [name]), name).toBe(true);
+      expect(templateDestructiveGuardApplies(guard, "read", [name]), name).toBe(true);
+    }
+    // A write rating is still asked about whatever the name.
+    expect(templateOutwardRiskApplies("write", ["get_post"])).toBe(true);
   });
 
   it("validates toolNamePatterns on policy selectors and trust-rule selectors", () => {
