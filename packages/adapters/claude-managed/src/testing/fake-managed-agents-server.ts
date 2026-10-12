@@ -261,6 +261,11 @@ export class FakeManagedAgentsServer {
     return skill;
   }
 
+  /** Deletes a skill (as if removed in the Console); agents that reference it can no longer be written. */
+  deleteSkill(skillId: string): void {
+    this.skills.delete(skillId);
+  }
+
   /** Queue turn scripts for one session (takes precedence over the global queue). */
   queueSessionTurns(sessionId: string, ...turns: TurnSource[]): void {
     const queue = this.sessionTurnQueues.get(sessionId) ?? [];
@@ -459,8 +464,28 @@ export class FakeManagedAgentsServer {
     return out;
   }
 
+  /** Error message when an agent body references a custom skill (or version) the fake does not have. */
+  private missingSkillProblem(params: Record<string, unknown>): string | null {
+    const refs = Array.isArray(params.skills) ? params.skills : [];
+    for (const raw of refs) {
+      const ref = asRecord(raw);
+      if (ref.type !== "custom") continue;
+      const skill = typeof ref.skill_id === "string" ? this.skills.get(ref.skill_id) : undefined;
+      if (!skill) return `skills: skill ${String(ref.skill_id)} not found`;
+      if (typeof ref.version === "string" && ref.version !== "latest" && !skill.versions.has(ref.version)) {
+        return `skills: version ${ref.version} of skill ${skill.id} not found`;
+      }
+    }
+    return null;
+  }
+
   private handleAgents(res: ServerResponse, method: string, id: string | undefined, action: string | undefined, body: unknown): void {
     const now = new Date().toISOString();
+    if (method === "POST" && !action) {
+      // API ASSUMPTION (fake): unknown skill references are a 404 naming the skill.
+      const problem = this.missingSkillProblem(asRecord(body));
+      if (problem) return this.sendError(res, 404, "not_found_error", problem);
+    }
     if (!id && method === "POST") {
       const params = asRecord(body);
       if (typeof params.name !== "string" || !params.model) {

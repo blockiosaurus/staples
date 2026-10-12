@@ -33,7 +33,7 @@ import {
   type SessionUsageTotals,
 } from "../types.js";
 import { readSessionParams, type ClaudeManagedSessionParams } from "./session.js";
-import { resolveAgentSkills, workspaceKey, type SkillsResolution } from "./skills.js";
+import { invalidateSkillsListing, resolveAgentSkills, workspaceKey, type SkillsResolution } from "./skills.js";
 import { ToolsProxy, type ToolCallOutcome } from "./tools-proxy.js";
 
 type AdapterExecutionErrorFamily = NonNullable<AdapterExecutionResult["errorFamily"]>;
@@ -496,14 +496,10 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
 
   // ---- Skills (native custom skills, or inlined on refusal) -------------------
   let skills: SkillsResolution;
+  const skillsWorkspace = workspaceKey(resolveApiBaseUrl(config), key.apiKey);
+  const resolveSkills = () => resolveAgentSkills({ config, client, workspaceKey: skillsWorkspace, onLog, signal });
   try {
-    skills = await resolveAgentSkills({
-      config,
-      client,
-      workspaceKey: workspaceKey(resolveApiBaseUrl(config), key.apiKey),
-      onLog,
-      signal,
-    });
+    skills = await resolveSkills();
   } catch (error) {
     if (signal?.aborted) {
       await onLog("stdout", line({ type: "claude_managed.result", status: "cancelled", error: "Run cancelled while preparing skills." }));
@@ -528,10 +524,18 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
       clearSession: false,
     };
   }
-  const system = [instructions, skills.systemAppendix].filter(Boolean).join("\n\n") || null;
-  const fingerprint = coreFingerprint({ model, system, skills: skills.refs });
   const toolsFp = toolsFingerprint(tools);
-  const definitionFp = `${fingerprint}:${toolsFp}`.slice(0, 200);
+  // Recomputed if a stale skill cache forces a re-sync while resolving the agent.
+  let system = null as string | null;
+  let fingerprint = "";
+  let definitionFp = "";
+  const applySkills = (resolution: SkillsResolution) => {
+    skills = resolution;
+    system = [instructions, resolution.systemAppendix].filter(Boolean).join("\n\n") || null;
+    fingerprint = coreFingerprint({ model, system, skills: resolution.refs });
+    definitionFp = `${fingerprint}:${toolsFp}`.slice(0, 200);
+  };
+  applySkills(skills);
   const networking = resolveNetworking(config);
   const envConfig: CloudEnvironmentConfig = { type: "cloud", networking };
   const envFingerprint = environmentFingerprint(envConfig);
@@ -671,9 +675,35 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
     return env.id;
   }
 
+  /**
+   * API ASSUMPTION (stale skills): an agent create/update that references a skill
+   * deleted from the workspace (our per-process listing is stale) fails with
+   * 400/404/422 and a message that mentions the skill.
+   */
+  function isStaleSkillError(error: unknown): boolean {
+    return error instanceof ManagedAgentsApiError
+      && skills.refs.length > 0
+      && (error.status === 400 || error.status === 404 || error.status === 422)
+      && /skill/i.test(error.message);
+  }
+
   async function resolveAgent(): Promise<void> {
-    const definition = { name: `Staples: ${agent.name}`, model, system, tools, skills: skills.refs };
-    const metadata = { ...ownerMetadata, staples_fingerprint: definitionFp };
+    let current = await findAgent();
+    try {
+      current = await writeDefinition(current);
+    } catch (error) {
+      if (signal?.aborted || !isStaleSkillError(error)) throw error;
+      // Re-list and re-upload once, then retry with the fresh skill ids.
+      notes.push(`A cached skill is gone (${messageOf(error)}); re-syncing skills.`);
+      invalidateSkillsListing(skillsWorkspace);
+      applySkills(await resolveSkills());
+      current = await writeDefinition(current);
+    }
+    managedAgentId = current.id;
+    managedAgentVersion = current.version;
+  }
+
+  async function findAgent(): Promise<ManagedAgent | null> {
     let current: ManagedAgent | null = null;
     if (prior) {
       try {
@@ -689,12 +719,18 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
       current = newest(existing.filter((a) => !a.archived_at && ownedByThisAgent(a.metadata)));
       if (current) notes.push(`Reusing Managed Agents agent ${current.id}.`);
     }
+    return current;
+  }
+
+  /** Creates the agent, or updates it to a new version when its definition changed. */
+  async function writeDefinition(found: ManagedAgent | null): Promise<ManagedAgent> {
+    const definition = { name: `Staples: ${agent.name}`, model, system, tools, skills: skills.refs };
+    const metadata = { ...ownerMetadata, staples_fingerprint: definitionFp };
+    let current = found;
     if (!current) {
       const created = await client.createAgent({ ...definition, metadata }, { signal });
-      managedAgentId = created.id;
-      managedAgentVersion = created.version;
       notes.push(`Created Managed Agents agent ${created.id}.`);
-      return;
+      return created;
     }
     if (current.metadata?.staples_fingerprint !== definitionFp) {
       try {
@@ -708,8 +744,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
       }
       notes.push(`Agent definition changed; Managed Agents agent ${current.id} is now version ${current.version}.`);
     }
-    managedAgentId = current.id;
-    managedAgentVersion = current.version;
+    return current;
   }
 
   /**
@@ -966,7 +1001,8 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
         sessionId,
         resumed,
         ...(outcome.status === "budget_reached" ? { budgetStopped: true } : {}),
-        ...(outcome.lastMessage ? { result: outcome.lastMessage } : {}),
+        // `result` only when it differs from the summary (it is the same text on success).
+        ...(outcome.lastMessage && outcome.lastMessage.trim() !== outcome.summary ? { result: outcome.lastMessage } : {}),
         ...(outcome.summary ? { summary: outcome.summary, summaryPreview: summaryPreview(outcome.summary) } : {}),
         ...(outcome.error ? { error: outcome.error } : {}),
       };

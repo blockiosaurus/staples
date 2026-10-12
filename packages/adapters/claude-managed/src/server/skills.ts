@@ -130,7 +130,11 @@ export function skillTitle(runtimeName: string, hash: string): string {
 export async function readLocalSkill(entry: Pick<PaperclipSkillEntry, "key" | "runtimeName" | "source">): Promise<LocalSkill | null> {
   let skillMd: string;
   try {
-    skillMd = await fs.readFile(path.join(entry.source, "SKILL.md"), "utf8");
+    const skillMdPath = path.join(entry.source, "SKILL.md");
+    const stat = await fs.lstat(skillMdPath);
+    // Like other files: no symlinks, and SKILL.md alone must fit the per-skill cap.
+    if (!stat.isFile() || stat.size > MAX_SKILL_BYTES) return null;
+    skillMd = await fs.readFile(skillMdPath, "utf8");
   } catch {
     return null;
   }
@@ -182,6 +186,8 @@ interface WorkspaceState {
   rejected: Map<string, string>;
   refusedUntil: number;
   refusalReason: string | null;
+  /** The refusal warning was logged for the current refusal window. */
+  refusalWarned: boolean;
 }
 
 const workspaces = new Map<string, WorkspaceState>();
@@ -189,6 +195,18 @@ const workspaces = new Map<string, WorkspaceState>();
 /** Test seam: forget every cached listing, upload and refusal. */
 export function resetSkillsCache(): void {
   workspaces.clear();
+}
+
+/**
+ * Forgets a workspace's skill listing and uploads (keeps refusals and per-skill
+ * rejections), so the next resolution lists again. Used when the agent API
+ * reports that a cached skill no longer exists.
+ */
+export function invalidateSkillsListing(key: string): void {
+  const state = workspaces.get(key);
+  if (!state) return;
+  state.listing = null;
+  state.uploads.clear();
 }
 
 /** Cache key: base URL + a hash of the API key (different keys can be different workspaces). */
@@ -199,7 +217,7 @@ export function workspaceKey(baseUrl: string, apiKey: string): string {
 function workspace(key: string): WorkspaceState {
   let state = workspaces.get(key);
   if (!state) {
-    state = { listing: null, uploads: new Map(), rejected: new Map(), refusedUntil: 0, refusalReason: null };
+    state = { listing: null, uploads: new Map(), rejected: new Map(), refusedUntil: 0, refusalReason: null, refusalWarned: false };
     workspaces.set(key, state);
   }
   return state;
@@ -207,21 +225,44 @@ function workspace(key: string): WorkspaceState {
 
 /**
  * API ASSUMPTION (skills refusal): the Skills API docs list no error codes. A
- * workspace without Skills access is assumed to answer 403 (permission), 404 /
- * 405 / 501 (endpoint not available), or 400 whose message mentions a beta /
- * feature not being enabled or supported. Those mean "inline skills instead";
- * any other 400 is a per-skill validation failure (e.g. SKILL.md frontmatter),
- * and 401 / 429 / 5xx / connection errors are real failures of the run.
+ * workspace without Skills access is assumed to answer 403 (permission) or
+ * 404 / 405 / 501 (endpoint not available) on any call, and on the LISTING call
+ * also 400 whose message mentions a beta / feature not being enabled or
+ * supported. Those mean "inline skills instead". On an upload, 400 / 413 / 422
+ * are always per-skill validation failures (e.g. SKILL.md frontmatter), whatever
+ * the message says. 401 / 429 / 5xx / connection errors fail the run.
  */
-export function isSkillsApiRefusal(error: unknown): boolean {
+export function isSkillsApiRefusal(error: unknown, call: "list" | "upload" = "list"): boolean {
   if (!(error instanceof ManagedAgentsApiError)) return false;
   if (error.status === 403 || error.status === 404 || error.status === 405 || error.status === 501) return true;
-  if (error.status === 400) return /beta|not (?:yet )?(?:enabled|supported|available)|unsupported|access/i.test(error.message);
+  if (call === "list" && error.status === 400) return /beta|not (?:yet )?(?:enabled|supported|available)|unsupported|access/i.test(error.message);
   return false;
 }
 
-function isValidationFailure(error: unknown): boolean {
-  return error instanceof ManagedAgentsApiError && (error.status === 400 || error.status === 413 || error.status === 422) && !isSkillsApiRefusal(error);
+function isUploadValidationFailure(error: unknown): boolean {
+  return error instanceof ManagedAgentsApiError && (error.status === 400 || error.status === 413 || error.status === 422);
+}
+
+/** Shared calls (listing, uploads) run on their own timeout; each caller races its own signal. */
+const SHARED_CALL_TIMEOUT_MS = 120_000;
+
+function raceSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason ?? new Error("aborted"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error("aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 async function listByTitle(client: ManagedAgentsClient, signal?: AbortSignal): Promise<Map<string, ManagedSkill>> {
@@ -302,7 +343,7 @@ export async function resolveAgentSkills(input: {
   for (const entry of desired) {
     const skill = await readLocalSkill(entry);
     if (!skill) {
-      await onLog("stderr", `[staples] Warning: skill "${entry.key}" has no SKILL.md at its source and was not attached.\n`);
+      await onLog("stderr", `[staples] Warning: skill "${entry.key}" has no readable SKILL.md (missing, a symlink, or over ${MAX_SKILL_BYTES / 1024 / 1024} MB) and was not attached.\n`);
       continue;
     }
     if (skill.skipped.length) {
@@ -326,19 +367,25 @@ export async function resolveAgentSkills(input: {
     result.fallback = true;
     result.refs = [];
     result.native = [];
-    await onLog("stderr", `[staples] Warning: the Anthropic Skills API is not available for this key (${reason}); ${local.length} skill(s) were added to the system prompt instead.\n`);
+    if (!state.refusalWarned) {
+      state.refusalWarned = true;
+      await onLog("stderr", `[staples] Warning: the Anthropic Skills API is not available for this key (${reason}); skills are added to the system prompt instead (retried after ${REFUSAL_TTL_MS / 60_000} minutes).\n`);
+    }
     return finish(local);
   };
   if (state.refusedUntil > now()) return refuse(state.refusalReason ?? "refused earlier");
 
+  let call: "list" | "upload" = "list";
   try {
     if (!state.listing) {
-      state.listing = listByTitle(client, signal);
-      state.listing.catch(() => {
-        state.listing = null;
+      const listing = listByTitle(client, AbortSignal.timeout(SHARED_CALL_TIMEOUT_MS));
+      state.listing = listing;
+      listing.catch(() => {
+        if (state.listing === listing) state.listing = null;
       });
     }
-    const byTitle = await state.listing;
+    const byTitle = await raceSignal(state.listing, signal);
+    call = "upload";
     const inline: LocalSkill[] = [];
     for (const skill of local) {
       if (state.rejected.has(skill.hash)) {
@@ -353,19 +400,25 @@ export async function resolveAgentSkills(input: {
       }
       let upload = state.uploads.get(skill.hash);
       if (!upload) {
-        upload = client.uploadSkill({ displayName: skill.title, files: toUploadFiles(skill) }, { signal });
-        state.uploads.set(skill.hash, upload);
-        upload.then(
+        const started = client.uploadSkill(
+          { displayName: skill.title, files: toUploadFiles(skill) },
+          { signal: AbortSignal.timeout(SHARED_CALL_TIMEOUT_MS) },
+        );
+        upload = started;
+        state.uploads.set(skill.hash, started);
+        started.then(
           (created) => byTitle.set(skill.title, created),
-          () => state.uploads.delete(skill.hash),
+          () => {
+            if (state.uploads.get(skill.hash) === started) state.uploads.delete(skill.hash);
+          },
         );
       }
       try {
-        const created = await upload;
+        const created = await raceSignal(upload, signal);
         result.refs.push({ type: "custom", skill_id: created.id, version: created.latest_version_id });
         result.native.push({ runtimeName: skill.runtimeName, skillId: created.id, version: created.latest_version_id, reused: false });
       } catch (error) {
-        if (!isValidationFailure(error)) throw error;
+        if (signal?.aborted || !isUploadValidationFailure(error)) throw error;
         const reason = error instanceof Error ? error.message : String(error);
         state.rejected.set(skill.hash, reason);
         await onLog("stderr", `[staples] Warning: skill "${skill.key}" could not be uploaded (${reason}); it was added to the system prompt instead.\n`);
@@ -374,8 +427,9 @@ export async function resolveAgentSkills(input: {
     }
     return finish(inline);
   } catch (error) {
-    if (signal?.aborted || !isSkillsApiRefusal(error)) throw error;
+    if (signal?.aborted || !isSkillsApiRefusal(error, call)) throw error;
     state.refusedUntil = now() + REFUSAL_TTL_MS;
+    state.refusalWarned = false;
     state.refusalReason = error instanceof ManagedAgentsApiError ? `${error.status} ${error.errorType}` : "refused";
     return refuse(state.refusalReason);
   }

@@ -183,8 +183,11 @@ describe("claude_managed native skills", () => {
     expect(req("POST", /^\/v1\/skills$/)).toHaveLength(0);
 
     // The refusal is remembered: the next run does not call the Skills API again and keeps the session.
-    const again = await execute(harness({ config, sessionParams: first.sessionParams }).ctx);
+    const againHarness = harness({ config, sessionParams: first.sessionParams });
+    const again = await execute(againHarness.ctx);
     expect(req("GET", /^\/v1\/skills$/)).toHaveLength(1);
+    // Warned once per refusal window, not on every run.
+    expect(againHarness.logs.join("")).not.toContain("Skills API is not available");
     expect(fake.sessionIds()).toHaveLength(1);
     expect(again.exitCode).toBe(0);
   });
@@ -200,6 +203,75 @@ describe("claude_managed native skills", () => {
     expect(String(agentBody.system)).toContain("Bad name body.");
     expect(String(agentBody.system)).not.toContain("Good body.");
     expect(h.logs.join("")).toContain('skill "company/claude-helper" could not be uploaded');
+  });
+
+  it("an upload 400 mentioning 'unsupported' inlines only that skill and keeps the Skills API on", async () => {
+    const good = await writeSkill("good", "Good body.");
+    const odd = await writeSkill("odd", "Odd body.");
+    fake.failNext({ method: "POST", path: "/v1/skills", status: 400, message: "unsupported file type in upload" });
+    fake.queueTurns(turn("ok"), turn("again"));
+    const config = skillConfig([{ name: "good", source: good }, { name: "odd", source: odd }]);
+    const h = harness({ config });
+    expect((await execute(h.ctx)).exitCode).toBe(0);
+    const agentBody = req("POST", /^\/v1\/agents$/)[0].body as Record<string, unknown>;
+    // "good" sorts first and took the injected failure; "odd" uploaded natively.
+    expect(agentBody.skills).toHaveLength(1);
+    expect(String(agentBody.system)).toContain("Good body.");
+    expect(String(agentBody.system)).not.toContain("Odd body.");
+    expect(h.logs.join("")).not.toContain("Skills API is not available");
+    // The workspace was not marked as refusing skills.
+    resetSkillsCache();
+    const fresh = await writeSkill("fresh", "Fresh body.");
+    await execute(harness({ config: skillConfig([{ name: "fresh", source: fresh }]) }).ctx);
+    expect(fake.listUploadedSkills().map((s) => s.display_name)).toEqual(expect.arrayContaining([expect.stringMatching(/^staples-fresh-/)]));
+  });
+
+  it("an upload 403 still disables the Skills API for the workspace", async () => {
+    const good = await writeSkill("good", "Good body.");
+    fake.failNext({ method: "POST", path: "/v1/skills", status: 403 });
+    fake.queueTurns(turn("ok"));
+    const h = harness({ config: skillConfig([{ name: "good", source: good }]) });
+    expect((await execute(h.ctx)).exitCode).toBe(0);
+    expect((req("POST", /^\/v1\/agents$/)[0].body as Record<string, unknown>).skills).toEqual([]);
+    expect(h.logs.join("")).toContain("Skills API is not available");
+  });
+
+  it("re-syncs and retries once when a cached skill was deleted from the workspace", async () => {
+    const codeword = await writeSkill("codeword", "Answer BANANA-7.");
+    const config = skillConfig([{ name: "codeword", source: codeword }]);
+    fake.queueTurns(turn("one"), turn("two"));
+    const first = await execute(harness({ config }).ctx);
+    const [original] = fake.listUploadedSkills();
+    fake.deleteSkill(original.id);
+    // A new task (no stored session) adopts the agent; the definition is unchanged so no
+    // write happens, so force a write by changing the instructions.
+    const file = path.join(tmpDir, "AGENTS.md");
+    await fs.writeFile(file, "New instructions.");
+    const second = await execute(harness({ config: { ...config, instructionsFilePath: file }, sessionParams: first.sessionParams }).ctx);
+    expect(second.exitCode).toBe(0);
+    const updates = req("POST", /^\/v1\/agents\/[^/]+$/);
+    expect(updates).toHaveLength(2); // stale attempt (404) + retry
+    const [replacement] = fake.listUploadedSkills();
+    expect(replacement.id).not.toBe(original.id);
+    expect((updates[1].body as Record<string, unknown>).skills).toEqual([{ type: "custom", skill_id: replacement.id, version: replacement.latest_version_id }]);
+    expect(req("GET", /^\/v1\/skills$/)).toHaveLength(2);
+  });
+
+  it("a cancelled caller does not abort the shared listing for other runs", async () => {
+    const codeword = await writeSkill("codeword", "Answer BANANA-7.");
+    const config = skillConfig([{ name: "codeword", source: codeword }]);
+    fake.failNext({ method: "GET", path: "/v1/skills", status: 200, delayMs: 200, passThrough: true });
+    fake.queueTurns(turn("ok"));
+    const controller = new AbortController();
+    const cancelled = harness({ config });
+    cancelled.ctx.signal = controller.signal;
+    const firstRun = execute(cancelled.ctx);
+    setTimeout(() => controller.abort(), 50);
+    const other = execute(harness({ config }).ctx);
+    const [a, b] = await Promise.all([firstRun, other]);
+    expect(a.errorCode).toBe("cancelled");
+    expect(b.exitCode).toBe(0);
+    expect(req("GET", /^\/v1\/skills$/)).toHaveLength(1);
   });
 
   it("fails the run (not a fallback) when the Skills API has a server error", async () => {
@@ -226,11 +298,23 @@ describe("claude_managed full replies", () => {
     const h = harness();
     const result = await execute(h.ctx);
     expect(result.summary).toBe(reply);
-    expect(result.resultJson).toMatchObject({ result: reply, summary: reply, summaryPreview: "Here is the plan:" });
+    expect(result.resultJson).toMatchObject({ summary: reply, summaryPreview: "Here is the plan:" });
+    // `result` is dropped when it would repeat the summary.
+    expect(result.resultJson).not.toHaveProperty("result");
   });
 });
 
 describe("skill files and inline section", () => {
+  it("ignores a symlinked or oversized SKILL.md", async () => {
+    const real = await writeSkill("real", "Real body.");
+    const linked = path.join(tmpDir, "linked");
+    await fs.mkdir(linked);
+    await fs.symlink(path.join(real, "SKILL.md"), path.join(linked, "SKILL.md"));
+    expect(await readLocalSkill({ key: "k", runtimeName: "linked", source: linked })).toBeNull();
+    const big = await writeSkill("big", "x".repeat(2 * 1024 * 1024 + 10));
+    expect(await readLocalSkill({ key: "k", runtimeName: "big", source: big })).toBeNull();
+  });
+
   it("reads text files, skips binaries and hashes content into the title", async () => {
     const dir = await writeSkill("files", "Body.", { "references/a.md": "A", "assets/logo.png": Buffer.from([0x89, 0x50, 0x00, 0x01]), ".hidden": "h" });
     const skill = (await readLocalSkill({ key: "k", runtimeName: "files", source: dir }))!;

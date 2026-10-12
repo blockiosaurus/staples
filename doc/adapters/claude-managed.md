@@ -138,12 +138,16 @@ Networking settings apply only to environments Staples creates. When
 - **Skills change the agent.** The pinned skill set is part of the agent
   fingerprint, so a changed skill creates a new agent version and the next run
   starts a new session. Tool-only changes still update the session in place.
-- **Fallback.** When the Skills API refuses (403, 404/405/501, or a 400 saying the
-  feature or beta is not enabled), the run inlines the skills into the system
-  prompt instead (a manifest plus each `SKILL.md` body, bounded to 60 KB with a
-  truncation note) and logs one warning. The refusal is remembered for 10
-  minutes per API key. A skill the API rejects as invalid (for example a
-  `SKILL.md` frontmatter `name` with a reserved word) is inlined on its own.
+- **Fallback.** When the Skills API refuses (403 or 404/405/501 on any call, or a
+  400 on the listing call saying the feature or beta is not enabled), runs inline
+  the skills into the system prompt instead (a manifest plus each `SKILL.md`
+  body, bounded to 60 KB with a truncation note). The refusal is remembered for
+  10 minutes per API key and the warning is logged once per refusal window. An
+  upload rejected with 400/413/422 (for example a `SKILL.md` frontmatter `name`
+  with a reserved word) inlines only that skill.
+- **Stale skill cache.** If the agent API rejects a cached skill id (it was
+  deleted in the Console), the adapter forgets its listing, re-syncs the skills
+  and retries the agent write once.
   Server errors, rate limits and auth failures fail the run
   (`claude_managed_skills_failed`) instead of switching modes.
 - **Library manifest.** Like `claude_local`, the system prompt lists the company
