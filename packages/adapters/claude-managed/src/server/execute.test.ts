@@ -1,0 +1,382 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import type { AdapterExecutionContext, AdapterRuntimeEvent, AdapterUsageCheckpoint } from "@paperclipai/adapter-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  budgetReachedTurn,
+  fakeEvents,
+  type FakeManagedAgentsServer,
+  startFakeManagedAgentsServer,
+  type TurnScript,
+} from "../testing/fake-managed-agents-server.js";
+import { startFakeMcpServer, type FakeMcpServer } from "../testing/fake-mcp-server.js";
+import { execute, resolveNetworking } from "./execute.js";
+import { sessionCodec } from "./session.js";
+import { testEnvironment } from "./test-environment.js";
+
+const RUN_TOKEN = "staples-run-jwt-SECRET-0001";
+
+let fake: FakeManagedAgentsServer;
+let mcp: FakeMcpServer | null = null;
+let tmpDir: string;
+
+beforeEach(async () => {
+  fake = await startFakeManagedAgentsServer();
+  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "claude-managed-"));
+});
+
+afterEach(async () => {
+  await fake.close();
+  await mcp?.close();
+  mcp = null;
+  await fs.rm(tmpDir, { recursive: true, force: true });
+});
+
+function turn(text: string, cumulativeCents: number, tokens = { input: 100, output: 20 }): TurnScript {
+  return [
+    { kind: "emit", event: fakeEvents.running() },
+    { kind: "emit", event: fakeEvents.agentMessage(text) },
+    { kind: "emit", event: fakeEvents.usage({ inputTokens: tokens.input, outputTokens: tokens.output, listCostCents: cumulativeCents }) },
+    { kind: "emit", event: fakeEvents.idle() },
+  ];
+}
+
+interface Harness {
+  ctx: AdapterExecutionContext;
+  logs: string[];
+  usage: AdapterUsageCheckpoint[];
+  events: AdapterRuntimeEvent[];
+  onDispatch: ReturnType<typeof vi.fn>;
+  onCancellationReady: ReturnType<typeof vi.fn>;
+}
+
+function harness(options: {
+  sessionParams?: Record<string, unknown> | null;
+  config?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+  servers?: Array<{ name: string; url: string; token: string; connectionId: string }>;
+  signal?: AbortSignal;
+} = {}): Harness {
+  const logs: string[] = [];
+  const usage: AdapterUsageCheckpoint[] = [];
+  const events: AdapterRuntimeEvent[] = [];
+  const onDispatch = vi.fn();
+  const onCancellationReady = vi.fn(async () => undefined);
+  const ctx: AdapterExecutionContext = {
+    runId: "run-1",
+    agent: { id: "agent-1234567890", companyId: "company-1", name: "Researcher", adapterType: "claude_managed", adapterConfig: {} },
+    runtime: { sessionId: null, sessionParams: options.sessionParams ?? null, sessionDisplayId: null, taskKey: null },
+    config: { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiBaseUrl: fake.baseUrl, ...options.config },
+    context: { ...options.context },
+    runtimeMcp: { getServers: () => options.servers ?? [] },
+    signal: options.signal,
+    onLog: async (_stream, chunk) => {
+      logs.push(chunk);
+    },
+    onUsage: async (checkpoint) => {
+      usage.push(checkpoint);
+    },
+    onEvent: async (event) => {
+      events.push(event);
+    },
+    onDispatch,
+    onCancellationReady,
+  };
+  return { ctx, logs, usage, events, onDispatch, onCancellationReady };
+}
+
+function logEvents(logs: string[]): Array<Record<string, unknown>> {
+  return logs
+    .join("")
+    .split("\n")
+    .filter((l) => l.startsWith("{"))
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+}
+
+function requestsMatching(method: string, pattern: RegExp) {
+  return fake.requests.filter((r) => r.method === method && pattern.test(r.path));
+}
+
+describe("claude_managed execute", () => {
+  it("first run creates environment, agent and session, then streams the turn", async () => {
+    fake.queueTurns(turn("All done.\nDetails follow.", 3));
+    const h = harness();
+    const result = await execute(h.ctx);
+
+    expect(result).toMatchObject({ exitCode: 0, summary: "All done.", provider: "anthropic", biller: "anthropic", billingType: "api", model: "claude-opus-5-5" });
+    expect(h.onCancellationReady).toHaveBeenCalledTimes(1);
+    expect(h.onDispatch).toHaveBeenCalledTimes(1);
+
+    const envReq = requestsMatching("POST", /^\/v1\/environments$/);
+    expect(envReq).toHaveLength(1);
+    expect(envReq[0].body).toMatchObject({ name: "staples-agent1234567", config: { type: "cloud", networking: { type: "unrestricted" } } });
+
+    const agentReq = requestsMatching("POST", /^\/v1\/agents$/);
+    expect(agentReq).toHaveLength(1);
+    expect(agentReq[0].body).toMatchObject({ name: "Staples: Researcher", model: "claude-opus-5-5", tools: [{ type: "agent_toolset_20260401" }] });
+    expect(requestsMatching("POST", /^\/v1\/sessions$/)).toHaveLength(1);
+
+    // The stream is opened before the user.message is sent.
+    const streamIndex = fake.requests.findIndex((r) => r.method === "GET" && r.path.endsWith("/events/stream"));
+    const sendIndex = fake.requests.findIndex((r) => r.method === "POST" && r.path.endsWith("/events"));
+    expect(streamIndex).toBeGreaterThanOrEqual(0);
+    expect(streamIndex).toBeLessThan(sendIndex);
+
+    const params = sessionCodec.deserialize(result.sessionParams);
+    expect(params).toMatchObject({ managedAgentVersion: 1, sessionId: fake.sessionIds()[0] });
+    expect(result.sessionDisplayId).toBe(fake.sessionIds()[0]);
+
+    const types = logEvents(h.logs).map((e) => e.type);
+    expect(types).toEqual(expect.arrayContaining(["claude_managed.init", "claude_managed.message", "claude_managed.usage", "claude_managed.result"]));
+    expect(h.events.map((e) => e.eventType)).toEqual(["claude_managed.session", "claude_managed.stop"]);
+    expect(h.logs.join("")).not.toContain(fake.apiKey);
+  });
+
+  it("second run resumes the same session and bills only this run's usage", async () => {
+    fake.queueTurns(turn("first", 3), turn("second", 8, { input: 250, output: 50 }));
+    const first = await execute(harness().ctx);
+    const h = harness({ sessionParams: first.sessionParams });
+    const second = await execute(h.ctx);
+
+    expect(second.exitCode).toBe(0);
+    expect(requestsMatching("POST", /^\/v1\/agents/)).toHaveLength(1);
+    expect(requestsMatching("POST", /^\/v1\/environments$/)).toHaveLength(1);
+    expect(requestsMatching("POST", /^\/v1\/sessions$/)).toHaveLength(1);
+    expect(second.sessionParams).toEqual(first.sessionParams);
+    expect(fake.receivedEvents(fake.sessionIds()[0]).filter((e) => e.type === "user.message")).toHaveLength(2);
+    expect(second.costUsd).toBeCloseTo(0.05, 10);
+    expect(second.usage).toMatchObject({ inputTokens: 150, outputTokens: 30 });
+    expect(logEvents(h.logs).find((e) => e.type === "claude_managed.init")).toMatchObject({ resumed: true });
+  });
+
+  it("changed instructions create a new agent version and a new session", async () => {
+    const file = path.join(tmpDir, "AGENTS.md");
+    await fs.writeFile(file, "Be brief.");
+    fake.queueTurns(turn("one", 1), turn("two", 1));
+    const first = await execute(harness({ config: { instructionsFilePath: file } }).ctx);
+    expect(requestsMatching("POST", /^\/v1\/agents$/)[0].body).toMatchObject({ system: "Be brief." });
+
+    await fs.writeFile(file, "Be thorough.");
+    const second = await execute(harness({ sessionParams: first.sessionParams, config: { instructionsFilePath: file } }).ctx);
+    expect(second.exitCode).toBe(0);
+    const update = requestsMatching("POST", /^\/v1\/agents\/[^/]+$/);
+    expect(update).toHaveLength(1);
+    expect(update[0].body).toMatchObject({ system: "Be thorough.", version: 1 });
+    expect(requestsMatching("POST", /^\/v1\/agents$/)).toHaveLength(1);
+    expect(fake.sessionIds()).toHaveLength(2);
+    const firstParams = sessionCodec.deserialize(first.sessionParams)!;
+    const secondParams = sessionCodec.deserialize(second.sessionParams)!;
+    expect(secondParams.managedAgentId).toBe(firstParams.managedAgentId);
+    expect(secondParams.managedAgentVersion).toBe(2);
+    expect(secondParams.sessionId).not.toBe(firstParams.sessionId);
+    expect(secondParams.fingerprint).not.toBe(firstParams.fingerprint);
+  });
+
+  it("starts a new session when the stored one was archived", async () => {
+    fake.queueTurns(turn("one", 1), turn("two", 1));
+    const first = await execute(harness().ctx);
+    const firstSession = fake.sessionIds()[0];
+    await fetch(`${fake.baseUrl}/sessions/${firstSession}/archive`, {
+      method: "POST",
+      headers: { "x-api-key": fake.apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "managed-agents-2026-04-01" },
+    });
+    const second = await execute(harness({ sessionParams: first.sessionParams }).ctx);
+    expect(second.exitCode).toBe(0);
+    expect(fake.sessionIds()).toHaveLength(2);
+    expect(second.sessionDisplayId).not.toBe(firstSession);
+  });
+
+  it("proxies custom tools to the Staples MCP server and keeps the run token away from Anthropic", async () => {
+    mcp = await startFakeMcpServer({
+      token: RUN_TOKEN,
+      tools: [{ name: "lookup", description: "Find a record", inputSchema: { type: "object", properties: { q: { type: "string" } } }, handler: (args) => ({ content: [{ type: "text", text: `found ${String(args.q)}` }] }) }],
+    });
+    fake.queueTurns([
+      { kind: "emit", event: fakeEvents.running() },
+      { kind: "custom_tool_call", name: "staples-tools__lookup", input: { q: "widgets" }, id: "sevt_tool_1" },
+      { kind: "emit", event: fakeEvents.agentMessage("Found it.") },
+      { kind: "emit", event: fakeEvents.usage({ listCostCents: 2 }) },
+      { kind: "emit", event: fakeEvents.idle() },
+    ]);
+    const h = harness({ servers: [{ name: "Staples tools", url: mcp.url, token: RUN_TOKEN, connectionId: "c1" }] });
+    const result = await execute(h.ctx);
+
+    expect(result.exitCode).toBe(0);
+    expect(mcp.calls()).toEqual([{ name: "lookup", arguments: { q: "widgets" } }]);
+    expect(mcp.requests.every((r) => r.headers.authorization === `Bearer ${RUN_TOKEN}`)).toBe(true);
+
+    const agentReq = requestsMatching("POST", /^\/v1\/agents$/)[0];
+    expect((agentReq.body as { tools: unknown[] }).tools).toEqual([
+      { type: "agent_toolset_20260401" },
+      expect.objectContaining({ type: "custom", name: "staples-tools__lookup", input_schema: { type: "object", properties: { q: { type: "string" } } } }),
+    ]);
+    const toolResult = fake.receivedEvents(fake.sessionIds()[0]).find((e) => e.type === "user.custom_tool_result");
+    expect(toolResult).toMatchObject({ custom_tool_use_id: "sevt_tool_1", is_error: false, content: [{ type: "text", text: "found widgets" }] });
+
+    // The run token never reaches the Managed Agents API, in any request.
+    expect(JSON.stringify(fake.requests)).not.toContain(RUN_TOKEN);
+    expect(h.logs.join("")).not.toContain(RUN_TOKEN);
+    expect(JSON.stringify(h.events)).not.toContain(RUN_TOKEN);
+    const toolLogs = logEvents(h.logs).filter((e) => String(e.type).startsWith("claude_managed.tool_"));
+    expect(toolLogs.map((e) => e.type)).toEqual(["claude_managed.tool_use", "claude_managed.tool_result"]);
+  });
+
+  it("reports usage incrementally and in the final result", async () => {
+    fake.queueTurns([
+      { kind: "emit", event: fakeEvents.running() },
+      { kind: "emit", event: fakeEvents.usage({ inputTokens: 100, outputTokens: 10, cacheReadTokens: 40, listCostCents: 4 }) },
+      { kind: "emit", event: fakeEvents.agentMessage("Done.") },
+      { kind: "emit", event: fakeEvents.usage({ inputTokens: 300, outputTokens: 30, cacheReadTokens: 80, listCostCents: 7 }) },
+      { kind: "emit", event: fakeEvents.idle() },
+    ]);
+    const h = harness();
+    const result = await execute(h.ctx);
+
+    const midRun = h.usage.filter((u) => !u.complete);
+    expect(midRun.map((u) => u.costUsd)).toEqual([0.04, 0.07]);
+    expect(h.usage.at(-1)).toMatchObject({ complete: true, costUsd: 0.07, costUsdExact: "0.07", costStatus: "reported", provider: "anthropic", biller: "anthropic", billingType: "api", usageBasis: "per_run" });
+    expect(result).toMatchObject({ costUsd: 0.07, costUsdExact: "0.07", costStatus: "reported", usageBasis: "per_run" });
+    expect(result.usage).toEqual({ inputTokens: 300, outputTokens: 30, cachedInputTokens: 80, cacheWriteTokens: 0 });
+  });
+
+  it("caps the session at the remaining budget and reports budget_reached", async () => {
+    fake.queueTurns(budgetReachedTurn(50));
+    const h = harness({ context: { paperclipBudgetRemainingUsd: 0.5 } });
+    const result = await execute(h.ctx);
+
+    expect(requestsMatching("POST", /^\/v1\/sessions$/)[0].body).toMatchObject({ budget: { type: "limit", max_list_cost: { amount: "50", currency: "USD" } } });
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "budget_reached", costUsd: 0.5 });
+    expect(result.summary).toContain("spending cap");
+    expect(result.resultJson).toMatchObject({ status: "budget_reached", budgetStopped: true, stopReason: "budget_reached" });
+    expect(logEvents(h.logs).at(-1)).toMatchObject({ type: "claude_managed.result", status: "budget_reached" });
+  });
+
+  it("creates the session without a cap when no budget is known", async () => {
+    fake.queueTurns(turn("ok", 1));
+    await execute(harness().ctx);
+    expect((requestsMatching("POST", /^\/v1\/sessions$/)[0].body as Record<string, unknown>).budget).toBeUndefined();
+  });
+
+  it("fails with the session.error message", async () => {
+    fake.queueTurns([
+      { kind: "emit", event: fakeEvents.running() },
+      { kind: "emit", event: fakeEvents.error("overloaded_error", "Model is overloaded", "retrying") },
+      { kind: "emit", event: fakeEvents.error("api_error", "Upstream exploded", "terminal") },
+      { kind: "emit", event: fakeEvents.idle() },
+    ]);
+    const h = harness();
+    const result = await execute(h.ctx);
+    expect(result.exitCode).toBe(1);
+    expect(result.errorMessage).toBe("Upstream exploded");
+    expect(result.sessionParams).toBeTruthy();
+    expect(logEvents(h.logs).filter((e) => e.type === "claude_managed.error")).toHaveLength(2);
+  });
+
+  it("never retries the user.message on a 5xx", async () => {
+    fake.failNext({ method: "POST", path: /\/events$/, status: 500, times: 3 });
+    const result = await execute(harness().ctx);
+    expect(result.exitCode).toBe(1);
+    expect(result.errorMessage).toContain("500");
+    expect(requestsMatching("POST", /\/events$/)).toHaveLength(1);
+  });
+
+  it("cancellation sends user.interrupt, returns promptly and keeps the session", async () => {
+    fake.queueTurns([
+      { kind: "emit", event: fakeEvents.running() },
+      { kind: "emit", event: fakeEvents.agentMessage("Working on it") },
+      { kind: "emit", event: fakeEvents.usage({ listCostCents: 2 }) },
+      { kind: "hang" },
+    ]);
+    const controller = new AbortController();
+    const h = harness({ signal: controller.signal });
+    const running = execute(h.ctx, { cancelGraceMs: 2_000 });
+    await vi.waitFor(() => expect(h.logs.join("")).toContain("Working on it"), { timeout: 2_000 });
+    const started = Date.now();
+    controller.abort(new Error("operator cancelled"));
+    const result = await running;
+
+    expect(Date.now() - started).toBeLessThan(1_500);
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "cancelled", costUsd: 0.02 });
+    const sessionId = fake.sessionIds()[0];
+    expect(fake.receivedEvents(sessionId).map((e) => e.type)).toEqual(["user.message", "user.interrupt"]);
+    await fake.settled();
+    expect(fake.getSessionStatus(sessionId)).toBe("idle");
+    expect(requestsMatching("POST", /\/archive$/)).toHaveLength(0);
+    expect(result.sessionDisplayId).toBe(sessionId);
+    expect(logEvents(h.logs).at(-1)).toMatchObject({ type: "claude_managed.result", status: "cancelled" });
+  });
+
+  it("returns a configuration error without an API key", async () => {
+    const h = harness({ config: { env: {} } });
+    const result = await execute(h.ctx, { env: {} });
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "claude_managed_api_key_missing", errorFamily: "configuration" });
+    expect(fake.requests).toHaveLength(0);
+  });
+
+  it("falls back to the server ANTHROPIC_API_KEY", async () => {
+    fake.queueTurns(turn("ok", 1));
+    const h = harness({ config: { env: {} } });
+    const result = await execute(h.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey } });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("honors a configured environmentId", async () => {
+    const env = await (await fetch(`${fake.baseUrl}/environments`, {
+      method: "POST",
+      headers: { "x-api-key": fake.apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "managed-agents-2026-04-01", "content-type": "application/json" },
+      body: JSON.stringify({ name: "mine", config: { type: "cloud", networking: { type: "limited" } } }),
+    })).json() as { id: string };
+    fake.queueTurns(turn("ok", 1));
+    const result = await execute(harness({ config: { environmentId: env.id } }).ctx);
+    expect(result.exitCode).toBe(0);
+    expect(requestsMatching("POST", /^\/v1\/environments$/)).toHaveLength(1);
+    expect(requestsMatching("POST", /^\/v1\/sessions$/)[0].body).toMatchObject({ environment_id: env.id });
+  });
+});
+
+describe("resolveNetworking", () => {
+  it("defaults to explicit unrestricted networking and supports limited opt-in", () => {
+    expect(resolveNetworking({})).toEqual({ type: "unrestricted" });
+    expect(resolveNetworking({ networking: { type: "limited", allowedHosts: ["api.example.com", ""], allowPackageManagers: true } })).toEqual({
+      type: "limited",
+      allowed_hosts: ["api.example.com"],
+      allow_package_managers: true,
+      allow_mcp_servers: false,
+    });
+  });
+});
+
+describe("claude_managed testEnvironment", () => {
+  const base = { companyId: "company-1", adapterType: "claude_managed" };
+
+  it("passes with a working key and never echoes it", async () => {
+    const result = await testEnvironment({ ...base, config: { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiBaseUrl: fake.baseUrl } }, { env: {} });
+    expect(result.status).toBe("pass");
+    expect(result.checks.map((c) => c.code)).toEqual(["claude_managed_api_key_present", "claude_managed_auth_ok"]);
+    expect(JSON.stringify(result)).not.toContain(fake.apiKey);
+    expect(fake.requests.at(-1)).toMatchObject({ method: "GET", path: "/v1/agents", query: expect.stringContaining("limit=1") });
+  });
+
+  it("maps a missing key, a rejected key, rate limits and network errors to plain checks", async () => {
+    const missing = await testEnvironment({ ...base, config: {} }, { env: {} });
+    expect(missing.checks.map((c) => c.code)).toEqual(["claude_managed_api_key_missing"]);
+
+    const rejected = await testEnvironment({ ...base, config: { env: { ANTHROPIC_API_KEY: "sk-ant-wrong-key-xyz" }, apiBaseUrl: fake.baseUrl } }, { env: {} });
+    expect(rejected.status).toBe("fail");
+    expect(rejected.checks.at(-1)?.code).toBe("claude_managed_auth_invalid");
+    expect(JSON.stringify(rejected)).not.toContain("sk-ant-wrong-key-xyz");
+
+    fake.failNext({ method: "GET", path: "/v1/agents", status: 403 });
+    const denied = await testEnvironment({ ...base, config: { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiBaseUrl: fake.baseUrl } }, { env: {} });
+    expect(denied.checks.at(-1)?.code).toBe("claude_managed_access_denied");
+
+    fake.failNext({ method: "GET", path: "/v1/agents", status: 429 });
+    const limited = await testEnvironment({ ...base, config: { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiBaseUrl: fake.baseUrl } }, { env: {} });
+    expect(limited.status).toBe("warn");
+    expect(limited.checks.at(-1)?.code).toBe("claude_managed_rate_limited");
+
+    const unreachable = await testEnvironment({ ...base, config: { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiBaseUrl: "http://127.0.0.1:1/v1" } }, { env: {} });
+    expect(unreachable.checks.at(-1)?.code).toBe("claude_managed_unreachable");
+  });
+});

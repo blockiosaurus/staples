@@ -18,7 +18,6 @@ import {
   selectInitialCommunicationGuidance,
   selectPaperclipPromptSections,
 } from "@paperclipai/adapter-utils/server-utils";
-type AdapterExecutionErrorFamily = NonNullable<AdapterExecutionResult["errorFamily"]>;
 import { ManagedAgentsApiError, ManagedAgentsClient, budgetFromUsd } from "../client.js";
 import {
   DEFAULT_MANAGED_AGENTS_BASE_URL,
@@ -32,6 +31,8 @@ import {
 } from "../types.js";
 import { readSessionParams, type ClaudeManagedSessionParams } from "./session.js";
 import { ToolsProxy, type ToolCallOutcome } from "./tools-proxy.js";
+
+type AdapterExecutionErrorFamily = NonNullable<AdapterExecutionResult["errorFamily"]>;
 
 export const ADAPTER_TYPE = "claude_managed";
 /** Default model (the current model id used throughout the Managed Agents docs, 2026-10-12). */
