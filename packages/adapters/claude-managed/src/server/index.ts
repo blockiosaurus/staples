@@ -32,14 +32,6 @@ export function getConfigSchema(): AdapterConfigSchema {
         hint: "Optional. Defaults to https://api.anthropic.com/v1. A custom URL needs this agent's own ANTHROPIC_API_KEY; the server's key is only sent to the default API.",
       },
       {
-        key: "inactivityTimeoutSec",
-        label: "Inactivity timeout (seconds)",
-        type: "number",
-        default: 900,
-        group: "advanced",
-        hint: "A run fails and interrupts its session after this long with no activity from Anthropic. Default 900 (15 minutes).",
-      },
-      {
         key: "networkingMode",
         label: "Sandbox networking",
         type: "select",
@@ -67,6 +59,14 @@ export function getConfigSchema(): AdapterConfigSchema {
         group: "advanced",
         hint: "Also allow npm, PyPI and other package registries.",
         meta: { visibleWhen: { key: "networkingMode", value: "limited" } },
+      },
+      {
+        key: "inactivityTimeoutSec",
+        label: "Inactivity timeout (seconds)",
+        type: "number",
+        default: 900,
+        group: "advanced",
+        hint: "A run fails and interrupts its session after this long with no activity from Anthropic. Default 900 (15 minutes).",
       },
     ],
   };

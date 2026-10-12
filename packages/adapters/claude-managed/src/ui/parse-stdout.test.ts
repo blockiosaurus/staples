@@ -66,9 +66,9 @@ describe("claude_managed config", () => {
     expect(resolveNetworking({})).toEqual({ type: "unrestricted" });
   });
 
-  it("exposes model, environment, API base URL and networking fields", () => {
+  it("exposes model, environment, API base URL, networking and timeout fields", () => {
     const fields = getConfigSchema().fields;
-    expect(fields.map((f) => f.key)).toEqual(["model", "environmentId", "apiBaseUrl", "networkingMode", "networkAllowedHosts", "networkAllowPackageManagers"]);
-    expect(fields.filter((f) => f.group === "advanced").map((f) => f.key)).toEqual(["apiBaseUrl", "networkingMode", "networkAllowedHosts", "networkAllowPackageManagers"]);
+    expect(fields.map((f) => f.key)).toEqual(["model", "environmentId", "apiBaseUrl", "networkingMode", "networkAllowedHosts", "networkAllowPackageManagers", "inactivityTimeoutSec"]);
+    expect(fields.filter((f) => f.group === "advanced").map((f) => f.key)).toEqual(["apiBaseUrl", "networkingMode", "networkAllowedHosts", "networkAllowPackageManagers", "inactivityTimeoutSec"]);
   });
 });
