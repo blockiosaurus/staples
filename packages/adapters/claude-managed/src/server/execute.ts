@@ -960,6 +960,18 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
           existing = null;
         }
       }
+      // A capped session whose cap can't be moved correctly is not resumed:
+      // with no budget left to apply the old cap would stop it for a budget
+      // that no longer exists, and without reported spend a session-total cap
+      // can't be computed.
+      if (existing?.budget?.max_list_cost && (remainingBudgetUsd === null || existing.usage?.list_cost?.amount == null)) {
+        notes.push(`Session ${existing.id} has a spending cap that can't be updated for this run; starting a new session.`);
+        existing = null;
+      }
+      if (existing && remainingBudgetUsd !== null && existing.usage?.list_cost?.amount == null) {
+        notes.push(`Session ${existing.id} reports no spend yet; starting a new capped session.`);
+        existing = null;
+      }
       if (existing && remainingBudgetUsd !== null) {
         // A resumed session keeps a session-total cap: move it to what the
         // session has spent so far plus this run's remaining budget.

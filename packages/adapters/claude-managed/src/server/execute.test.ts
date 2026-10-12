@@ -312,6 +312,18 @@ describe("claude_managed execute", () => {
     expect(fake.sessionBudget(newSession)).toMatchObject({ max_list_cost: { amount: "25" } });
   });
 
+  it("does not resume a capped session once no budget applies", async () => {
+    fake.queueTurns(turn("first", 30));
+    const first = await execute(harness({ context: { paperclipBudgetRemainingUsd: 1 } }).ctx);
+    const sessionId = fake.sessionIds()[0];
+    fake.queueTurns(turn("second", 1));
+    const second = await execute(harness({ sessionParams: first.sessionParams }).ctx);
+    expect(second.exitCode).toBe(0);
+    const newSession = fake.sessionIds().find((id) => id !== sessionId);
+    expect(newSession).toBeTruthy();
+    expect(fake.sessionBudget(newSession!)).toBeFalsy();
+  });
+
   it("creates the session without a cap when no budget is known", async () => {
     fake.queueTurns(turn("ok", 1));
     await execute(harness().ctx);
