@@ -639,7 +639,7 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(action.hash).toBe(proposedActionHash({ method: "POST", path: action.path, body: action.body }));
     expect(action.planTemplateSummaries).toEqual([{
       clientKey: "mail", ref: "staples/email-secretary", name: detail.name, needs: ["AgentMail or Gmail"],
-      asksBefore: ["Sending email"], routineCount: 2, budgetMonthlyCents: 3000, readOnly: false,
+      asksBefore: ["Sending email", "Accepting meetings or changing your calendar"], routineCount: 2, budgetMonthlyCents: 3000, readOnly: false,
     }]);
     // No instructions in the proposal: they come from the template at apply.
     expect(JSON.stringify(action.body)).not.toMatch(/instructions/i);

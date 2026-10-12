@@ -3,6 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { agents, approvals, companySecrets, issues, toolConnections, type Db } from "@paperclipai/db";
 import { ALL_PROPOSABLE_HIRE_ADAPTER_TYPES, HOSTED_HIRE_ADAPTER_TYPE, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { hostedHireOptions } from "./hosted-inference-access.js";
+import { hostedInference } from "./hosted-inference.js";
 import { companyBriefService } from "./company-brief.js";
 import {
   planHireAdapterDefaults,
@@ -178,11 +179,21 @@ function hostedHireUnavailableMessage(hireAdapterTypes: readonly string[]) {
   return `adapterType ${HOSTED_HIRE_ADAPTER_TYPE} is not available in this company (no hosted inference and no Anthropic key): use one of ${hireAdapterTypes.join(", ")}.`;
 }
 
+/**
+ * A direct (non-plan) hire carries no adapter config, so on Claude (hosted) it
+ * can only run on the server's key: allowed only with hosted inference. A
+ * company that has only its own key hires on it through a plan, which binds
+ * the key to the hire.
+ */
 async function assertHireAdapterAvailable(db: Db, body: unknown, companyId: string) {
   const adapterType = bodyRecord(body).adapterType;
   if (adapterType !== HOSTED_HIRE_ADAPTER_TYPE) return;
+  if (hostedInference().available) return;
   const { hireAdapterTypes } = await hostedHireOptions(db, companyId);
   if (!hireAdapterTypes.includes(HOSTED_HIRE_ADAPTER_TYPE)) throw new ProposedActionError(hostedHireUnavailableMessage(hireAdapterTypes));
+  throw new ProposedActionError(
+    `A single hire on ${HOSTED_HIRE_ADAPTER_TYPE} would have no Anthropic key here: propose it in a plan (staples_propose_plan), which gives the hire the company's key.`,
+  );
 }
 
 /**

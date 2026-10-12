@@ -94,18 +94,22 @@ export async function ensureHostedAssistantBudget(
  * agent config: hosted inference must be available and the agent must be on
  * the hosted adapter without its own key. The key is only granted once the
  * agent's and its company's hard-stop budgets are ensured; if that fails the
- * key is withheld (false) and a warning is logged.
+ * key is withheld (false) and a warning is logged. `probeOnly` (the
+ * environment-test route's free list call) skips the ensure and writes nothing.
  */
 export async function hostedInferenceAllowedFor(
   db: Db,
   agent: { id: string; companyId: string; adapterType: string; adapterConfig?: unknown },
   env: NodeJS.ProcessEnv = process.env,
-  deps: { ensureBudget?: typeof ensureHostedAgentBudgets } = {},
+  deps: { ensureBudget?: typeof ensureHostedAgentBudgets; probeOnly?: boolean } = {},
 ): Promise<boolean> {
   if (agent.adapterType !== HOSTED_INFERENCE_ADAPTER_TYPE) return false;
   if (!hostedInference(env).available) return false;
   // Its own key is used first; the server's key is not needed.
   if (agent.adapterConfig !== undefined && hasAnthropicKeyBinding(agent.adapterConfig)) return false;
+  // A connection test (one free list call) needs no caps and writes none:
+  // testing a draft agent must not create budget policies.
+  if (deps.probeOnly) return true;
   try {
     await (deps.ensureBudget ?? ensureHostedAgentBudgets)(db, agent, env);
   } catch (error) {

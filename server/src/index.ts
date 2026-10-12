@@ -225,8 +225,14 @@ async function startServerWithDatabaseTeardown(
   ensureDecisionSigningSecret();
   let config = loadConfig();
   // Before anything reads the agent JWT config: without a run-token secret,
-  // agents run with no Staples tools. Configured secrets always win.
-  ensureAgentJwtSecret({ log: (message) => logger.info(message) });
+  // agents run with no Staples tools. Configured secrets always win; only a
+  // local_trusted instance gets a generated one (authenticated modes keep
+  // better-auth's own startup guard).
+  ensureAgentJwtSecret({
+    deploymentMode: config.deploymentMode,
+    log: (message) => logger.info(message),
+    warn: (message) => logger.warn(message),
+  });
   initTelemetry({ enabled: config.telemetryEnabled });
   if (process.env.PAPERCLIP_SECRETS_PROVIDER === undefined) {
     process.env.PAPERCLIP_SECRETS_PROVIDER = config.secretsProvider;

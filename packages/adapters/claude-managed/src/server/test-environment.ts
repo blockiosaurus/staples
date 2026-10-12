@@ -88,8 +88,8 @@ export async function testEnvironment(
   const key = resolveApiKey(config, env, { serverKeyAllowed });
 
   if (!key) {
-    const hostedOnlyForAssistant = !serverKeyAllowed && Boolean((env.ANTHROPIC_API_KEY ?? "").trim());
-    checks.push(hostedOnlyForAssistant
+    const serverKeyWithheld = !serverKeyAllowed && Boolean((env.ANTHROPIC_API_KEY ?? "").trim());
+    checks.push(serverKeyWithheld
       ? {
           code: "claude_managed_api_key_missing",
           level: "error",

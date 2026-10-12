@@ -6,8 +6,8 @@ import { resolveDefaultSecretsKeyFilePath } from "./home-paths.js";
 /**
  * The run-token signing secret (agent JWTs: run-scoped tokens that give agents
  * their Staples tools). Without one, agents run with no Staples tools, so an
- * instance that configures neither PAPERCLIP_AGENT_JWT_SECRET nor
- * BETTER_AUTH_SECRET gets a persisted, generated one:
+ * local_trusted instance that configures neither PAPERCLIP_AGENT_JWT_SECRET
+ * nor BETTER_AUTH_SECRET gets a persisted, generated one:
  * `<instance>/secrets/agent-jwt-secret` (directory 0700, file 0600, 32 random
  * bytes as hex). A configured secret always wins and is never overwritten.
  * The value is never logged.
@@ -89,22 +89,41 @@ function loadOrCreate(keyPath: string): { secret: string; generated: boolean } {
   }
 }
 
-export type AgentJwtSecretSource = "configured" | "file" | "generated";
+export type AgentJwtSecretSource = "configured" | "file" | "generated" | "missing";
+
+/** A secret env var counts as set only when it is non-blank (the agent JWT config trims and ignores blanks). */
+const isSet = (value: string | undefined) => Boolean(value?.trim());
 
 /**
  * Startup: make sure a run-token signing secret is set before anything reads
  * the JWT config. Does nothing when PAPERCLIP_AGENT_JWT_SECRET or
- * BETTER_AUTH_SECRET is set (worktree/fork instances set it deliberately).
+ * BETTER_AUTH_SECRET is set to a non-blank value (worktree/fork instances set
+ * it deliberately; blank values count as unset, like the JWT config).
+ *
+ * Only a `local_trusted` instance gets a generated secret: in authenticated
+ * modes PAPERCLIP_AGENT_JWT_SECRET is also better-auth's fallback login
+ * secret, so it must be configured on purpose (better-auth still refuses to
+ * start without one). There, a missing secret is reported with an operator
+ * hint (`warn`) and nothing is written.
+ *
  * Otherwise reads the instance's persisted secret, generating it on first
  * start, and sets PAPERCLIP_AGENT_JWT_SECRET for this process.
  */
 export function ensureAgentJwtSecret(options: {
+  deploymentMode: string;
   env?: NodeJS.ProcessEnv;
   secretsDir?: string;
   log?: (message: string) => void;
-} = {}): { source: AgentJwtSecretSource; path?: string } {
+  warn?: (message: string) => void;
+}): { source: AgentJwtSecretSource; path?: string } {
   const env = options.env ?? process.env;
-  if (env.PAPERCLIP_AGENT_JWT_SECRET?.trim() || env.BETTER_AUTH_SECRET?.trim()) return { source: "configured" };
+  if (isSet(env.PAPERCLIP_AGENT_JWT_SECRET) || isSet(env.BETTER_AUTH_SECRET)) return { source: "configured" };
+  if (options.deploymentMode !== "local_trusted") {
+    options.warn?.(
+      "No agent run-token secret is configured, so agents run without their Staples tools. Set PAPERCLIP_AGENT_JWT_SECRET (and BETTER_AUTH_SECRET) for this instance.",
+    );
+    return { source: "missing" };
+  }
   const keyPath = resolveAgentJwtSecretFilePath(options.secretsDir);
   const { secret, generated } = loadOrCreate(keyPath);
   env.PAPERCLIP_AGENT_JWT_SECRET = secret;

@@ -1532,6 +1532,43 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         expect(pinned.agents[0]).toMatchObject({ adapterType: "claude_managed" });
       }, 120_000);
 
+      it("a company with only its own key may not propose a single claude_managed hire (it would have no key); plans are pointed to", async () => {
+        const { validateGovernedAction } = await import("../services/assistant-proposed-actions.js");
+        vi.stubEnv("STAPLES_HOSTED_INFERENCE", "off");
+        const s = await seed();
+        const secret = await secretService(db).create(s.companyId, {
+          name: "Anthropic key", key: `ANTHROPIC_API_KEY.test.${randomUUID()}`, provider: "local_encrypted", value: "sk-ant-test-own",
+        }, { userId: s.userId, agentId: null });
+        await assistantOnHosted(s, { model: "claude-opus-5-5", env: { ANTHROPIC_API_KEY: { type: "secret_ref", secretId: secret.id, version: "latest" } } });
+        await expect(validateGovernedAction(db as never, { method: "POST", path: `/api/companies/${s.companyId}/agent-hires`,
+          body: { name: "Researcher", role: "researcher", adapterType: "claude_managed" } }, s.companyId))
+          .rejects.toThrow(/propose it in a plan/);
+        // The same hire in a plan is fine (it gets the company's key).
+        await expect(validateGovernedAction(db as never, { method: "POST", path: `/api/companies/${s.companyId}/plans/apply`,
+          body: { agents: [{ clientKey: "r", name: "Researcher", role: "researcher", adapterType: "claude_managed" }], tasks: [{ clientKey: "t", title: "Start", assigneeClientKey: "r" }] } }, s.companyId))
+          .resolves.toMatchObject({ category: "plan" });
+      }, 120_000);
+
+      it("testing a draft claude_managed agent uses the server key but creates no budget policy", async () => {
+        const { requireServerAdapter } = await import("../adapters/index.js");
+        hostedOn();
+        const s = await seed();
+        const adapter = requireServerAdapter("claude_managed");
+        const testEnvironment = vi.spyOn(adapter, "testEnvironment").mockResolvedValue({
+          adapterType: "claude_managed", status: "pass", checks: [], testedAt: new Date().toISOString(),
+        });
+        try {
+          const { app } = buildApp(sessionActor(s));
+          const response = await request(app).post(`/api/companies/${s.companyId}/adapters/claude_managed/test-environment`)
+            .set("Origin", ORIGIN).send({ adapterConfig: { model: "claude-opus-5-5" } });
+          expect(response.status, JSON.stringify(response.body)).toBe(200);
+          expect(testEnvironment).toHaveBeenCalledWith(expect.objectContaining({ hostedInferenceAllowed: true }));
+          expect(await db.select().from(budgetPolicies).where(eq(budgetPolicies.companyId, s.companyId))).toEqual([]);
+        } finally {
+          testEnvironment.mockRestore();
+        }
+      }, 120_000);
+
       it("without hosted inference or a company key, claude_managed is not hireable and templated hires keep the Assistant's adapter", async () => {
         vi.stubEnv("ANTHROPIC_API_KEY", "");
         const s = await seed();
