@@ -9,5 +9,5 @@ export {
   normalizeSessionUsage,
   parseApiErrorBody,
 } from "./client.js";
-export type { ManagedAgentsClientOptions, RequestOptions, RetryPolicy, StreamOptions } from "./client.js";
+export type { ListPage, ListParams, ManagedAgentsClientOptions, RequestOptions, RetryPolicy, StreamOptions, UpdateSessionParams } from "./client.js";
 export * from "./types.js";

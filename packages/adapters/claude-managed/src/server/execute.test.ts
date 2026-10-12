@@ -297,7 +297,13 @@ describe("claude_managed execute", () => {
     const result = await running;
 
     expect(Date.now() - started).toBeLessThan(1_500);
-    expect(result).toMatchObject({ exitCode: 1, errorCode: "cancelled", costUsd: 0.02 });
+    expect(result).toMatchObject({
+      exitCode: null,
+      errorCode: "cancelled",
+      costUsd: 0.02,
+      executionRecovery: { kind: "interrupted", providerStopped: true, sessionPreserved: true, actionOutcomes: "settled" },
+      resultJson: { executionCancellation: { state: "acknowledged", acknowledgedAt: expect.any(String) } },
+    });
     const sessionId = fake.sessionIds()[0];
     expect(fake.receivedEvents(sessionId).map((e) => e.type)).toEqual(["user.message", "user.interrupt"]);
     await fake.settled();

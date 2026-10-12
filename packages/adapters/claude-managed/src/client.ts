@@ -9,6 +9,7 @@ import {
   ANTHROPIC_VERSION,
   DEFAULT_MANAGED_AGENTS_BASE_URL,
   MANAGED_AGENTS_BETA,
+  type AgentTool,
   type BudgetLimit,
   type CreateAgentParams,
   type CreateEnvironmentParams,
@@ -53,6 +54,26 @@ export type RetryPolicy = "safe" | "none" | "all";
 export interface RequestOptions {
   signal?: AbortSignal;
   retry?: RetryPolicy;
+}
+
+export interface ListParams {
+  limit?: number;
+  page?: string;
+}
+
+/**
+ * API ASSUMPTION: agents and environments list endpoints paginate like sessions
+ * (documented): `{ data, next_page }`, with `page=<next_page>` for the next page.
+ */
+export interface ListPage<T> {
+  data: T[];
+  next_page?: string | null;
+  [key: string]: unknown;
+}
+
+export interface UpdateSessionParams {
+  agent?: { tools?: AgentTool[]; mcp_servers?: Array<Record<string, unknown>> };
+  budget?: BudgetLimit | null;
 }
 
 export interface StreamOptions {
@@ -169,10 +190,9 @@ export class ManagedAgentsClient {
     return this.request("POST", "/agents", params, options);
   }
 
-  /** Lists agents (newest first). Used as a cheap authenticated probe. */
-  listAgents(params: { limit?: number } = {}, options?: RequestOptions): Promise<{ data: ManagedAgent[]; [key: string]: unknown }> {
-    const query = params.limit !== undefined ? `?limit=${encodeURIComponent(String(params.limit))}` : "";
-    return this.request("GET", `/agents${query}`, undefined, options);
+  /** Lists agents (newest first). `page` is the `next_page` cursor of a previous response. */
+  listAgents(params: ListParams = {}, options?: RequestOptions): Promise<ListPage<ManagedAgent>> {
+    return this.request("GET", `/agents${listQuery(params)}`, undefined, options);
   }
 
   getAgent(agentId: string, options?: RequestOptions): Promise<ManagedAgent> {
@@ -190,6 +210,11 @@ export class ManagedAgentsClient {
     return this.request("POST", "/environments", params, options);
   }
 
+  /** Lists environments. `page` is the `next_page` cursor of a previous response. */
+  listEnvironments(params: ListParams = {}, options?: RequestOptions): Promise<ListPage<ManagedEnvironment>> {
+    return this.request("GET", `/environments${listQuery(params)}`, undefined, options);
+  }
+
   getEnvironment(environmentId: string, options?: RequestOptions): Promise<ManagedEnvironment> {
     return this.request("GET", `/environments/${enc(environmentId)}`, undefined, options);
   }
@@ -202,6 +227,15 @@ export class ManagedAgentsClient {
 
   getSession(sessionId: string, options?: RequestOptions): Promise<ManagedSession> {
     return this.request("GET", `/sessions/${enc(sessionId)}`, undefined, options);
+  }
+
+  /**
+   * Updates a session (POST /v1/sessions/{id}). Per the session-operations docs only
+   * `agent.tools` / `agent.mcp_servers` (and `budget`) can change, and only while the
+   * session is idle; the change is session-local (no new agent version).
+   */
+  updateSession(sessionId: string, params: UpdateSessionParams, options?: RequestOptions): Promise<ManagedSession> {
+    return this.request("POST", `/sessions/${enc(sessionId)}`, params, options);
   }
 
   archiveSession(sessionId: string, options?: RequestOptions): Promise<ManagedSession> {
@@ -395,6 +429,14 @@ export class ManagedAgentsClient {
   private redact(message: string): string {
     return message.split(this.#apiKey).join("[redacted]");
   }
+}
+
+function listQuery(params: ListParams): string {
+  const query = new URLSearchParams();
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  if (params.page) query.set("page", params.page);
+  const text = query.toString();
+  return text ? `?${text}` : "";
 }
 
 function enc(id: string): string {

@@ -5,8 +5,10 @@ import type { AdapterSessionCodec } from "@paperclipai/adapter-utils";
  *
  * - managedAgentId / managedAgentVersion: the Managed Agents agent and the version
  *   the session was created with.
- * - fingerprint: hash of the agent definition (model, system, tools). A changed
- *   fingerprint means a new agent version and a new session.
+ * - fingerprint: hash of the session-fixed agent fields (model, system). A change
+ *   needs a new session (the API cannot change them on an existing session).
+ * - toolsFingerprint: hash of the custom tool definitions. A change is applied to the
+ *   resumed session in place (session-local tool update) and to a new agent version.
  * - environmentId (+ environmentFingerprint): the cloud environment and the config
  *   it was created with.
  * - sessionId: the Managed Agents session resumed across heartbeats.
@@ -15,6 +17,7 @@ export interface ClaudeManagedSessionParams {
   managedAgentId: string;
   managedAgentVersion: number;
   fingerprint: string;
+  toolsFingerprint?: string;
   environmentId: string;
   environmentFingerprint?: string;
   sessionId: string;
@@ -39,10 +42,12 @@ export function readSessionParams(raw: unknown): ClaudeManagedSessionParams | nu
   const version = typeof record.managedAgentVersion === "number" ? record.managedAgentVersion : Number(record.managedAgentVersion);
   if (!managedAgentId || !sessionId || !environmentId || !fingerprint || !Number.isSafeInteger(version) || version < 1) return null;
   const environmentFingerprint = readString(record.environmentFingerprint);
+  const toolsFingerprint = readString(record.toolsFingerprint);
   return {
     managedAgentId,
     managedAgentVersion: version,
     fingerprint,
+    ...(toolsFingerprint ? { toolsFingerprint } : {}),
     environmentId,
     ...(environmentFingerprint ? { environmentFingerprint } : {}),
     sessionId,

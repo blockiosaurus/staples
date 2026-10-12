@@ -59,6 +59,10 @@ export interface FailRule {
   retryAfterSeconds?: number;
   /** How many matching requests fail. Default 1. */
   times?: number;
+  /** Wait this long before answering. */
+  delayMs?: number;
+  /** After the delay, handle the request normally instead of failing it. */
+  passThrough?: boolean;
 }
 
 export interface FakeManagedAgentsServerOptions {
@@ -90,6 +94,7 @@ interface FakeSession {
   toolWaiters: Map<string, (result: Record<string, unknown>) => void>;
   toolResults: Map<string, Record<string, unknown>>;
   usage: { input_tokens: number; output_tokens: number; list_cost_cents: number };
+  stopReason: Record<string, unknown> | null;
 }
 
 let idCounter = 0;
@@ -169,6 +174,8 @@ export class FakeManagedAgentsServer {
   private readonly failRules: Array<FailRule & { remaining: number }> = [];
   private readonly turnPromises = new Set<Promise<void>>();
   private listLimit: number | null = null;
+  /** When true, `user.interrupt` events are recorded but do not stop the turn. */
+  ignoreInterrupts = false;
 
   constructor(options: FakeManagedAgentsServerOptions = {}) {
     this.options = options;
@@ -238,6 +245,19 @@ export class FakeManagedAgentsServer {
     return this.sessions.get(sessionId)?.status ?? null;
   }
 
+  /** Ends every open stream for a session without an idle event (a dropped connection). */
+  dropStreams(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    for (const stream of session.streams) stream.destroy();
+    session.streams.clear();
+  }
+
+  /** The agent snapshot (incl. session-local tool updates) a session runs with. */
+  sessionAgent(sessionId: string): Record<string, unknown> | null {
+    return (this.sessions.get(sessionId)?.agent as Record<string, unknown> | undefined) ?? null;
+  }
+
   /** Emit an ad-hoc event on a session (outside any turn script). */
   emit(sessionId: string, event: FakeEventPayload): void {
     const session = this.sessions.get(sessionId);
@@ -277,6 +297,9 @@ export class FakeManagedAgentsServer {
     const rule = this.failRules.find((r) => r.remaining > 0 && matchesRule(r, req.method ?? "GET", path));
     if (rule) {
       rule.remaining -= 1;
+      if (rule.delayMs) await new Promise((r) => setTimeout(r, rule.delayMs));
+    }
+    if (rule && !rule.passThrough) {
       const headers: Record<string, string> = {};
       if (rule.retryAfterSeconds !== undefined) headers["retry-after"] = String(rule.retryAfterSeconds);
       this.sendError(res, rule.status, rule.errorType ?? defaultErrorType(rule.status), rule.message ?? "injected failure", headers);
@@ -324,7 +347,7 @@ export class FakeManagedAgentsServer {
     }
     if (!id && method === "GET") {
       const data = [...this.agents.values()].reverse();
-      return this.sendJson(res, 200, { data: data.slice(0, this.listLimit ?? data.length), has_more: false });
+      return this.sendJson(res, 200, { data: data.slice(0, this.listLimit ?? data.length), next_page: null });
     }
     const agent = id ? this.agents.get(id) : undefined;
     if (!agent) return this.sendError(res, 404, "not_found_error", "Agent not found");
@@ -361,6 +384,10 @@ export class FakeManagedAgentsServer {
       this.environments.set(env.id, env);
       return this.sendJson(res, 200, env);
     }
+    if (!id && method === "GET") {
+      const data = [...this.environments.values()].reverse();
+      return this.sendJson(res, 200, { data: data.slice(0, this.listLimit ?? data.length), next_page: null });
+    }
     const env = id ? this.environments.get(id) : undefined;
     if (!env) return this.sendError(res, 404, "not_found_error", "Environment not found");
     if (method === "GET") return this.sendJson(res, 200, env);
@@ -396,7 +423,7 @@ export class FakeManagedAgentsServer {
       const session: FakeSession = {
         id: nextId("sesn"),
         status: "idle",
-        agent: this.agents.get(agentId),
+        agent: structuredClone(this.agents.get(agentId)),
         environmentId: params.environment_id,
         budget,
         archivedAt: null,
@@ -409,6 +436,7 @@ export class FakeManagedAgentsServer {
         toolWaiters: new Map(),
         toolResults: new Map(),
         usage: { input_tokens: 0, output_tokens: 0, list_cost_cents: 0 },
+        stopReason: null,
       };
       this.sessions.set(session.id, session);
       return this.sendJson(res, 200, this.sessionJson(session));
@@ -417,6 +445,12 @@ export class FakeManagedAgentsServer {
     if (!session) return this.sendError(res, 404, "not_found_error", "Session not found");
 
     if (!action && method === "GET") return this.sendJson(res, 200, this.sessionJson(session));
+    if (!action && method === "POST") {
+      if (session.status !== "idle") return this.sendError(res, 400, "invalid_request_error", "Session must be idle to update the agent");
+      const update = asRecord(asRecord(body).agent);
+      if (Array.isArray(update.tools)) (session.agent as Record<string, unknown>).tools = update.tools;
+      return this.sendJson(res, 200, this.sessionJson(session));
+    }
     if (action === "archive" && method === "POST") {
       session.interrupt?.();
       session.status = "terminated";
@@ -454,7 +488,7 @@ export class FakeManagedAgentsServer {
           this.startTurn(session);
           break;
         case "user.interrupt":
-          session.interrupt?.();
+          if (!this.ignoreInterrupts) session.interrupt?.();
           break;
         case "user.custom_tool_result": {
           const toolId = String(event.custom_tool_use_id);
@@ -508,7 +542,10 @@ export class FakeManagedAgentsServer {
         if (interrupted) break;
         if (step.kind === "emit") {
           this.emitEvent(session, step.event);
-          if (step.event.type === "session.status_idle") session.status = "idle";
+          if (step.event.type === "session.status_idle") {
+            session.status = "idle";
+            session.stopReason = asRecord(step.event.stop_reason);
+          }
           if (step.event.type === "session.status_running") session.status = "running";
         } else if (step.kind === "delay") {
           await waitOrInterrupt(new Promise((r) => setTimeout(r, step.ms)));
@@ -525,6 +562,7 @@ export class FakeManagedAgentsServer {
           if (step.emitRequiresAction !== false) {
             this.emitEvent(session, { type: "session.status_idle", stop_reason: { type: "requires_action", event_ids: [toolId] } });
             session.status = "idle";
+            session.stopReason = { type: "requires_action", event_ids: [toolId] };
           }
           const answered = await waitOrInterrupt(result);
           session.toolWaiters.delete(toolId);
@@ -541,6 +579,7 @@ export class FakeManagedAgentsServer {
           budget: session.budget,
         }));
         this.emitEvent(session, fakeEvents.idle({ type: "end_turn" }));
+        session.stopReason = { type: "end_turn" };
       }
     } finally {
       if ((session.status as FakeSession["status"]) !== "terminated") session.status = "idle";
@@ -613,6 +652,8 @@ export class FakeManagedAgentsServer {
       environment_id: session.environmentId,
       budget: session.budget,
       archived_at: session.archivedAt,
+      // API ASSUMPTION (adapter): the session object exposes the last idle stop_reason.
+      stop_reason: session.status === "idle" ? session.stopReason : null,
       created_at: now,
       updated_at: now,
       metadata: {},
