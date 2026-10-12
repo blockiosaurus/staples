@@ -150,7 +150,7 @@ Networking settings apply only to environments Staples creates. When
 - **Resumed-session cost baseline (unverified).** A resumed run bills the change
   in the session's `list_cost` since the session resource was read at the start.
   If the API's session resource omits cost totals, resumed sessions may
-  double-count; verify with the smoke test run twice.
+  double-count; verify with the smoke test's `resume` scenario.
 - **Budget-capped sessions are not cleared.** A session that stopped with
   `budget_reached` is kept, and later runs on that task fail until it is
   cleared. The host sets no cap today, so this cannot happen yet.
@@ -159,44 +159,60 @@ Networking settings apply only to environments Staples creates. When
 
 ## Live smoke test
 
-A script that runs the real adapter once against your own Anthropic account:
+A script that runs the real adapter against your own Anthropic account:
 
 ```sh
 export ANTHROPIC_API_KEY=...        # your key; never commit it
-pnpm --filter @paperclipai/adapter-claude-managed smoke
+pnpm --filter @paperclipai/adapter-claude-managed smoke                       # basic only
+pnpm --filter @paperclipai/adapter-claude-managed smoke --scenario all --json # every scenario
 ```
 
-Optional: `MANAGED_AGENTS_MODEL` (default is the adapter's default model) and
-`MANAGED_AGENTS_BASE_URL`. Without a key the script exits 1 and tells you to set one.
+Optional: `MANAGED_AGENTS_MODEL` (default is the adapter's default model),
+`MANAGED_AGENTS_BASE_URL`, and `MANAGED_AGENTS_MODELS` (comma list for the
+`models` scenario; default `claude-sonnet-5-5,claude-haiku-5-5`). Without a key
+the script exits 1 and tells you to set one.
 
-What it does:
+`--scenario <name>` is repeatable and accepts comma lists and `all`; the default
+is `basic`. Each scenario calls `execute()` with a minimal run context and
+in-process fake Staples MCP servers, prints a compact transcript, its own
+`PASS`/`FAIL` (or `INFO`) line, a cost line and its session, agent and
+environment ids, and archives every session it started:
 
-- Starts one in-process fake Staples MCP server exposing a tool `echo_note`.
-- Calls `execute()` with a minimal run context; the prompt asks the agent to call
-  `echo_note` exactly once.
-- Prints a compact transcript (messages, tool calls and results, usage), the cost,
-  and the session, environment and agent ids. It fails unless `echo_note` was
-  called through the tools proxy.
-- Prints the session id as soon as the session starts, so it is known even if
-  the process is killed.
-- Cancels the run after 5 minutes (`SMOKE_TIMEOUT_MS` overrides it) or on
-  Ctrl-C; the adapter interrupts the session. Press Ctrl-C twice to exit at once
-  without cleanup.
-- Archives the session at the end (best effort), including after a timeout or
-  Ctrl-C.
+| Scenario | What it checks |
+| --- | --- |
+| `basic` | One turn; the agent calls `echo_note` once through the tools proxy. |
+| `resume` | Two runs with the same `runtime.sessionParams`. The second run must resume the same session (`resumed true` on init), repeat the note from the first run, and report a per-run cost delta (at most the session total from `getSession` minus the first run's cost, plus one cent; never the cumulative total). Prints both runs' cost and the session total. |
+| `cancel` | A long multi-step task, aborted after the first tool call (or 8s). The result must have `exitCode` null, `errorCode` `cancelled`, `resultJson.executionCancellation.state` `acknowledged`, and `executionRecovery` when the session was seen going idle; `getSession` must then show `idle`. |
+| `budget` | `context.paperclipBudgetRemainingUsd` = 0.01. The session must be created with a spending cap (printed) and the run must stop with `budget_reached` (`exitCode` 1, `errorCode` `budget_reached`). The API may overshoot the cap by about one request; the script prints the session total. |
+| `tool-error` | The MCP tool returns an error result (`isError: true`); the agent must get an error tool result and the run must still complete. |
+| `big-result` | The MCP tool returns about 250 KB of text; the adapter must truncate it, the agent must report the truncation note, and the run must complete. |
+| `multi-tool` | Two tools on two MCP servers; both must be called and mapped back to the right server and tool name. |
+| `networking-limited` | Limited networking with `allowedHosts: ["example.com"]`; the agent web-fetches example.com and wikipedia.org. Informational: `PASS` when example.com worked and wikipedia.org was blocked, otherwise `INFO`; the observations are printed either way. Creates a second environment (different networking fingerprint). |
+| `models` | `basic` once per model in `MANAGED_AGENTS_MODELS`, each as its own agent sharing the default environment. Per-model `PASS`/`FAIL`; a model the API refuses before a session starts prints the API error type and makes the scenario `INFO`, not `FAIL`. |
+| `test-environment` | Calls the adapter's `testEnvironment()` with the key and prints the check codes (never the key). |
 
-Cost: it creates one small agent, one environment and one short session; expect a
-few cents.
+At the end the script prints a summary table and the cumulative cost;
+`--json` also prints a machine-readable summary (scenario to status, message,
+cost and ids, plus the total). The exit code is 0 when every scenario is `PASS`
+or `INFO`.
 
-Cleanup: the session is archived automatically. The agent and environment are kept
+Safety: session ids are printed as soon as sessions start, so they are known even
+if the process is killed. Each scenario is cancelled after 5 minutes
+(`SMOKE_TIMEOUT_MS` overrides it). Ctrl-C cancels the current scenario (the
+adapter interrupts the session), still archives its sessions, and skips the
+remaining scenarios; press Ctrl-C twice to exit at once without cleanup (the
+script prints the session ids to archive by hand).
+
+Cost: `basic` is a few cents. `--scenario all` costs about $0.50 in total and
+creates up to 2 environments (default and limited networking) and 3 agents (one
+per model: the default plus the two in `MANAGED_AGENTS_MODELS`).
+
+Cleanup: sessions are archived automatically. Agents and environments are kept
 (the adapter reuses them on later runs); the script prints their ids so you can
 archive or delete them in the Anthropic Console if you want.
 
-To exercise the script without a key, add `--fake`: it runs the same flow against the
-package's local fake Managed Agents server. `SMOKE_FAKE_SCENARIO=never_idle` with
-`--fake` simulates a session that never goes idle, to check the timeout path.
-
-Note on the resumed-session cost check (see Limitations): the script starts a new
-session on every run, so running it twice checks cost reporting but does not yet
-resume a session. Verifying the resumed baseline needs a second run that reuses
-the first run's session; the script does not do that yet.
+To exercise the script without a key, add `--fake`: every scenario runs against
+the package's local fake Managed Agents server (`--fake --scenario all` is covered
+by `scripts/smoke.test.ts`). `SMOKE_FAKE_SCENARIO=never_idle` with `--fake` makes
+`basic` hang, to check the timeout path. With `--fake`, a model name containing
+`unsupported` in `MANAGED_AGENTS_MODELS` simulates a model the API refuses.
