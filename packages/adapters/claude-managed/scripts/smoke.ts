@@ -18,6 +18,7 @@
  *   networking-limited  limited networking (allowedHosts example.com); informational web_fetch check
  *   models              basic once per model in MANAGED_AGENTS_MODELS (default sonnet + haiku 5.5)
  *   test-environment    the adapter's testEnvironment() check codes
+ *   skills              attaches a tiny runtime skill (staples-smoke-codeword) and asks for its code word
  *
  * Each scenario prints its own PASS/FAIL (or INFO) line, a cost line and its ids,
  * and archives every session it started. Agents and environments are left in place
@@ -33,6 +34,9 @@
  * start. SMOKE_FAKE_SCENARIO=never_idle (with --fake) makes `basic` hang, to exercise
  * the timeout path.
  */
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclipai/adapter-utils";
 import { ManagedAgentsClient } from "../src/client.js";
@@ -61,6 +65,7 @@ export const SCENARIOS = [
   "networking-limited",
   "models",
   "test-environment",
+  "skills",
 ] as const;
 export type ScenarioName = (typeof SCENARIOS)[number];
 
@@ -71,6 +76,21 @@ const RESUME_NOTE = "staples-resume-note-7319";
 const RUN_TOKEN = "smoke-run-token";
 const SMOKE_AGENT_ID = "smoke-agent-0001";
 const SMOKE_COMPANY_ID = "smoke-company";
+const SKILLS_AGENT_ID = "smoke-agent-skills";
+const SMOKE_SKILL_NAME = "staples-smoke-codeword";
+const SMOKE_CODE_WORD = "BANANA-7";
+const SMOKE_SKILL_MD = [
+  "---",
+  `name: ${SMOKE_SKILL_NAME}`,
+  "description: Knows the Staples code word. Use it whenever someone asks for the Staples code word.",
+  "---",
+  "",
+  "# Staples code word",
+  "",
+  `When asked for the Staples code word, answer ${SMOKE_CODE_WORD}.`,
+  "",
+].join("\n");
+const SKILLS_PROMPT = "What is the Staples code word? Check your skills for it. Reply with only the code word.";
 const MAIN_SERVER = "Staples smoke";
 const EXTRA_SERVER = "Staples extra";
 /** Proxied custom tool names (server slug + "__" + tool), used by the fake turn scripts. */
@@ -743,6 +763,58 @@ async function scenarioTestEnvironment(h: Harness, scope: Scope): Promise<Verdic
   return { status: "pass", message: "testEnvironment connected to Managed Agents." };
 }
 
+async function scenarioSkills(h: Harness, scope: Scope): Promise<Verdict> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "staples-smoke-skill-"));
+  scope.cleanups.push(() => fs.rm(dir, { recursive: true, force: true }));
+  const source = path.join(dir, SMOKE_SKILL_NAME);
+  await fs.mkdir(source);
+  await fs.writeFile(path.join(source, "SKILL.md"), SMOKE_SKILL_MD);
+  const key = `staples/smoke/${SMOKE_SKILL_NAME}`;
+  // Fake: answer with the code word only when the skill reached the agent
+  // (attached natively, or inlined into the system prompt on fallback).
+  if (h.fake) {
+    h.fake.queueTurns(({ agent, attachedSkillFiles }) => {
+      const attached = [...attachedSkillFiles.values()].some((files) => files.some((f) => f.content.includes(SMOKE_CODE_WORD)));
+      const inlined = String(agent.system ?? "").includes(SMOKE_CODE_WORD);
+      return [
+        { kind: "emit", event: fakeEvents.running() },
+        { kind: "emit", event: fakeEvents.agentMessage(attached || inlined ? SMOKE_CODE_WORD : "I do not know a Staples code word.") },
+        { kind: "emit", event: fakeEvents.usage({ inputTokens: 200, outputTokens: 5, listCostCents: 1 }) },
+        { kind: "emit", event: fakeEvents.idle() },
+      ];
+    });
+  }
+  const run = await runAdapter(h, scope, {
+    prompt: SKILLS_PROMPT,
+    servers: [],
+    agentId: SKILLS_AGENT_ID,
+    config: {
+      ...(h.defaultEnvironmentId ? { environmentId: h.defaultEnvironmentId } : {}),
+      paperclipRuntimeSkills: [{ key, runtimeName: SMOKE_SKILL_NAME, source }],
+      paperclipSkillSync: { desiredSkills: [key] },
+    },
+  });
+  const reply = run.result.summary ?? "";
+  let attachedCount: number | null = null;
+  if (run.agentId) {
+    try {
+      const agent = await h.client.getAgent(run.agentId, { signal: AbortSignal.timeout(15_000) });
+      attachedCount = Array.isArray(agent.skills) ? agent.skills.length : null;
+    } catch {
+      attachedCount = null;
+    }
+  }
+  h.io.out(`  reply: ${clip(reply)}`);
+  h.io.out(`  skills on the agent: ${attachedCount ?? "unknown"} (0 means the skill was inlined into the system prompt)`);
+  scope.details = { reply: clip(reply), attachedSkills: attachedCount };
+  if (run.result.exitCode !== 0) return { status: "fail", message: "the run did not succeed." };
+  if (!reply.includes(SMOKE_CODE_WORD)) return { status: "fail", message: `the reply does not contain the code word ${SMOKE_CODE_WORD}.` };
+  return {
+    status: "pass",
+    message: `the agent answered with the skill's code word (${attachedCount ? "attached as a custom skill" : "skill inlined or attachment not reported"}).`,
+  };
+}
+
 const SCENARIO_FNS: Record<ScenarioName, (h: Harness, scope: Scope) => Promise<Verdict>> = {
   basic: scenarioBasic,
   resume: scenarioResume,
@@ -754,6 +826,7 @@ const SCENARIO_FNS: Record<ScenarioName, (h: Harness, scope: Scope) => Promise<V
   "networking-limited": scenarioNetworkingLimited,
   models: scenarioModels,
   "test-environment": scenarioTestEnvironment,
+  skills: scenarioSkills,
 };
 
 // ---------------------------------------------------------------------------

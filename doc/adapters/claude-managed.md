@@ -122,6 +122,36 @@ Networking settings apply only to environments Staples creates. When
   (`budget.max_list_cost`); the session then stops with `budget_reached` and the
   run fails with `errorCode: "budget_reached"`.
 
+## Skills and replies
+
+- **Skills.** The agent's enabled skills (the server-resolved
+  `paperclipRuntimeSkills` entries selected by its desired-skills preference)
+  are uploaded to the Anthropic workspace as custom skills through the Skills
+  API (`POST /v1/skills`, multipart `files[]` + `display_name`) and attached to
+  the Managed Agents agent with a pinned version id
+  (`{ type: "custom", skill_id, version }`). Each upload holds `SKILL.md` and the
+  skill's other text files (binaries and dotfiles are skipped; 2 MB and 200
+  files per skill). The display name is `staples-<runtimeName>-<hash8>`, where
+  the hash covers every file, so identical content is reused: the adapter lists
+  the workspace's custom skills once per server process and reuses an exact
+  title match, otherwise it uploads. Old skill versions are never deleted.
+- **Skills change the agent.** The pinned skill set is part of the agent
+  fingerprint, so a changed skill creates a new agent version and the next run
+  starts a new session. Tool-only changes still update the session in place.
+- **Fallback.** When the Skills API refuses (403, 404/405/501, or a 400 saying the
+  feature or beta is not enabled), the run inlines the skills into the system
+  prompt instead (a manifest plus each `SKILL.md` body, bounded to 60 KB with a
+  truncation note) and logs one warning. The refusal is remembered for 10
+  minutes per API key. A skill the API rejects as invalid (for example a
+  `SKILL.md` frontmatter `name` with a reserved word) is inlined on its own.
+  Server errors, rate limits and auth failures fail the run
+  (`claude_managed_skills_failed`) instead of switching modes.
+- **Library manifest.** Like `claude_local`, the system prompt lists the company
+  skill library and marks which skills are enabled for this agent.
+- **Full replies.** The run `summary` (and `resultJson.summary`) is the full final
+  assistant message, so conversation replies are posted whole;
+  `resultJson.summaryPreview` holds a one-line preview.
+
 ## Limitations
 
 - **No budget cap from the host yet.** The host does not pass the remaining
@@ -197,6 +227,7 @@ environment ids, and archives every session it started:
 | `networking-limited` | Limited networking with `allowedHosts: ["example.com"]`; the agent web-fetches example.com and wikipedia.org. Informational: `PASS` when example.com worked and wikipedia.org was blocked, otherwise `INFO`; the observations are printed either way. Creates a second environment (different networking fingerprint). |
 | `models` | `basic` once per model in `MANAGED_AGENTS_MODELS`, each as its own agent sharing the default environment. Per-model `PASS`/`FAIL`; a model the API refuses before a session starts prints the API error type and makes the scenario `INFO`, not `FAIL`. |
 | `test-environment` | Calls the adapter's `testEnvironment()` with the key and prints the check codes (never the key). |
+| `skills` | Writes a tiny runtime skill (`staples-smoke-codeword`: "When asked for the Staples code word, answer BANANA-7") and runs its own agent (`smoke-agent-skills`) with it enabled. `PASS` when the reply contains `BANANA-7`; prints whether the agent reports the skill attached (0 means it was inlined on fallback). Leaves the uploaded skill in the workspace (later runs reuse it). |
 
 At the end the script prints a summary table and the cumulative cost;
 `--json` also prints a machine-readable summary (scenario to status, message,

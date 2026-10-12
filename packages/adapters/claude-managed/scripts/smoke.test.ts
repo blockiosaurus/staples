@@ -71,7 +71,7 @@ describe("smoke script", () => {
       expect(text).toContain(`PASS ${name}:`);
       expect(text).toMatch(new RegExp(`cost \\(USD\\) ${name}: `));
     }
-    expect(text).toMatch(/Total cost \(USD\): [\d.]+ across 10 scenario\(s\)/);
+    expect(text).toMatch(/Total cost \(USD\): [\d.]+ across 11 scenario\(s\)/);
     expect(text).toContain("second run: resumed true");
     expect(text).toContain("session budget cap: $0.01");
     expect(text).toContain('"allowed_hosts":["example.com"]');
@@ -96,9 +96,19 @@ describe("smoke script", () => {
     const envs = new Set(Object.values(summary.scenarios).flatMap((s) => s?.environmentIds ?? []));
     const agents = new Set(Object.values(summary.scenarios).flatMap((s) => s?.agentIds ?? []));
     expect(envs.size).toBe(2);
-    expect(agents.size).toBe(3);
+    // basic + two models + the skills scenario's own agent.
+    expect(agents.size).toBe(4);
+    expect(summary.scenarios.skills?.details).toMatchObject({ reply: "BANANA-7", attachedSkills: 1 });
     expect(process.listenerCount("SIGINT")).toBe(0);
   }, 60_000);
+
+  it("skills passes alone under --fake (the skill is uploaded and attached)", async () => {
+    const c = capture();
+    const code = await runSmoke(["--fake", "--scenario", "skills"], {}, c.io);
+    expect(c.err).toEqual([]);
+    expect(code).toBe(0);
+    expect(c.out.join("\n")).toContain("PASS skills:");
+  });
 
   it("models reports an unsupported model without failing the run", async () => {
     const c = capture();

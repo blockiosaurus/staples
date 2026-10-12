@@ -42,6 +42,7 @@ Notes:
 - Staples tools are proxied from the Staples server; no Staples credentials enter the sandbox.
 - The Managed Agents session is reused across heartbeats for the same task.
 - Cost is reported by Anthropic per run and counts against the agent's budget.
+- Enabled skills are uploaded as Anthropic custom skills and attached to the agent (inlined into the system prompt if the Skills API is unavailable).
 `;
 
 export {
