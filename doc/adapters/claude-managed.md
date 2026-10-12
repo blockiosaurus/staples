@@ -1,6 +1,9 @@
 # Claude (hosted) adapter (`claude_managed`)
 
-Status: proof of concept (2026-10-12).
+Status: proof of concept (2026-10-12). **Not yet run against the live Managed
+Agents API.** Every test so far uses a local fake server; treat the request and
+event shapes as unverified until someone runs the [live smoke test](#live-smoke-test)
+with a real key.
 
 ## What it is
 
@@ -31,11 +34,12 @@ Package: `packages/adapters/claude-managed`.
 
 | Field | Where | Notes |
 | --- | --- | --- |
-| `env.ANTHROPIC_API_KEY` | Agent setup credential field, or Environment variables | A company secret binding (recommended) or a plain value. When empty, the server's `ANTHROPIC_API_KEY` is used. |
+| `env.ANTHROPIC_API_KEY` | Agent setup credential field, or Environment variables | A company secret binding (recommended) or a plain value. When empty, the server's `ANTHROPIC_API_KEY` is used, but only when `apiBaseUrl` is the default. |
 | `model` | Model picker | Default `claude-opus-5-5`. Any Managed Agents model id can be typed. |
 | `environmentId` | Configuration | Optional. An existing Managed Agents environment. When empty, Staples creates one per agent. |
 | `instructionsFilePath` | Instructions | Used as the agent's system prompt. |
-| `apiBaseUrl` | Advanced | Default `https://api.anthropic.com/v1`. Tests point it at a fake server. |
+| `apiBaseUrl` | Advanced | Default `https://api.anthropic.com/v1`. Tests point it at a fake server. A custom URL requires the agent's own `env.ANTHROPIC_API_KEY`. |
+| `inactivityTimeoutSec` | Advanced | Default `900` (15 minutes). A run with no session events for this long fails and interrupts the session. |
 | `networkingMode` | Advanced | `unrestricted` (default) or `limited`. |
 | `networkAllowedHosts` | Advanced, when limited | Hosts the sandbox may reach, one per line. |
 | `networkAllowPackageManagers` | Advanced, when limited | Also allow package registries (npm, PyPI, ...). |
@@ -57,13 +61,30 @@ calls `GET /v1/agents?limit=1`; it never echoes the key.
 - **Because tools are called from the host,** `PAPERCLIP_API_URL` does not need
   to be reachable from the internet for this adapter.
 - **The Anthropic API key** is resolved through the normal secrets path, sent
-  only to the configured API base URL, and never logged or returned.
-- **Resource ownership.** Managed Agents agents and environments carry metadata
-  `staples_agent_id`, `staples_company_id` and `staples_instance_id`. A new task
-  adopts an existing agent or environment only when all three match. The
-  instance id is `PAPERCLIP_INSTANCE_ID` (default `default`), so a worktree or
-  fork instance that copied the database (same company and agent ids) creates its
-  own resources rather than adopting the original instance's.
+  only to the configured API base URL, and never logged or returned. The
+  server's `ANTHROPIC_API_KEY` fallback is used only with the default base URL
+  (`https://api.anthropic.com/v1`). `apiBaseUrl` is per-agent config, so an agent
+  with a custom base URL must carry its own key; otherwise a board user could
+  point an agent at their own host and capture the instance key. The run and the
+  connection test fail with a message that says so.
+- **Tool results are scrubbed.** The run token is redacted from tool results
+  (successful and failed) before they are sent to Anthropic, in case a tool
+  echoes its request headers.
+- **Resource ownership.** Managed Agents agents, environments and sessions carry
+  metadata `staples_agent_id`, `staples_company_id` and `staples_instance_id`.
+  The instance id is `PAPERCLIP_INSTANCE_ID` (default `default`). The adapter
+  uses an existing resource only when all three match:
+  - adoption (a new task picking up the agent's existing agent or environment)
+    filters on them;
+  - ids stored in the task session (`sessionParams`) are re-checked after they
+    are fetched; a stored environment, agent or session owned by someone else is
+    treated as not found, so the adapter adopts or creates its own and never
+    resumes, updates or interrupts the other one.
+
+  A worktree or fork instance that copied the database (same company, agent and
+  stored session ids) therefore creates its own resources rather than driving
+  the original instance's. The one exception is an operator-configured
+  **Environment ID**, which is used as given.
 
 ### Networking
 
@@ -103,6 +124,13 @@ Networking settings apply only to environments Staples creates. When
 - **Model and instructions are fixed per session.** Changing the model or the
   instructions starts a new session (the conversation does not carry over).
   Tool changes are applied to the existing session in place.
+- **Stuck runs time out.** A run fails (`claude_managed_inactive`) and
+  interrupts its session after `inactivityTimeoutSec` (default 15 minutes)
+  without a session event. A `requires_action` stop that names events other
+  than this run's Staples tool calls (for example a built-in tool confirmation,
+  if a permission policy ever asks for one) fails the run at once
+  (`claude_managed_unsupported_action`) and interrupts the session, rather than
+  waiting forever.
 - **No stream reconnect.** If the event stream drops, the run fails as a
   transient upstream error, the session is interrupted, and the next run resumes
   it.
@@ -114,6 +142,17 @@ Networking settings apply only to environments Staples creates. When
 - **Unsettled sessions are abandoned.** If a previous session can't be settled, it's
   interrupted and archived on a best-effort basis; any spend it incurs after that
   isn't attributed to a Staples run or budget.
+- **Sessions rotated by host compaction are left idle.** When the host's session
+  compaction rotates a task to a new session, the old Managed Agents session is
+  left idle on Anthropic; it is not archived. It costs nothing while idle, but it
+  stays listed in the Console until you archive it.
+- **Resumed-session cost baseline (unverified).** A resumed run bills the change
+  in the session's `list_cost` since the session resource was read at the start.
+  If the API's session resource omits cost totals, resumed sessions may
+  double-count; verify with the smoke test run twice.
+- **Budget-capped sessions are not cleared.** A session that stopped with
+  `budget_reached` is kept, and later runs on that task fail until it is
+  cleared. The host sets no cap today, so this cannot happen yet.
 - **Not offered as the Assistant's runtime** during the proof of concept.
 - **Not published to npm** yet (`publishFromCi: false` in the release manifest).
 
@@ -137,7 +176,13 @@ What it does:
 - Prints a compact transcript (messages, tool calls and results, usage), the cost,
   and the session, environment and agent ids. It fails unless `echo_note` was
   called through the tools proxy.
-- Archives the session at the end (best effort).
+- Prints the session id as soon as the session starts, so it is known even if
+  the process is killed.
+- Cancels the run after 5 minutes (`SMOKE_TIMEOUT_MS` overrides it) or on
+  Ctrl-C; the adapter interrupts the session. Press Ctrl-C twice to exit at once
+  without cleanup.
+- Archives the session at the end (best effort), including after a timeout or
+  Ctrl-C.
 
 Cost: it creates one small agent, one environment and one short session; expect a
 few cents.
@@ -147,4 +192,8 @@ Cleanup: the session is archived automatically. The agent and environment are ke
 archive or delete them in the Anthropic Console if you want.
 
 To exercise the script without a key, add `--fake`: it runs the same flow against the
-package's local fake Managed Agents server.
+package's local fake Managed Agents server. `SMOKE_FAKE_SCENARIO=never_idle` with
+`--fake` simulates a session that never goes idle, to check the timeout path.
+
+To check the resumed-session cost baseline, run the live smoke test twice and
+compare the reported costs; this is not automated yet.
