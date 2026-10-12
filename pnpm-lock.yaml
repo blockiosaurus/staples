@@ -196,6 +196,10 @@ importers:
         version: 7.0.2
 
   packages/adapters/claude-managed:
+    dependencies:
+      '@paperclipai/adapter-utils':
+        specifier: workspace:*
+        version: link:../../adapter-utils
     devDependencies:
       '@types/node':
         specifier: ^24.0.0

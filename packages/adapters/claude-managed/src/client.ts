@@ -169,6 +169,12 @@ export class ManagedAgentsClient {
     return this.request("POST", "/agents", params, options);
   }
 
+  /** Lists agents (newest first). Used as a cheap authenticated probe. */
+  listAgents(params: { limit?: number } = {}, options?: RequestOptions): Promise<{ data: ManagedAgent[]; [key: string]: unknown }> {
+    const query = params.limit !== undefined ? `?limit=${encodeURIComponent(String(params.limit))}` : "";
+    return this.request("GET", `/agents${query}`, undefined, options);
+  }
+
   getAgent(agentId: string, options?: RequestOptions): Promise<ManagedAgent> {
     return this.request("GET", `/agents/${enc(agentId)}`, undefined, options);
   }
@@ -283,7 +289,7 @@ export class ManagedAgentsClient {
 
   private url(path: string): string {
     // `beta=true` mirrors the official SDK's request paths for beta endpoints.
-    return `${this.baseUrl}${path}?beta=true`;
+    return `${this.baseUrl}${path}${path.includes("?") ? "&" : "?"}beta=true`;
   }
 
   private headers(): Record<string, string> {

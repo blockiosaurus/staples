@@ -168,6 +168,7 @@ export class FakeManagedAgentsServer {
   private readonly sessionTurnQueues = new Map<string, TurnScript[]>();
   private readonly failRules: Array<FailRule & { remaining: number }> = [];
   private readonly turnPromises = new Set<Promise<void>>();
+  private listLimit: number | null = null;
 
   constructor(options: FakeManagedAgentsServerOptions = {}) {
     this.options = options;
@@ -287,6 +288,8 @@ export class FakeManagedAgentsServer {
     if (!path.startsWith("/v1/")) return this.sendError(res, 404, "not_found_error", "Not found");
     const [resource, id, action, sub] = segments;
 
+    const limit = url.searchParams.get("limit");
+    this.listLimit = limit !== null && /^\d+$/.test(limit) ? Number(limit) : null;
     if (resource === "agents") return this.handleAgents(res, method, id, action, body);
     if (resource === "environments") return this.handleEnvironments(res, method, id, body);
     if (resource === "sessions") return this.handleSessions(req, res, method, id, action, sub, body);
@@ -318,6 +321,10 @@ export class FakeManagedAgentsServer {
       };
       this.agents.set(agent.id, agent);
       return this.sendJson(res, 200, agent);
+    }
+    if (!id && method === "GET") {
+      const data = [...this.agents.values()].reverse();
+      return this.sendJson(res, 200, { data: data.slice(0, this.listLimit ?? data.length), has_more: false });
     }
     const agent = id ? this.agents.get(id) : undefined;
     if (!agent) return this.sendError(res, 404, "not_found_error", "Agent not found");
