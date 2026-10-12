@@ -17,6 +17,7 @@ import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
 import { createAgentLifecycle } from "./agent-lifecycle.js";
 import { STAPLES_TEMPLATE_METADATA_KEY } from "../lib/staples-template-metadata.js";
+import { STAPLES_TEMPLATED_PERMISSION_FLAG } from "../lib/agent-permissions.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
 import { resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { canonicalJson, currentBriefRevisionId, planExistingAssigneeViolation, planRuleViolation } from "./assistant-proposed-actions.js";
@@ -134,7 +135,9 @@ export function planHireBody(
     body.desiredSkills = template.desiredSkills;
     // Guards are per agent and not inherited: a templated agent may not hire
     // (an unguarded) one, and a read-only one may not hand work to others.
-    body.permissions = { canCreateAgents: false, ...(template.readOnly ? { canAssignTasks: false } : {}) };
+    // Nor may it reconfigure agents or the company's tools: it gets no
+    // agents:configure / tools:manage_* grants (see newStandardAgentGrantKeys).
+    body.permissions = { canCreateAgents: false, [STAPLES_TEMPLATED_PERMISSION_FLAG]: true, ...(template.readOnly ? { canAssignTasks: false } : {}) };
   }
   if (agent.title !== undefined) body.title = agent.title;
   if (agent.capabilities !== undefined) body.capabilities = agent.capabilities;

@@ -46,7 +46,7 @@ import {
   type TrustPresetResolution,
 } from "./trust-preset-resolver.js";
 import { logger } from "../middleware/logger.js";
-import { normalizeAgentPermissions } from "../lib/agent-permissions.js";
+import { isStaplesTemplatedAgent, normalizeAgentPermissions } from "../lib/agent-permissions.js";
 import { grantsForHumanRole, normalizeHumanRole } from "./company-member-roles.js";
 
 export type AuthorizationActor =
@@ -265,6 +265,7 @@ type AgentAuthorizationRow = {
   status: string;
   reportsTo: string | null;
   permissions: Record<string, unknown> | null | undefined;
+  metadata?: Record<string, unknown> | null;
 };
 type ProjectAuthorizationRow = {
   id: string;
@@ -932,6 +933,7 @@ export function authorizationService(db: Db | DbTransaction) {
         status: agents.status,
         reportsTo: agents.reportsTo,
         permissions: agents.permissions,
+        metadata: agents.metadata,
       })
       .from(agents)
       .where(eq(agents.id, agentId))
@@ -2087,6 +2089,22 @@ export function authorizationService(db: Db | DbTransaction) {
         action: input.action,
         reason: "deny_company_boundary",
         explanation: "Actor agent was not found in the target company.",
+      });
+    }
+
+    // A Staples templated agent never changes agent configuration beyond its
+    // own non-protected settings: not another agent's (Autopilot, lifecycle,
+    // adapter, instructions), and not a change that needs a change grant
+    // (e.g. resuming itself). Its guards live in that configuration.
+    if (
+      (input.action === "agent_config:update" || input.action === "agent_instructions:update")
+      && isStaplesTemplatedAgent(actorAgent)
+      && (input.resource.type !== "agent" || input.resource.agentId !== actorAgentId || scopeBoolean(input.scope, "requiresChangeGrant"))
+    ) {
+      return deny({
+        action: input.action,
+        reason: "deny_missing_grant",
+        explanation: "An agent installed from a Staples template cannot change agent configuration.",
       });
     }
 

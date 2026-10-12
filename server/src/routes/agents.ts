@@ -116,6 +116,7 @@ import {
   workspaceOperationService,
 } from "../services/index.js";
 import { badRequest, conflict, forbidden, HttpError, notFound, unprocessable } from "../errors.js";
+import { isStaplesTemplatedAgent } from "../lib/agent-permissions.js";
 import { ONBOARDING_FIRST_TASK_SKILL_KEY, PAPERCLIP_CORE_SKILL_KEYS } from "../services/company-skills.js";
 import { createRunSecretRedactionRegistry } from "../services/run-secret-redaction.js";
 import { assertAuthenticated, assertBoard, assertCompanyAccess, assertInstanceAdmin, buildActorSecretContext, getAccessibleResource, getActorInfo, hasCompanyAccess, isDelegatedBoardSource } from "./authz.js";
@@ -4710,6 +4711,11 @@ export function agentRoutes(
         res.status(403).json({ error: "Only CEO can manage permissions" });
         return;
       }
+      // A templated agent (whatever its role) never changes permissions.
+      if (isStaplesTemplatedAgent(actorAgent)) {
+        res.status(403).json({ error: "An agent installed from a Staples template cannot manage permissions" });
+        return;
+      }
     } else {
       await assertBoardCanManageAgentsForCompany(req, existing.companyId);
     }
@@ -5188,6 +5194,10 @@ export function agentRoutes(
     const requestedStatus = patchData.status;
     delete patchData.status;
     if (requestedStatus !== undefined && !["paused", "idle", "terminated"].includes(String(requestedStatus))) throw badRequest("Use an agent lifecycle command to change status");
+    // Setting idle resumes the agent: same template-setup hold as POST /resume.
+    if (requestedStatus === "idle" && isHeldForTemplateSetup(existing)) {
+      throw conflict(TEMPLATE_SETUP_RESUME_MESSAGE, { code: "agent_template_setup_pending" });
+    }
     const replaceAdapterConfig = patchData.replaceAdapterConfig === true;
     delete patchData.replaceAdapterConfig;
     // The apply-existing flag is not an agent column. The server binds the fixed

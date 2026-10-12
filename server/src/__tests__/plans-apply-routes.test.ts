@@ -37,6 +37,8 @@ import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } fro
 import { errorHandler } from "../middleware/index.js";
 import { withBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
 import { agentRoutes } from "../routes/agents.js";
+import { toolAccessRoutes } from "../routes/tool-access.js";
+import { agentAutopilotRoutes } from "../routes/agent-autopilot.js";
 import { planRoutes } from "../routes/plans.js";
 import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
 import { injectApiRequest } from "../services/public-mcp/capabilities.js";
@@ -1103,6 +1105,100 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       expect(released!.lifecycleHolds).toEqual([]);
       expect((released!.metadata as Record<string, Record<string, unknown>>).staplesTemplate.setupPending).toBeUndefined();
       expect(await templatePolicies(devId)).toHaveLength(2);
+    }, 240_000);
+
+    it("gives a templated agent no configuration grants: its own credentials cannot weaken guards or reconfigure agents", async () => {
+      const s = await seed();
+      const { app } = buildApp(sessionActor(s));
+      const response = await apply(app, s.companyId, { agents: [await templatedAgent("dev", "staples/coding-agent")] });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      const devId = response.body.agents.dev.id as string;
+      const grantKeys = async () => (await db.select().from(principalPermissionGrants).where(and(
+        eq(principalPermissionGrants.companyId, s.companyId), eq(principalPermissionGrants.principalId, devId),
+      ))).map((grant) => grant.permissionKey);
+      const keys = await grantKeys();
+      for (const withheld of ["agents:configure", "tools:manage_connections", "tools:manage_profiles", "tools:manage_runtime"]) {
+        expect(keys).not.toContain(withheld);
+      }
+      expect(keys).toContain("tools:use");
+      const [guard] = await templatePolicies(devId);
+      expect(guard).toBeTruthy();
+      // Defense in depth: even an agent hired before the grants were withheld is refused.
+      await db.insert(principalPermissionGrants).values({ companyId: s.companyId, principalType: "agent", principalId: devId, permissionKey: "agents:configure" });
+      // A CEO-role agent may manage permissions; a templated one may not.
+      await db.update(agents).set({ role: "ceo" }).where(eq(agents.id, devId));
+
+      for (const source of ["agent_jwt", "agent_key"] as const) {
+        const actor = { type: "agent", agentId: devId, companyId: s.companyId, runId: null, source } as unknown as Actor;
+        const api = Router();
+        api.use(agentRoutes(db));
+        api.use(toolAccessRoutes(db));
+        api.use(agentAutopilotRoutes(db));
+        const agentApp = express();
+        agentApp.use(express.json());
+        agentApp.use((req, _res, next) => { req.actor = actor; next(); });
+        agentApp.use("/api", api);
+        agentApp.use(errorHandler);
+        const base = `/api/companies/${s.companyId}/tools/policies`;
+        const attempts = [
+          ["create policy", request(agentApp).post(base).send({ name: "Allow everything", policyType: "allow" })],
+          ["update policy", request(agentApp).patch(`${base}/${guard!.id}`).send({ enabled: false })],
+          ["delete policy", request(agentApp).delete(`${base}/${guard!.id}`)],
+          ["reorder policies", request(agentApp).post(`${base}/reorder`).send({ policyIds: [guard!.id] })],
+          ["duplicate policy", request(agentApp).post(`${base}/${guard!.id}/duplicate`).send({})],
+          ["revoke trust rule", request(agentApp).post(`/api/companies/${s.companyId}/tools/trust-rules/${guard!.id}/revoke`).send({})],
+          ["create profile", request(agentApp).post(`/api/companies/${s.companyId}/tools/profiles`).send({ profileKey: "open", name: "Open", defaultAction: "allow" })],
+          ["autopilot", request(agentApp).put(`/api/agents/${devId}/autopilot/email`).send({ mode: "auto" })],
+          ["configure another agent", request(agentApp).patch(`/api/agents/${s.staffId}`).send({ budgetMonthlyCents: 1 })],
+          ["pause another agent", request(agentApp).patch(`/api/agents/${s.staffId}`).send({ status: "paused" })],
+          ["another agent's permissions", request(agentApp).patch(`/api/agents/${s.staffId}/permissions`).send({ canCreateAgents: true, canAssignTasks: true })],
+          ["own permissions", request(agentApp).patch(`/api/agents/${devId}/permissions`).send({ canCreateAgents: true, canAssignTasks: true })],
+        ] as const;
+        for (const [label, attempt] of attempts) {
+          const result = await attempt;
+          expect(result.status, `${source} ${label}: ${JSON.stringify(result.body)}`).toBe(403);
+        }
+
+        // Un-pausing itself from the template setup hold is refused on both paths.
+        await db.update(agents).set({
+          status: "paused", pauseReason: "template_setup", pausedAt: new Date(),
+          metadata: sql`jsonb_set(${agents.metadata}, '{staplesTemplate,setupPending}', 'true'::jsonb)`,
+        }).where(eq(agents.id, devId));
+        const patched = await request(agentApp).patch(`/api/agents/${devId}`).send({ status: "idle" });
+        expect(patched.status, JSON.stringify(patched.body)).toBe(409);
+        expect(patched.body.error).toBe("Finishing setup — apply the plan again to complete it");
+        const resumed = await request(agentApp).post(`/api/agents/${devId}/resume`).send({});
+        expect(resumed.status, JSON.stringify(resumed.body)).toBe(403);
+      }
+
+      const policiesAfter = await templatePolicies(devId);
+      expect(policiesAfter.map((row) => [row.id, row.enabled])).toContainEqual([guard!.id, true]);
+      const [staff] = await db.select().from(agents).where(eq(agents.id, s.staffId));
+      expect(staff).toMatchObject({ status: "idle", budgetMonthlyCents: 0 });
+      expect((staff!.permissions as Record<string, unknown> | null)?.canCreateAgents).not.toBe(true);
+      const [dev] = await db.select().from(agents).where(eq(agents.id, devId));
+      expect(dev).toMatchObject({ status: "paused", pauseReason: "template_setup" });
+    }, 240_000);
+
+    it("refuses a board PATCH to idle for an agent held for template setup until setup completes", async () => {
+      const s = await seed();
+      const { app } = buildApp(sessionActor(s));
+      const response = await apply(app, s.companyId, { agents: [await templatedAgent("dev", "staples/coding-agent")] });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      const devId = response.body.agents.dev.id as string;
+      await db.update(agents).set({
+        status: "paused", pauseReason: "template_setup", pausedAt: new Date(),
+        metadata: sql`jsonb_set(${agents.metadata}, '{staplesTemplate,setupPending}', 'true'::jsonb)`,
+      }).where(eq(agents.id, devId));
+      const refused = await request(app).patch(`/api/agents/${devId}`).set("Origin", ORIGIN).send({ status: "idle" });
+      expect(refused.status, JSON.stringify(refused.body)).toBe(409);
+      expect(refused.body.error).toBe("Finishing setup — apply the plan again to complete it");
+      const [still] = await db.select().from(agents).where(eq(agents.id, devId));
+      expect(still!.status).toBe("paused");
+
+      await db.update(agents).set({ metadata: sql`${agents.metadata} #- '{staplesTemplate,setupPending}'` }).where(eq(agents.id, devId));
+      const allowed = await request(app).patch(`/api/agents/${devId}`).set("Origin", ORIGIN).send({ status: "idle" });
+      expect(allowed.status, JSON.stringify(allowed.body)).toBe(200);
     }, 240_000);
 
     it("keeps a pending hire approval from activating a templated agent whose setup did not finish", async () => {
