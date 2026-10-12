@@ -1949,6 +1949,7 @@ registry.registerPath({
         // unavailable. Present on every response shape, including redacted ones.
         commit: z.string().nullable(),
         deploymentMode: z.string().optional(),
+        hostedInferenceAvailable: z.boolean().optional().describe("Whether the server holds an Anthropic key so the Assistant can run on Claude (hosted); the key itself is never exposed"),
         cloud: z
           .object({
             managed: z.literal(true),
@@ -6785,6 +6786,7 @@ const assistantResponse = z.object({
   conversationIssueId: z.string().uuid().nullable(),
   setup: assistantSetupStatusSchema.describe("Whether the Assistant can answer yet; drives the inline setup card"),
   canConfigure: z.boolean().describe("Whether the caller may connect a model (the same agent_config:update decision PATCH /agents/{id} needs)"),
+  hostedInferenceAvailable: z.boolean().describe("Whether the server can run the Assistant on Claude (hosted) with its own key; the key itself is never exposed"),
 });
 
 const assistantAdapterAvailabilitySchema = z.object({
@@ -6794,6 +6796,8 @@ const assistantAdapterAvailabilitySchema = z.object({
   engine: z.enum(["cli"]).nullable(),
   signedIn: z.boolean().nullable(),
   hint: z.string().optional(),
+  label: z.string().optional().describe("Display name, e.g. \"Claude (hosted)\""),
+  needsKey: z.boolean().optional().describe("claude_managed only: a person's own Anthropic API key is needed (no hosted inference)"),
 });
 
 registry.registerPath({

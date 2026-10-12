@@ -66,12 +66,26 @@ describe("GET /health", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockReadPersistedDevServerStatus.mockReturnValue(undefined);
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
+  it("reports hosted inference as a boolean only, never the key", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-dummy-health");
+    const db = { execute: vi.fn().mockResolvedValue([{ "?column?": 1 }]) } as unknown as Db;
+    const app = createApp(db);
+    const res = await request(app).get("/health");
+    expect(res.status).toBe(200);
+    expect(res.body.hostedInferenceAvailable).toBe(true);
+    expect(JSON.stringify(res.body)).not.toContain("sk-ant-test-dummy-health");
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE", "off");
+    const optedOut = await request(createApp(db)).get("/health");
+    expect(optedOut.body.hostedInferenceAvailable).toBe(false);
+  });
+
   it("returns 200 with status ok", async () => {
     const app = createApp();
     const res = await request(app).get("/health");
@@ -360,6 +374,7 @@ describe("GET /health", () => {
       deploymentMode: "authenticated",
       deploymentExposure: "public",
       localAiLoginSupported: false,
+      hostedInferenceAvailable: false,
       commit: testServerInfo.git.fullSha,
       bootstrapStatus: "ready",
       bootstrapInviteActive: false,
@@ -418,6 +433,7 @@ describe("GET /health", () => {
       deploymentMode: "authenticated",
       deploymentExposure: "public",
       localAiLoginSupported: false,
+      hostedInferenceAvailable: false,
       commit: testServerInfo.git.fullSha,
       bootstrapStatus: "ready",
       bootstrapInviteActive: false,
@@ -457,6 +473,7 @@ describe("GET /health", () => {
       deploymentMode: "authenticated",
       deploymentExposure: "public",
       localAiLoginSupported: false,
+      hostedInferenceAvailable: false,
       commit: testServerInfo.git.fullSha,
       bootstrapStatus: "ready",
       bootstrapInviteActive: false,

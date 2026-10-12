@@ -42,6 +42,22 @@ describe("assistantSetupStatus", () => {
     expect(assistantSetupStatus(failed([code]))).toEqual({ state: "needs_model", adapterType: "claude_local", reason });
   });
 
+  it.each([
+    ["claude_managed_api_key_missing", "Add an Anthropic API key to use Claude (hosted)."],
+    ["claude_managed_auth_invalid", "That Anthropic API key was rejected."],
+  ])("maps the Claude (hosted) check %s to needs_model with a plain reason", (code, reason) => {
+    const claude = failed([code]);
+    const managed = {
+      ...claude, adapterType: "claude_managed",
+      lifecycleOperation: { ...claude.lifecycleOperation, lastHarnessTest: { ...claude.lifecycleOperation.lastHarnessTest, adapterType: "claude_managed" } },
+    };
+    expect(assistantSetupStatus(managed)).toEqual({ state: "needs_model", adapterType: "claude_managed", reason });
+  });
+
+  it("is ready on Claude (hosted) once the lifecycle is ready", () => {
+    expect(assistantSetupStatus({ ...base, adapterType: "claude_managed" })).toEqual({ state: "ready", adapterType: "claude_managed" });
+  });
+
   it("names Node 24.11 only when the check says the Node version is the cause", () => {
     expect(assistantSetupStatus(failed(["adapter_engine_unavailable", "adapter_engine_node_unsupported"]))).toEqual({
       state: "needs_model", adapterType: "claude_local",
@@ -133,6 +149,8 @@ describe("assistantAdapterAvailability", () => {
         hint: "Needs Node 24.11 or newer on this computer." },
       { adapterType: "kimi_local", installed: false, available: false, engine: null, signedIn: null,
         hint: "Not installed: install the kimi CLI, then check again." },
+      { adapterType: "claude_managed", installed: true, available: false, engine: null, signedIn: false,
+        label: "Claude (hosted)", needsKey: true, hint: "Add an Anthropic API key to use Claude (hosted)." },
     ]);
     expect(d.commandResolvable.mock.calls.map((call) => call[0]).sort()).toEqual(["claude", "codex", "gemini", "kimi"]);
   });
@@ -153,6 +171,16 @@ describe("assistantAdapterAvailability", () => {
       hint: "Sign-in not checked — if `kimi` isn't logged in, run it in a terminal once." });
     expect(result.find((entry) => entry.adapterType === "codex_local")).toMatchObject({ signedIn: null,
       hint: "Sign-in not checked — if `codex` isn't logged in, run it in a terminal once." });
+  });
+
+  it("lists Claude (hosted) as available with hosted inference or a bound key, without a CLI lookup", async () => {
+    const hosted = await assistantAdapterAvailability(deps({ hostedInferenceAvailable: true }));
+    expect(hosted.find((entry) => entry.adapterType === "claude_managed")).toEqual({
+      adapterType: "claude_managed", installed: true, available: true, engine: null, signedIn: true,
+      label: "Claude (hosted)", needsKey: false,
+    });
+    const ownKey = await assistantAdapterAvailability(deps({ anthropicKeyBound: true }));
+    expect(ownKey.find((entry) => entry.adapterType === "claude_managed")).toMatchObject({ available: true, needsKey: true });
   });
 
   it("treats found Gemini credentials as signed in", async () => {

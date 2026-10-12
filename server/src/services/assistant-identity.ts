@@ -8,13 +8,16 @@ import { readBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
  * actually delivers `ctx.runtimeMcp` (the Assistant's tools) to the model.
  * Verified in each adapter's execute path: claude_local and codex_local (CLI
  * and ACP engines), gemini_local and kimi_local (default ACP engine, which
- * passes runtime MCP servers to the agent). All issue local agent JWTs.
+ * passes runtime MCP servers to the agent), and claude_managed (Claude hosted
+ * on Managed Agents: runtime MCP tools are proxied from the server host).
+ * All issue local agent JWTs.
  */
 export const ASSISTANT_RUNTIME_ADAPTER_TYPES = [
   "claude_local",
   "codex_local",
   "gemini_local",
   "kimi_local",
+  "claude_managed",
 ] as const;
 
 /**

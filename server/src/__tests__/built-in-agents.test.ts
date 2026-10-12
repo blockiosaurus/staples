@@ -1,4 +1,8 @@
 import { createAgentLifecycle, configureAgentLifecycle } from "../services/agent-lifecycle.js";
+import { agentHarnessVerificationService } from "../services/agent-harness-verification.js";
+import { assistantSetupStatus, readAssistantLifecycle } from "../services/assistant-setup.js";
+import { requireServerAdapter } from "../adapters/index.js";
+import { isConversationAdapter } from "../services/conversation-continuation.js";
 import fs from "node:fs/promises";
 import { fileHash } from "../services/agent-file-store.js";
 import { stockHash } from "../services/managed-resource-drift.js";
@@ -6,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import {
   activityLog,
@@ -170,7 +174,15 @@ describeEmbeddedPostgres("built-in agents", () => {
     lifecycleWorker = configureAgentLifecycle(db, { requiredPluginIds: async () => [], runPlugin: async () => "complete", runHost: async () => "complete" });
   }, 20_000);
 
+  // Hosted inference follows the server's ANTHROPIC_API_KEY: keep it off
+  // unless a test opts in (with a dummy value), whatever the host shell has.
+  beforeEach(() => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE", "");
+  });
+
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await lifecycleWorker.sweep();
     await db.delete(routineTriggers);
     await db.delete(routines);
@@ -229,7 +241,7 @@ describeEmbeddedPostgres("built-in agents", () => {
       defaultTitle: "Assistant",
       defaultAdapterType: "claude_local",
       // Only adapters whose default engine delivers the run-scoped MCP tools.
-      allowedAdapterTypes: ["claude_local", "codex_local", "gemini_local", "kimi_local"],
+      allowedAdapterTypes: ["claude_local", "codex_local", "gemini_local", "kimi_local", "claude_managed"],
       defaultStatus: "idle",
       defaultManager: null,
       defaultBudgetMonthlyCents: 0,
@@ -406,7 +418,9 @@ describeEmbeddedPostgres("built-in agents", () => {
   });
 
   it("keeps the Assistant's runtime adapters separate from the adapters it may propose for hires", () => {
-    expect([...ASSISTANT_RUNTIME_ADAPTER_TYPES]).toEqual(["claude_local", "codex_local", "gemini_local", "kimi_local"]);
+    expect([...ASSISTANT_RUNTIME_ADAPTER_TYPES]).toEqual(["claude_local", "codex_local", "gemini_local", "kimi_local", "claude_managed"]);
+    // Every runtime adapter takes conversation turns (retry continues the conversation).
+    for (const adapterType of ASSISTANT_RUNTIME_ADAPTER_TYPES) expect(isConversationAdapter(adapterType)).toBe(true);
     expect([...PROPOSABLE_HIRE_ADAPTER_TYPES]).toEqual([
       "claude_local", "codex_local", "cursor", "gemini_local", "grok_local", "kimi_local", "opencode_local", "pi_local",
     ]);
@@ -604,6 +618,110 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect(ensuredOther.id).toBe(provisionedId);
     const [kept] = await db.select().from(agents).where(eq(agents.id, provisionedId));
     expect(readBuiltInAgentMarker(kept!.metadata)?.key).toBe("assistant");
+  });
+
+  const DUMMY_SERVER_KEY = "sk-ant-test-dummy-hosted-0000";
+  const managedTestResult = (checks: Array<{ code: string; level: "info" | "warn" | "error" }>) => ({
+    adapterType: "claude_managed", status: checks.some((check) => check.level === "error") ? "fail" as const : "pass" as const,
+    testedAt: new Date().toISOString(), checks: checks.map((check) => ({ ...check, message: check.code })),
+  });
+  async function withHarnessVerification<T>(run: () => Promise<T>) {
+    await lifecycleWorker.stop();
+    const { verify } = agentHarnessVerificationService(db, {} as never);
+    lifecycleWorker = configureAgentLifecycle(db, { requiredPluginIds: async () => [], runPlugin: async () => "complete",
+      runHost: async (agent) => (agent.lifecycleState === "verifying" ? verify(agent) : "complete") });
+    try {
+      return await run();
+    } finally {
+      await lifecycleWorker.stop();
+      lifecycleWorker = configureAgentLifecycle(db, { requiredPluginIds: async () => [], runPlugin: async () => "complete", runHost: async () => "complete" });
+    }
+  }
+
+  it("provisions a new Assistant on Claude (hosted) over sibling inheritance, verified by the adapter's environment test", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    await hire(companyId, "codex_local", "gpt-5.4", "CEO");
+    const adapter = requireServerAdapter("claude_managed");
+    const testEnvironment = vi.spyOn(adapter, "testEnvironment").mockResolvedValue(managedTestResult([
+      { code: "claude_managed_api_key_present", level: "info" },
+      { code: "claude_managed_auth_ok", level: "info" },
+    ]));
+    try {
+      await withHarnessVerification(async () => {
+        const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+        expect(assistant.adapterType).toBe("claude_managed");
+        expect(assistant.adapterConfig).toMatchObject({ model: "claude-opus-5-5" });
+        // The server key is never copied into the agent.
+        expect(assistant.adapterConfig).not.toHaveProperty("env");
+        expect(JSON.stringify(assistant)).not.toContain(DUMMY_SERVER_KEY);
+        await lifecycleWorker.process(assistant.id);
+        const lifecycle = await readAssistantLifecycle(db, assistant.id);
+        expect(lifecycle?.lifecycleState).toBe("ready");
+        expect(assistantSetupStatus(lifecycle!)).toEqual({ state: "ready", adapterType: "claude_managed" });
+        expect(testEnvironment).toHaveBeenCalledWith(expect.objectContaining({ adapterType: "claude_managed" }));
+      });
+    } finally {
+      testEnvironment.mockRestore();
+    }
+  });
+
+  it("reports needs_model when Claude (hosted) has no usable key", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const adapter = requireServerAdapter("claude_managed");
+    const testEnvironment = vi.spyOn(adapter, "testEnvironment").mockResolvedValue(managedTestResult([
+      { code: "claude_managed_api_key_present", level: "info" },
+      { code: "claude_managed_auth_invalid", level: "error" },
+    ]));
+    try {
+      await withHarnessVerification(async () => {
+        const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+        await lifecycleWorker.process(assistant.id);
+        const lifecycle = await readAssistantLifecycle(db, assistant.id);
+        expect(assistantSetupStatus(lifecycle!)).toEqual({
+          state: "needs_model", adapterType: "claude_managed", reason: "That Anthropic API key was rejected.",
+        });
+      });
+    } finally {
+      testEnvironment.mockRestore();
+    }
+  });
+
+  it("keeps an existing Assistant's adapter when hosted inference becomes available", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const service = createBuiltInAgentService(db);
+    const before = await service.ensureAssistant(companyId);
+    expect(before.adapterType).toBe("claude_local");
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const again = await service.ensureAssistant(companyId);
+    expect(again.adapterType).toBe("claude_local");
+    await service.ensure(companyId, "assistant");
+    const [row] = await db.select().from(agents).where(eq(agents.id, before.id));
+    expect(row.adapterType).toBe("claude_local");
+    // A staff hire still re-inherits a never-run Assistant onto the staff adapter, never onto hosted.
+    await hire(companyId, "codex_local", "gpt-5.4");
+    const [after] = await db.select().from(agents).where(eq(agents.id, before.id));
+    expect(after.adapterType).toBe("codex_local");
+  });
+
+  it("does not move a hosted Assistant onto a staff agent's adapter", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const service = createBuiltInAgentService(db);
+    const assistant = await service.ensureAssistant(companyId);
+    expect(assistant.adapterType).toBe("claude_managed");
+    await hire(companyId, "codex_local", "gpt-5.4");
+    const [after] = await db.select().from(agents).where(eq(agents.id, assistant.id));
+    expect(after).toMatchObject({ adapterType: "claude_managed", adapterConfig: { model: "claude-opus-5-5" } });
+  });
+
+  it("ignores hosted inference when opted out", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE", "off");
+    const companyId = await seedCompany({ requireApproval: false });
+    const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(ensured.adapterType).toBe("claude_local");
   });
 
   it("falls back to claude_local when no company agent has a complete adapter config", async () => {

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import express from "express";
 import request from "supertest";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@paperclipai/db";
 import { healthRoutes } from "../routes/health.js";
 import * as devServerStatus from "../dev-server-status.js";
@@ -19,8 +19,13 @@ function createDevServerStatusFile(payload: unknown) {
   return filePath;
 }
 
+beforeEach(() => {
+  vi.stubEnv("ANTHROPIC_API_KEY", "");
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -107,6 +112,7 @@ describe("GET /health dev-server supervisor access", () => {
         deploymentMode: "authenticated",
         deploymentExposure: "private",
         localAiLoginSupported: true,
+        hostedInferenceAvailable: false,
         commit: null,
         bootstrapStatus: "ready",
         bootstrapInviteActive: false,

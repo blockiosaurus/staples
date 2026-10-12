@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockAgentService = vi.hoisted(() => ({
   create: vi.fn(),
@@ -28,6 +28,8 @@ const mockCompanySkillService = vi.hoisted(() => ({
 }));
 
 const mockSecretService = vi.hoisted(() => ({
+  create: vi.fn(),
+  remove: vi.fn(),
   normalizeAdapterConfigForPersistence: vi.fn(async (_companyId: string, config: Record<string, unknown>) => config),
   resolveAdapterConfigForRuntime: vi.fn(async (_companyId: string, config: Record<string, unknown>) => ({ config })),
   syncEnvBindingsForTarget: vi.fn(),
@@ -266,8 +268,27 @@ const failedLifecycle = (codes: string[]) => ({
     lastHarnessTest: { version: 2, adapterType: "claude_local", checks: codes.map((code) => ({ code, level: "error" })) } },
 });
 
+const DUMMY_KEY = "sk-ant-test-dummy-key-0000";
+let savedAnthropicKey: string | undefined;
+let savedHostedFlag: string | undefined;
+
 describe("POST /companies/:companyId/assistant/setup", () => {
+  afterEach(() => {
+    if (savedAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = savedAnthropicKey;
+    if (savedHostedFlag === undefined) delete process.env.STAPLES_HOSTED_INFERENCE;
+    else process.env.STAPLES_HOSTED_INFERENCE = savedHostedFlag;
+  });
+
   beforeEach(() => {
+    savedAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    savedHostedFlag = process.env.STAPLES_HOSTED_INFERENCE;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.STAPLES_HOSTED_INFERENCE;
+    mockSecretService.create.mockImplementation(async (_companyId: string, input: { name: string }) => ({
+      id: "22222222-2222-4222-8222-222222222222", name: input.name, provider: "local_encrypted",
+    }));
+    mockSecretService.remove.mockResolvedValue(null);
     vi.resetModules();
     registerModuleMocks();
     vi.clearAllMocks();
@@ -372,6 +393,84 @@ describe("POST /companies/:companyId/assistant/setup", () => {
     });
     const viewerRes = await requestApp(viewer, (baseUrl) => request(baseUrl).get("/api/companies/company-1/assistant/adapters"));
     expect(viewerRes.status).toBe(403);
+  });
+
+  it("stores a person's Anthropic key as a company secret bound by reference, never echoing it", async () => {
+    const app = await createApp();
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .post("/api/companies/company-1/assistant/setup")
+      .send({ adapterType: "claude_managed", apiKey: DUMMY_KEY }));
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockSecretService.create).toHaveBeenCalledTimes(1);
+    const [secretCompanyId, secretInput] = mockSecretService.create.mock.calls[0]!;
+    expect(secretCompanyId).toBe("company-1");
+    expect(secretInput).toMatchObject({ value: DUMMY_KEY, key: expect.stringMatching(/^ANTHROPIC_API_KEY\.setup\./) });
+    const patch = mockAgentService.update.mock.calls.at(-1)![1] as Record<string, any>;
+    expect(patch.adapterType).toBe("claude_managed");
+    expect(patch.adapterConfig.model).toBe("claude-opus-5-5");
+    expect(patch.adapterConfig.env.ANTHROPIC_API_KEY).toEqual({
+      type: "secret_ref", secretId: "22222222-2222-4222-8222-222222222222", version: "latest",
+    });
+    expect(JSON.stringify(patch)).not.toContain(DUMMY_KEY);
+    expect(JSON.stringify(res.body)).not.toContain(DUMMY_KEY);
+    expect(JSON.stringify(mockLogActivity.mock.calls)).not.toContain(DUMMY_KEY);
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "secret.created", entityType: "secret" }));
+  }, 60_000);
+
+  it("connects Claude (hosted) without a key when the server has hosted inference", async () => {
+    process.env.ANTHROPIC_API_KEY = DUMMY_KEY;
+    const app = await createApp();
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .post("/api/companies/company-1/assistant/setup")
+      .send({ adapterType: "claude_managed", model: "claude-sonnet-5-5" }));
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockSecretService.create).not.toHaveBeenCalled();
+    const patch = mockAgentService.update.mock.calls.at(-1)![1] as Record<string, any>;
+    expect(patch.adapterType).toBe("claude_managed");
+    expect(patch.adapterConfig.model).toBe("claude-sonnet-5-5");
+    expect(JSON.stringify(patch)).not.toContain(DUMMY_KEY);
+  });
+
+  it("asks for a key when there is no hosted inference and none is bound", async () => {
+    const app = await createApp();
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .post("/api/companies/company-1/assistant/setup").send({ adapterType: "claude_managed" }));
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe("Add an Anthropic API key to use Claude (hosted).");
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a key for other adapters without echoing it", async () => {
+    const app = await createApp();
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .post("/api/companies/company-1/assistant/setup").send({ adapterType: "claude_local", apiKey: DUMMY_KEY }));
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).not.toContain(DUMMY_KEY);
+    expect(mockSecretService.create).not.toHaveBeenCalled();
+  });
+
+  it("removes the stored key secret when the save is refused", async () => {
+    mockAgentService.update.mockRejectedValue(new Error("save failed"));
+    const app = await createApp();
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .post("/api/companies/company-1/assistant/setup").send({ adapterType: "claude_managed", apiKey: DUMMY_KEY }));
+    expect(res.status).toBe(500);
+    expect(mockSecretService.remove).toHaveBeenCalledWith("22222222-2222-4222-8222-222222222222");
+    expect(JSON.stringify(res.body)).not.toContain(DUMMY_KEY);
+  });
+
+  it("tells adapter detection about hosted inference and a bound key", async () => {
+    mockAdapterAvailability.mockResolvedValue([]);
+    process.env.ANTHROPIC_API_KEY = DUMMY_KEY;
+    mockEnsureAssistant.mockResolvedValue({
+      ...assistantRow,
+      adapterConfig: { ...assistantRow.adapterConfig, env: { ANTHROPIC_API_KEY: { type: "secret_ref", secretId: "secret-1" } } },
+    });
+    const app = await createApp();
+    const res = await requestApp(app, (baseUrl) => request(baseUrl).get("/api/companies/company-1/assistant/adapters"));
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockAdapterAvailability.mock.calls.at(-1)![0]).toMatchObject({ hostedInferenceAvailable: true, anthropicKeyBound: true });
+    expect(JSON.stringify(res.body)).not.toContain(DUMMY_KEY);
   });
 
   it("forbids members without the agent configure grant, matching what saving would need", async () => {

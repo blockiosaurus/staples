@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const companyId = "22222222-2222-4222-8222-222222222222";
 const otherCompanyId = "33333333-3333-4333-8333-333333333333";
@@ -57,7 +57,12 @@ const boardActor = {
 };
 
 describe("assistant routes", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   beforeEach(() => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
     vi.resetModules();
     registerModuleMocks();
     vi.clearAllMocks();
@@ -86,9 +91,19 @@ describe("assistant routes", () => {
       conversationIssueId: null,
       setup: { state: "ready", adapterType: "claude_local" },
       canConfigure: true,
+      hostedInferenceAvailable: false,
     });
     expect(mockBuiltInAgentService.ensureAssistant).toHaveBeenCalledWith(companyId);
     expect(mockIssueService.getConversation).toHaveBeenCalledWith(companyId, assistantId, "user-1");
+  });
+
+  it("reports hosted inference as a boolean, never the key", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-dummy-assistant");
+    const app = await createApp(boardActor);
+    const res = await request(app).get(`/api/companies/${companyId}/assistant`);
+    expect(res.status).toBe(200);
+    expect(res.body.hostedInferenceAvailable).toBe(true);
+    expect(JSON.stringify(res.body)).not.toContain("sk-ant-test-dummy-assistant");
   });
 
   it("returns the caller's existing conversation issue id", async () => {

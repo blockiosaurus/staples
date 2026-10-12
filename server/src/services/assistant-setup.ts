@@ -39,9 +39,15 @@ const SETTING_UP_STATES = new Set(["preparing", "verifying", "resuming"]);
 /** Emitted beside `adapter_engine_unavailable` only when the Node version is the cause. */
 export const ENGINE_NODE_UNSUPPORTED_CHECK_CODE = "adapter_engine_node_unsupported";
 
+/** claude_managed checks a person fixes by adding (or replacing) an Anthropic API key. */
+const CLAUDE_MANAGED_KEY_MISSING_CHECK_CODE = "claude_managed_api_key_missing";
+const CLAUDE_MANAGED_AUTH_INVALID_CHECK_CODE = "claude_managed_auth_invalid";
+
 /** A failed check a person fixes by connecting (or installing) a model. */
 export function isNeedsModelCheck(code: string): boolean {
   return code === ADAPTER_AUTH_MISSING_CHECK_CODE
+    || code === CLAUDE_MANAGED_KEY_MISSING_CHECK_CODE
+    || code === CLAUDE_MANAGED_AUTH_INVALID_CHECK_CODE
     || code === "adapter_engine_unavailable"
     || code === ENGINE_NODE_UNSUPPORTED_CHECK_CODE
     || /_auth_required$/.test(code)
@@ -65,8 +71,9 @@ const ADAPTER_LABELS: Record<string, string> = {
   codex_local: "Codex",
   gemini_local: "Gemini",
   kimi_local: "Kimi",
+  claude_managed: "Claude (hosted)",
 };
-function adapterLabel(adapterType: string) {
+export function adapterLabel(adapterType: string) {
   return ADAPTER_LABELS[adapterType] ?? "The model";
 }
 
@@ -98,6 +105,8 @@ function engineUnavailableReason(adapterType: string, label: string, nodeIsCause
  */
 export function harnessFailureReason(adapterType: string, codes: readonly string[]): string {
   const label = adapterLabel(adapterType);
+  if (codes.includes(CLAUDE_MANAGED_KEY_MISSING_CHECK_CODE)) return "Add an Anthropic API key to use Claude (hosted).";
+  if (codes.includes(CLAUDE_MANAGED_AUTH_INVALID_CHECK_CODE)) return "That Anthropic API key was rejected.";
   if (codes.some((code) => code === ADAPTER_AUTH_MISSING_CHECK_CODE || /_auth_required$/.test(code))) {
     return `${label} isn't signed in on this computer.`;
   }
@@ -183,7 +192,21 @@ export const assistantSetupRequestSchema = z.object({
   }).strict().optional(),
   aiConnection: aiRuntimeConnectionBindingSchema.optional(),
   applyStoredClaudeLogin: z.boolean().optional(),
-}).strict();
+  /** claude_managed only: shorthand for adapterConfig.model. */
+  model: z.string().trim().min(1).optional(),
+  /**
+   * claude_managed only: a person's own Anthropic API key. Stored as a company
+   * secret and bound to adapterConfig.env.ANTHROPIC_API_KEY; never echoed.
+   */
+  apiKey: z.string().trim().min(1).max(1000).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.adapterType === CLAUDE_MANAGED_ADAPTER_TYPE) return;
+  for (const key of ["model", "apiKey"] as const) {
+    if (value[key] !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is only accepted for claude_managed` });
+    }
+  }
+});
 export type AssistantSetupRequest = z.infer<typeof assistantSetupRequestSchema>;
 
 const MIN_ACP_NODE_VERSION = [24, 11, 0] as const;
@@ -209,7 +232,13 @@ export interface AssistantAdapterAvailability {
   signedIn: boolean | null;
   /** Fixed copy for what to do next. */
   hint?: string;
+  /** Display name, e.g. "Claude (hosted)". */
+  label?: string;
+  /** claude_managed only: the server has no hosted key, so a person's own key is needed. */
+  needsKey?: boolean;
 }
+
+export const CLAUDE_MANAGED_ADAPTER_TYPE = "claude_managed";
 
 const ADAPTER_COMMANDS: Record<string, string> = {
   claude_local: "claude",
@@ -228,9 +257,14 @@ export async function assistantAdapterAvailability(deps: {
   commandResolvable: (command: string) => Promise<boolean>;
   authSignal: (adapterType: string) => Promise<"present" | "absent" | "unknown">;
   geminiCredentialsPresent: () => Promise<boolean>;
+  /** The server holds an Anthropic key (hosted inference). */
+  hostedInferenceAvailable?: boolean;
+  /** The Assistant already has an Anthropic API key bound in its env. */
+  anthropicKeyBound?: boolean;
 }): Promise<AssistantAdapterAvailability[]> {
   const acp = nodeMeetsAcpMinimum(deps.nodeVersion);
   return Promise.all(ASSISTANT_RUNTIME_ADAPTER_TYPES.map(async (adapterType): Promise<AssistantAdapterAvailability> => {
+    if (adapterType === CLAUDE_MANAGED_ADAPTER_TYPE) return claudeManagedAvailability(deps);
     const command = ADAPTER_COMMANDS[adapterType]!;
     const installed = await deps.commandResolvable(command).catch(() => false);
     const cliCarriesTools = ASSISTANT_CLI_ENGINE_ADAPTER_TYPES.includes(adapterType);
@@ -262,6 +296,41 @@ export async function assistantAdapterAvailability(deps: {
         : `Sign-in not checked — if \`${command}\` isn't logged in, run it in a terminal once.`;
     return { adapterType, installed, available, engine, signedIn, ...(hint ? { hint } : {}) };
   }));
+}
+
+/**
+ * Claude (hosted) runs on Anthropic's servers: no CLI to find. Usable when the
+ * server holds a key (hosted inference) or the Assistant has its own key.
+ */
+function claudeManagedAvailability(deps: { hostedInferenceAvailable?: boolean; anthropicKeyBound?: boolean }): AssistantAdapterAvailability {
+  const hosted = deps.hostedInferenceAvailable === true;
+  const keyBound = deps.anthropicKeyBound === true;
+  const available = hosted || keyBound;
+  return {
+    adapterType: CLAUDE_MANAGED_ADAPTER_TYPE,
+    installed: true,
+    available,
+    engine: null,
+    signedIn: available,
+    label: adapterLabel(CLAUDE_MANAGED_ADAPTER_TYPE),
+    needsKey: !hosted,
+    ...(available ? {} : { hint: "Add an Anthropic API key to use Claude (hosted)." }),
+  };
+}
+
+/** Whether an adapter config's env carries an Anthropic API key (a secret binding or a value). */
+export function hasAnthropicKeyBinding(adapterConfig: unknown): boolean {
+  if (!adapterConfig || typeof adapterConfig !== "object") return false;
+  const env = (adapterConfig as { env?: unknown }).env;
+  if (!env || typeof env !== "object") return false;
+  const binding = (env as Record<string, unknown>).ANTHROPIC_API_KEY;
+  if (typeof binding === "string") return binding.trim().length > 0;
+  if (!binding || typeof binding !== "object") return false;
+  const record = binding as Record<string, unknown>;
+  if (record.type === "secret_ref") return typeof record.secretId === "string" && record.secretId.length > 0;
+  if (record.type === "user_secret_ref") return typeof record.key === "string" && record.key.length > 0;
+  if (record.type === "plain") return typeof record.value === "string" && record.value.trim().length > 0;
+  return false;
 }
 
 /** Gemini CLI's own sign-in: an API key in the server env or its OAuth credentials file. */

@@ -5,6 +5,7 @@ import { builtInAgentService } from "../services/built-in-agents.js";
 import { issueService } from "../services/issues.js";
 import { accessService } from "../services/access.js";
 import { assistantSetupStatus, canConfigureAssistant, readAssistantLifecycle } from "../services/assistant-setup.js";
+import { hostedInference } from "../services/hosted-inference.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 
 /**
@@ -45,6 +46,8 @@ export function assistantRoutes(db: Db) {
       // Same decision as saving the agent's config: viewers and members
       // without the configure grant see the state but cannot connect a model.
       canConfigure,
+      // Boolean only: the server's Anthropic key is never exposed.
+      hostedInferenceAvailable: hostedInference().available,
     });
   });
 

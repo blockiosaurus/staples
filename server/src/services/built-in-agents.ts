@@ -1,4 +1,5 @@
 import { createAgentLifecycle, createAgentLifecycleEffects, scheduleAgentLifecycle } from "./agent-lifecycle.js";
+import { HOSTED_INFERENCE_ADAPTER_TYPE, hostedInference } from "./hosted-inference.js";
 import { updateAgentConfiguration } from "../modules/agent-lifecycle/adapters/configuration.js";
 import { ASSISTANT_RUNTIME_ADAPTER_TYPES } from "./assistant-identity.js";
 import fs from "node:fs/promises";
@@ -972,8 +973,21 @@ export function builtInAgentService(db: Db) {
     definition: BuiltInAgentDefinition,
     input: BuiltInAgentProvisionInput,
     lookup?: { degraded: boolean },
+    options: { preferHosted?: boolean } = {},
   ) {
     if (input.adapterType || input.adapterConfig) return input;
+    // A new Assistant runs on Claude (hosted) when the server holds an
+    // Anthropic key: no key or env goes into its config (the adapter reads the
+    // server's key itself). Takes precedence over sibling inheritance.
+    const hosted = hostedInference();
+    if (
+      options.preferHosted !== false
+      && definition.key === ASSISTANT_BUILT_IN_AGENT_KEY
+      && hosted.available
+      && definition.allowedAdapterTypes?.includes(hosted.adapterType)
+    ) {
+      return { ...input, adapterType: hosted.adapterType, adapterConfig: { model: hosted.model } };
+    }
     if (definition.inheritCompanyAdapterType) {
       const rows = await db
         .select({
@@ -989,6 +1003,9 @@ export function builtInAgentService(db: Db) {
       const candidate = rows
         .filter((row) =>
           !readBuiltInAgentMarker(row.metadata)
+          // Only the model is inherited, never env: a claude_managed sibling's
+          // own key would not come along, so it is not a usable source.
+          && row.adapterType !== HOSTED_INFERENCE_ADAPTER_TYPE
           && definition.allowedAdapterTypes?.includes(row.adapterType)
           && hasCompleteAdapterConfig(row.adapterType, row.adapterConfig))
         .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())[0];
@@ -2331,7 +2348,9 @@ export function builtInAgentService(db: Db) {
     const lookup = { degraded: false };
     let inherited: Awaited<ReturnType<typeof defaultProvisionInput>>;
     try {
-      inherited = await defaultProvisionInput(companyId, definition, {}, lookup);
+      // Never moves an existing Assistant onto (or off) Claude (hosted).
+      if (assistant.adapterType === HOSTED_INFERENCE_ADAPTER_TYPE) return null;
+      inherited = await defaultProvisionInput(companyId, definition, {}, lookup, { preferHosted: false });
     } catch (error) {
       logger.warn({ err: error, companyId }, "Assistant re-inheritance skipped: adapter lookup failed");
       return null;
