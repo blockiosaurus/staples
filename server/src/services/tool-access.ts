@@ -13844,11 +13844,13 @@ export function toolAccessService(
       actor?: ActorInfo;
       disableStale?: boolean;
       /**
-       * True when these Ask first rows are the connection's setup defaults
-       * (the first finish of a connection that is not active yet). Rows keep
+       * True when these Ask first rows may be the connection's setup
+       * defaults. They are marked only on the connection's first-ever finish
+       * (no `app_gallery_finish` rows exist for it yet). Rows keep
        * `config.defaultAskFirst` only while they stay the setup's choice; a
-       * row a person turns on later is an explicit choice and is not marked.
-       * Agent Autopilot lifts only marked rows.
+       * row a person turns on later, including on a re-finish after the
+       * connection went back to draft, is an explicit choice and is not
+       * marked. Agent Autopilot lifts only marked rows.
        */
       markDefaults?: boolean;
     },
@@ -13881,10 +13883,11 @@ export function toolAccessService(
       }
     }
     const askFirstIds = new Set(input.askFirstEntries.map((entry) => entry.id));
+    const firstFinish = managedPolicies.length === 0;
     const results: ToolPolicy[] = [];
     for (const entry of input.askFirstEntries) {
       const existing = policiesByCatalogEntryId.get(entry.id);
-      const defaultAskFirst = input.markDefaults === true
+      const defaultAskFirst = (input.markDefaults === true && firstFinish)
         || Boolean(existing && existing.enabled && asRecord(existing.config).defaultAskFirst === true);
       const config = {
         source: "app_gallery_finish",
@@ -14313,6 +14316,7 @@ export function toolAccessService(
           connection,
           askFirstEntries: askFirstRows,
           disableStale: !input.preserveExistingAccess,
+          // Marked only on a first-ever finish (see upsertAskFirstPolicies).
           markDefaults: connection.status !== "active",
           actor,
         },

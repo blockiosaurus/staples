@@ -16523,6 +16523,16 @@ describeEmbeddedPostgres("tool access service", () => {
       );
     }
     expect(await askFirstConfig()).not.toHaveProperty("defaultAskFirst");
+    // A re-finish after the connection went back to draft is not a first
+    // finish: the explicit Ask first row is not re-marked as a default.
+    await db.update(toolConnections).set({ status: "draft" }).where(eq(toolConnections.id, connect.connectionId));
+    await service.finishGalleryAppConnection(
+      company.id,
+      connect.connectionId,
+      { enabledCatalogEntryIds: [listEntry.id, updateEntry.id], askFirstCatalogEntryIds: [updateEntry.id], access: { agentIds: [agent.id] } },
+      { actorType: "user", actorId: "board" },
+    );
+    expect(await askFirstConfig()).not.toHaveProperty("defaultAskFirst");
 
     const finishedCatalog = await db
       .select()
