@@ -78,13 +78,14 @@ describe("AssistantSetupCard", () => {
     }
   }
   async function render(
-    setup: { state: "ready" | "starting" | "needs_model" | "error"; message?: string; reason?: string },
+    setup: { state: "ready" | "starting" | "needs_model" | "error"; message?: string; reason?: string; adapterType?: string },
     canConfigure = true,
+    hostedInferenceAvailable = false,
   ) {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <AssistantSetupCard companyId="company-1" agentId="assistant-1" canConfigure={canConfigure}
+          <AssistantSetupCard companyId="company-1" agentId="assistant-1" canConfigure={canConfigure} hostedInferenceAvailable={hostedInferenceAvailable}
             setup={{ adapterType: "claude_local", ...setup }} />
         </QueryClientProvider>,
       );
@@ -249,5 +250,76 @@ describe("AssistantSetupCard", () => {
     expect(container.querySelectorAll("button")).toHaveLength(0);
     await render({ state: "error", message: "The lifecycle step failed. Retry the operation." }, false);
     expect(container.querySelectorAll("button")).toHaveLength(0);
+  });
+
+  describe("Claude (hosted)", () => {
+    const KEY = "sk-ant-secret-key-123";
+    const HOSTED = { adapterType: "claude_managed", installed: true, available: false, engine: null, signedIn: false, label: "Claude (hosted)", needsKey: true };
+    const withHosted = (over = {}) => mocks.adapters.mockResolvedValue({ adapters: [...ADAPTERS, { ...HOSTED, ...over }] });
+    const input = () => container.querySelector<HTMLInputElement>('input[type="password"]');
+    const type = async (value: string) => {
+      await act(async () => {
+        const el = input()!;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+
+    it("renders nothing when ready, even with hosted inference", async () => {
+      await render({ state: "ready", adapterType: "claude_managed" }, true, true);
+      expect(container.querySelector('[data-testid="assistant-setup-card"]')).toBeNull();
+    });
+
+    it("shows the finishing state, not the picker, while a hosted Assistant provisions", async () => {
+      await render({ state: "needs_model", adapterType: "claude_managed" }, true, true);
+      expect(container.textContent).toContain("Finishing Assistant setup…");
+      expect(container.querySelector('[data-testid="adapter-picker"]')).toBeNull();
+      expect(mocks.adapters).not.toHaveBeenCalled();
+      await render({ state: "starting", adapterType: "claude_managed", message: "Finishing Assistant setup…" }, true, true);
+      expect(container.textContent).toContain("Finishing Assistant setup…");
+    });
+
+    it("offers the hosted tile with key copy, and a password field that submits once and clears", async () => {
+      withHosted();
+      mocks.setup.mockRejectedValueOnce(new Error("That Anthropic API key was rejected."));
+      await render({ state: "needs_model" });
+      expect(button("Claude (hosted)")?.textContent).toContain("Runs in Anthropic's cloud. Needs an Anthropic API key.");
+      expect(button("Claude")?.textContent).not.toContain("hosted");
+      await act(async () => button("Claude (hosted)")!.click());
+      expect(input()?.autocomplete).toBe("off");
+      expect((button("Connect") as HTMLButtonElement).disabled).toBe(true);
+      await type(KEY);
+      await act(async () => { button("Connect")!.click(); });
+      await settle();
+      expect(mocks.setup).toHaveBeenCalledTimes(1);
+      expect(mocks.setup).toHaveBeenCalledWith("company-1", { adapterType: "claude_managed", apiKey: KEY });
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe("That Anthropic API key was rejected.");
+      expect(input()?.value).toBe("");
+      expect(container.innerHTML).not.toContain(KEY);
+    });
+
+    it("clears the key and leaves it out of the page after a successful submit", async () => {
+      withHosted();
+      const onSuccess = mocks.setup;
+      await render({ state: "needs_model" });
+      await act(async () => button("Claude (hosted)")!.click());
+      await type(KEY);
+      await act(async () => { button("Connect")!.click(); });
+      await settle();
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+      expect(input()?.value ?? "").toBe("");
+      expect(container.innerHTML).not.toContain(KEY);
+    });
+
+    it("connects without a key when the server provides one", async () => {
+      withHosted({ available: true, signedIn: true, needsKey: false });
+      await render({ state: "needs_model" });
+      expect(button("Claude (hosted)")?.textContent).toContain("Provided by this Staples server.");
+      await act(async () => button("Claude (hosted)")!.click());
+      expect(input()).toBeNull();
+      await act(async () => { button("Connect")!.click(); });
+      await settle();
+      expect(mocks.setup).toHaveBeenCalledWith("company-1", { adapterType: "claude_managed" });
+    });
   });
 });

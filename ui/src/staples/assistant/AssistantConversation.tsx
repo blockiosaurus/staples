@@ -63,11 +63,12 @@ export function AssistantConversation({
   );
   const agentId = assistant.agent?.id ?? null;
   const canConfigure = assistant.summary?.canConfigure ?? true;
+  const hostedAvailable = assistant.summary?.hostedInferenceAvailable ?? false;
   const setupCard = useMemo(
     () => (!setupReady && setup && selectedCompanyId && agentId
-      ? <AssistantSetupCard companyId={selectedCompanyId} agentId={agentId} setup={setup} canConfigure={canConfigure} />
+      ? <AssistantSetupCard companyId={selectedCompanyId} agentId={agentId} setup={setup} canConfigure={canConfigure} hostedInferenceAvailable={hostedAvailable} />
       : undefined),
-    [setupReady, setup, selectedCompanyId, agentId, canConfigure],
+    [setupReady, setup, selectedCompanyId, agentId, canConfigure, hostedAvailable],
   );
 
   if (assistant.error) {

@@ -16,7 +16,14 @@ import {
 import { queryKeys } from "@/lib/queryKeys";
 import { testAgentSetup } from "@/lib/test-agent-setup";
 import { cn } from "@/lib/utils";
-import { ASSISTANT_ADAPTER_LABELS, ASSISTANT_CLI_ENGINE_ADAPTER_TYPES, connectionFailureReason, connectionTestPassed } from "./setup-reasons";
+import {
+  ASSISTANT_ADAPTER_LABELS,
+  ASSISTANT_CLI_ENGINE_ADAPTER_TYPES,
+  HOSTED_FINISHING_MESSAGE,
+  HOSTED_TILE_COPY,
+  connectionFailureReason,
+  connectionTestPassed,
+} from "./setup-reasons";
 
 /** Adapters with a login/API-key flow in AgentProviderConnection. */
 const PROVIDER_CONNECTION_TYPES = ["claude_local", "codex_local"] as const;
@@ -60,11 +67,14 @@ export function AssistantSetupCard({
   agentId,
   setup,
   canConfigure = true,
+  hostedInferenceAvailable = false,
 }: {
   companyId: string;
   agentId: string;
   setup: AssistantSetup;
   canConfigure?: boolean;
+  /** The server can run the Assistant on Claude (hosted) without a person's key. */
+  hostedInferenceAvailable?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [retrying, setRetrying] = useState(false);
@@ -72,12 +82,15 @@ export function AssistantSetupCard({
   const summaryKey = queryKeys.assistant.detail(companyId);
 
   if (setup.state === "ready") return null;
-  if (setup.state === "starting") {
+  // A hosted Assistant still provisioning (no failure reason yet) is finishing, not waiting for a model.
+  const hostedFinishing = hostedInferenceAvailable && setup.adapterType === "claude_managed"
+    && setup.state === "needs_model" && !setup.reason;
+  if (setup.state === "starting" || hostedFinishing) {
     return (
       <SetupFrame>
         <p role="status" className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-          Getting the Assistant ready…
+          {hostedFinishing || setup.adapterType === "claude_managed" ? (setup.message ?? HOSTED_FINISHING_MESSAGE) : "Getting the Assistant ready…"}
         </p>
       </SetupFrame>
     );
@@ -163,6 +176,7 @@ function ConnectModel({
   const [submitting, setSubmitting] = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hostedKey, setHostedKey] = useState("");
   const [testError, setTestError] = useState<string | null>(null);
   // Set when the chosen adapter's full test found the ACP engine unavailable. A
   // ref: AgentProviderConnection calls onConnected from the closure that ran the test.
@@ -181,10 +195,27 @@ function ConnectModel({
 
   const choose = (adapterType: AssistantRuntimeAdapterType | null) => {
     setSelected(adapterType);
+    setHostedKey("");
     engineOverride.current = null;
     setError(null);
     setTestError(null);
   };
+
+  async function connectHosted() {
+    const apiKey = hostedKey.trim();
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await assistantApi.setup(companyId, { adapterType: "claude_managed", ...(apiKey ? { apiKey } : {}) });
+      onConfigured(result);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not connect Claude (hosted).");
+    } finally {
+      // The key is never kept after a submit, whatever the outcome.
+      setHostedKey("");
+      setSubmitting(false);
+    }
+  }
 
   async function submit(adapterType: AssistantRuntimeAdapterType, connection?: ProviderConnection, engine = engineFor(adapterType)) {
     setSubmitting(true);
@@ -291,6 +322,41 @@ function ConnectModel({
     );
   }
 
+  if (selected === "claude_managed") {
+    const needsKey = entry("claude_managed")?.needsKey ?? true;
+    return (
+      <form
+        className="flex flex-col items-start gap-3"
+        onSubmit={(event) => { event.preventDefault(); if (!submitting && (!needsKey || hostedKey.trim())) void connectHosted(); }}
+      >
+        <p className="text-foreground">
+          {needsKey ? "The Assistant will use Claude (hosted) with your Anthropic API key." : "The Assistant will use Claude (hosted), provided by this Staples server."}
+        </p>
+        {needsKey ? (
+          <label className="flex w-full max-w-(--tc-shell-max-w) flex-col gap-1">
+            <span className="text-muted-foreground">Anthropic API key</span>
+            <input
+              type="password"
+              name="anthropic-api-key"
+              autoComplete="off"
+              spellCheck={false}
+              value={hostedKey}
+              disabled={submitting}
+              onChange={(event) => setHostedKey(event.target.value)}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-foreground"
+            />
+          </label>
+        ) : null}
+        {error ? <p role="alert" className="text-destructive">{error}</p> : null}
+        <Button type="submit" size="sm" disabled={submitting || (needsKey && !hostedKey.trim())}>
+          {submitting ? <Loader2 className="size-3.5 animate-spin" /> : null}
+          Connect
+        </Button>
+        {chooseAnother}
+      </form>
+    );
+  }
+
   if (selected) {
     const hint = entry(selected)?.hint;
     const busy = submitting || checking;
@@ -319,7 +385,7 @@ function ConnectModel({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className="font-medium text-foreground">Connect a model to start</p>
-          <p className="text-muted-foreground">The Assistant runs on an AI model installed on this computer. Choose one to connect.</p>
+          <p className="text-muted-foreground">The Assistant runs on an AI model installed on this computer, or on Claude (hosted). Choose one to connect.</p>
         </div>
         <Button
           type="button"
@@ -333,9 +399,10 @@ function ConnectModel({
       </div>
       {adapters.isError ? <p role="alert" className="text-destructive">Couldn't check which models are installed.</p> : null}
       <ul data-testid="adapter-tiles" className="grid gap-2 @md:grid-cols-2">
-        {(["claude_local", "codex_local", "gemini_local", "kimi_local"] as const).map((adapterType) => {
+        {(["claude_local", "codex_local", "gemini_local", "kimi_local", "claude_managed"] as const).map((adapterType) => {
           const item = entry(adapterType);
-          const status = adapters.isPending ? "Checking…"
+          const hosted = adapterType === "claude_managed";
+          const status = hosted ? (adapters.isPending ? "Checking…" : !item ? "Couldn't check" : item.available || item.needsKey !== false ? "Available" : "Unavailable") : adapters.isPending ? "Checking…"
             : !item ? "Couldn't check"
             : !item.installed ? "Not installed"
             : !item.available ? "Unavailable"
@@ -346,7 +413,7 @@ function ConnectModel({
             <li key={adapterType}>
               <button
                 type="button"
-                disabled={!item?.available}
+                disabled={hosted ? !item : !item?.available}
                 onClick={() => choose(adapterType)}
                 className="flex w-full flex-col gap-1 rounded-lg border border-border px-3 py-2 text-left transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
               >
@@ -354,11 +421,13 @@ function ConnectModel({
                 <span className="flex w-full flex-wrap items-center gap-x-3 gap-y-1">
                   <span className="flex flex-auto items-center gap-3">
                     <AdapterMark type={adapterType} className="size-5 shrink-0" />
-                    <span className="font-medium">{label(adapterType)}</span>
+                    <span className="font-medium">{hosted ? (item?.label ?? label(adapterType)) : label(adapterType)}</span>
                   </span>
                   <span data-testid="adapter-status" className={cn("whitespace-nowrap text-xs", item?.available ? "text-foreground" : "text-muted-foreground")}>{status}</span>
                 </span>
-                {item?.hint ? (
+                {hosted ? (
+                  <span className="text-xs text-muted-foreground">{item?.needsKey === false ? HOSTED_TILE_COPY.provided : HOSTED_TILE_COPY.needsKey}</span>
+                ) : item?.hint ? (
                   <span className="text-xs text-muted-foreground"><HintText text={item.hint} /></span>
                 ) : null}
               </button>

@@ -5,7 +5,16 @@ export const ASSISTANT_ADAPTER_LABELS: Record<string, string> = {
   codex_local: "Codex",
   gemini_local: "Gemini",
   kimi_local: "Kimi",
+  claude_managed: "Claude (hosted)",
 };
+
+/** Shown while the hosted Assistant finishes provisioning (server message, same copy). */
+export const HOSTED_FINISHING_MESSAGE = "Finishing Assistant setup…";
+
+export const HOSTED_TILE_COPY = {
+  needsKey: "Runs in Anthropic's cloud. Needs an Anthropic API key.",
+  provided: "Provided by this Staples server.",
+} as const;
 
 /** Adapters whose CLI engine still carries the Assistant's tools (server: ASSISTANT_CLI_ENGINE_ADAPTER_TYPES). */
 export const ASSISTANT_CLI_ENGINE_ADAPTER_TYPES: readonly string[] = ["claude_local", "codex_local"];
@@ -21,6 +30,11 @@ const acpNodeMinimum = (adapterType: string) => ACP_NODE_MINIMUM[adapterType] ??
 
 export function connectionFailureReason(adapterType: string, codes: readonly string[]): string {
   const label = ASSISTANT_ADAPTER_LABELS[adapterType] ?? "The model";
+  if (codes.includes("claude_managed_api_key_missing")) return "Add an Anthropic API key to use Claude (hosted).";
+  if (codes.some((code) => code === "claude_managed_auth_invalid" || code === "claude_managed_access_denied")) {
+    return "That Anthropic API key was rejected.";
+  }
+  if (codes.includes("assistant_provisioning_incomplete")) return "The Assistant's setup didn't finish. Try again.";
   if (codes.some((code) => code === ADAPTER_AUTH_MISSING_CHECK_CODE || /_auth_required$/.test(code))) {
     return `${label} isn't signed in on this computer.`;
   }
