@@ -871,7 +871,10 @@ export function authorizationService(db: Db | DbTransaction) {
     if (!grant) {
       if (
         input.principalType === "user"
-        && input.permissionKey.startsWith("tools:")
+        // Owners and admins without seeded grants (legacy companies, imports,
+        // tenant paths that skip ensureRoleDefaultGrants) keep tool access and
+        // agent configuration (Autopilot included) from their role.
+        && (input.permissionKey.startsWith("tools:") || input.permissionKey === "agents:configure")
         && (membership.membershipRole === "owner" || membership.membershipRole === "admin")
         && grantsForHumanRole(normalizeHumanRole(membership.membershipRole, "operator"))
           .some((defaultGrant) => defaultGrant.permissionKey === input.permissionKey)

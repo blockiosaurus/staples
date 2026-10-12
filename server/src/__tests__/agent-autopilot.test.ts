@@ -392,4 +392,21 @@ describeEmbeddedPostgres("agent Autopilot", () => {
     expect((await put(boardActor(s), randomUUID(), "code", "auto")).status).toBe(404);
     expect(await autopilotRows(dev)).toHaveLength(0);
   }, 60_000);
+
+  it("owners and admins without seeded grants can use Autopilot from their role; operators cannot", async () => {
+    const s = await seed();
+    const dev = await templatedAgent(s, "staples/coding-agent");
+    await connection(s.companyId, "github", [["merge_pull_request", "write"]]);
+    for (const role of ["owner", "admin", "operator"] as const) {
+      const nonce = randomUUID().slice(0, 8);
+      const userId = `legacy-${role}-${nonce}`;
+      await db.insert(authUsers).values({ id: userId, name: role, email: `${userId}@fixture.invalid`, emailVerified: true, createdAt: new Date(), updatedAt: new Date() });
+      // A legacy membership: no ensureRoleDefaultGrants, so no agents:configure grant.
+      await db.insert(companyMemberships).values({ companyId: s.companyId, principalType: "user", principalId: userId, status: "active", membershipRole: role });
+      const actor = boardActor({ ...s, userId });
+      const expected = role === "operator" ? 403 : 200;
+      expect((await request(app(actor)).get(`/api/agents/${dev}/autopilot`)).status, role).toBe(expected);
+      expect((await put(actor, dev, "code", role === "admin" ? "ask" : "auto")).status, role).toBe(expected);
+    }
+  }, 60_000);
 });
