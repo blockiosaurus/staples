@@ -336,6 +336,21 @@ describe("agentTemplatesService", () => {
     expect(await cronFor("Every other day")).toEqual(["0 9 * * 1-5", "0 16 * * 5"]);
   });
 
+  it("summaries and detail show schedules chosen by the recommended answers", async () => {
+    const base = readFixtureFiles();
+    const recommended = JSON.parse(base["staples.template.json"]!).setupQuestions[1].options.find((option: any) => option.recommended).id as string;
+    const files = editSidecar(base, (sidecar) => {
+      sidecar.scheduleByAnswer = { "daily-check-in": { questionId: "cadence", cron: { daily: "0 8 * * 1", weekly: "0 8 * * 1", [recommended]: "15 6 * * 2" } } };
+    });
+    const svc = service({ "test-helper": files });
+    const [summary] = await svc.list({ includePreview: true });    expect(summary!.routines.map((routine) => routine.schedule)).toEqual(["15 6 * * 2", "0 16 * * 5"]);
+    const detail = await svc.get("staples/test-helper", CTX);
+    expect(detail.routines.map((routine) => routine.schedule)).toEqual(["15 6 * * 2", "0 16 * * 5"]);
+    // Without a rule, the TASK.md default shows.
+    const plain = await service().get("staples/test-helper", CTX);
+    expect(plain.routines.map((routine) => routine.schedule)).toEqual(["0 9 * * 1-5", "0 16 * * 5"]);
+  });
+
   it("inserts an answer containing a placeholder literally, without re-expanding it", async () => {
     const rendered = await service().render(
       "staples/test-helper",

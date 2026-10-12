@@ -494,6 +494,17 @@ function parseTemplateRef(ref: string): string | null {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) ? slug : null;
 }
 
+/** A recurring task's schedule under the template's recommended answers, else its TASK.md default. */
+function recommendedSchedule(template: LoadedTemplate, task: TemplateDoc): string {
+  const rule = template.sidecar.scheduleByAnswer?.[taskSlug(task)];
+  if (rule) {
+    const question = template.sidecar.setupQuestions.find((candidate) => candidate.id === rule.questionId);
+    const recommended = question?.options?.find((option) => option.recommended === true);
+    if (recommended && Object.hasOwn(rule.cron, recommended.id)) return rule.cron[recommended.id]!;
+  }
+  return asString(task.frontmatter.schedule) ?? "";
+}
+
 function summarize(template: LoadedTemplate): AgentTemplateSummary {
   const { sidecar } = template;
   return {
@@ -513,7 +524,7 @@ function summarize(template: LoadedTemplate): AgentTemplateSummary {
     asksBefore: sidecar.outwardActions.map((action) => action.label),
     routines: template.tasks.filter(isRecurring).map((task) => ({
       title: taskTitle(task),
-      schedule: asString(task.frontmatter.schedule) ?? "",
+      schedule: recommendedSchedule(template, task),
       timezone: asString(task.frontmatter.timezone) ?? "UTC",
     })),
     defaultBudgetMonthlyCents: sidecar.defaultBudgetMonthlyCents ?? null,
