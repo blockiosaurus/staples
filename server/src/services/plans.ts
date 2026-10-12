@@ -36,11 +36,13 @@ import {
   renderPlanTemplates,
   routineSafeText,
   staplesTemplateRecord,
+  templateSetupSourceFromMetadata,
   templateSkillPolicyDenial,
   templateTaskSpecs,
   withTemplateDefaults,
   type AgentTemplatesService,
   type PlanTemplates,
+  type TemplateSetupSource,
 } from "./plan-templates.js";
 import { projectService } from "./projects.js";
 import { routineService } from "./routines.js";
@@ -421,16 +423,58 @@ function replay(row: ApplicationRow): AppliedPlan {
 }
 
 /**
+ * Templated agents an earlier attempt at this plan already hired (the
+ * application this request will resume: the row for its key, or the earlier
+ * failed one a new key takes over) that still exist and carry a stored
+ * template record, by client key.
+ */
+async function priorTemplatedHires(db: Db, companyId: string, plan: ApplyPlan, input: { key: string | null; hash: string; userId: string | null }) {
+  const prior = new Map<string, { name: string; role: string; title: string | null; adapterType: string }>();
+  if (!input.key || !plan.agents.some((agent) => agent.templateRef)) return prior;
+  let [row] = await db.select().from(planApplications)
+    .where(and(eq(planApplications.companyId, companyId), eq(planApplications.idempotencyKey, input.key)));
+  if (!row && input.userId) {
+    [row] = await db.select().from(planApplications)
+      .where(and(
+        eq(planApplications.companyId, companyId),
+        eq(planApplications.planHash, input.hash),
+        eq(planApplications.createdByUserId, input.userId),
+        or(eq(planApplications.status, "failed"), eq(planApplications.status, "in_progress")),
+        gt(planApplications.updatedAt, new Date(Date.now() - PLAN_RESUME_MAX_AGE_MS)),
+      ))
+      .orderBy(desc(planApplications.updatedAt)).limit(1);
+  }
+  if (!row || (row.status !== "failed" && row.status !== "in_progress")) return prior;
+  const recorded = await reusableHires(db, companyId, row.agents);
+  for (const agent of plan.agents) {
+    const hire = recorded[agent.clientKey];
+    if (!agent.templateRef || !hire) continue;
+    const [existing] = await db.select({ name: agents.name, role: agents.role, title: agents.title, adapterType: agents.adapterType, metadata: agents.metadata })
+      .from(agents).where(and(eq(agents.id, hire.id), eq(agents.companyId, companyId)));
+    if (existing && templateSetupSourceFromMetadata(existing.metadata)) prior.set(agent.clientKey, existing);
+  }
+  return prior;
+}
+
+/**
  * Render a plan's templated agents for apply (at their pinned versions) and
  * fill the hire fields their templates supply. Throws before anything is
  * created: 409 when a pinned version is no longer current, 422 for an
  * unavailable template or answers that no longer validate, 403 when the
  * company skill policy does not let the person install a template's skills.
+ *
+ * An agent an earlier attempt already hired (`prior`) is finished from its
+ * stored template record, so a render failure for it is deferred instead:
+ * `deferred` holds the error to raise only if that agent turns out not to be
+ * reused after all.
  */
 async function preparePlanTemplates(db: Db, companyId: string, plan: ApplyPlan, input: {
   userId: string | null; personTimezone?: string | null; templates?: AgentTemplatesService; actor?: AuthorizationActor | null;
-}): Promise<{ plan: ApplyPlan; templates: PlanTemplates }> {
-  if (!plan.agents.some((agent) => agent.templateRef)) return { plan, templates: new Map() };
+  prior?: Awaited<ReturnType<typeof priorTemplatedHires>>;
+}): Promise<{ plan: ApplyPlan; templates: PlanTemplates; deferred: Map<string, HttpError> }> {
+  const deferred = new Map<string, HttpError>();
+  if (!plan.agents.some((agent) => agent.templateRef)) return { plan, templates: new Map(), deferred };
+  const prior = input.prior ?? new Map();
   const ctx = await planTemplateContext(db, companyId, input.userId, input.personTimezone);
   const templates: PlanTemplates = new Map();
   for (const agent of plan.agents) {
@@ -441,12 +485,29 @@ async function preparePlanTemplates(db: Db, companyId: string, plan: ApplyPlan, 
     } catch (error) {
       const message = planTemplateErrorMessage(agent.clientKey, agent.templateRef, error);
       if (!message) throw error;
-      throw error instanceof HttpError && error.status === 409 ? conflict(message) : unprocessable(message);
+      const failure = error instanceof HttpError && error.status === 409 ? conflict(message) : unprocessable(message);
+      if (!prior.has(agent.clientKey)) throw failure;
+      deferred.set(agent.clientKey, failure);
+      continue;
     }
+    if (prior.has(agent.clientKey)) continue;
     const denial = await templateSkillPolicyDenial(db, companyId, agent.clientKey, templates.get(agent.clientKey)!, { userId: input.userId, actor: input.actor });
     if (denial) throw forbidden(denial, { code: "skill_policy_denied" });
   }
-  return { plan: withTemplateDefaults(plan, templates, { fallbackAdapterType: await assistantAdapterType(db, companyId) }), templates };
+  const filled = withTemplateDefaults(plan, templates, { fallbackAdapterType: await assistantAdapterType(db, companyId) });
+  // Agents finished from their stored record keep the fields they were hired with.
+  filled.agents = filled.agents.map((agent) => {
+    const existing = deferred.has(agent.clientKey) ? prior.get(agent.clientKey) : undefined;
+    if (!existing) return agent;
+    return {
+      ...agent,
+      name: agent.name ?? existing.name,
+      role: agent.role ?? existing.role,
+      ...(agent.title === undefined && existing.title ? { title: existing.title } : {}),
+      adapterType: agent.adapterType ?? existing.adapterType,
+    } as typeof agent;
+  });
+  return { plan: filled, templates, deferred };
 }
 
 /**
@@ -497,7 +558,8 @@ export async function applyPlan(db: Db, input: {
     if (existing?.status === "superseded") return replay(await appliedSuccessor(db, existing));
   }
 
-  const { plan, templates } = await preparePlanTemplates(db, companyId, input.plan, input);
+  const prior = await priorTemplatedHires(db, companyId, input.plan, { key, hash, userId });
+  const { plan, templates, deferred } = await preparePlanTemplates(db, companyId, input.plan, { ...input, prior });
   await validatePlanForApply(db, companyId, plan, input.assertCanAssign);
 
   let application: (ApplicationRow & { leaseOwner: string }) | null = null;
@@ -535,12 +597,18 @@ export async function applyPlan(db: Db, input: {
       if (paused) hire.status = paused.status;
     }
   };
-  /** Install a templated agent's access rules and record (idempotent; also for agents an earlier attempt hired). */
+  /**
+   * Install a templated agent's access rules and record (idempotent; also for
+   * agents an earlier attempt hired). They are built from the template record
+   * stored on the agent when it was hired, not from a fresh render: the
+   * pinned version may have changed since, or the template may be gone.
+   */
   const setUpTemplatedAgent = async (clientKey: string) => {
-    const rendered = templates.get(clientKey);
-    if (!rendered) return;
     const agentId = hired[clientKey]!.id;
-    await setUpTemplatedAgentRules(rendered, agentId);
+    const [stored] = await db.select({ metadata: agents.metadata }).from(agents).where(and(eq(agents.id, agentId), eq(agents.companyId, companyId)));
+    const source = templateSetupSourceFromMetadata(stored?.metadata) ?? templates.get(clientKey);
+    if (!source) return;
+    await setUpTemplatedAgentRules(source, agentId);
     // Guards are in place: release an agent held for setup.
     const [row] = await db.select({ holds: agents.lifecycleHolds }).from(agents).where(and(eq(agents.id, agentId), eq(agents.companyId, companyId)));
     if (row?.holds.includes(TEMPLATE_SETUP_PAUSE_REASON)) {
@@ -548,7 +616,7 @@ export async function applyPlan(db: Db, input: {
       if (released) hired[clientKey]!.status = released.status;
     }
   };
-  const setUpTemplatedAgentRules = async (rendered: NonNullable<ReturnType<typeof templates.get>>, agentId: string) => {
+  const setUpTemplatedAgentRules = async (rendered: TemplateSetupSource, agentId: string) => {
     for (const policy of await ensureTemplateAgentSetup(db, companyId, agentId, rendered, userId)) {
       templatePolicies.push({ ...policy, agentId });
       // Logged as it is created: the rule stays even if a later step fails.
@@ -596,9 +664,14 @@ export async function applyPlan(db: Db, input: {
     if (assistant && binding?.mode === "shared" && !(await applierCanUseShared(db, companyId, binding, input.canInstallSharedConnection))) {
       delete assistant.aiConnection;
     }
+    // A template that could not be rendered is only acceptable for an agent
+    // this request reuses (finished from its stored record).
+    for (const [clientKey, failure] of deferred) {
+      if (!hired[clientKey]) throw failure;
+    }
     for (const agent of planAgentCreationOrder(plan.agents)) {
       if (hired[agent.clientKey]) {
-        if (templates.has(agent.clientKey)) {
+        if (agent.templateRef) {
           // Stop before writing if a newer request took the plan over.
           await holdLease();
           await setUpTemplatedAgent(agent.clientKey);

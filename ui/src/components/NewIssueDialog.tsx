@@ -1342,12 +1342,12 @@ export function NewIssueDialog() {
                         <InlineBanner tone="warning" icon={PauseCircle} compact>
                           <span className="font-medium">{selectedAssigneeAgent.name}</span> is paused and will not start
                           work on this task until it is resumed
-                          {selectedAssigneeAgent.pauseReason === "import"
-                            ? " — it arrived paused from an organization import"
-                            : selectedAssigneeAgent.pauseReason === TEMPLATE_SETUP_PAUSE_REASON
-                              ? ` — ${TEMPLATE_SETUP_PAUSE_MESSAGE}`
-                              : ""}
-                          . You can resume it from the task page after creating the task.
+                          {selectedAssigneeAgent.pauseReason === TEMPLATE_SETUP_PAUSE_REASON
+                            ? `. ${TEMPLATE_SETUP_PAUSE_MESSAGE}.`
+                            : <>
+                              {selectedAssigneeAgent.pauseReason === "import" ? " — it arrived paused from an organization import" : ""}
+                              . You can resume it from the task page after creating the task.
+                            </>}
                         </InlineBanner>
                       </div>
                     ) : null}

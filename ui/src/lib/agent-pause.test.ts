@@ -8,6 +8,6 @@ describe("agent pause helpers", () => {
     expect(isTemplateSetupPause({ status: "idle", pauseReason: "template_setup" })).toBe(false);
   });
   it("uses the shared message", () => {
-    expect(TEMPLATE_SETUP_PAUSE_MESSAGE).toContain("apply the plan again");
+    expect(TEMPLATE_SETUP_PAUSE_MESSAGE).toContain("apply the same plan again");
   });
 });

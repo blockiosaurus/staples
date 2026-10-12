@@ -6,6 +6,8 @@ import {
   applyPlanSchema,
   getAppStoreDefinition,
   isToolConnectionAttentionHealth,
+  type AgentTemplateOutwardAction,
+  type AgentTemplateRequiredApp,
   type ApplyPlan,
   type PlanTemplateSummary,
   type RenderedAgentTemplate,
@@ -421,7 +423,7 @@ export function templateDestructiveToolPatterns(rendered: Pick<RenderedAgentTemp
  * the template's outward-action patterns (sending, publishing, deploying...).
  * Drafts and other writes are left to the company's own rules.
  */
-export function templateAccessRules(agent: { id: string; name: string }, rendered: RenderedAgentTemplate): TemplateAccessRule[] {
+export function templateAccessRules(agent: { id: string; name: string }, rendered: TemplateSetupSource): TemplateAccessRule[] {
   const label = (text: string) => `${agent.name}: ${text}`.slice(0, 140) + ` · ${agent.id.slice(0, 8)}`;
   if (rendered.readOnly) {
     return [{
@@ -452,8 +454,51 @@ export function templateAccessRules(agent: { id: string; name: string }, rendere
   return rules;
 }
 
+/**
+ * What a templated agent's guards and record are built from: a freshly
+ * rendered template, or the record stored on an agent hired earlier.
+ */
+export type TemplateSetupSource = Pick<RenderedAgentTemplate, "ref" | "version" | "readOnly" | "outwardActions" | "requiredApps">;
+
+function recordStrings(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? [...value] as string[] : null;
+}
+
+/**
+ * The setup source stored on an agent (`metadata.staplesTemplate`), or null
+ * when the record is missing or malformed. Used to finish setting up an agent
+ * hired earlier without re-rendering its template, whose pinned version may
+ * have changed or which may no longer be available.
+ */
+export function templateSetupSourceFromMetadata(metadata: unknown): TemplateSetupSource | null {
+  const record = metadataRecord(metadataRecord(metadata)[STAPLES_TEMPLATE_METADATA_KEY]);
+  if (typeof record.ref !== "string" || typeof record.version !== "string" || typeof record.readOnly !== "boolean") return null;
+  if (!Array.isArray(record.outwardActions) || !Array.isArray(record.requiredApps)) return null;
+  const outwardActions: AgentTemplateOutwardAction[] = [];
+  for (const raw of record.outwardActions) {
+    const action = metadataRecord(raw);
+    const toolPatterns = recordStrings(action.toolPatterns);
+    if (typeof action.capability !== "string" || typeof action.label !== "string" || !toolPatterns) return null;
+    const destructiveToolPatterns = action.destructiveToolPatterns === undefined ? undefined : recordStrings(action.destructiveToolPatterns);
+    if (destructiveToolPatterns === null) return null;
+    outwardActions.push({
+      ...(action as unknown as AgentTemplateOutwardAction),
+      toolPatterns,
+      ...(destructiveToolPatterns ? { destructiveToolPatterns } : {}),
+    });
+  }
+  const requiredApps: AgentTemplateRequiredApp[] = [];
+  for (const raw of record.requiredApps) {
+    const app = metadataRecord(raw);
+    const anyOf = recordStrings(app.anyOf);
+    if (typeof app.capability !== "string" || !anyOf) return null;
+    requiredApps.push({ ...(app as unknown as AgentTemplateRequiredApp), anyOf });
+  }
+  return { ref: record.ref, version: record.version, readOnly: record.readOnly, outwardActions, requiredApps };
+}
+
 /** What `agents.metadata.staplesTemplate` holds. */
-export function staplesTemplateRecord(rendered: RenderedAgentTemplate) {
+export function staplesTemplateRecord(rendered: TemplateSetupSource) {
   return {
     ref: rendered.ref,
     version: rendered.version,
@@ -473,7 +518,7 @@ export function staplesTemplateRecord(rendered: RenderedAgentTemplate) {
  * rewritten only when it differs. Returns the rules created now.
  */
 export async function ensureTemplateAgentSetup(
-  db: Db, companyId: string, agentId: string, rendered: RenderedAgentTemplate, userId: string | null,
+  db: Db, companyId: string, agentId: string, rendered: TemplateSetupSource, userId: string | null,
 ): Promise<Array<{ id: string; name: string; policyType: string; priority: number }>> {
   const [agent] = await db.select({ id: agents.id, name: agents.name, metadata: agents.metadata }).from(agents)
     .where(and(eq(agents.id, agentId), eq(agents.companyId, companyId)));

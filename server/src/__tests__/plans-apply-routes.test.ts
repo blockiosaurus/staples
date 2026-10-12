@@ -49,6 +49,8 @@ import { applyPlanSchema } from "@paperclipai/shared";
 import { aiConnectionService } from "../services/ai-connections.js";
 import { planHireConnectionsFor } from "../services/assistant-tools.js";
 import { agentTemplatesService } from "../services/agent-templates.js";
+import { defaultAgentTemplates } from "../services/plan-templates.js";
+import { conflict, notFound } from "../errors.js";
 import { agentInstructionsService } from "../services/agent-instructions.js";
 import { approvalService } from "../services/approvals.js";
 import { teamsCatalogService } from "../services/teams-catalog.js";
@@ -1122,6 +1124,60 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       expect(await templatePolicies(devId)).toHaveLength(2);
     }, 240_000);
 
+    it("finishes setup for a held agent from its stored template record when the template changed or is gone", async () => {
+      for (const failure of [
+        () => conflict("Agent template staples/coding-agent is now version 9.9.9; review the plan again."),
+        () => notFound("Agent template not found"),
+      ]) {
+        const s = await seed();
+        let block = true;
+        const built = buildApp(sessionActor(s), {
+          hireAgent: async (actor, companyId, body, origin) => {
+            const response = await injectApiRequest(built.api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin });
+            const hired = (response.json as { agent?: { id: string; name: string } }).agent;
+            if (block && hired) {
+              await db.insert(toolPolicies).values({
+                companyId, name: `${hired.name}: ask before deleting`.slice(0, 140) + ` · ${hired.id.slice(0, 8)}`, policyType: "allow", priority: 900,
+              });
+            }
+            return response;
+          },
+        });
+        const plan = { agents: [await templatedAgent("dev", "staples/coding-agent")] };
+        const first = await apply(built.app, s.companyId, plan, `stored-setup-${s.companyId}`);
+        expect(first.body.code, JSON.stringify(first.body)).toBe("plan_partially_applied");
+        const devId = first.body.partial.agents.dev.id as string;
+        // Mark the stored record so the guards can be traced back to it.
+        const [held] = await db.select().from(agents).where(eq(agents.id, devId));
+        const metadata = held!.metadata as Record<string, Record<string, unknown>>;
+        const actions = (metadata.staplesTemplate.outwardActions as Array<Record<string, unknown>>)
+          .map((action, index) => index === 0 ? { ...action, destructiveToolPatterns: ["*stored_marker*"] } : action);
+        await db.update(agents).set({ metadata: { ...metadata, staplesTemplate: { ...metadata.staplesTemplate, outwardActions: actions } } })
+          .where(eq(agents.id, devId));
+
+        block = false;
+        await db.delete(toolPolicies).where(and(eq(toolPolicies.companyId, s.companyId), eq(toolPolicies.priority, 900)));
+        const render = vi.spyOn(defaultAgentTemplates(), "render").mockRejectedValue(failure());
+        try {
+          const retried = await apply(built.app, s.companyId, plan, `stored-setup-${s.companyId}`);
+          expect(retried.status, JSON.stringify(retried.body)).toBe(201);
+          expect(retried.body.agents.dev.id).toBe(devId);
+          // A new hire still needs the current template.
+          const fresh = await apply(built.app, s.companyId, plan, `stored-setup-new-${s.companyId}`);
+          expect(fresh.status, JSON.stringify(fresh.body)).not.toBe(201);
+        } finally {
+          render.mockRestore();
+        }
+        const [released] = await db.select().from(agents).where(eq(agents.id, devId));
+        expect(released).toMatchObject({ pauseReason: null, lifecycleHolds: [] });
+        expect((released!.metadata as Record<string, Record<string, unknown>>).staplesTemplate.setupPending).toBeUndefined();
+        const guards = await templatePolicies(devId);
+        expect(guards).toHaveLength(2);
+        const destructive = guards.find((row) => (row.config as Record<string, unknown>).templateRule === "destructive")!;
+        expect((destructive.config as Record<string, unknown>).destructiveToolPatterns).toContain("*stored_marker*");
+      }
+    }, 240_000);
+
     it("gives a templated agent no configuration grants: its own credentials cannot weaken guards or reconfigure agents", async () => {
       const s = await seed();
       const { app } = buildApp(sessionActor(s));
@@ -1181,7 +1237,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         }).where(eq(agents.id, devId));
         const patched = await request(agentApp).patch(`/api/agents/${devId}`).send({ status: "idle" });
         expect(patched.status, JSON.stringify(patched.body)).toBe(409);
-        expect(patched.body.error).toBe("Finishing setup — apply the plan again to complete it");
+        expect(patched.body.error).toBe("Setup has not finished — apply the same plan again to finish setting up this agent; it resumes on its own after that");
         const resumed = await request(agentApp).post(`/api/agents/${devId}/resume`).send({});
         expect(resumed.status, JSON.stringify(resumed.body)).toBe(403);
       }
@@ -1207,7 +1263,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       }).where(eq(agents.id, devId));
       const refused = await request(app).patch(`/api/agents/${devId}`).set("Origin", ORIGIN).send({ status: "idle" });
       expect(refused.status, JSON.stringify(refused.body)).toBe(409);
-      expect(refused.body.error).toBe("Finishing setup — apply the plan again to complete it");
+      expect(refused.body.error).toBe("Setup has not finished — apply the same plan again to finish setting up this agent; it resumes on its own after that");
       const [still] = await db.select().from(agents).where(eq(agents.id, devId));
       expect(still!.status).toBe("paused");
 

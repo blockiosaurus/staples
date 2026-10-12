@@ -503,7 +503,7 @@ describe("agent cross-tenant route authorization", () => {
       request(baseUrl).post(`/api/agents/${agentId}/resume`).send({}),
     );
     expect(refused.status).toBe(409);
-    expect(refused.body.error).toBe("Finishing setup — apply the plan again to complete it");
+    expect(refused.body.error).toBe("Setup has not finished — apply the same plan again to finish setting up this agent; it resumes on its own after that");
     expect(mockAgentService.resume).not.toHaveBeenCalled();
 
     mockAgentService.getById.mockResolvedValue({ ...held, metadata: { staplesTemplate: { setupPending: false } } });

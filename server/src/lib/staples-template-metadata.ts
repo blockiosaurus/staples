@@ -59,7 +59,7 @@ export function withStaplesTemplateMarkerFrom(stored: unknown, incoming: Record<
   return { ...(incoming ?? {}), [STAPLES_TEMPLATE_METADATA_KEY]: marker };
 }
 
-export const TEMPLATE_SETUP_RESUME_MESSAGE = "Finishing setup — apply the plan again to complete it";
+export const TEMPLATE_SETUP_RESUME_MESSAGE = "Setup has not finished — apply the same plan again to finish setting up this agent; it resumes on its own after that";
 
 /** A templated agent paused for `template_setup` whose setup has not finished (resuming it would skip its guards). */
 export function isHeldForTemplateSetup(agent: { status?: string | null; pauseReason?: string | null; metadata?: unknown }): boolean {
