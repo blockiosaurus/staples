@@ -160,8 +160,8 @@ describeEmbeddedPostgres("agent Autopilot", () => {
     const response = await request(app(boardActor(s))).get(`/api/agents/${creator}/autopilot`);
     expect(response.status, JSON.stringify(response.body)).toBe(200);
     expect(response.body.categories).toEqual([
-      { capability: "social", label: "Publishing posts", destructiveLabel: "Deleting posts", connection: { id: expect.any(String), appSlug: "x", displayName: "x connection" }, mode: "ask", stale: false, canToggle: true },
-      { capability: "cms", label: "Publishing to your site", destructiveLabel: "Deleting site content", connection: null, mode: "ask", stale: false, canToggle: false },
+      { capability: "social", label: "Publishing posts", destructiveLabel: "Deleting posts", connection: { id: expect.any(String), appSlug: "x", displayName: "x connection" }, mode: "ask", stale: false, canToggle: true, remembered: [] },
+      { capability: "cms", label: "Publishing to your site", destructiveLabel: "Deleting site content", connection: null, mode: "ask", stale: false, canToggle: false, remembered: [] },
     ]);
     // Without a connection, auto is refused (409) and nothing is created.
     const refused = await put(boardActor(s), creator, "cms", "auto");
@@ -169,6 +169,31 @@ describeEmbeddedPostgres("agent Autopilot", () => {
     expect(await autopilotRows(creator)).toHaveLength(0);
     // Unknown category: 404.
     expect((await put(boardActor(s), creator, "payments", "auto")).status).toBe(404);
+  }, 60_000);
+
+  it("reports remembered permissions (trust rules) that allow a category's outward tools", async () => {
+    const s = await seed();
+    const creator = await templatedAgent(s, "staples/content-creator");
+    const other = await templatedAgent(s, "staples/content-creator");
+    const x = await connection(s.companyId, "x", [["create_tweet", "write"], ["get_profile", "read"]]);
+    const trustRule = (agentId: string, toolName: string, extra: Record<string, unknown> = {}) => ({
+      companyId: s.companyId, name: `Trust ${toolName} ${randomUUID().slice(0, 6)}`, policyType: "trust_rule" as const, priority: 40, enabled: true,
+      selectors: { agentId, connectionId: x.id, toolName },
+      config: { trustRule: { argumentFilters: { allowAny: true }, revokedAt: null, expiresAt: null, ...extra } },
+    });
+    const [kept] = await db.insert(toolPolicies).values(trustRule(creator, "create_tweet")).returning();
+    await db.insert(toolPolicies).values([
+      trustRule(creator, "get_profile"), // not an outward tool of the category
+      trustRule(creator, "post_update", { revokedAt: new Date().toISOString() }), // revoked
+      trustRule(other, "create_tweet"), // another agent
+    ]);
+    const response = await request(app(boardActor(s))).get(`/api/agents/${creator}/autopilot`);
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const social = response.body.categories.find((category: { capability: string }) => category.capability === "social");
+    expect(social.remembered).toEqual([{ policyId: kept!.id, toolName: "create_tweet" }]);
+    // Switching the category back to ask keeps reporting the remembered rule.
+    const off = await put(boardActor(s), creator, "social", "ask");
+    expect(off.body.remembered).toEqual([{ policyId: kept!.id, toolName: "create_tweet" }]);
   }, 60_000);
 
   it("auto lifts only the template's outward ask and the connection's seeded Ask first for the category's routine writes", async () => {

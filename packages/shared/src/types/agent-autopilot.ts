@@ -25,6 +25,18 @@ export interface AgentAutopilotCategory {
   stale: boolean;
   /** False while no usable connection satisfies the capability. */
   canToggle: boolean;
+  /**
+   * Remembered permissions ("Always allow" trust rules) scoped to this agent
+   * for this category's outward tools. They allow those calls without asking
+   * whatever the mode says; revoke them to make the agent ask again.
+   */
+  remembered: AgentAutopilotRememberedRule[];
+}
+
+export interface AgentAutopilotRememberedRule {
+  /** The trust rule's tool policy id (revoke via the tools trust-rules API). */
+  policyId: string;
+  toolName: string;
 }
 
 export interface AgentAutopilotState {

@@ -17,9 +17,11 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   setMode: vi.fn(),
   listTemplates: vi.fn(),
+  revokeTrustRule: vi.fn(),
 }));
 
 vi.mock("@/api/agentAutopilot", () => ({ agentAutopilotApi: { get: mocks.get, setMode: mocks.setMode } }));
+vi.mock("@/api/tools", () => ({ toolsApi: { revokeTrustRule: mocks.revokeTrustRule } }));
 vi.mock("@/api/agentTemplates", () => ({ agentTemplatesApi: { list: mocks.listTemplates } }));
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: ReactNode; className?: string }) => (
@@ -54,7 +56,7 @@ const EMAIL_TEMPLATE = {
 };
 
 function category(overrides: Partial<AgentAutopilotCategory> & Pick<AgentAutopilotCategory, "capability" | "label">): AgentAutopilotCategory {
-  return { destructiveLabel: null, connection: null, mode: "ask", stale: false, canToggle: false, ...overrides };
+  return { destructiveLabel: null, connection: null, mode: "ask", stale: false, canToggle: false, remembered: [], ...overrides };
 }
 
 const SOCIAL = category({
@@ -103,7 +105,7 @@ describe("AutopilotPanel", () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <AutopilotPanel agent={{ id: "agent-1", name, metadata }} />
+          <AutopilotPanel agent={{ id: "agent-1", companyId: "company-1", name, metadata }} />
         </QueryClientProvider>,
       );
     });
@@ -115,6 +117,26 @@ describe("AutopilotPanel", () => {
     [...(scope?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? [])].find((button) => button.textContent === label) ?? null;
   const checkedLabel = (scope: HTMLElement | null) =>
     scope?.querySelector('[role="radio"][aria-checked="true"]')?.textContent ?? null;
+
+  it("shows remembered permissions for a category and lets the person make them ask again", async () => {
+    const remembered = [{ policyId: "trust-1", toolName: "create_post" }];
+    mocks.get.mockResolvedValueOnce({ categories: [{ ...SOCIAL, remembered }, CMS] });
+    mocks.get.mockResolvedValue({ categories: [SOCIAL, CMS] });
+    mocks.revokeTrustRule.mockResolvedValue({ id: "trust-1" });
+    await render({ staplesTemplate: CONTENT_TEMPLATE });
+
+    const note = container.querySelector<HTMLElement>('[data-testid="autopilot-remembered-social"]');
+    expect(note?.textContent).toContain("Some actions are always allowed (remembered)");
+    expect(note?.textContent).toContain("create_post");
+    expect(note?.querySelector("a")?.getAttribute("href")).toBe("/PAP/agents/agent-1/tools");
+    expect(container.querySelector('[data-testid="autopilot-remembered-cms"]')).toBeNull();
+
+    const button = [...(note?.querySelectorAll("button") ?? [])].find((entry) => entry.textContent === "Ask first again")!;
+    await act(async () => button.click());
+    await settle();
+    expect(mocks.revokeTrustRule).toHaveBeenCalledWith("company-1", "trust-1", expect.any(String));
+    expect(container.querySelector('[data-testid="autopilot-remembered-social"]')).toBeNull();
+  });
 
   it("shows one row per category with its connection or a Connect link, and its mode", async () => {
     mocks.get.mockResolvedValue({ categories: [SOCIAL, CMS] });

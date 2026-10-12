@@ -467,7 +467,7 @@ function trustRuleNeedsReview(policy: typeof toolPolicies.$inferSelect, ctx: Too
   );
 }
 
-function trustRuleIsActive(policy: typeof toolPolicies.$inferSelect, now = new Date()): boolean {
+export function trustRuleIsActive(policy: typeof toolPolicies.$inferSelect, now = new Date()): boolean {
   const rule = trustRuleConfig(policy);
   if (!rule) return false;
   if (rule.revokedAt) return false;

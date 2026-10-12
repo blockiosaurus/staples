@@ -2,9 +2,11 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AgentAutopilotCategory, AgentAutopilotMode, AgentAutopilotState } from "@paperclipai/shared";
 import { agentAutopilotApi } from "@/api/agentAutopilot";
+import { toolsApi } from "@/api/tools";
 import { Button } from "@/components/ui/button";
 import { Link } from "@/lib/router";
 import { queryKeys } from "@/lib/queryKeys";
+import { agentDetailHref } from "@/pages/agent-detail-navigation";
 import { cn } from "@/lib/utils";
 import { appChoices } from "@/staples/marketplace/templateText";
 import { agentTemplateRecord } from "./templateRecord";
@@ -64,18 +66,72 @@ function ModeControl({
   );
 }
 
+/**
+ * Remembered permissions ("Always allow") for this category's tools. They
+ * allow those calls whatever the mode says, so they are shown here and can
+ * be stopped from here.
+ */
+function RememberedRules({
+  category,
+  toolsHref,
+  revoking,
+  onRevoke,
+}: {
+  category: AgentAutopilotCategory;
+  toolsHref: string;
+  revoking: ReadonlySet<string>;
+  onRevoke: ((policyId: string) => void) | null;
+}) {
+  const remembered = category.remembered ?? [];
+  if (remembered.length === 0) return null;
+  return (
+    <div data-testid={`autopilot-remembered-${category.capability}`} className="flex flex-col gap-1.5 pl-3">
+      <span className="text-xs text-muted-foreground">
+        Some actions are always allowed (remembered). They run without asking, even on Ask first.{" "}
+        <Link to={toolsHref} className="text-foreground underline underline-offset-4 hover:text-muted-foreground">
+          Manage in Tools
+        </Link>
+      </span>
+      <ul className="flex flex-col gap-1">
+        {remembered.map((rule) => (
+          <li key={`${rule.policyId}:${rule.toolName}`} className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-mono text-xs text-foreground">{rule.toolName}</span>
+            {onRevoke ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={revoking.has(rule.policyId)}
+                onClick={() => onRevoke(rule.policyId)}
+              >
+                Ask first again
+              </Button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function CategoryRow({
   category,
   anyOf,
+  toolsHref,
   pending,
   error,
   onChange,
+  revoking,
+  onRevoke,
 }: {
+  toolsHref: string;
   category: AgentAutopilotCategory;
   anyOf: string[];
   pending: boolean;
   error: string | null;
   onChange: (mode: AgentAutopilotMode) => void;
+  revoking: ReadonlySet<string>;
+  onRevoke: ((policyId: string) => void) | null;
 }) {
   const connectLabel = anyOf.length ? appChoices(anyOf) : "an app";
   // A stale marker never applies: the control shows what the agent actually does.
@@ -113,6 +169,7 @@ function CategoryRow({
           <span className="text-xs font-medium text-muted-foreground">Always asks</span>
         </div>
       ) : null}
+      <RememberedRules category={category} toolsHref={toolsHref} revoking={revoking} onRevoke={onRevoke} />
       {error ? (
         <p role="alert" className="text-xs text-destructive">
           {error}
@@ -126,7 +183,7 @@ function CategoryRow({
  * Autopilot for a templated agent: per outward category, whether the agent
  * asks first or acts on its own. Destructive actions always ask.
  */
-export function AutopilotPanel({ agent }: { agent: { id: string; name: string; metadata?: unknown } }) {
+export function AutopilotPanel({ agent }: { agent: { id: string; name: string; urlKey?: string | null; companyId?: string; metadata?: unknown } }) {
   const queryClient = useQueryClient();
   const queryKey = queryKeys.agentAutopilot(agent.id);
   const record = agentTemplateRecord(agent.metadata);
@@ -181,6 +238,26 @@ export function AutopilotPanel({ agent }: { agent: { id: string; name: string; m
     },
   });
 
+  const [revokingIds, setRevokingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+  const revoke = useMutation({
+    mutationFn: (policyId: string) => toolsApi.revokeTrustRule(agent.companyId!, policyId, "Ask first again (Autopilot)"),
+    onMutate: (policyId) => {
+      setRevokeError(null);
+      setRevokingIds((current) => new Set(current).add(policyId));
+    },
+    onError: (error) => setRevokeError(errorText(error, "The remembered permission could not be removed. Try again.")),
+    onSettled: (_data, _error, policyId) => {
+      setRevokingIds((current) => {
+        const next = new Set(current);
+        next.delete(policyId);
+        return next;
+      });
+      void queryClient.invalidateQueries({ queryKey });
+    },
+  });
+  const onRevoke = agent.companyId ? (policyId: string) => revoke.mutate(policyId) : null;
+
   if (!record) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -223,13 +300,21 @@ export function AutopilotPanel({ agent }: { agent: { id: string; name: string; m
               key={category.capability}
               category={category}
               anyOf={record.requiredApps.find((app) => app.capability === category.capability)?.anyOf ?? []}
+              toolsHref={agentDetailHref(agent.urlKey || agent.id, "tools")}
               pending={pendingCapabilities.has(category.capability)}
               error={errors[category.capability] ?? null}
               onChange={(mode) => toggle.mutate({ capability: category.capability, mode })}
+              revoking={revokingIds}
+              onRevoke={onRevoke}
             />
           ))}
         </ul>
       )}
+      {revokeError ? (
+        <p role="alert" className="text-xs text-destructive">
+          {revokeError}
+        </p>
+      ) : null}
     </section>
   );
 }

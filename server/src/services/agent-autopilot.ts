@@ -1,11 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { agents, toolPolicies, type Db } from "@paperclipai/db";
-import type { AgentAutopilotCategory, AgentAutopilotMode } from "@paperclipai/shared";
+import type { AgentAutopilotCategory, AgentAutopilotMode, AgentAutopilotRememberedRule } from "@paperclipai/shared";
 import { conflict, notFound } from "../errors.js";
 import { rawStaplesTemplateMarker } from "../lib/staples-template-metadata.js";
 import { usableAppConnections, type UsableAppConnection } from "./plan-templates.js";
-import { AGENT_AUTOPILOT_POLICY_SOURCE, toolAccessPolicyService } from "./tool-access-policy.js";
+import { AGENT_AUTOPILOT_POLICY_SOURCE, toolAccessPolicyService, toolNamePatternMatches, trustRuleIsActive } from "./tool-access-policy.js";
 
 /**
  * Autopilot: per templated agent and outward category (from the template
@@ -113,11 +113,53 @@ export function agentAutopilotService(db: Db) {
     ));
   }
 
+  /** Active, enabled remembered permissions (trust rules) scoped to the agent. */
+  async function trustRules(companyId: string, agentId: string): Promise<PolicyRow[]> {
+    const rows = await db.select().from(toolPolicies).where(and(
+      eq(toolPolicies.companyId, companyId),
+      eq(toolPolicies.policyType, "trust_rule"),
+      eq(toolPolicies.enabled, true),
+      sql`${toolPolicies.selectors} ->> 'agentId' = ${agentId}`,
+    ));
+    return rows.filter((row) => trustRuleIsActive(row));
+  }
+
+  /**
+   * The remembered rules that allow this category's outward tools: a rule
+   * naming a tool that matches the category's patterns, on the category's
+   * connection (or any connection when the rule names none, or the category
+   * has no connection yet).
+   */
+  function rememberedFor(category: OutwardCategory, connection: UsableAppConnection | null, rules: PolicyRow[]): AgentAutopilotRememberedRule[] {
+    const out: AgentAutopilotRememberedRule[] = [];
+    for (const rule of rules) {
+      const selectors = isRecord(rule.selectors) ? rule.selectors : {};
+      const ruleConnection = typeof selectors.connectionId === "string" ? selectors.connectionId : null;
+      if (connection && ruleConnection && ruleConnection !== connection.id) continue;
+      const names = [
+        ...(typeof selectors.toolName === "string" ? [selectors.toolName] : []),
+        ...strings(selectors.toolNames),
+      ];
+      for (const toolName of names) {
+        if (category.toolPatterns.some((pattern) => toolNamePatternMatches(pattern, toolName))) {
+          out.push({ policyId: rule.id, toolName });
+        }
+      }
+    }
+    return out;
+  }
+
   function connectionFor(category: OutwardCategory, connections: UsableAppConnection[]): UsableAppConnection | null {
     return connections.find((connection) => category.anyOf.includes(connection.appSlug)) ?? null;
   }
 
-  function view(agentId: string, category: OutwardCategory, connection: UsableAppConnection | null, rows: PolicyRow[]): AgentAutopilotCategory {
+  function view(
+    agentId: string,
+    category: OutwardCategory,
+    connection: UsableAppConnection | null,
+    rows: PolicyRow[],
+    remembered: AgentAutopilotRememberedRule[] = [],
+  ): AgentAutopilotCategory {
     const current = rows.some((row) => markerIsCurrent(row, agentId, connection, category));
     return {
       capability: category.capability,
@@ -129,6 +171,7 @@ export function agentAutopilotService(db: Db) {
       // another connection or older patterns): turning auto on again fixes it.
       stale: !current && rows.length > 0,
       canToggle: Boolean(connection),
+      remembered,
     };
   }
 
@@ -144,9 +187,14 @@ export function agentAutopilotService(db: Db) {
     const agent = await loadAgent(companyId, agentId);
     const categories = autopilotCategoriesFromMetadata(agent.metadata);
     if (categories.length === 0) return [];
-    const [connections, rows] = await Promise.all([usableAppConnections(db, companyId), markers(companyId, agentId)]);
-    return categories.map((category) => view(agentId, category, connectionFor(category, connections),
-      rows.filter((row) => markerCapability(row) === category.capability)));
+    const [connections, rows, rules] = await Promise.all([
+      usableAppConnections(db, companyId), markers(companyId, agentId), trustRules(companyId, agentId),
+    ]);
+    return categories.map((category) => {
+      const connection = connectionFor(category, connections);
+      return view(agentId, category, connection, rows.filter((row) => markerCapability(row) === category.capability),
+        rememberedFor(category, connection, rules));
+    });
   }
 
   /**
@@ -166,12 +214,13 @@ export function agentAutopilotService(db: Db) {
       if (!category) {
         if (!existing.length) throw notFound("This agent has no Autopilot category with that name");
         return {
-          category: { capability, label: capability, destructiveLabel: null, connection: null, mode: "ask" as const, stale: false, canToggle: false },
+          category: { capability, label: capability, destructiveLabel: null, connection: null, mode: "ask" as const, stale: false, canToggle: false, remembered: [] },
           changed: true, policyId: removedId,
         };
       }
       const connection = connectionFor(category, await usableAppConnections(db, companyId));
-      return { category: view(agentId, category, connection, []), changed: existing.length > 0, policyId: removedId };
+      const remembered = rememberedFor(category, connection, await trustRules(companyId, agentId));
+      return { category: view(agentId, category, connection, [], remembered), changed: existing.length > 0, policyId: removedId };
     }
 
     if (!category) throw notFound("This agent has no Autopilot category with that name");
@@ -211,7 +260,8 @@ export function agentAutopilotService(db: Db) {
       }
       changed = true;
     }
-    return { category: view(agentId, category, connection, [marker!]), changed, policyId: marker!.id };
+    const remembered = rememberedFor(category, connection, await trustRules(companyId, agentId));
+    return { category: view(agentId, category, connection, [marker!], remembered), changed, policyId: marker!.id };
   }
 
   return { list, setMode };
