@@ -31,6 +31,17 @@ describe("adapter display registry", () => {
     });
   });
 
+  it("shows the hosted Claude adapter as Claude (hosted), never Claude Code", () => {
+    expect(getAdapterLabel("claude_managed")).toBe("Claude (hosted)");
+    expect(getAdapterDisplay("claude_managed")).toMatchObject({
+      label: "Claude (hosted)",
+      description: "Runs in Anthropic's cloud sandbox. Uses your Anthropic API key; billed per use.",
+    });
+    expect(getAdapterDisplay("claude_managed").comingSoon).toBeFalsy();
+    expect(getAdapterDisplay("claude_managed").hideFromVisualSelection).toBeFalsy();
+    expect(JSON.stringify(getAdapterDisplay("claude_managed"))).not.toContain("Claude Code");
+  });
+
   it("drops local suffixes for unknown plugin adapter labels", () => {
     expect(getAdapterLabel("droid_local")).toBe("Droid");
     expect(getAdapterDisplay("droid_local")).toMatchObject({

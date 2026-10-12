@@ -33,7 +33,9 @@ export function configFieldsForSection(
   });
 }
 
-export function schemaFieldSection(key: string): AdapterConfigSection {
+export function schemaFieldSection(key: string, group?: string): AdapterConfigSection {
+  // A schema field may opt into the Advanced section explicitly.
+  if (group === "advanced") return "advanced";
   if (["model", "provider"].includes(key)) return "adapter";
   if (["command", "agentCommand", "args", "extraArgs"].includes(key))
     return "advanced";

@@ -1,6 +1,13 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { setupEfforts } from "./agent-setup-fields";
+import { SETUP_CREDENTIAL_KEYS, setupEfforts } from "./agent-setup-fields";
+
+describe("hosted Claude setup", () => {
+  it("asks for an Anthropic API key and offers no thinking effort", () => {
+    expect(SETUP_CREDENTIAL_KEYS.claude_managed).toBe("ANTHROPIC_API_KEY");
+    expect(setupEfforts("claude_managed", "claude-opus-5-5")).toEqual([]);
+  });
+});
 
 describe("model-specific setup efforts", () => {
   it("offers current Claude efforts without offering them on Haiku", () => {
