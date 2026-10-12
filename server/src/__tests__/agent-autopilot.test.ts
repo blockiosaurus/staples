@@ -160,8 +160,8 @@ describeEmbeddedPostgres("agent Autopilot", () => {
     const response = await request(app(boardActor(s))).get(`/api/agents/${creator}/autopilot`);
     expect(response.status, JSON.stringify(response.body)).toBe(200);
     expect(response.body.categories).toEqual([
-      { capability: "social", label: "Publishing posts", destructiveLabel: null, connection: { id: expect.any(String), appSlug: "x", displayName: "x connection" }, mode: "ask", stale: false, canToggle: true },
-      { capability: "cms", label: "Publishing to your site", destructiveLabel: null, connection: null, mode: "ask", stale: false, canToggle: false },
+      { capability: "social", label: "Publishing posts", destructiveLabel: "Deleting posts", connection: { id: expect.any(String), appSlug: "x", displayName: "x connection" }, mode: "ask", stale: false, canToggle: true },
+      { capability: "cms", label: "Publishing to your site", destructiveLabel: "Deleting site content", connection: null, mode: "ask", stale: false, canToggle: false },
     ]);
     // Without a connection, auto is refused (409) and nothing is created.
     const refused = await put(boardActor(s), creator, "cms", "auto");

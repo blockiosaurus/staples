@@ -192,6 +192,8 @@ describe("tool-name glob matching", () => {
       // The first verb must be a read verb, and no mutating verb may appear anywhere.
       "refund_list", "delete_saved_search", "get_and_charge", "refund_and_get_receipt", "stripe_cancel_list",
       "list_and_send", "getAndUpdateCustomer",
+      // set/add/issue/record are verbs when they lead the name.
+      "issue_refund", "set_price", "add_line_item", "recordPayment", "issue_invoice", "get_issue_and_close",
     ];
     for (const name of blocked) {
       expect(toolNameIsReadOnlyVerb(name), name).toBe(false);
@@ -200,6 +202,8 @@ describe("tool-name glob matching", () => {
     const allowed = [
       "stripe_list_charges", "listRefunds", "get_invoice", "retrieve_balance", "search_customers",
       "stripe.get-invoice", "mcp__stripe__list_payouts", "LIST_CHARGES", "lookup_customer", "countInvoices",
+      // Nouns after a read verb.
+      "get_issue", "get_record", "list_records", "list_issues", "getIssue", "get_settings", "get_add_ons",
     ];
     for (const name of allowed) {
       expect(toolNameIsReadOnlyVerb(name), name).toBe(true);

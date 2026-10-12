@@ -246,11 +246,19 @@ const READ_ONLY_TOOL_VERB_SET = new Set<string>(READ_ONLY_TOOL_VERBS);
 /** Verbs that make a tool name not read-only wherever they appear in it. */
 export const MUTATING_TOOL_VERBS = [
   "create", "update", "delete", "send", "post", "pay", "refund", "charge", "transfer", "cancel", "capture", "close",
-  "merge", "push", "publish", "deploy", "write", "set", "add", "remove", "attach", "apply", "record", "submit",
-  "execute", "withdraw", "modify", "pause", "resume", "issue", "approve", "confirm", "reverse", "archive", "trash",
+  "merge", "push", "publish", "deploy", "write", "remove", "attach", "apply", "submit",
+  "execute", "withdraw", "modify", "pause", "resume", "approve", "confirm", "reverse", "archive", "trash",
   "move", "upload", "import", "sync",
 ] as const;
 const MUTATING_TOOL_VERB_SET = new Set<string>(MUTATING_TOOL_VERBS);
+
+/**
+ * Words that are mutating verbs only when they lead the name, and nouns after
+ * a read verb: `issue_credit`, `record_payment`, `set_price` and `add_note`
+ * are denied, while `get_issue`, `get_record` and `list_records` are read-only.
+ */
+export const LEADING_MUTATING_TOOL_VERBS = ["set", "add", "issue", "record"] as const;
+const LEADING_MUTATING_TOOL_VERB_SET = new Set<string>(LEADING_MUTATING_TOOL_VERBS);
 
 function toolNameWords(name: string): string[] {
   return name
@@ -264,14 +272,16 @@ function toolNameWords(name: string): string[] {
  * on separators and namespaces (`_`, `-`, `.`, `/`, `:`...) and camelCase.
  * The first verb-like word (after any namespace prefix such as `stripe_` or
  * `mcp__stripe__`) must be a read verb, and no word anywhere may be a
- * mutating verb. `stripe_list_charges`, `listRefunds` and `get-invoice`
+ * mutating verb (`set`, `add`, `issue` and `record` count only when they come
+ * first). `stripe_list_charges`, `listRefunds`, `get-invoice` and `get_issue`
  * qualify; `refund_list`, `delete_saved_search`, `get_and_charge`,
- * `refundPayment` and `listing` do not.
+ * `refundPayment`, `record_payment` and `listing` do not.
  */
 export function toolNameIsReadOnlyVerb(name: string): boolean {
   if (!name || name.length > 512) return false;
   const words = toolNameWords(name);
-  const firstVerb = words.find((word) => READ_ONLY_TOOL_VERB_SET.has(word) || MUTATING_TOOL_VERB_SET.has(word));
+  const firstVerb = words.find((word) =>
+    READ_ONLY_TOOL_VERB_SET.has(word) || MUTATING_TOOL_VERB_SET.has(word) || LEADING_MUTATING_TOOL_VERB_SET.has(word));
   if (!firstVerb || !READ_ONLY_TOOL_VERB_SET.has(firstVerb)) return false;
   return !words.some((word) => MUTATING_TOOL_VERB_SET.has(word));
 }
