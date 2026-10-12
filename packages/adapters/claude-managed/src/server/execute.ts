@@ -563,7 +563,9 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
     if (prior && prior.environmentFingerprint === envFingerprint) {
       try {
         const env = await client.getEnvironment(prior.environmentId, { signal });
-        if (!env.archived_at) return env.id;
+        // A stored id is trusted only if this agent, company and instance own it
+        // (a fork instance with a copied database must not drive the original's resources).
+        if (!env.archived_at && ownedByThisAgent(env.metadata)) return env.id;
       } catch (error) {
         if (!(error instanceof ManagedAgentsApiError && error.status === 404)) throw error;
       }
@@ -596,7 +598,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
     if (prior) {
       try {
         const found = await client.getAgent(prior.managedAgentId, { signal });
-        if (!found.archived_at) current = found;
+        if (!found.archived_at && ownedByThisAgent(found.metadata)) current = found;
       } catch (error) {
         if (!(error instanceof ManagedAgentsApiError && error.status === 404)) throw error;
       }
@@ -679,6 +681,10 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
       let existing: ManagedSession | null = null;
       try {
         existing = await client.getSession(prior.sessionId, { signal });
+        if (!ownedByThisAgent(existing.metadata)) {
+          notes.push(`Stored session ${prior.sessionId} is not owned by this agent and instance; starting a new session.`);
+          existing = null;
+        }
       } catch (error) {
         if (!(error instanceof ManagedAgentsApiError && error.status === 404)) throw error;
       }

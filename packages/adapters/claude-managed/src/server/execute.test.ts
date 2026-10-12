@@ -644,6 +644,36 @@ describe("claude_managed agent and environment reuse", () => {
     expect(sessionCodec.deserialize(second.sessionParams)).toMatchObject({ managedAgentVersion: 2 });
   });
 
+  it("ignores stored session params whose resources another instance owns", async () => {
+    fake.queueTurns(turn("one", 1), turn("two", 1));
+    const first = await execute(harness().ctx, { instanceId: "instance-a" });
+    const firstSession = fake.sessionIds()[0];
+    // A fork instance with a copied database (same agent, company and stored ids).
+    const second = await execute(harness({ sessionParams: first.sessionParams }).ctx, { instanceId: "instance-b" });
+    expect(second.exitCode).toBe(0);
+    expect(requestsMatching("POST", /^\/v1\/agents$/)).toHaveLength(2);
+    expect(requestsMatching("POST", /^\/v1\/agents\/[^/]+$/)).toHaveLength(0);
+    expect(requestsMatching("POST", /^\/v1\/environments$/)).toHaveLength(2);
+    expect(fake.sessionIds()).toHaveLength(2);
+    expect(second.sessionDisplayId).not.toBe(firstSession);
+    // The original session was never touched: one user.message, no interrupt, no update.
+    expect(fake.receivedEvents(firstSession).map((e) => e.type)).toEqual(["user.message"]);
+    expect(requestsMatching("POST", new RegExp(`^/v1/sessions/${firstSession}($|/archive)`))).toHaveLength(0);
+  });
+
+  it("starts a new session when the stored session carries another instance id", async () => {
+    fake.queueTurns(turn("one", 1), turn("two", 1));
+    const first = await execute(harness().ctx, { instanceId: "instance-a" });
+    const firstSession = fake.sessionIds()[0];
+    fake.setMetadata("session", firstSession, { staples_agent_id: "agent-1234567890", staples_company_id: "company-1", staples_instance_id: "instance-x" });
+    const second = await execute(harness({ sessionParams: first.sessionParams }).ctx, { instanceId: "instance-a" });
+    expect(second.exitCode).toBe(0);
+    expect(fake.sessionIds()).toHaveLength(2);
+    expect(second.sessionDisplayId).not.toBe(firstSession);
+    expect(requestsMatching("POST", /^\/v1\/agents$/)).toHaveLength(1);
+    expect(fake.receivedEvents(firstSession).map((e) => e.type)).toEqual(["user.message"]);
+  });
+
   it("creates a new agent when the stored one was archived", async () => {
     fake.queueTurns(turn("one", 1), turn("two", 1));
     const first = await execute(harness().ctx);

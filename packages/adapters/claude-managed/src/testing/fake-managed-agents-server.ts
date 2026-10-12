@@ -95,6 +95,7 @@ interface FakeSession {
   toolResults: Map<string, Record<string, unknown>>;
   usage: { input_tokens: number; output_tokens: number; list_cost_cents: number };
   stopReason: Record<string, unknown> | null;
+  metadata: Record<string, string>;
 }
 
 let idCounter = 0;
@@ -249,6 +250,17 @@ export class FakeManagedAgentsServer {
   archiveAgent(agentId: string): void {
     const agent = this.agents.get(agentId);
     if (agent) agent.archived_at = new Date().toISOString();
+  }
+
+  /** Replaces the metadata of an agent, environment or session (simulates resources owned by someone else). */
+  setMetadata(kind: "agent" | "environment" | "session", id: string, metadata: Record<string, string>): void {
+    if (kind === "session") {
+      const session = this.sessions.get(id);
+      if (session) session.metadata = { ...metadata };
+      return;
+    }
+    const record = (kind === "agent" ? this.agents : this.environments).get(id);
+    if (record) record.metadata = { ...metadata };
   }
 
   /** Ends every open stream for a session without an idle event (a dropped connection). */
@@ -443,6 +455,7 @@ export class FakeManagedAgentsServer {
         toolResults: new Map(),
         usage: { input_tokens: 0, output_tokens: 0, list_cost_cents: 0 },
         stopReason: null,
+        metadata: { ...((params.metadata as Record<string, string> | undefined) ?? {}) },
       };
       this.sessions.set(session.id, session);
       return this.sendJson(res, 200, this.sessionJson(session));
@@ -662,7 +675,7 @@ export class FakeManagedAgentsServer {
       stop_reason: session.status === "idle" ? session.stopReason : null,
       created_at: now,
       updated_at: now,
-      metadata: {},
+      metadata: { ...session.metadata },
       usage: {
         input_tokens: session.usage.input_tokens,
         output_tokens: session.usage.output_tokens,
