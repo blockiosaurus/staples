@@ -58,6 +58,22 @@ export interface ExecuteDeps {
   settleTimeoutMs?: number;
   /** Poll interval while waiting for a resumed session to settle. */
   settlePollMs?: number;
+  /**
+   * Stable id of the Staples instance running this adapter. The server passes
+   * `resolvePaperclipInstanceId()` (PAPERCLIP_INSTANCE_ID, default "default").
+   * It is written into Managed Agents metadata and filtered on during adoption,
+   * so a worktree/fork instance that copied the database (same company and agent
+   * ids) never adopts the original instance's agents or environments.
+   */
+  instanceId?: string;
+}
+
+/** Instance discriminator: explicit deps value, else PAPERCLIP_INSTANCE_ID, else "default". */
+export function resolveInstanceId(deps: Pick<ExecuteDeps, "instanceId" | "env">): string {
+  const explicit = deps.instanceId?.trim();
+  if (explicit) return explicit;
+  const fromEnv = (deps.env ?? process.env).PAPERCLIP_INSTANCE_ID?.trim();
+  return fromEnv || "default";
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +445,13 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
   const configuredEnvironmentId = asString(config.environmentId, "").trim() || null;
   const remainingBudgetUsd = resolveRemainingBudgetUsd(context);
   const sessionBudget: BudgetLimit | null = remainingBudgetUsd !== null ? budgetFromUsd(remainingBudgetUsd) : null;
-  const ownerMetadata = { staples_agent_id: agent.id, staples_company_id: agent.companyId };
+  const instanceId = resolveInstanceId(deps);
+  const ownerMetadata = { staples_agent_id: agent.id, staples_company_id: agent.companyId, staples_instance_id: instanceId };
+  /** Adoption filter: only resources created by this Staples agent, company and instance. */
+  const ownedByThisAgent = (metadata: Record<string, string> | null | undefined): boolean =>
+    metadata?.staples_agent_id === agent.id
+    && metadata?.staples_company_id === agent.companyId
+    && metadata?.staples_instance_id === instanceId;
 
   let managedAgentId: string | null = null;
   let managedAgentVersion = 0;
@@ -535,7 +557,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
     // Adopt this Staples agent's environment (created by an earlier task) before creating one.
     const existing = await listAll((page) => client.listEnvironments({ limit: LIST_PAGE_LIMIT, page }, { signal }));
     const match = newest(existing.filter((env) =>
-      !env.archived_at && env.metadata?.staples_agent_id === agent.id && env.metadata?.staples_env_fingerprint === envFingerprint));
+      !env.archived_at && ownedByThisAgent(env.metadata) && env.metadata?.staples_env_fingerprint === envFingerprint));
     if (match) {
       notes.push(`Reusing cloud environment ${match.id}.`);
       return match.id;
@@ -568,7 +590,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
     if (!current) {
       // Adopt this Staples agent's Managed Agents agent (created by an earlier task).
       const existing = await listAll((page) => client.listAgents({ limit: LIST_PAGE_LIMIT, page }, { signal }));
-      current = newest(existing.filter((a) => !a.archived_at && a.metadata?.staples_agent_id === agent.id));
+      current = newest(existing.filter((a) => !a.archived_at && ownedByThisAgent(a.metadata)));
       if (current) notes.push(`Reusing Managed Agents agent ${current.id}.`);
     }
     if (!current) {
@@ -594,18 +616,28 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
     managedAgentVersion = current.version;
   }
 
-  /** Interrupts a resumed session left running (or waiting on tools) by a crashed run. */
+  /**
+   * Interrupts a resumed session left running (or waiting on tools) by a crashed run.
+   * Returns null (start a new session) when it does not settle in time, or when the
+   * interrupt or a status poll fails; only a cancellation is rethrown.
+   */
   async function settleSession(id: string): Promise<ManagedSession | null> {
-    await client.sendEvents(id, [{ type: "user.interrupt" }], { retry: "all", signal });
-    const deadline = Date.now() + (deps.settleTimeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS);
-    while (Date.now() < deadline) {
-      await sleep(deps.settlePollMs ?? DEFAULT_SETTLE_POLL_MS, signal);
-      if (signal?.aborted) throw new Error("cancelled");
-      const session = await client.getSession(id, { signal });
-      if (session.archived_at || session.status === "terminated") return null;
-      if (!sessionNeedsSettle(session)) return session;
+    try {
+      await client.sendEvents(id, [{ type: "user.interrupt" }], { retry: "all", signal });
+      const deadline = Date.now() + (deps.settleTimeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS);
+      while (Date.now() < deadline) {
+        await sleep(deps.settlePollMs ?? DEFAULT_SETTLE_POLL_MS, signal);
+        if (signal?.aborted) throw new Error("cancelled");
+        const session = await client.getSession(id, { signal });
+        if (session.archived_at || session.status === "terminated") return null;
+        if (!sessionNeedsSettle(session)) return session;
+      }
+      return null;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      notes.push(`Could not settle session ${id} (${messageOf(error)}).`);
+      return null;
     }
-    return null;
   }
 
   async function resolveSession(): Promise<void> {
@@ -915,11 +947,13 @@ async function runTurn(input: {
   let outcome: TurnOutcome | null = null;
   try {
     let stream: AsyncIterable<ManagedAgentsEvent>;
+    let sendAttempted = false;
     try {
       // Open the stream BEFORE sending: the API does not replay earlier events.
       stream = await client.openEventStream(sessionId, { signal: streamAbort.signal });
       if (ctx.signal?.aborted) throw new Error("cancelled");
       // A user.message is never retried on 5xx (it may already have been accepted).
+      sendAttempted = true;
       await client.sendEvents(sessionId, [{ type: "user.message", content: [{ type: "text", text: input.prompt }] }], {
         retry: "safe",
         signal: ctx.signal,
@@ -934,6 +968,8 @@ async function runTurn(input: {
         await refreshUsage();
         return await input.finish({ status: "cancelled", error: "Run cancelled while sending the task; the session was interrupted." });
       }
+      // A failed send (e.g. a 5xx) may still have been accepted and started a turn: stop it.
+      if (sendAttempted) await interrupt(STREAM_FAILURE_INTERRUPT_TIMEOUT_MS);
       await refreshUsage();
       return await input.finish({ status: "failed", error: messageOf(error), errorFamily: errorFamilyFor(error) ?? undefined });
     }

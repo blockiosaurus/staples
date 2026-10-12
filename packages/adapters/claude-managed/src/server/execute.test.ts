@@ -278,7 +278,10 @@ describe("claude_managed execute", () => {
     const result = await execute(harness().ctx);
     expect(result.exitCode).toBe(1);
     expect(result.errorMessage).toContain("500");
-    expect(requestsMatching("POST", /\/events$/)).toHaveLength(1);
+    const messages = requestsMatching("POST", /\/events$/).filter(
+      (r) => (r.body as { events: Array<{ type: string }> }).events[0].type === "user.message",
+    );
+    expect(messages).toHaveLength(1);
   });
 
   it("cancellation sends user.interrupt, returns promptly and keeps the session", async () => {
@@ -526,7 +529,67 @@ describe("claude_managed cancellation and recovery", () => {
   });
 });
 
+describe("claude_managed settle and send failures", () => {
+  async function stuckSession() {
+    fake.queueTurns(turn("first", 1), [{ kind: "emit", event: fakeEvents.running() }, { kind: "hang" }], turn("second", 1));
+    const first = await execute(harness().ctx);
+    const stuck = fake.sessionIds()[0];
+    await sendUserMessage(stuck);
+    await vi.waitFor(() => expect(fake.getSessionStatus(stuck)).toBe("running"));
+    return { first, stuck };
+  }
+
+  it("starts a new session when the settle interrupt cannot be sent", async () => {
+    const { first, stuck } = await stuckSession();
+    fake.failNext({ method: "POST", path: `/v1/sessions/${stuck}/events`, status: 400 });
+    const second = await execute(harness({ sessionParams: first.sessionParams }).ctx, { settlePollMs: 20 });
+    expect(second.exitCode).toBe(0);
+    expect(fake.sessionIds()).toHaveLength(2);
+    expect(second.sessionDisplayId).not.toBe(stuck);
+  });
+
+  it("starts a new session when polling the settling session fails", async () => {
+    const { first, stuck } = await stuckSession();
+    fake.ignoreInterrupts = true;
+    // The resume lookup passes; every settle poll after it fails.
+    fake.failNext({ method: "GET", path: `/v1/sessions/${stuck}`, status: 200, passThrough: true });
+    fake.failNext({ method: "GET", path: `/v1/sessions/${stuck}`, status: 400, times: 50 });
+    const second = await execute(harness({ sessionParams: first.sessionParams }).ctx, { settlePollMs: 20 });
+    expect(second.exitCode).toBe(0);
+    expect(fake.sessionIds()).toHaveLength(2);
+    expect(second.sessionDisplayId).not.toBe(stuck);
+  });
+
+  it("interrupts the session when the user.message send fails with a 5xx", async () => {
+    fake.failNext({ method: "POST", path: /\/events$/, status: 500 });
+    const result = await execute(harness().ctx);
+    expect(result.exitCode).toBe(1);
+    const types = requestsMatching("POST", /\/events$/).map((r) => (r.body as { events: Array<{ type: string }> }).events[0].type);
+    expect(types).toEqual(["user.message", "user.interrupt"]);
+  });
+});
+
 describe("claude_managed agent and environment reuse", () => {
+  it("writes company and instance ids into metadata and only adopts resources from the same instance", async () => {
+    fake.queueTurns(turn("one", 1), turn("two", 1), turn("three", 1));
+    await execute(harness().ctx, { instanceId: "instance-a" });
+    const agentCreate = requestsMatching("POST", /^\/v1\/agents$/)[0].body as { metadata: Record<string, string> };
+    expect(agentCreate.metadata).toMatchObject({ staples_agent_id: "agent-1234567890", staples_company_id: "company-1", staples_instance_id: "instance-a" });
+    const envCreate = requestsMatching("POST", /^\/v1\/environments$/)[0].body as { metadata: Record<string, string> };
+    expect(envCreate.metadata).toMatchObject({ staples_company_id: "company-1", staples_instance_id: "instance-a" });
+
+    // A forked instance with the same agent and company ids creates its own resources.
+    await execute(harness().ctx, { instanceId: "instance-b" });
+    expect(requestsMatching("POST", /^\/v1\/agents$/)).toHaveLength(2);
+    expect(requestsMatching("POST", /^\/v1\/environments$/)).toHaveLength(2);
+
+    // A different company with the same agent id does not adopt either.
+    const other = harness();
+    other.ctx.agent = { ...other.ctx.agent, companyId: "company-2" };
+    await execute(other.ctx, { instanceId: "instance-a" });
+    expect(requestsMatching("POST", /^\/v1\/agents$/)).toHaveLength(3);
+  });
+
   it("adopts the Staples agent's existing Managed Agents agent and environment for a new task", async () => {
     fake.queueTurns(turn("task one", 1), turn("task two", 1));
     const one = await execute(harness().ctx);
