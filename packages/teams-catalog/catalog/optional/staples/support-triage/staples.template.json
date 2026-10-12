@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "tagline": "Sorts customer messages, drafts answers and escalates problems",
   "icon": "life-buoy",
   "marketplaceCategory": "communication",
@@ -44,7 +44,13 @@
     }
   ],
   "outwardActions": [
-    { "capability": "inbox", "label": "Replying to customers", "toolPatterns": ["*send*", "*reply*", "*forward*", "*post*"] }
+    {
+      "capability": "inbox",
+      "label": "Replying to customers",
+      "destructiveLabel": "Deleting or archiving messages",
+      "toolPatterns": ["*send*", "*reply*", "*forward*", "*post*"],
+      "destructiveToolPatterns": ["*delete*", "*trash*", "*archive*"]
+    }
   ],
   "defaultBudgetMonthlyCents": 4000
 }

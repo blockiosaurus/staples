@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@paperclipai/teams-catalog",
   "packageVersion": "0.1.0",
-  "generatedAt": "2026-10-11T21:30:31.146Z",
+  "generatedAt": "2026-10-12T01:31:45.613Z",
   "teams": [
     {
       "id": "paperclipai:bundled:company-defaults:core-exec-team",
@@ -579,14 +579,14 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 1755,
-          "sha256": "72c53745a82bfe646a96a4cd58f9a0cdd7cb42282709b1ca7fc2fdb5899d2e2e"
+          "sha256": "a153adf24f233fd889ff45cedcb4f251c94d58650376c70f1ff139f66b687913"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:46934ffad43379ca3872adac89e33eea29ec1f7c573320fb9d9c3c3b6ea0e37f",
+      "contentHash": "sha256:ea2f4ab3282cd41052692ca55b11bd84806291a17567a50f0c654e9c22b38c2b",
       "staplesTemplate": {
-        "version": "1.0.0",
+        "version": "1.1.0",
         "tagline": "Read-only weekly summaries of your revenue and spending",
         "icon": "calculator",
         "marketplaceCategory": "finance",
@@ -801,14 +801,14 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 2232,
-          "sha256": "07fec67ae2f16410d7511ab61af5476b61b1c0431e7c288478c993244039a182"
+          "sha256": "06048274dc8e120ae41141b1fc9a3205c8d5e1d850997998e2d88af8d3698cf2"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:3216606c1b5814accef1b21faf741ecd811fde851762b122630608b74d16022d",
+      "contentHash": "sha256:28e1cb99572173724c7d99b44dd5c19855e5a7c23e3c4cb06c8e1a314c335471",
       "staplesTemplate": {
-        "version": "1.0.1",
+        "version": "1.1.0",
         "tagline": "Triages GitHub issues, fixes bugs and opens pull requests for review",
         "icon": "code",
         "marketplaceCategory": "engineering",
@@ -1002,15 +1002,15 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2415,
-          "sha256": "5c7b35aef40032cd6153d8d5e51e506616f2a3a284a738e0ca4e281786357ecf"
+          "sizeBytes": 2648,
+          "sha256": "114ab48ed1458b940e65e4e048b7513bfd8bf3b247a3e9c79eabcd5c4e4c8469"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:f32b9e7f7b241ee5b02eb75aa8e70a8324d39a6ab2902c6271db67d8d8b70760",
+      "contentHash": "sha256:0240c9883c2f9d14065bac4b7cb788b9f33773c44442e280460cadd453367d31",
       "staplesTemplate": {
-        "version": "1.0.0",
+        "version": "1.1.0",
         "tagline": "Plans, writes and publishes your posts on a steady schedule",
         "icon": "pen-line",
         "marketplaceCategory": "content",
@@ -1101,19 +1101,27 @@
           {
             "capability": "social",
             "label": "Publishing posts",
+            "destructiveLabel": "Deleting posts",
             "toolPatterns": [
               "*post*",
               "*publish*",
               "*share*",
               "*tweet*",
               "*schedule*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*"
             ]
           },
           {
             "capability": "cms",
             "label": "Publishing to your site",
+            "destructiveLabel": "Deleting site content",
             "toolPatterns": [
               "*publish*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*"
             ]
           }
         ],
@@ -1187,14 +1195,14 @@
         {
           "path": "TEAM.md",
           "kind": "team",
-          "sizeBytes": 1776,
-          "sha256": "15f5ec559730d11f9cc478e8080c9b594b9d683d9045883a236dfa7a4bdc2954"
+          "sizeBytes": 1888,
+          "sha256": "9bbbe1614f7b81e212305da73531d9f4d5688cbc22678007af2374065d71ff4e"
         },
         {
           "path": "agents/email-secretary/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 6258,
-          "sha256": "cf276f3a46a374d5d6c3cd6196422308bb992449c1e814f07b1ff027e296b25c"
+          "sizeBytes": 6380,
+          "sha256": "df4a0bad05c4dba885ced4bfb47e2a6eb1f7357547044d68e4bbd6343fe6453a"
         },
         {
           "path": "projects/inbox/PROJECT.md",
@@ -1235,15 +1243,15 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2560,
-          "sha256": "3142c9201dda39b0013b84002797be92d9a2dddf14be2013ff3a3143b404f7aa"
+          "sizeBytes": 2932,
+          "sha256": "a8e694ddfb7483ab2f85f7aadf59c7fd0dd4955a76108646c3559e6e895d6760"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:5135b4b9d90987458a813315d246b045906997d740cbe4e72973ff1e9881eb28",
+      "contentHash": "sha256:7f80da003a4b793b869193336c2f585bc4fecec81ef45c356f880b6b2724800a",
       "staplesTemplate": {
-        "version": "1.0.1",
+        "version": "1.1.0",
         "tagline": "Sorts your inbox, drafts replies and sends a daily digest",
         "icon": "mail",
         "marketplaceCategory": "communication",
@@ -1329,6 +1337,25 @@
             "destructiveToolPatterns": [
               "*delete*",
               "*trash*"
+            ]
+          },
+          {
+            "capability": "calendar",
+            "label": "Accepting meetings or changing your calendar",
+            "destructiveLabel": "Deleting calendar events",
+            "toolPatterns": [
+              "*create_event*",
+              "*update_event*",
+              "*patch_event*",
+              "*move_event*",
+              "*insert_event*",
+              "*quick_add*",
+              "*respond*",
+              "*accept*",
+              "*decline*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*"
             ]
           }
         ],
@@ -1460,15 +1487,15 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2457,
-          "sha256": "cf630305d0d533448a0ac6ebe3d95eb0c2870c288d005c2b9ec551da8c2827ab"
+          "sizeBytes": 2569,
+          "sha256": "2939d14c192e0a6354639fd2eba6e8ee866e61c816a278ef5394c3db8c297628"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:3cd15b1023f7eb5ac2276649399c8e6367822a33c1b192d26fd1a3e2d54d10e2",
+      "contentHash": "sha256:9d6857179d980111963b523527fc26d010ae356ba782b92b3591902841cc116d",
       "staplesTemplate": {
-        "version": "1.0.0",
+        "version": "1.1.0",
         "tagline": "Researches, writes and schedules your newsletter on time",
         "icon": "newspaper",
         "marketplaceCategory": "content",
@@ -1546,10 +1573,14 @@
           {
             "capability": "newsletter",
             "label": "Sending to your list",
+            "destructiveLabel": "Deleting issues, lists or campaigns",
             "toolPatterns": [
               "*send*",
               "*schedule*",
               "*publish*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*"
             ]
           }
         ],
@@ -1682,14 +1713,14 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 2026,
-          "sha256": "ea207df5664eb72f3b902564b41ddf627421968b403c757e06a4472001b01fe3"
+          "sha256": "f32515092ae42d3fe323b59875e88e14cf82406ad2d388c185ccef9faf059749"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:e27a254854efccbb7b33a8d4edb59961d83797bde27ceada1927c0cf9fc9bbad",
+      "contentHash": "sha256:c0cfaa79f83aaab892465138d6e3726774cf5f16114c771cc3fe4072b888cd9c",
       "staplesTemplate": {
-        "version": "1.0.0",
+        "version": "1.1.0",
         "tagline": "A weekly brief on your market, competitors and customers",
         "icon": "search",
         "marketplaceCategory": "research",
@@ -1876,15 +1907,15 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2363,
-          "sha256": "e6a1e533d2d3792d785827ea1af1eff281b7743165dfb333dded2548ab47a9b9"
+          "sizeBytes": 2488,
+          "sha256": "f9e403815c8f067a7a3290e8fcfed9471d26dccea7218aa27806bbcf86776165"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:975dabccdfa323ba063bbddf474e5f03783e9cb4415145bf3fa296f982d2ed26",
+      "contentHash": "sha256:f333ca46a9dae90a24aeaf4b18ca2753a8d461ec6cfbfc1ddfb2d80d98a8b5ae",
       "staplesTemplate": {
-        "version": "1.0.0",
+        "version": "1.1.0",
         "tagline": "Plans your social posts each week and keeps an eye on replies",
         "icon": "share-2",
         "marketplaceCategory": "content",
@@ -1977,6 +2008,7 @@
           {
             "capability": "social",
             "label": "Posting",
+            "destructiveLabel": "Deleting posts",
             "toolPatterns": [
               "*post*",
               "*publish*",
@@ -1985,6 +2017,10 @@
               "*schedule*",
               "*reply*",
               "*comment*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*",
+              "*remove*"
             ]
           }
         ],
@@ -2100,15 +2136,15 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2101,
-          "sha256": "58df93f32695988c4cac556946628c29947c01ee688d3ba0063fcb573867381d"
+          "sizeBytes": 2254,
+          "sha256": "565338c48c18048288f1b73b0e776ebec7e92a0146ff1a676e1e24c69b10e87c"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:ea3051337b0da0b677711e2556ae07b7c60cebdc00749df93d25d55253a6ab42",
+      "contentHash": "sha256:5eefebc5be625138ce46d3e1b197e3d4b9183dd1a06a59134195313652f7956c",
       "staplesTemplate": {
-        "version": "1.0.0",
+        "version": "1.1.0",
         "tagline": "Sorts customer messages, drafts answers and escalates problems",
         "icon": "life-buoy",
         "marketplaceCategory": "communication",
@@ -2173,11 +2209,17 @@
           {
             "capability": "inbox",
             "label": "Replying to customers",
+            "destructiveLabel": "Deleting or archiving messages",
             "toolPatterns": [
               "*send*",
               "*reply*",
               "*forward*",
               "*post*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*",
+              "*trash*",
+              "*archive*"
             ]
           }
         ],
@@ -2293,15 +2335,15 @@
         {
           "path": "staples.template.json",
           "kind": "other",
-          "sizeBytes": 2101,
-          "sha256": "6eeeeaac2bef59f2c826cd1b324445832cf86c5766aa81ac8ea737aa0ef92d11"
+          "sizeBytes": 2401,
+          "sha256": "ef5ef8ac0220f15ee54033206f1e46c3d9875750319750a4b73d65d47db82aab"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:7b122d948ee23d7630d4cbfdb9cef21b9fbeb6e71ecd467f9ae97ae01050d9fb",
+      "contentHash": "sha256:81ab8f3d3a391a0c925527d3207051444ec9463e659857c9af587f5162bcfd3e",
       "staplesTemplate": {
-        "version": "1.0.0",
+        "version": "1.1.0",
         "tagline": "Builds a simple website, shares previews and checks it every week",
         "icon": "globe",
         "marketplaceCategory": "engineering",
@@ -2371,12 +2413,24 @@
           {
             "capability": "hosting",
             "label": "Publishing to your live site",
+            "destructiveLabel": "Deleting a site or deployment, or buying or moving a domain",
             "toolPatterns": [
               "*deploy*",
               "*publish*",
               "*promote*",
               "*alias*",
-              "*domain*"
+              "*add_domain*",
+              "*assign_domain*",
+              "*set_domain*",
+              "*update_domain*",
+              "*create_domain*",
+              "*domain_add*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*",
+              "*remove*",
+              "*buy_domain*",
+              "*transfer_domain*"
             ]
           }
         ],

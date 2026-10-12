@@ -1,5 +1,5 @@
 {
-  "version": "1.0.1",
+  "version": "1.1.0",
   "tagline": "Sorts your inbox, drafts replies and sends a daily digest",
   "icon": "mail",
   "marketplaceCategory": "communication",
@@ -79,6 +79,13 @@
       "destructiveLabel": "Deleting email",
       "toolPatterns": ["*send*", "*reply*", "*forward*"],
       "destructiveToolPatterns": ["*delete*", "*trash*"]
+    },
+    {
+      "capability": "calendar",
+      "label": "Accepting meetings or changing your calendar",
+      "destructiveLabel": "Deleting calendar events",
+      "toolPatterns": ["*create_event*", "*update_event*", "*patch_event*", "*move_event*", "*insert_event*", "*quick_add*", "*respond*", "*accept*", "*decline*"],
+      "destructiveToolPatterns": ["*delete*"]
     }
   ],
   "defaultBudgetMonthlyCents": 3000,

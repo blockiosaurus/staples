@@ -41,6 +41,12 @@ async function readTemplateFiles(teamId: string, paths: string[]) {
   return files;
 }
 
+async function readSidecar(slug: string): Promise<{ version: string; outwardActions: Array<{ label: string; destructiveToolPatterns?: string[] }> }> {
+  const team = (await shippedTemplateTeams()).find((entry) => entry.slug === slug);
+  if (!team) throw new Error(`missing template ${slug}`);
+  return JSON.parse((await readCatalogTeamFile(team.id, AGENT_TEMPLATE_SIDECAR_FILE)).content);
+}
+
 function recommendedAnswers(questions: PaperclipQuestionSetQuestion[]): AgentTemplateAnswers {
   const answers: AgentTemplateAnswers = {};
   for (const question of questions) {
@@ -161,7 +167,15 @@ describe("shipped Staples agent templates", () => {
     expect(rendered.agent.instructionsMarkdown).toContain("Call them: Dana Smith");
     expect(rendered.outwardActions).toEqual([
       { capability: "email", label: "Sending email", destructiveLabel: "Deleting email", toolPatterns: ["*send*", "*reply*", "*forward*"], destructiveToolPatterns: ["*delete*", "*trash*"] },
+      {
+        capability: "calendar",
+        label: "Accepting meetings or changing your calendar",
+        destructiveLabel: "Deleting calendar events",
+        toolPatterns: ["*create_event*", "*update_event*", "*patch_event*", "*move_event*", "*insert_event*", "*quick_add*", "*respond*", "*accept*", "*decline*"],
+        destructiveToolPatterns: ["*delete*"],
+      },
     ]);
+    expect(rendered.requiredApps.find((app) => app.capability === "calendar")).toMatchObject({ optional: true, anyOf: ["google-calendar"] });
     expect(rendered.routines.map((routine) => [routine.title, routine.cronExpression])).toEqual([
       ["Daily digest", "0 17 * * 1-5"],
       ["Morning inbox sweep", "0 8 * * 1-5"],
@@ -263,6 +277,30 @@ describe("shipped Staples agent templates", () => {
     ]);
   });
 
+  it("guards deletion by name wherever the instructions promise it always needs approval", async () => {
+    const expected: Record<string, string[]> = {
+      "staples/website-builder": ["*delete*", "*remove*", "*buy_domain*", "*transfer_domain*"],
+      "staples/social-media-manager": ["*delete*", "*remove*"],
+      "staples/support-triage": ["*delete*", "*trash*", "*archive*"],
+      "staples/newsletter": ["*delete*"],
+      "staples/content-creator": ["*delete*"],
+      "staples/email-secretary": ["*delete*", "*trash*"],
+      "staples/coding-agent": ["*delete*", "*close*", "*update_issue*"],
+    };
+    for (const [ref, patterns] of Object.entries(expected)) {
+      const rendered = await readSidecar(ref.replace("staples/", ""));
+      const all = new Set(rendered.outwardActions.flatMap((action) => action.destructiveToolPatterns ?? []));
+      for (const pattern of patterns) expect([...all], ref).toContain(pattern);
+      for (const action of rendered.outwardActions) expect(action.destructiveToolPatterns?.length ?? 0, `${ref} ${action.label}`).toBeGreaterThan(0);
+    }
+  });
+
+  it("ships every Staples template at one consistent version", async () => {
+    const versions = new Set<string>();
+    for (const slug of EXPECTED_TEMPLATE_SLUGS) versions.add((await readSidecar(slug)).version);
+    expect([...versions]).toEqual(["1.1.0"]);
+  });
+
   it("keeps the website builder on previews until a version is approved", async () => {
     const rendered = await renderRecommended("staples/website-builder");
     const text = rendered.agent.instructionsMarkdown;
@@ -272,7 +310,9 @@ describe("shipped Staples agent templates", () => {
     expect(text).toContain("Web address: use the free host address for now");
     expect(rendered.outwardActions).toEqual([{
       capability: "hosting", label: "Publishing to your live site",
-      toolPatterns: ["*deploy*", "*publish*", "*promote*", "*alias*", "*domain*"],
+      destructiveLabel: "Deleting a site or deployment, or buying or moving a domain",
+      toolPatterns: ["*deploy*", "*publish*", "*promote*", "*alias*", "*add_domain*", "*assign_domain*", "*set_domain*", "*update_domain*", "*create_domain*", "*domain_add*"],
+      destructiveToolPatterns: ["*delete*", "*remove*", "*buy_domain*", "*transfer_domain*"],
     }]);
     expect(rendered.starterTasks.map((task) => task.title)).toEqual([
       "Build a one-page landing site and share a preview link",

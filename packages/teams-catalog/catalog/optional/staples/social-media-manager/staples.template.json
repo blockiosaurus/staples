@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "tagline": "Plans your social posts each week and keeps an eye on replies",
   "icon": "share-2",
   "marketplaceCategory": "content",
@@ -51,7 +51,13 @@
     }
   ],
   "outwardActions": [
-    { "capability": "social", "label": "Posting", "toolPatterns": ["*post*", "*publish*", "*share*", "*tweet*", "*schedule*", "*reply*", "*comment*"] }
+    {
+      "capability": "social",
+      "label": "Posting",
+      "destructiveLabel": "Deleting posts",
+      "toolPatterns": ["*post*", "*publish*", "*share*", "*tweet*", "*schedule*", "*reply*", "*comment*"],
+      "destructiveToolPatterns": ["*delete*", "*remove*"]
+    }
   ],
   "defaultBudgetMonthlyCents": 2500
 }

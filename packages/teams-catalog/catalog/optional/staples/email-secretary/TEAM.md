@@ -31,7 +31,7 @@ A secretary who keeps your inbox under control, so the important messages get yo
 - Every weekday morning, sorts new email: what is urgent, what needs your reply, what is just for information, and what can wait.
 - Drafts replies in your voice for the messages that need one.
 - Every weekday at 5pm, sends you a short digest of the day: what came in, what was handled, and what still needs you.
-- Optionally checks your Google Calendar when an email asks for a meeting, and suggests times.
+- Optionally checks your Google Calendar when an email asks for a meeting, and suggests times. Accepting a meeting or adding an event waits for your approval, unless you turn on autopilot for your calendar.
 
 ## What it needs
 

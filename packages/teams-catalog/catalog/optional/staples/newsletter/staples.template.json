@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "tagline": "Researches, writes and schedules your newsletter on time",
   "icon": "newspaper",
   "marketplaceCategory": "content",
@@ -77,7 +77,9 @@
     {
       "capability": "newsletter",
       "label": "Sending to your list",
-      "toolPatterns": ["*send*", "*schedule*", "*publish*"]
+      "destructiveLabel": "Deleting issues, lists or campaigns",
+      "toolPatterns": ["*send*", "*schedule*", "*publish*"],
+      "destructiveToolPatterns": ["*delete*"]
     }
   ],
   "defaultBudgetMonthlyCents": 2000,

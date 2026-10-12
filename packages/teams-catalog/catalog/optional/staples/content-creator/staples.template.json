@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "tagline": "Plans, writes and publishes your posts on a steady schedule",
   "icon": "pen-line",
   "marketplaceCategory": "content",
@@ -54,8 +54,20 @@
     }
   ],
   "outwardActions": [
-    { "capability": "social", "label": "Publishing posts", "toolPatterns": ["*post*", "*publish*", "*share*", "*tweet*", "*schedule*"] },
-    { "capability": "cms", "label": "Publishing to your site", "toolPatterns": ["*publish*"] }
+    {
+      "capability": "social",
+      "label": "Publishing posts",
+      "destructiveLabel": "Deleting posts",
+      "toolPatterns": ["*post*", "*publish*", "*share*", "*tweet*", "*schedule*"],
+      "destructiveToolPatterns": ["*delete*"]
+    },
+    {
+      "capability": "cms",
+      "label": "Publishing to your site",
+      "destructiveLabel": "Deleting site content",
+      "toolPatterns": ["*publish*"],
+      "destructiveToolPatterns": ["*delete*"]
+    }
   ],
   "defaultBudgetMonthlyCents": 2500
 }

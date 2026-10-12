@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "tagline": "Builds a simple website, shares previews and checks it every week",
   "icon": "globe",
   "marketplaceCategory": "engineering",
@@ -45,7 +45,13 @@
     }
   ],
   "outwardActions": [
-    { "capability": "hosting", "label": "Publishing to your live site", "toolPatterns": ["*deploy*", "*publish*", "*promote*", "*alias*", "*domain*"] }
+    {
+      "capability": "hosting",
+      "label": "Publishing to your live site",
+      "destructiveLabel": "Deleting a site or deployment, or buying or moving a domain",
+      "toolPatterns": ["*deploy*", "*publish*", "*promote*", "*alias*", "*add_domain*", "*assign_domain*", "*set_domain*", "*update_domain*", "*create_domain*", "*domain_add*"],
+      "destructiveToolPatterns": ["*delete*", "*remove*", "*buy_domain*", "*transfer_domain*"]
+    }
   ],
   "defaultBudgetMonthlyCents": 3000
 }
