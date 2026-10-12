@@ -939,7 +939,7 @@ export function AgentDetail() {
     enabled: !!resolvedCompanyId && needsOverviewData,
   });
 
-  const { data: skillSnapshot } = useQuery({
+  const { data: skillSnapshot, isLoading: skillSnapshotLoading, isError: skillSnapshotError } = useQuery({
     queryKey: queryKeys.agents.skills(resolvedAgentId ?? "__none__"),
     queryFn: () => agentsApi.skills(resolvedAgentId!, resolvedCompanyId ?? undefined),
     enabled: Boolean(resolvedCompanyId && resolvedAgentId && needsOverviewData),
@@ -959,8 +959,12 @@ export function AgentDetail() {
   const directReports = (allAgents ?? []).filter((a) => a.reportsTo === agent?.id && a.status !== "terminated");
   const overviewSkillNames = useMemo(() => {
     const namesByKey = new Map((overviewCompanySkills ?? []).map((skill) => [skill.key, skill.name]));
-    return (skillSnapshot?.desiredSkills ?? []).map((key) => namesByKey.get(key) ?? key);
-  }, [overviewCompanySkills, skillSnapshot?.desiredSkills]);
+    return overviewDesiredSkillKeys(skillSnapshot?.desiredSkills, agent?.adapterConfig).map((key) => namesByKey.get(key) ?? key);
+  }, [overviewCompanySkills, skillSnapshot?.desiredSkills, agent?.adapterConfig]);
+  // Only report loading/error while there is nothing to show; the stored
+  // desired skills stand in when the live snapshot is unavailable.
+  const overviewSkillsState: "ready" | "loading" | "error" =
+    skillSnapshot || overviewSkillNames.length > 0 ? "ready" : skillSnapshotError ? "error" : skillSnapshotLoading ? "loading" : "ready";
   const mobileLiveRun = useMemo(
     () => (heartbeats ?? []).find((r) => r.status === "running" || r.status === "queued") ?? null,
     [heartbeats],
@@ -1406,6 +1410,7 @@ export function AgentDetail() {
           reportsToAgent={reportsToAgent}
           directReportCount={directReports.length}
           skillNames={overviewSkillNames}
+          skillsState={overviewSkillsState}
           agentRouteId={canonicalAgentRef}
         />
       )}
@@ -1715,6 +1720,16 @@ function LatestRunCard({
 
 /* ---- Agent Overview ---- */
 
+/** Desired skill keys: the live snapshot when present, else the agent's stored sync config. */
+export function overviewDesiredSkillKeys(snapshotKeys: string[] | undefined, adapterConfig: unknown): string[] {
+  if (snapshotKeys) return snapshotKeys;
+  const sync = adapterConfig && typeof adapterConfig === "object"
+    ? (adapterConfig as { paperclipSkillSync?: { desiredSkills?: unknown } }).paperclipSkillSync
+    : undefined;
+  const desired = sync?.desiredSkills;
+  return Array.isArray(desired) ? desired.filter((key): key is string => typeof key === "string") : [];
+}
+
 export function AgentOverview({
   agent,
   runs,
@@ -1723,6 +1738,7 @@ export function AgentOverview({
   reportsToAgent,
   directReportCount,
   skillNames,
+  skillsState = "ready",
   agentRouteId,
 }: {
   agent: AgentDetailRecord;
@@ -1732,6 +1748,7 @@ export function AgentOverview({
   reportsToAgent?: Agent;
   directReportCount: number;
   skillNames: string[];
+  skillsState?: "ready" | "loading" | "error";
   agentRouteId: string;
 }) {
   const issuesById = useMemo(() => {
@@ -1815,7 +1832,11 @@ export function AgentOverview({
             <h3 id="agent-skills-heading" className="text-sm font-medium">Skills</h3>
             <Link className="text-xs text-muted-foreground hover:text-foreground" to={agentDetailHref(agentRouteId, "skills")}>Manage</Link>
           </div>
-          {skillNames.length > 0 ? (
+          {skillsState === "loading" ? (
+            <p className="text-sm text-muted-foreground" data-testid="agent-skills-loading">Loading skills…</p>
+          ) : skillsState === "error" ? (
+            <p className="text-sm text-destructive" data-testid="agent-skills-error">Skills could not be loaded.</p>
+          ) : skillNames.length > 0 ? (
             <div className="flex flex-wrap gap-2">
               {skillNames.slice(0, 8).map((skill) => <Badge key={skill} variant="secondary">{skill}</Badge>)}
               {skillNames.length > 8 ? <Badge variant="outline">+{skillNames.length - 8} more</Badge> : null}

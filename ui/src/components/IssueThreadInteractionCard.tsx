@@ -54,7 +54,7 @@ import {
   readProposedActionStaleValue,
   type ProposedActionAcceptResult,
 } from "../api/issues";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { companyBriefApi } from "../api/companyBrief";
 import { agentsApi } from "../api/agents";
 import { companiesApi } from "../api/companies";
@@ -2205,6 +2205,7 @@ function ProposedActionCard({
   onRejectInteraction?: (interaction: RequestConfirmationInteraction, reason?: string) => Promise<void> | void;
 }) {
   const action = interaction.payload.proposedAction!;
+  const queryClient = useQueryClient();
   const [working, setWorking] = useState<"confirm" | "cancel" | null>(null);
   const [staleWarning, setStaleWarning] = useState(false);
   const [claimHeld, setClaimHeld] = useState(false);
@@ -2248,6 +2249,10 @@ function ProposedActionCard({
       // again (another tab, or after a stale claim) never creates it twice.
       const result = await executeProposedAction(action, action.category === "plan" ? { idempotencyKey: interaction.id } : {});
       setLocalResult(result);
+      if (action.category === "plan") {
+        // A plan apply may hire agents with desired skills: refresh every agent's skill snapshot.
+        void queryClient.invalidateQueries({ queryKey: ["agents", "skills"] });
+      }
       try {
         await onAcceptInteraction?.(interaction, undefined, undefined, undefined, { ...result, hash: action.hash });
       } catch (error) {
