@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { agents, approvals, companySecrets, issues, toolConnections, type Db } from "@paperclipai/db";
-import { PROPOSABLE_HIRE_ADAPTER_TYPES, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
+import { ALL_PROPOSABLE_HIRE_ADAPTER_TYPES, HOSTED_HIRE_ADAPTER_TYPE, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
+import { hostedHireOptions } from "./hosted-inference-access.js";
 import { companyBriefService } from "./company-brief.js";
 import {
-  assistantAdapterType,
+  planHireAdapterDefaults,
   planTemplateContext,
   planTemplateErrorMessage,
   renderPlanTemplates,
@@ -164,12 +165,24 @@ function assertSafeAgentCreate(body: unknown) {
   }
   // Omitting adapterType makes the route default to "process", which runs a host command.
   if (record.adapterType === undefined || record.adapterType === null) {
-    throw new ProposedActionError(`adapterType is required: one of ${PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}.`);
+    throw new ProposedActionError(`adapterType is required: one of ${ALL_PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}.`);
   }
-  if (!(PROPOSABLE_HIRE_ADAPTER_TYPES as readonly unknown[]).includes(record.adapterType)) {
-    throw new ProposedActionError(`adapterType must be one of ${PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}. ${AGENT_SETTINGS_HINT}`);
+  if (!ALL_PROPOSABLE_HIRE_ADAPTER_TYPES.includes(record.adapterType as string)) {
+    throw new ProposedActionError(`adapterType must be one of ${ALL_PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}. ${AGENT_SETTINGS_HINT}`);
   }
   assertBudgetAmounts(body, ["budgetMonthlyCents"]);
+}
+
+/** Claude (hosted) is proposable only where it can run (see hostedHireOptions). */
+function hostedHireUnavailableMessage(hireAdapterTypes: readonly string[]) {
+  return `adapterType ${HOSTED_HIRE_ADAPTER_TYPE} is not available in this company (no hosted inference and no Anthropic key): use one of ${hireAdapterTypes.join(", ")}.`;
+}
+
+async function assertHireAdapterAvailable(db: Db, body: unknown, companyId: string) {
+  const adapterType = bodyRecord(body).adapterType;
+  if (adapterType !== HOSTED_HIRE_ADAPTER_TYPE) return;
+  const { hireAdapterTypes } = await hostedHireOptions(db, companyId);
+  if (!hireAdapterTypes.includes(HOSTED_HIRE_ADAPTER_TYPE)) throw new ProposedActionError(hostedHireUnavailableMessage(hireAdapterTypes));
 }
 
 /**
@@ -178,7 +191,11 @@ function assertSafeAgentCreate(body: unknown) {
  * violation as a sentence, or null. Shared by the governed allowlist (at
  * proposal and claim) and by POST /plans/apply itself.
  */
-export function planRuleViolation(plan: ApplyPlan, options: { resolved?: boolean } = {}): string | null {
+export function planRuleViolation(
+  plan: ApplyPlan, options: { resolved?: boolean; hireAdapterTypes?: readonly string[] } = {},
+): string | null {
+  // Without the company's list (a structural check), any adapter a hire could ever use; callers with a db pass hostedHireOptions().
+  const hireAdapterTypes = options.hireAdapterTypes ?? ALL_PROPOSABLE_HIRE_ADAPTER_TYPES;
   for (const agent of plan.agents) {
     // A templated agent may leave role and adapterType to its template until
     // the server fills them in (at proposal and again at apply, `resolved`).
@@ -196,8 +213,11 @@ export function planRuleViolation(plan: ApplyPlan, options: { resolved?: boolean
         return `Agent ${agent.clientKey}: role must be one of ${PROPOSABLE_AGENT_ROLES.join(", ")}.`;
       }
     }
-    if (agent.adapterType !== undefined && !(PROPOSABLE_HIRE_ADAPTER_TYPES as readonly string[]).includes(agent.adapterType)) {
-      return `Agent ${agent.clientKey}: adapterType must be one of ${PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}. ${AGENT_SETTINGS_HINT}`;
+    if (agent.adapterType !== undefined && !hireAdapterTypes.includes(agent.adapterType)) {
+      if (agent.adapterType === HOSTED_HIRE_ADAPTER_TYPE) {
+        return `Agent ${agent.clientKey}: ${hostedHireUnavailableMessage(hireAdapterTypes)}`;
+      }
+      return `Agent ${agent.clientKey}: adapterType must be one of ${hireAdapterTypes.join(", ")}. ${AGENT_SETTINGS_HINT}`;
     }
   }
   return null;
@@ -238,7 +258,12 @@ export async function planExistingAssigneeViolation(db: Db, plan: ApplyPlan, com
 }
 
 async function assertPlanAssignees(db: Db, body: unknown, companyId: string) {
-  const violation = await planExistingAssigneeViolation(db, applyPlanSchema.parse(body), companyId);
+  const plan = applyPlanSchema.parse(body);
+  // Local adapters are always proposable; only a Claude (hosted) hire depends on the company.
+  const hireAdapterTypes = plan.agents.some((agent) => agent.adapterType === HOSTED_HIRE_ADAPTER_TYPE)
+    ? (await hostedHireOptions(db, companyId)).hireAdapterTypes
+    : undefined;
+  const violation = planRuleViolation(plan, { hireAdapterTypes }) ?? await planExistingAssigneeViolation(db, plan, companyId);
   if (violation) throw new ProposedActionError(violation);
 }
 
@@ -279,8 +304,8 @@ export const GOVERNED_ROUTE_PATTERNS: readonly GovernedRoutePattern[] = [
   { method: "POST", pattern: re(`/api/approvals/${UUID}/reject`), category: "approval", binding: entity("approval"), route: "POST /api/approvals/:id/reject" },
   { method: "POST", pattern: re(`/api/approvals/${UUID}/request-revision`), category: "approval", binding: entity("approval"), route: "POST /api/approvals/:id/request-revision" },
   // agents.ts
-  { method: "POST", pattern: re(`/api/companies/${UUID}/agent-hires`), category: "agent_lifecycle", binding: company(), route: "POST /api/companies/:companyId/agent-hires", validateBody: assertSafeAgentCreate },
-  { method: "POST", pattern: re(`/api/companies/${UUID}/agents`), category: "agent_lifecycle", binding: company(), route: "POST /api/companies/:companyId/agents", validateBody: assertSafeAgentCreate },
+  { method: "POST", pattern: re(`/api/companies/${UUID}/agent-hires`), category: "agent_lifecycle", binding: company(), route: "POST /api/companies/:companyId/agent-hires", validateBody: assertSafeAgentCreate, validateBodyWithDb: assertHireAdapterAvailable },
+  { method: "POST", pattern: re(`/api/companies/${UUID}/agents`), category: "agent_lifecycle", binding: company(), route: "POST /api/companies/:companyId/agents", validateBody: assertSafeAgentCreate, validateBodyWithDb: assertHireAdapterAvailable },
   { method: "POST", pattern: re(`/api/agents/${UUID}/pause`), category: "agent_lifecycle", binding: entity("agent"), route: "POST /api/agents/:id/pause" },
   { method: "POST", pattern: re(`/api/agents/${UUID}/resume`), category: "agent_lifecycle", binding: entity("agent"), route: "POST /api/agents/:id/resume" },
   { method: "POST", pattern: re(`/api/agents/${UUID}/terminate`), category: "agent_lifecycle", binding: entity("agent"), route: "POST /api/agents/:id/terminate" },
@@ -401,6 +426,9 @@ export async function pinPlanProposalBody(
     record = { ...record, brief: { ...brief, baseRevisionId: current } };
   }
   const plan = parseProposablePlan(record);
+  const hireDefaults = await planHireAdapterDefaults(db, companyId);
+  const hireViolation = planRuleViolation(plan, { hireAdapterTypes: hireDefaults.hireAdapterTypes });
+  if (hireViolation) throw new ProposedActionError(hireViolation);
   if (!plan.agents.some((agent) => agent.templateRef)) return record;
   const ctx = await planTemplateContext(db, companyId, options.userId ?? null);
   const rendered: PlanTemplates = new Map();
@@ -418,8 +446,8 @@ export async function pinPlanProposalBody(
     const denial = await templateSkillPolicyDenial(db, companyId, agent.clientKey, rendered.get(agent.clientKey)!, { userId: options.userId ?? null });
     if (denial) throw new ProposedActionError(denial);
   }
-  const filled = withTemplateDefaults(plan, rendered, { fallbackAdapterType: await assistantAdapterType(db, companyId), pinVersion: true });
-  const violation = planRuleViolation(filled, { resolved: true });
+  const filled = withTemplateDefaults(plan, rendered, { ...hireDefaults, pinVersion: true });
+  const violation = planRuleViolation(filled, { resolved: true, hireAdapterTypes: hireDefaults.hireAdapterTypes });
   if (violation) throw new ProposedActionError(violation);
   // Keep the body as proposed (key order, untouched fields), with the templated agents filled in.
   const byKey = new Map(filled.agents.map((agent) => [agent.clientKey, agent] as const));

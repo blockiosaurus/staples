@@ -37,6 +37,17 @@ export const PROPOSABLE_HIRE_ADAPTER_TYPES = [
 ] as const;
 
 /**
+ * Claude (hosted, Managed Agents). Proposable for a hire only in a company
+ * where it can run: hosted inference is available (the operator's key, with
+ * hard-stop caps) or the Assistant runs on it with the company's own key.
+ * See `hostedHireOptions` in hosted-inference-access.ts.
+ */
+export const HOSTED_HIRE_ADAPTER_TYPE = "claude_managed" as const;
+
+/** Every adapter a hire could ever be proposed on; the per-company list is `hostedHireOptions().hireAdapterTypes`. */
+export const ALL_PROPOSABLE_HIRE_ADAPTER_TYPES: readonly string[] = [...PROPOSABLE_HIRE_ADAPTER_TYPES, HOSTED_HIRE_ADAPTER_TYPE];
+
+/**
  * Authority check for the built-in Assistant. The marker alone is caller-shaped
  * metadata, so authority also requires the company's provisioning record: the
  * built-in service binds the Assistant's managed instructions to its agent id.

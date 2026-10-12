@@ -19,7 +19,8 @@ import { createAgentLifecycle } from "./agent-lifecycle.js";
 import { STAPLES_TEMPLATE_METADATA_KEY } from "../lib/staples-template-metadata.js";
 import { STAPLES_TEMPLATED_PERMISSION_FLAG } from "../lib/agent-permissions.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
-import { resolveCompanyAssistantAgentId } from "./assistant-identity.js";
+import { HOSTED_HIRE_ADAPTER_TYPE, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
+import { ensureHostedAgentBudgets, hostedHireAdapterConfig, hostedHireOptions, type HostedHireOptions } from "./hosted-inference-access.js";
 import { canonicalJson, currentBriefRevisionId, planExistingAssigneeViolation, planRuleViolation } from "./assistant-proposed-actions.js";
 import { writeCompanyBrief } from "./company-brief.js";
 import { getDefaultCompanyGoal, goalService } from "./goals.js";
@@ -27,10 +28,10 @@ import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import {
   AGENT_TEMPLATE_ROUTINE_ORIGIN,
-  assistantAdapterType,
   connectedAppSlugs,
   ensureTemplateAgentSetup,
   ensureTemplateSkills,
+  planHireAdapterDefaults,
   planTemplateContext,
   planTemplateErrorMessage,
   renderPlanTemplates,
@@ -129,6 +130,7 @@ export function planHireBody(
   assistant: AssistantHireDefaults | null,
   withConnection = true,
   template?: { instructionsMarkdown: string; desiredSkills: string[]; readOnly?: boolean },
+  hosted?: Pick<HostedHireOptions, "companyKeyBinding" | "assistantModel"> | null,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = { name: agent.name, role: agent.role, adapterType: agent.adapterType };
   if (template) {
@@ -148,6 +150,14 @@ export function planHireBody(
   if (assistant && assistant.adapterType === agent.adapterType) {
     if (assistant.engine) body.adapterConfig = { engine: assistant.engine };
     if (withConnection && assistant.aiConnection) body.runtimeConfig = { aiConnection: assistant.aiConnection };
+  }
+  if (agent.adapterType === HOSTED_HIRE_ADAPTER_TYPE) {
+    // Claude (hosted): a model, plus the company's own key when the Assistant has one
+    // (otherwise the server's key, under hard-stop caps ensured at hire and at run).
+    body.adapterConfig = hostedHireAdapterConfig({
+      companyKeyBinding: hosted?.companyKeyBinding ?? null,
+      assistantModel: hosted?.assistantModel ?? null,
+    });
   }
   return body;
 }
@@ -242,7 +252,8 @@ function describeHired(plan: ApplyPlan, hired: HiredAgents) {
 export async function validatePlanForApply(db: Db, companyId: string, plan: ApplyPlan, assertCanAssign: PlanAssertCanAssign) {
   const structure = planStructureErrors(plan);
   if (structure.length) throw unprocessable(`The plan is not consistent: ${structure.slice(0, 5).join(" ")}`);
-  const violation = planRuleViolation(plan, { resolved: true }) ?? await planExistingAssigneeViolation(db, plan, companyId);
+  const { hireAdapterTypes } = await hostedHireOptions(db, companyId);
+  const violation = planRuleViolation(plan, { resolved: true, hireAdapterTypes }) ?? await planExistingAssigneeViolation(db, plan, companyId);
   if (violation) throw unprocessable(violation);
   for (const agentId of new Set(plan.tasks.map((task) => task.assigneeAgentId).filter((id): id is string => Boolean(id)))) {
     await assertAssignableAgent(db, companyId, agentId, { kind: "work" });
@@ -494,7 +505,7 @@ async function preparePlanTemplates(db: Db, companyId: string, plan: ApplyPlan, 
     const denial = await templateSkillPolicyDenial(db, companyId, agent.clientKey, templates.get(agent.clientKey)!, { userId: input.userId, actor: input.actor });
     if (denial) throw forbidden(denial, { code: "skill_policy_denied" });
   }
-  const filled = withTemplateDefaults(plan, templates, { fallbackAdapterType: await assistantAdapterType(db, companyId) });
+  const filled = withTemplateDefaults(plan, templates, await planHireAdapterDefaults(db, companyId));
   // Agents finished from their stored record keep the fields they were hired with.
   filled.agents = filled.agents.map((agent) => {
     const existing = deferred.has(agent.clientKey) ? prior.get(agent.clientKey) : undefined;
@@ -658,6 +669,7 @@ export async function applyPlan(db: Db, input: {
 
   try {
     const assistant = plan.agents.length ? await assistantHireDefaults(db, companyId) : null;
+    const hosted = plan.agents.some((agent) => agent.adapterType === HOSTED_HIRE_ADAPTER_TYPE) ? await hostedHireOptions(db, companyId) : null;
     // A shared binding the applier cannot use would make every hire fail with a
     // 403 that must stay final; leave it off instead, like before inheritance.
     const binding = assistant?.aiConnection;
@@ -700,7 +712,7 @@ export async function applyPlan(db: Db, input: {
         template = { instructionsMarkdown: rendered.agent.instructionsMarkdown, desiredSkills: skills.keys, readOnly: rendered.readOnly };
       }
       if (rendered) await holdLease();
-      const body = planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant, true, template);
+      const body = planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant, true, template, hosted);
       const hire = async (hireBody: Record<string, unknown>) => {
         try {
           return await input.hireAgent(hireBody);
@@ -715,7 +727,7 @@ export async function applyPlan(db: Db, input: {
       // other failure are final, and the retry's own result is what is reported.
       if (response.statusCode === 422 && isBindingRefusal(response.json) && planHireInheritsConnection(agent, assistant)
         && (assistant!.aiConnection!.mode === "router" || assistant!.aiConnection!.mode === "shared")) {
-        response = await hire(planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant, false, template));
+        response = await hire(planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant, false, template, hosted));
       }
       const json = (response.json ?? {}) as { agent?: { id?: unknown; status?: unknown }; approval?: { id?: unknown } | null };
       if (response.statusCode >= 400 || typeof json.agent?.id !== "string") {
@@ -725,6 +737,13 @@ export async function applyPlan(db: Db, input: {
           ? new PlanPartiallyAppliedError(status,
             `${reason}. Hired so far: ${describeHired(plan, hired)}. Nothing else from the plan was created; applying the same plan again reuses these agents.`, hired)
           : new HttpError(status, reason);
+      }
+      if (agent.adapterType === HOSTED_HIRE_ADAPTER_TYPE && hosted?.hostedInference && !hosted.companyKeyBinding) {
+        // On the operator's key: its caps exist before its first run (and are
+        // ensured again at every run, which is the guarantee).
+        await ensureHostedAgentBudgets(db, { id: json.agent.id, companyId }, process.env, { assistant: false }).catch((error) => {
+          logger.warn({ err: error, companyId, agentId: json.agent?.id }, "Could not set a hosted hire's budget caps at hire; they are set at its first run");
+        });
       }
       hired[agent.clientKey] = {
         id: json.agent.id,

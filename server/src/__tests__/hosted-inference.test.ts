@@ -30,3 +30,17 @@ describe("hostedAssistantBudgetCents", () => {
     }
   });
 });
+
+describe("hosted hire and company budgets", () => {
+  it("default to $20 per agent and $50 per company, with explicit overrides (0 = uncapped)", async () => {
+    const { hostedAgentBudgetCents, hostedCompanyBudgetCents } = await import("../services/hosted-inference.js");
+    expect(hostedAgentBudgetCents({})).toBe(2000);
+    expect(hostedAgentBudgetCents({ STAPLES_HOSTED_AGENT_BUDGET_CENTS: "750" })).toBe(750);
+    expect(hostedAgentBudgetCents({ STAPLES_HOSTED_AGENT_BUDGET_CENTS: "0" })).toBe(0);
+    expect(hostedAgentBudgetCents({ STAPLES_HOSTED_AGENT_BUDGET_CENTS: "nope" })).toBe(2000);
+    expect(hostedCompanyBudgetCents({})).toBe(5000);
+    expect(hostedCompanyBudgetCents({ STAPLES_HOSTED_COMPANY_BUDGET_CENTS: "12000" })).toBe(12000);
+    expect(hostedCompanyBudgetCents({ STAPLES_HOSTED_COMPANY_BUDGET_CENTS: "0" })).toBe(0);
+    expect(hostedCompanyBudgetCents({ STAPLES_HOSTED_COMPANY_BUDGET_CENTS: "-1" })).toBe(5000);
+  });
+});

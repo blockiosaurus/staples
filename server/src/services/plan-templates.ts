@@ -17,7 +17,8 @@ import { HttpError, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { STAPLES_TEMPLATE_METADATA_KEY } from "../lib/staples-template-metadata.js";
 import { agentTemplatesService } from "./agent-templates.js";
-import { PROPOSABLE_HIRE_ADAPTER_TYPES, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
+import { HOSTED_HIRE_ADAPTER_TYPE, PROPOSABLE_HIRE_ADAPTER_TYPES, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
+import { hostedHireOptions } from "./hosted-inference-access.js";
 import { accessService } from "./access.js";
 import type { AuthorizationActor } from "./authorization.js";
 import { companySkillPolicyService } from "./company-skill-policy.js";
@@ -110,18 +111,36 @@ export function planTemplateErrorMessage(clientKey: string, ref: string, error: 
   return null;
 }
 
+/** How a company's plan hires pick an adapter when the plan names none. */
+export interface PlanHireAdapterDefaults {
+  /** The Assistant's adapter: the default for templated hires that name none. */
+  fallbackAdapterType: string | null;
+  /** Adapters a hire may use in this company (hostedHireOptions). */
+  hireAdapterTypes: readonly string[];
+  /**
+   * The company runs on Claude (hosted): its Assistant is on claude_managed
+   * and claude_managed is available for hires. Template recommendations then
+   * resolve to claude_managed (a hosted-only company has no local CLIs).
+   */
+  hostedHires: boolean;
+}
+
 /**
  * The plan with each templated agent's hire fields filled from its template
  * where the plan left them out: name, role, title, monthly budget and the
- * adapter (the template's recommendation when proposable, else
- * `fallbackAdapterType` when proposable). `pinVersion` also records the
- * rendered version, which apply installs.
+ * adapter: the template's recommendation (claude_managed when the company
+ * runs on Claude hosted), else the Assistant's adapter (`fallbackAdapterType`),
+ * else claude_managed when it is available, each only when proposable for
+ * the company. `pinVersion` also records the rendered version, which apply
+ * installs.
  */
 export function withTemplateDefaults(
-  plan: ApplyPlan, templates: PlanTemplates, options: { fallbackAdapterType?: string | null; pinVersion?: boolean } = {},
+  plan: ApplyPlan, templates: PlanTemplates,
+  options: Partial<PlanHireAdapterDefaults> & { pinVersion?: boolean } = {},
 ): ApplyPlan {
-  const proposable = (value: string | null | undefined) =>
-    value && (PROPOSABLE_HIRE_ADAPTER_TYPES as readonly string[]).includes(value) ? value : undefined;
+  const allowed: readonly string[] = options.hireAdapterTypes ?? PROPOSABLE_HIRE_ADAPTER_TYPES;
+  const proposable = (value: string | null | undefined) => value && allowed.includes(value) ? value : undefined;
+  const hostedFallback = proposable(HOSTED_HIRE_ADAPTER_TYPE);
   return {
     ...plan,
     agents: plan.agents.map((agent) => {
@@ -134,7 +153,8 @@ export function withTemplateDefaults(
       if (filled.budgetMonthlyCents === undefined && rendered.defaultBudgetMonthlyCents !== null) {
         filled.budgetMonthlyCents = rendered.defaultBudgetMonthlyCents;
       }
-      filled.adapterType ??= proposable(rendered.recommendedAdapterType) ?? proposable(options.fallbackAdapterType);
+      const recommended = options.hostedHires && hostedFallback ? hostedFallback : rendered.recommendedAdapterType;
+      filled.adapterType ??= proposable(recommended) ?? proposable(options.fallbackAdapterType) ?? hostedFallback;
       if (options.pinVersion) filled.templateVersion = rendered.version;
       return filled;
     }),
@@ -148,6 +168,17 @@ export async function assistantAdapterType(db: Db, companyId: string): Promise<s
   const [row] = await db.select({ adapterType: agents.adapterType }).from(agents)
     .where(and(eq(agents.id, assistantId), eq(agents.companyId, companyId)));
   return row?.adapterType ?? null;
+}
+
+/** This company's adapter defaults for plan hires (the Assistant's adapter and what may be hired). */
+export async function planHireAdapterDefaults(db: Db, companyId: string): Promise<PlanHireAdapterDefaults> {
+  const fallbackAdapterType = await assistantAdapterType(db, companyId);
+  const { hireAdapterTypes } = await hostedHireOptions(db, companyId);
+  return {
+    fallbackAdapterType,
+    hireAdapterTypes,
+    hostedHires: fallbackAdapterType === HOSTED_HIRE_ADAPTER_TYPE && hireAdapterTypes.includes(HOSTED_HIRE_ADAPTER_TYPE),
+  };
 }
 
 const AGGREGATOR_DISPLAY_NAMES: Record<string, string> = {

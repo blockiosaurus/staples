@@ -9,7 +9,7 @@ import { aiConnectionRouterService } from "./ai-connection-router.js";
 import { withManagedAiProbe, stripAiAuthBindings } from "./ai-connection-runtime.js";
 import { environmentService } from "./environments.js";
 import { secretService } from "./secrets.js";
-import { ASSISTANT_PROVISIONING_INCOMPLETE_CHECK_CODE } from "./assistant-setup.js";
+import { ASSISTANT_PROVISIONING_INCOMPLETE_CHECK_CODE, hasAnthropicKeyBinding } from "./assistant-setup.js";
 import { hostedAssistantProvisioningPending, hostedInferenceAllowedFor } from "./hosted-inference-access.js";
 import { dotRunnerBroker } from "./dot-runner-broker.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
@@ -96,10 +96,10 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
         { ...context, consumerType: "environment", consumerId: environmentId });
       config = { ...config, env: { ...resolved.env, ...parseObject(config.env) } };
     }
-    const hostedInferenceAllowed = await hostedInferenceAllowedFor(db, agent);
-    if (!hostedInferenceAllowed && await hostedAssistantProvisioningPending(db, agent)) {
-      // Waiting on the provisioning record: say so, and give up (a setup error
-      // the person can retry) instead of verifying silently forever.
+    if (!hasAnthropicKeyBinding(agent.adapterConfig) && await hostedAssistantProvisioningPending(db, agent)) {
+      // Waiting on the provisioning record (which decides the Assistant's own
+      // hosted cap): say so, and give up (a setup error the person can retry)
+      // instead of verifying silently forever.
       const waits = readProvisioningWaits(agent.lifecycleOperation) + 1;
       if (waits > HOSTED_PROVISIONING_MAX_WAITS) {
         const checks = [{ code: ASSISTANT_PROVISIONING_INCOMPLETE_CHECK_CODE, level: "error" }];
@@ -109,6 +109,7 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
       await recordProvisioningWait(db, agent, waits);
       return "pending";
     }
+    const hostedInferenceAllowed = await hostedInferenceAllowedFor(db, agent);
     const target = await tests.resolveAdapterTestExecutionContext({ agentId: agent.id, companyId: agent.companyId, adapterType: agent.adapterType, environmentId });
     let status: "released" | "failed" = "failed";
     try {

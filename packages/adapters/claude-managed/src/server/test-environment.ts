@@ -5,7 +5,7 @@ import type {
 } from "@paperclipai/adapter-utils";
 import { parseObject } from "@paperclipai/adapter-utils/server-utils";
 import { ManagedAgentsApiError, ManagedAgentsClient } from "../client.js";
-import { HOSTED_ONLY_FOR_ASSISTANT_MESSAGE, resolveApiBaseUrl, resolveApiKey, usesDefaultApiBaseUrl } from "./execute.js";
+import { HOSTED_KEY_WITHHELD_MESSAGE, resolveApiBaseUrl, resolveApiKey, usesDefaultApiBaseUrl } from "./execute.js";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -93,7 +93,7 @@ export async function testEnvironment(
       ? {
           code: "claude_managed_api_key_missing",
           level: "error",
-          message: HOSTED_ONLY_FOR_ASSISTANT_MESSAGE,
+          message: HOSTED_KEY_WITHHELD_MESSAGE,
           hint: "Add ANTHROPIC_API_KEY to this agent's environment variables (a company secret works).",
         }
       : usesDefaultApiBaseUrl(config)

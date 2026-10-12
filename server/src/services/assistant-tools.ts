@@ -6,9 +6,10 @@ import { agents, approvals, authUsers, companies, companyMemberships, issueThrea
 import { COMPANY_BRIEF_MAX_CHARS, PROPOSED_ACTION_BODY_MAX_BYTES, PROPOSED_ACTION_CATEGORIES, PROPOSED_BRIEF_BODY_MAX_BYTES, PROPOSED_PLAN_BODY_MAX_BYTES, applyPlanSchema, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, createIssueThreadInteractionSchema, isAssistantAgent, paperclipQuestionSchema, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
-import { PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
+import { HOSTED_HIRE_ADAPTER_TYPE, PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
+import { hostedInference as hostedInferenceStatus } from "./hosted-inference.js";
 import { publicMcpCapabilities } from "./public-mcp/capabilities.js";
-import { defaultAgentTemplates, planTemplateContext, planTemplateSummariesFor } from "./plan-templates.js";
+import { defaultAgentTemplates, planHireAdapterDefaults, planTemplateContext, planTemplateSummariesFor } from "./plan-templates.js";
 import { APPROVAL_DECISION_PATH, PROPOSABLE_AGENT_ROLES, ProposedActionError, pinBriefProposalBody, pinPlanProposalBody, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
 import { assistantHireDefaults, planHireInheritsConnection } from "./plans.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
@@ -163,6 +164,29 @@ async function assistantRuntimeSummary(db: Db, companyId: string) {
   };
 }
 
+/**
+ * What new hires may run on in this company, and what to recommend: Claude
+ * (hosted) when the company runs on it (`hostedInference` true means the
+ * server's key pays, under hard-stop monthly caps), else the Assistant's own
+ * adapter. Booleans and adapter names only; never a key.
+ */
+async function hiringSummary(db: Db, companyId: string) {
+  const defaults = await planHireAdapterDefaults(db, companyId);
+  const recommendedAdapterType = defaults.hostedHires
+    ? HOSTED_HIRE_ADAPTER_TYPE
+    : defaults.fallbackAdapterType && defaults.hireAdapterTypes.includes(defaults.fallbackAdapterType)
+      ? defaults.fallbackAdapterType
+      : defaults.hireAdapterTypes.includes(HOSTED_HIRE_ADAPTER_TYPE) ? HOSTED_HIRE_ADAPTER_TYPE : null;
+  return {
+    hostedInference: hostedInferenceStatus().available,
+    adapterTypes: defaults.hireAdapterTypes,
+    recommendedAdapterType,
+    ...(recommendedAdapterType === HOSTED_HIRE_ADAPTER_TYPE
+      ? { note: "Recommend Claude (hosted), adapterType claude_managed, for new hires. It runs in Anthropic's cloud with no setup; its model and spending caps are set by the server." }
+      : {}),
+  };
+}
+
 function capability(name: string) {
   const found = publicMcpCapabilities.find((c) => c.name === name);
   if (!found) throw new Error(`Missing public MCP capability ${name}`);
@@ -185,6 +209,7 @@ function assistantCapabilities(db: Db): Capability[] {
         permissions: p.grant.scopes, runId: p.actor.assistantRunId,
         execution: "The Assistant acts as this person with their company permissions. Tasks run through Paperclip scheduling, budgets and approvals.",
         assistant: await assistantRuntimeSummary(db, p.company.id),
+        hiring: await hiringSummary(db, p.company.id),
       }),
     }),
     reused("paperclip_list_agents", {
@@ -321,7 +346,7 @@ function assistantCapabilities(db: Db): Capability[] {
         "Propose a whole starter plan for this person to confirm in one card: optionally the company brief (the whole new brief), a goal and a project, new agents, and 0 to 25 tasks. Nothing is created until they click Create plan; their browser then applies it with their own session and you are woken with the result.",
         "Agents and tasks refer to each other by clientKey (lowercase letters, digits and dashes). A task's assignee is assigneeClientKey (a new agent in this plan) or assigneeAgentId (an existing staff agent, never the Assistant), or none. parentClientKey and blockedByClientKeys refer to other tasks in the plan and must not form a cycle.",
         "A hire that matches a template (staples_list_templates) is a templated agent: give it clientKey, templateRef and templateAnswers (the answers to the template's setup questions, keyed by question id); name, role, title and capabilities are optional and come from the template. Never write instructions for a templated hire. A templated agent may have no tasks: its template adds its own starter tasks and routines.",
-        `New agents: role one of ${PROPOSABLE_AGENT_ROLES.join(", ")} (never ceo); adapterType one of ${PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}; no other settings. If the company requires approval for new agents, their tasks are created unassigned in the backlog and linked to the hire approval.`,
+        `New agents: role one of ${PROPOSABLE_AGENT_ROLES.join(", ")} (never ceo); adapterType one of the company's hiring.adapterTypes from paperclip_connection (${PROPOSABLE_HIRE_ADAPTER_TYPES.join(", ")}, and ${HOSTED_HIRE_ADAPTER_TYPE} when listed there), preferring hiring.recommendedAdapterType; a templated agent may omit it (the server picks the recommended one); no other settings. If the company requires approval for new agents, their tasks are created unassigned in the backlog and linked to the hire approval.`,
         `brief.baseRevisionId is the revisionId from staples_get_company_brief, or null when there is no brief. The whole plan must serialize to at most ${PROPOSED_PLAN_BODY_MAX_BYTES} bytes.`,
       ].join(" "),
       schema: z.object({

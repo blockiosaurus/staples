@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import express, { Router } from "express";
 import request from "supertest";
 import { and, eq, sql } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
   agents,
   builtInManagedResources,
+  budgetPolicies,
   approvals,
   authUsers,
   companies,
@@ -57,6 +58,8 @@ import { approvalService } from "../services/approvals.js";
 import { teamsCatalogService } from "../services/teams-catalog.js";
 import { toolAccessPolicyService } from "../services/tool-access-policy.js";
 import { agentService } from "../services/agents.js";
+import { hostedInferenceAllowedFor } from "../services/hosted-inference-access.js";
+import { secretService } from "../services/secrets.js";
 
 const support = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = support.supported ? describe : describe.skip;
@@ -1403,6 +1406,152 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         expect(after!.metadata, JSON.stringify(metadata)).toMatchObject({ note: metadata.note, staplesTemplate: stored });
       }
     }, 120_000);
+
+    describe("hosted hires (Claude hosted on the operator's key, with caps)", () => {
+      afterEach(() => { vi.unstubAllEnvs(); });
+      const hostedOn = () => {
+        vi.stubEnv("STAPLES_HOSTED_INFERENCE", "");
+        vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-dummy");
+      };
+      async function assistantOnHosted(s: Seed, adapterConfig: Record<string, unknown> = { model: "claude-opus-5-5" }) {
+        await db.update(agents).set({
+          adapterType: "claude_managed", adapterConfig,
+          metadata: withBuiltInAgentMarker({}, { key: ASSISTANT_BUILT_IN_AGENT_KEY, featureKeys: [] }),
+        }).where(eq(agents.id, s.assistantId));
+        await db.insert(builtInManagedResources).values({
+          companyId: s.companyId, bundleKey: ASSISTANT_BUILT_IN_AGENT_KEY, resourceKind: "instructions", resourceKey: "AGENTS.md",
+          resourceId: s.assistantId, stockVersion: "test", stockHash: "test",
+        });
+      }
+      const monthlyPolicy = async (scopeType: "agent" | "company", scopeId: string) => (await db.select().from(budgetPolicies).where(and(
+        eq(budgetPolicies.scopeType, scopeType), eq(budgetPolicies.scopeId, scopeId), eq(budgetPolicies.windowKind, "calendar_month_utc"),
+      )))[0] ?? null;
+      const researcher = async () => {
+        const { adapterType: _omitted, ...agent } = await templatedAgent("research", "staples/researcher");
+        return agent;
+      };
+
+      it("hires a templated agent on claude_managed with a model, and its caps exist before its first run", async () => {
+        hostedOn();
+        const s = await seed();
+        await assistantOnHosted(s);
+        const { app } = buildApp(sessionActor(s));
+        const response = await apply(app, s.companyId, { agents: [await researcher()] });
+        expect(response.status, JSON.stringify(response.body)).toBe(201);
+        const [hired] = await db.select().from(agents).where(eq(agents.id, response.body.agents.research.id));
+        expect(hired).toMatchObject({ adapterType: "claude_managed", adapterConfig: expect.objectContaining({ model: "claude-opus-5-5" }) });
+        expect(JSON.stringify(hired!.adapterConfig)).not.toContain("ANTHROPIC_API_KEY");
+        const agentPolicy = await monthlyPolicy("agent", hired!.id);
+        expect(agentPolicy).toMatchObject({ isActive: true, hardStopEnabled: true });
+        expect(agentPolicy!.amount).toBeGreaterThan(0);
+        expect(await monthlyPolicy("company", s.companyId)).toMatchObject({ amount: 5000, isActive: true, hardStopEnabled: true });
+        // At run time the server key is granted (the caps are already there).
+        expect(await hostedInferenceAllowedFor(db, hired!)).toBe(true);
+      }, 120_000);
+
+      it("never lowers an existing company budget, and an explicit 0 leaves the company uncapped", async () => {
+        hostedOn();
+        const s = await seed();
+        await assistantOnHosted(s);
+        await db.insert(budgetPolicies).values({
+          companyId: s.companyId, scopeType: "company", scopeId: s.companyId, metric: "billed_cents", windowKind: "calendar_month_utc",
+          amount: 25_000, hardStopEnabled: true, isActive: true,
+        });
+        const { app } = buildApp(sessionActor(s));
+        expect((await apply(app, s.companyId, { agents: [await researcher()] })).status).toBe(201);
+        expect(await monthlyPolicy("company", s.companyId)).toMatchObject({ amount: 25_000, isActive: true });
+
+        vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_CENTS", "0");
+        const t = await seed();
+        await assistantOnHosted(t);
+        const second = await apply(buildApp(sessionActor(t)).app, t.companyId, { agents: [await researcher()] });
+        expect(second.status).toBe(201);
+        expect(await monthlyPolicy("company", t.companyId)).toBeNull();
+        expect(await monthlyPolicy("agent", second.body.agents.research.id)).toMatchObject({ isActive: true, hardStopEnabled: true });
+      }, 120_000);
+
+      it("a company with its own Anthropic key hires on it: the key binding is inherited and no caps are forced", async () => {
+        vi.stubEnv("STAPLES_HOSTED_INFERENCE", "off");
+        const s = await seed();
+        const secret = await secretService(db).create(s.companyId, {
+          name: "Anthropic key", key: `ANTHROPIC_API_KEY.test.${randomUUID()}`, provider: "local_encrypted", value: "sk-ant-test-own",
+        }, { userId: s.userId, agentId: null });
+        const keyBinding = { type: "secret_ref", secretId: secret.id, version: "latest" };
+        await assistantOnHosted(s, { model: "claude-opus-5-5", env: { ANTHROPIC_API_KEY: keyBinding } });
+        const { app } = buildApp(sessionActor(s));
+        const response = await apply(app, s.companyId, { agents: [await researcher()] });
+        expect(response.status, JSON.stringify(response.body)).toBe(201);
+        const [hired] = await db.select().from(agents).where(eq(agents.id, response.body.agents.research.id));
+        expect(hired!.adapterType).toBe("claude_managed");
+        expect((hired!.adapterConfig as { env?: Record<string, unknown> }).env?.ANTHROPIC_API_KEY).toMatchObject({ type: "secret_ref", secretId: secret.id });
+        expect(await monthlyPolicy("company", s.companyId)).toBeNull();
+        vi.stubEnv("STAPLES_HOSTED_INFERENCE", "");
+        vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test-dummy");
+        expect(await hostedInferenceAllowedFor(db, hired!)).toBe(false);
+        expect(await monthlyPolicy("company", s.companyId)).toBeNull();
+      }, 120_000);
+
+      it("tells the Assistant in paperclip_connection which adapters it may hire on and to recommend Claude (hosted)", async () => {
+        const { createAssistantTools } = await import("../services/assistant-tools.js");
+        const connection = async (s: Seed) => {
+          const t = createAssistantTools(db, { dispatch: vi.fn(), origin: "https://staples.example/" });
+          const result = await t.call({
+            companyId: s.companyId, agentId: s.assistantId, runId: randomUUID(), userId: s.userId, issueId: randomUUID(),
+            membership: { companyId: s.companyId, membershipRole: "owner", status: "active" },
+            company: { id: s.companyId, name: "Plan Co", issuePrefix: "PL", status: "active" }, canWrite: true,
+          } as never, "paperclip_connection", {});
+          expect(result.isError, JSON.stringify(result.content)).toBeUndefined();
+          return (result.structuredContent as { hiring: Record<string, unknown> }).hiring;
+        };
+        hostedOn();
+        const s = await seed();
+        await assistantOnHosted(s);
+        const hosted = await connection(s);
+        expect(hosted).toMatchObject({ hostedInference: true, recommendedAdapterType: "claude_managed" });
+        expect(hosted.adapterTypes).toContain("claude_managed");
+        expect(JSON.stringify(hosted)).not.toContain("sk-ant-test-dummy");
+        vi.stubEnv("ANTHROPIC_API_KEY", "");
+        const local = await connection(await seed());
+        expect(local.hostedInference).toBe(false);
+        expect(local.adapterTypes).not.toContain("claude_managed");
+      }, 120_000);
+
+      it("proposals: claude_managed hires are proposable only where they can run; a hosted templated plan resolves to claude_managed", async () => {
+        const { pinPlanProposalBody, validateGovernedAction } = await import("../services/assistant-proposed-actions.js");
+        const hireBody = { name: "Researcher", role: "researcher", adapterType: "claude_managed" };
+        vi.stubEnv("ANTHROPIC_API_KEY", "");
+        const local = await seed();
+        await expect(validateGovernedAction(db as never, { method: "POST", path: `/api/companies/${local.companyId}/agent-hires`, body: hireBody }, local.companyId))
+          .rejects.toThrow(/claude_managed is not available in this company/);
+        hostedOn();
+        const s = await seed();
+        await assistantOnHosted(s);
+        await expect(validateGovernedAction(db as never, { method: "POST", path: `/api/companies/${s.companyId}/agent-hires`, body: hireBody }, s.companyId))
+          .resolves.toMatchObject({ category: "agent_lifecycle" });
+        const pinned = await pinPlanProposalBody(db as never, s.companyId, { agents: [await researcher()] }, { userId: s.userId }) as { agents: Array<Record<string, unknown>> };
+        expect(pinned.agents[0]).toMatchObject({ adapterType: "claude_managed" });
+      }, 120_000);
+
+      it("without hosted inference or a company key, claude_managed is not hireable and templated hires keep the Assistant's adapter", async () => {
+        vi.stubEnv("ANTHROPIC_API_KEY", "");
+        const s = await seed();
+        const { app } = buildApp(sessionActor(s));
+        const refused = await apply(app, s.companyId, { agents: [{ clientKey: "w", name: "W", role: "general", adapterType: "claude_managed" }], tasks: [{ clientKey: "t", title: "Start", assigneeClientKey: "w" }] });
+        expect(refused.status, JSON.stringify(refused.body)).toBe(422);
+        expect(refused.body.error).toMatch(/claude_managed is not available in this company/);
+        expect(await db.select().from(agents).where(and(eq(agents.companyId, s.companyId), eq(agents.name, "W")))).toEqual([]);
+        // A provisioned Assistant on claude_local: a templated hire without an adapter gets its adapter.
+        await db.update(agents).set({ metadata: withBuiltInAgentMarker({}, { key: ASSISTANT_BUILT_IN_AGENT_KEY, featureKeys: [] }) }).where(eq(agents.id, s.assistantId));
+        await db.insert(builtInManagedResources).values({
+          companyId: s.companyId, bundleKey: ASSISTANT_BUILT_IN_AGENT_KEY, resourceKind: "instructions", resourceKey: "AGENTS.md",
+          resourceId: s.assistantId, stockVersion: "test", stockHash: "test",
+        });
+        const local = await apply(app, s.companyId, { agents: [await researcher()] });
+        expect(local.status, JSON.stringify(local.body)).toBe(201);
+        const [hired] = await db.select().from(agents).where(eq(agents.id, local.body.agents.research.id));
+        expect(hired!.adapterType).toBe("claude_local");
+      }, 120_000);
+    });
 
     it("does not count template agents (or forged provenance pointing at a template) as installed catalog teams", async () => {
       const s = await seed();

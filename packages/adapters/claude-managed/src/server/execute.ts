@@ -109,8 +109,9 @@ export function usesDefaultApiBaseUrl(config: Record<string, unknown>): boolean 
 /**
  * Resolves the Anthropic API key: adapter env (plain or resolved secret) first, then
  * the server env. The server-env key ("hosted inference") is used only when the
- * server allows it for this agent (`serverKeyAllowed`, decided server-side: the
- * provisioned Assistant, or every agent when the operator opts in), and is only
+ * server allows it for this agent (`serverKeyAllowed`, decided server-side for a
+ * claude_managed agent without its own key, once its hosted budget caps are
+ * ensured), and is only
  * ever sent to the default Anthropic API base URL: `apiBaseUrl` is per-agent
  * config, so a custom base URL needs the agent's own key (otherwise any board user
  * could point it at their host and capture the instance key).
@@ -129,19 +130,19 @@ export function resolveApiKey(
   return null;
 }
 
-export const HOSTED_ONLY_FOR_ASSISTANT_MESSAGE =
-  "This agent needs its own Anthropic API key; hosted inference is only provided for the Assistant.";
+export const HOSTED_KEY_WITHHELD_MESSAGE =
+  "This agent needs its own Anthropic API key; the server's hosted inference is not available to it (hosted inference is off, or its spending caps could not be set).";
 
 /**
- * Explains a missing key; names the custom-base-URL rule or the Assistant-only
- * hosted-inference rule when one of them is the reason.
+ * Explains a missing key; names the custom-base-URL rule or the withheld
+ * hosted-inference key when one of them is the reason.
  */
 export function missingApiKeyMessage(
   config: Record<string, unknown>,
   env: Record<string, string | undefined> = {},
   options: { serverKeyAllowed?: boolean } = {},
 ): string {
-  if (options.serverKeyAllowed !== true && (env.ANTHROPIC_API_KEY ?? "").trim()) return HOSTED_ONLY_FOR_ASSISTANT_MESSAGE;
+  if (options.serverKeyAllowed !== true && (env.ANTHROPIC_API_KEY ?? "").trim()) return HOSTED_KEY_WITHHELD_MESSAGE;
   return usesDefaultApiBaseUrl(config)
     ? "ANTHROPIC_API_KEY is required for claude_managed. Add it to this agent's environment variables (or set it on the Staples server)."
     : "This agent uses a custom API base URL, so it needs its own ANTHROPIC_API_KEY in its environment variables. The Staples server's key is only sent to the default Anthropic API.";

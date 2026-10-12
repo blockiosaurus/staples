@@ -341,7 +341,7 @@ describe("claude_managed execute", () => {
     const requestsBefore = fake.requests.length;
     const result = await execute(h.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiFetch: toFake });
     expect(result).toMatchObject({ exitCode: 1, errorCode: "claude_managed_api_key_missing", errorFamily: "configuration",
-      errorMessage: "This agent needs its own Anthropic API key; hosted inference is only provided for the Assistant." });
+      errorMessage: "This agent needs its own Anthropic API key; the server's hosted inference is not available to it (hosted inference is off, or its spending caps could not be set)." });
     expect(fake.requests.length).toBe(requestsBefore);
     // A config flag cannot grant it: only the server-owned context field counts.
     const spoofed = harness({ config: { env: {}, apiBaseUrl: "", hostedInferenceAllowed: true } });
@@ -353,7 +353,7 @@ describe("claude_managed execute", () => {
       { env: { ANTHROPIC_API_KEY: fake.apiKey } },
     );
     expect(check.checks).toEqual([expect.objectContaining({ code: "claude_managed_api_key_missing",
-      message: "This agent needs its own Anthropic API key; hosted inference is only provided for the Assistant." })]);
+      message: "This agent needs its own Anthropic API key; the server's hosted inference is not available to it (hosted inference is off, or its spending caps could not be set)." })]);
     expect(JSON.stringify(check)).not.toContain(fake.apiKey);
   });
 

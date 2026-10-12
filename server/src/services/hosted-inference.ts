@@ -24,12 +24,17 @@ export function hostedInference(env: NodeJS.ProcessEnv = process.env): HostedInf
   };
 }
 
-/** Operator opt-in: every claude_managed agent may use the server's key, not only the Assistant. */
-export function hostedInferenceForAllAgents(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.STAPLES_HOSTED_INFERENCE_ALL_AGENTS?.trim().toLowerCase() === "on";
-}
-
 const DEFAULT_HOSTED_ASSISTANT_BUDGET_CENTS = 2000;
+const DEFAULT_HOSTED_AGENT_BUDGET_CENTS = 2000;
+const DEFAULT_HOSTED_COMPANY_BUDGET_CENTS = 5000;
+
+/** An integer >= 0 from the env (explicit 0 = no cap), else the default. */
+function centsFromEnv(raw: string | undefined, fallback: number): number {
+  const value = raw?.trim();
+  if (!value || !/^\d+$/.test(value)) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
+}
 
 /**
  * Monthly hard-stop budget for an Assistant provisioned on hosted inference
@@ -37,8 +42,23 @@ const DEFAULT_HOSTED_ASSISTANT_BUDGET_CENTS = 2000;
  * overrides it with an integer >= 0, where an explicit 0 means no cap.
  */
 export function hostedAssistantBudgetCents(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env.STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS?.trim();
-  if (!raw || !/^\d+$/.test(raw)) return DEFAULT_HOSTED_ASSISTANT_BUDGET_CENTS;
-  const value = Number.parseInt(raw, 10);
-  return Number.isSafeInteger(value) ? value : DEFAULT_HOSTED_ASSISTANT_BUDGET_CENTS;
+  return centsFromEnv(env.STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS, DEFAULT_HOSTED_ASSISTANT_BUDGET_CENTS);
+}
+
+/**
+ * Monthly hard-stop budget for any other agent on hosted inference (a hire on
+ * Claude (hosted) without its own key). Default $20;
+ * `STAPLES_HOSTED_AGENT_BUDGET_CENTS` overrides it (explicit 0 = no cap).
+ */
+export function hostedAgentBudgetCents(env: NodeJS.ProcessEnv = process.env): number {
+  return centsFromEnv(env.STAPLES_HOSTED_AGENT_BUDGET_CENTS, DEFAULT_HOSTED_AGENT_BUDGET_CENTS);
+}
+
+/**
+ * Monthly hard-stop budget for a company with any agent on hosted inference.
+ * Default $50; `STAPLES_HOSTED_COMPANY_BUDGET_CENTS` overrides it (explicit 0 =
+ * no cap). An existing active company budget is never lowered.
+ */
+export function hostedCompanyBudgetCents(env: NodeJS.ProcessEnv = process.env): number {
+  return centsFromEnv(env.STAPLES_HOSTED_COMPANY_BUDGET_CENTS, DEFAULT_HOSTED_COMPANY_BUDGET_CENTS);
 }

@@ -693,22 +693,47 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect((await createBuiltInAgentService(db).ensureAssistant(local)).budgetMonthlyCents).toBe(0);
   });
 
-  it("allows the server key only for the provisioned Assistant unless the operator opts every agent in", async () => {
+  it("lets any claude_managed agent without its own key use the server key, once its agent and company caps are ensured", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_AGENT_BUDGET_CENTS", "750");
     const companyId = await seedCompany({ requireApproval: false });
     const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
     const staff = await hire(companyId, "claude_managed", "claude-opus-5-5");
+    const local = await hire(companyId, "claude_local", "claude-sonnet-4-5");
+    const policyFor = async (scopeType: "agent" | "company", scopeId: string) => (await db.select().from(budgetPolicies)
+      .where(and(eq(budgetPolicies.scopeType, scopeType), eq(budgetPolicies.scopeId, scopeId))))[0];
     expect(await hostedInferenceAllowedFor(db, assistant)).toBe(true);
-    expect(await hostedInferenceAllowedFor(db, staff)).toBe(false);
-    // A marker copied into a staff agent's metadata is not the provisioning record.
-    await db.update(agents).set({ metadata: withBuiltInAgentMarker({}, { key: "assistant", featureKeys: ["assistant"] }) }).where(eq(agents.id, staff.id))
-      .catch(() => undefined);
-    expect(await hostedInferenceAllowedFor(db, staff)).toBe(false);
-    vi.stubEnv("STAPLES_HOSTED_INFERENCE_ALL_AGENTS", "on");
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
+    expect(await hostedInferenceAllowedFor(db, local)).toBe(false);
+    // The Assistant keeps its own cap; other agents get STAPLES_HOSTED_AGENT_BUDGET_CENTS; the company gets the default $50.
+    expect(await policyFor("agent", assistant.id)).toMatchObject({ amount: 2000, isActive: true, hardStopEnabled: true });
+    expect(await policyFor("agent", staff.id)).toMatchObject({ amount: 750, isActive: true, hardStopEnabled: true });
+    expect(await policyFor("agent", local.id)).toBeUndefined();
+    expect(await policyFor("company", companyId)).toMatchObject({ amount: 5000, isActive: true, hardStopEnabled: true });
+    // The retired all-agents switch changes nothing.
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE_ALL_AGENTS", "off");
     expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
     vi.stubEnv("STAPLES_HOSTED_INFERENCE", "off");
     expect(await hostedInferenceAllowedFor(db, assistant)).toBe(false);
     expect(await hostedInferenceAllowedFor(db, staff)).toBe(false);
+  });
+
+  it("re-activates a disabled company cap at its own amount, and an explicit 0 leaves the company uncapped", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const staff = await hire(companyId, "claude_managed", "claude-opus-5-5");
+    await db.insert(budgetPolicies).values({ companyId, scopeType: "company", scopeId: companyId, metric: "billed_cents", windowKind: "calendar_month_utc",
+      amount: 900, hardStopEnabled: false, isActive: false });
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
+    const companyPolicy = async (id: string) => (await db.select().from(budgetPolicies)
+      .where(and(eq(budgetPolicies.scopeType, "company"), eq(budgetPolicies.scopeId, id))))[0];
+    expect(await companyPolicy(companyId)).toMatchObject({ amount: 900, isActive: true, hardStopEnabled: true });
+
+    vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_CENTS", "0");
+    const uncapped = await seedCompany({ requireApproval: false });
+    const other = await hire(uncapped, "claude_managed", "claude-opus-5-5");
+    expect(await hostedInferenceAllowedFor(db, other)).toBe(true);
+    expect(await companyPolicy(uncapped)).toBeUndefined();
   });
 
   const hostedPolicy = async (agentId: string) => (await db.select().from(budgetPolicies)

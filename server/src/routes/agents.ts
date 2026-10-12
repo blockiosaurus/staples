@@ -3306,7 +3306,7 @@ export function agentRoutes(
           tested.checks.unshift({ code: "ai_connection_tested", level: "info", message: `Tested ${managed.accountName} — ${managed.accountOwnerUserId ? managed.accountOwnerUserId === responsibleUserForAiRequest(req) ? "your personal account" : "the owner’s account authorized for this agent" : "company-shared account"}. Responsible user: ${req.actor.type === "agent" ? responsibleUserForAiRequest(req) ?? "unavailable" : "the signed-in user"}.` });
           return tested;
         }) : await adapter.testEnvironment({ companyId, adapterType: type, config: effectiveAdapterConfig, executionTarget, environmentName,
-          // Server-owned: the server's key is only for the provisioned Assistant (or all agents when the operator opts in).
+          // Server-owned: the server's key only for a claude_managed agent without its own key, once its hosted budgets are ensured.
           hostedInferenceAllowed: await hostedInferenceAllowedFor(db, { id: savedAgentId ?? "", companyId, adapterType: type, adapterConfig: effectiveAdapterConfig }) });
 
         const prefixChecks = [
