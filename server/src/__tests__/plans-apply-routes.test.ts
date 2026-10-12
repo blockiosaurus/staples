@@ -42,6 +42,7 @@ import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
 import { injectApiRequest } from "../services/public-mcp/capabilities.js";
 import { companyBriefService } from "../services/company-brief.js";
 import { claimPlanApplication, planHash, takeOverPlanApplication } from "../services/plans.js";
+import { prepareAgentHireApproval } from "../services/agent-hiring.js";
 import { applyPlanSchema } from "@paperclipai/shared";
 import { aiConnectionService } from "../services/ai-connections.js";
 import { planHireConnectionsFor } from "../services/assistant-tools.js";
@@ -1037,6 +1038,93 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       await expect(decide(books, "list_charges")).resolves.toMatchObject({ decision: "allow" });
       expect((await db.select().from(agents).where(eq(agents.id, books)))[0]!.metadata).toMatchObject({ staplesTemplate: { readOnly: true, outwardActions: [] } });
     }, 120_000);
+
+    it("hires templated agents without delegation: no hiring, and a read-only one cannot assign work", async () => {
+      const s = await seed();
+      const { app } = buildApp(sessionActor(s));
+      const response = await apply(app, s.companyId, {
+        agents: [await templatedAgent("books", "staples/bookkeeper"), await templatedAgent("dev", "staples/coding-agent")],
+      });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      const books = response.body.agents.books.id as string;
+      const dev = response.body.agents.dev.id as string;
+      const rows = await db.select().from(agents).where(eq(agents.companyId, s.companyId));
+      const row = (id: string) => rows.find((candidate) => candidate.id === id)!;
+      expect(row(books).permissions).toMatchObject({ canCreateAgents: false, canAssignTasks: false });
+      expect(row(dev).permissions).toMatchObject({ canCreateAgents: false });
+      expect((row(dev).permissions as Record<string, unknown>).canAssignTasks).toBeUndefined();
+      // Setup finished, so neither is held.
+      for (const id of [books, dev]) {
+        expect(row(id).pauseReason).toBeNull();
+        expect(row(id).lifecycleHolds).not.toContain("template_setup");
+        expect((row(id).metadata as Record<string, Record<string, unknown>>).staplesTemplate.setupPending).toBeUndefined();
+      }
+      const grants = await db.select().from(principalPermissionGrants).where(eq(principalPermissionGrants.companyId, s.companyId));
+      const keys = (id: string) => grants.filter((grant) => grant.principalId === id).map((grant) => grant.permissionKey);
+      expect(keys(books)).not.toContain("tasks:assign");
+      expect(keys(books)).not.toContain("tasks:assign_scope");
+      expect(keys(books)).not.toContain("agents:create");
+      expect(keys(dev)).toContain("tasks:assign");
+      expect(keys(dev)).not.toContain("agents:create");
+    }, 120_000);
+
+    it("holds a templated agent paused until its guards exist; re-applying finishes setup and releases it", async () => {
+      const s = await seed();
+      let block = true;
+      const built = buildApp(sessionActor(s), {
+        hireAgent: async (actor, companyId, body, origin) => {
+          const response = await injectApiRequest(built.api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin });
+          const hired = (response.json as { agent?: { id: string; name: string } }).agent;
+          if (block && hired) {
+            // A same-named policy makes seeding the destructive guard fail.
+            await db.insert(toolPolicies).values({
+              companyId, name: `${hired.name}: ask before deleting`.slice(0, 140) + ` · ${hired.id.slice(0, 8)}`, policyType: "allow", priority: 900,
+            });
+          }
+          return response;
+        },
+      });
+      const plan = { agents: [await templatedAgent("dev", "staples/coding-agent")] };
+      const first = await apply(built.app, s.companyId, plan, "held-setup");
+      expect(first.body.code, JSON.stringify(first.body)).toBe("plan_partially_applied");
+      expect(first.body.error).toContain("stays paused until its template setup finishes");
+      const devId = first.body.partial.agents.dev.id as string;
+      const [held] = await db.select().from(agents).where(eq(agents.id, devId));
+      expect(held).toMatchObject({ status: "paused", pauseReason: "template_setup", lifecycleHolds: ["template_setup"] });
+      expect((held!.metadata as Record<string, Record<string, unknown>>).staplesTemplate.setupPending).toBe(true);
+
+      block = false;
+      await db.delete(toolPolicies).where(and(eq(toolPolicies.companyId, s.companyId), eq(toolPolicies.priority, 900)));
+      const retried = await apply(built.app, s.companyId, plan, "held-setup");
+      expect(retried.status, JSON.stringify(retried.body)).toBe(201);
+      expect(retried.body.agents.dev.id).toBe(devId);
+      const [released] = await db.select().from(agents).where(eq(agents.id, devId));
+      expect(released!.pauseReason).toBeNull();
+      expect(released!.lifecycleHolds).toEqual([]);
+      expect((released!.metadata as Record<string, Record<string, unknown>>).staplesTemplate.setupPending).toBeUndefined();
+      expect(await templatePolicies(devId)).toHaveLength(2);
+    }, 240_000);
+
+    it("keeps a pending hire approval from activating a templated agent whose setup did not finish", async () => {
+      const s = await seed({ requireApproval: true });
+      const built = buildApp(sessionActor(s), {
+        hireAgent: async (actor, companyId, body, origin) => {
+          const response = await injectApiRequest(built.api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin });
+          const hired = (response.json as { agent?: { id: string; name: string } }).agent;
+          if (hired) {
+            await db.insert(toolPolicies).values({
+              companyId, name: `${hired.name}: ask before deleting`.slice(0, 140) + ` · ${hired.id.slice(0, 8)}`, policyType: "allow", priority: 900,
+            });
+          }
+          return response;
+        },
+      });
+      const first = await apply(built.app, s.companyId, { agents: [await templatedAgent("dev", "staples/coding-agent")] });
+      expect(first.body.code, JSON.stringify(first.body)).toBe("plan_partially_applied");
+      const [pending] = await db.select().from(agents).where(eq(agents.id, first.body.partial.agents.dev.id as string));
+      expect(pending!.status).toBe("pending_approval");
+      await expect(prepareAgentHireApproval(db, pending as never, null)).rejects.toThrow("template setup has not finished");
+    }, 240_000);
 
     it("skips the connect task for a service the company already connected", async () => {
       const s = await seed();

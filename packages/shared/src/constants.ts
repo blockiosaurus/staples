@@ -669,8 +669,9 @@ export type RoutineRunSource = (typeof ROUTINE_RUN_SOURCES)[number];
 
 // "import" marks agents parked by a company import (safety default) so the UI
 // can explain the pause and offer a scoped bulk-resume; "system" remains the
-// reason for platform-managed pauses (plugins, built-ins).
-export const PAUSE_REASONS = ["manual", "budget", "system", "company_archived", "import"] as const;
+// reason for platform-managed pauses (plugins, built-ins). "template_setup"
+// holds an agent hired from a Staples template until its guards are in place.
+export const PAUSE_REASONS = ["manual", "budget", "system", "company_archived", "import", "template_setup"] as const;
 export type PauseReason = (typeof PAUSE_REASONS)[number];
 
 export const PROJECT_COLORS = [

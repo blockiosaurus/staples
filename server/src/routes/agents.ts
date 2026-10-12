@@ -1384,8 +1384,11 @@ export function agentRoutes(
     companyId: string,
     agentId: string,
     grantedByUserId: string | null,
+    permissions?: unknown,
   ) {
     await access.ensureMembership(companyId, "agent", agentId, "member", "active");
+    // A read-only template agent is hired with canAssignTasks: false.
+    if (permissions && typeof permissions === "object" && (permissions as Record<string, unknown>).canAssignTasks === false) return;
     await access.setPrincipalPermission(
       companyId,
       "agent",
@@ -4487,6 +4490,7 @@ export function agentRoutes(
         companyId,
         agent.id,
         actor.actorType === "user" ? actor.actorId : null,
+        agent.permissions,
       );
 
       if (approval) {
@@ -4670,6 +4674,7 @@ export function agentRoutes(
       companyId,
       agent.id,
       req.actor.type === "board" ? (req.actor.userId ?? null) : null,
+      agent.permissions,
     );
     await builtInAgentService(db).ensureCompanyDefaultAgentGrants(companyId);
 

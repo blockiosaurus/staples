@@ -2,13 +2,13 @@ import { agentAppearanceSchema, randomAgentAppearance } from "@paperclipai/share
 import { normalizePaperclipRunnerAdapterConfig } from "@paperclipai/adapter-utils/server-utils";
 import { agents, toolConnectionInstalls, principalPermissionGrants, type Db } from "@paperclipai/db";
 import { eq } from "drizzle-orm";
-import { unprocessable } from "../errors.js";
+import { conflict, unprocessable } from "../errors.js";
 import { agentRecordQueries, isPlainRecord, configPatchFromApprovalPayload, normalizeRuntimeConfigForNewAgent,
   deduplicateAgentName, type CreateAgentData, type CreateAgentOptions, type AgentConfigurationPatch, type AgentHireRecord } from "../lib/agent-records.js";
-import { normalizeAgentPermissions, permissionsImplyLowTrust, NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS,
+import { normalizeAgentPermissions, permissionsImplyLowTrust, newStandardAgentGrantKeys,
   newStandardAgentGrantScope } from "../lib/agent-permissions.js";
 import { readBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
-import { withStoredStaplesTemplateMarker } from "../lib/staples-template-metadata.js";
+import { rawStaplesTemplateMarker, withStoredStaplesTemplateMarker } from "../lib/staples-template-metadata.js";
 import { secretService, assertClaudeOAuthBindingInvariant } from "./secrets.js";
 import { agentCredentialService } from "./agent-credentials.js";
 import { agentIdentityService } from "./agent-identity.js";
@@ -55,7 +55,7 @@ export async function initializeAgentHire(txDb: Db, created: AgentHireRecord, op
   if (created.status !== "pending_approval" && !permissionsImplyLowTrust(created.permissions) &&
       !readBuiltInAgentMarker(created.metadata)) {
     await tx.insert(principalPermissionGrants).values(
-      NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS.map((permissionKey) => ({
+      newStandardAgentGrantKeys(created.permissions).map((permissionKey) => ({
         companyId,
         principalType: "agent" as const,
         principalId: created.id,
@@ -80,6 +80,13 @@ export async function initializeAgentHire(txDb: Db, created: AgentHireRecord, op
 }
 
 export async function prepareAgentHireApproval(txDb: Db, existing: AgentHireRecord, approvedPayload?: Record<string, unknown> | null): Promise<AgentConfigurationPatch> {
+  // A templated hire is held until plans/apply has seeded its guards.
+  const templateMarker = rawStaplesTemplateMarker(existing.metadata);
+  if (templateMarker && typeof templateMarker === "object" && (templateMarker as Record<string, unknown>).setupPending === true) {
+    throw conflict("This agent's template setup has not finished, so its safety rules are not in place yet. Apply the same plan again, then approve the hire.", {
+      code: "agent_template_setup_pending",
+    });
+  }
   const approvedPatch = approvedPayload ? configPatchFromApprovalPayload(approvedPayload) : {};
   const patch = { ...approvedPatch } as AgentConfigurationPatch;
   // An approval payload is caller-shaped; it may not add or alter a built-in marker.
@@ -131,7 +138,7 @@ export async function completeAgentHireApproval(txDb: Db, updated: AgentHireReco
   await agentCredentialService(txDb).syncAgentSecretBindings(updated, txDb, existing.adapterConfig);
   if (!permissionsImplyLowTrust(updated.permissions) && !readBuiltInAgentMarker(updated.metadata)) {
     await tx.insert(principalPermissionGrants).values(
-      NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS.map((permissionKey) => ({
+      newStandardAgentGrantKeys(updated.permissions).map((permissionKey) => ({
         companyId: updated.companyId,
         principalType: "agent" as const,
         principalId: updated.id,

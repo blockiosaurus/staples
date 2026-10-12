@@ -18,6 +18,16 @@ export const NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS = [
   "tasks:manage_active_checkouts",
 ] as const satisfies readonly PermissionKey[];
 
+/**
+ * The standard grant keys for a new agent, minus task assignment when its
+ * permissions say `canAssignTasks: false` (read-only template agents).
+ */
+export function newStandardAgentGrantKeys(permissions: unknown): PermissionKey[] {
+  const record = asRecord(permissions);
+  const noAssign = record?.canAssignTasks === false;
+  return NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS.filter((key) => !(noAssign && (key === "tasks:assign" || key === "tasks:assign_scope")));
+}
+
 export function newStandardAgentGrantScope(
   permissionKey: PermissionKey,
   agentId: string,

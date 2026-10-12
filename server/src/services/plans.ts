@@ -15,6 +15,8 @@ import {
 import { conflict, forbidden, HttpError, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
+import { createAgentLifecycle } from "./agent-lifecycle.js";
+import { STAPLES_TEMPLATE_METADATA_KEY } from "../lib/staples-template-metadata.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
 import { resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { canonicalJson, currentBriefRevisionId, planExistingAssigneeViolation, planRuleViolation } from "./assistant-proposed-actions.js";
@@ -32,6 +34,7 @@ import {
   planTemplateErrorMessage,
   renderPlanTemplates,
   routineSafeText,
+  staplesTemplateRecord,
   templateSkillPolicyDenial,
   templateTaskSpecs,
   withTemplateDefaults,
@@ -122,13 +125,16 @@ export function planHireBody(
   reportsTo: string | undefined,
   assistant: AssistantHireDefaults | null,
   withConnection = true,
-  template?: { instructionsMarkdown: string; desiredSkills: string[] },
+  template?: { instructionsMarkdown: string; desiredSkills: string[]; readOnly?: boolean },
 ): Record<string, unknown> {
   const body: Record<string, unknown> = { name: agent.name, role: agent.role, adapterType: agent.adapterType };
   if (template) {
     // A template's instructions and skills ride on the hire like any app hire's.
     body.instructionsBundle = { entryFile: "AGENTS.md", files: { "AGENTS.md": template.instructionsMarkdown } };
     body.desiredSkills = template.desiredSkills;
+    // Guards are per agent and not inherited: a templated agent may not hire
+    // (an unguarded) one, and a read-only one may not hand work to others.
+    body.permissions = { canCreateAgents: false, ...(template.readOnly ? { canAssignTasks: false } : {}) };
   }
   if (agent.title !== undefined) body.title = agent.title;
   if (agent.capabilities !== undefined) body.capabilities = agent.capabilities;
@@ -193,6 +199,28 @@ export function planHash(plan: ApplyPlan) {
 function errorMessage(json: unknown, statusCode: number) {
   const error = json && typeof json === "object" ? (json as { error?: unknown }).error : null;
   return typeof error === "string" && error.trim() ? error.trim().slice(0, 200) : `HTTP ${statusCode}`;
+}
+
+/** Pause reason of a templated agent held until its template guards exist. */
+export const TEMPLATE_SETUP_PAUSE_REASON = "template_setup";
+
+/** Names of hired agents still held for template setup (paused for it, or with a pending setup record). */
+async function heldTemplatedHires(db: Db, companyId: string, plan: ApplyPlan, hired: HiredAgents): Promise<string[]> {
+  const names = new Map(plan.agents.map((agent) => [agent.clientKey, agent.name] as const));
+  const held: string[] = [];
+  for (const [clientKey, hire] of Object.entries(hired)) {
+    if (!hire.templateRef) continue;
+    try {
+      const [row] = await db.select({ holds: agents.lifecycleHolds, metadata: agents.metadata }).from(agents)
+        .where(and(eq(agents.id, hire.id), eq(agents.companyId, companyId)));
+      const marker = row?.metadata && typeof row.metadata === "object" ? (row.metadata as Record<string, unknown>)[STAPLES_TEMPLATE_METADATA_KEY] : undefined;
+      const pending = Boolean(marker && typeof marker === "object" && (marker as Record<string, unknown>).setupPending === true);
+      if (row && (row.holds.includes(TEMPLATE_SETUP_PAUSE_REASON) || pending)) held.push(names.get(clientKey) ?? clientKey);
+    } catch {
+      // Naming held agents must never replace the error being reported.
+    }
+  }
+  return held;
 }
 
 function describeHired(plan: ApplyPlan, hired: HiredAgents) {
@@ -479,11 +507,45 @@ export async function applyPlan(db: Db, input: {
   const hired: HiredAgents = application ? await reusableHires(db, companyId, application.agents) : {};
   const templatePolicies: AppliedPlan["templatePolicies"] = [];
   let connected: ReadonlySet<string> = new Set();
+  /**
+   * Hold a just-hired templated agent until its guards exist: pause it
+   * (pauseReason `template_setup`) and record its template with
+   * `setupPending`, which keeps a pending hire approval from activating it.
+   */
+  const holdTemplatedHire = async (clientKey: string) => {
+    const rendered = templates.get(clientKey);
+    const hire = hired[clientKey];
+    if (!rendered || !hire) return;
+    const [row] = await db.select({ metadata: agents.metadata, status: agents.status }).from(agents)
+      .where(and(eq(agents.id, hire.id), eq(agents.companyId, companyId)));
+    if (!row) return;
+    const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata as Record<string, unknown> : {};
+    await db.update(agents).set({
+      metadata: { ...metadata, [STAPLES_TEMPLATE_METADATA_KEY]: { ...staplesTemplateRecord(rendered), setupPending: true } },
+      updatedAt: new Date(),
+    }).where(and(eq(agents.id, hire.id), eq(agents.companyId, companyId)));
+    // A lifecycle hold: the agent cannot run until it is released, whatever
+    // state its setup is in. A pending hire is held by its approval instead
+    // (activation refuses while `setupPending` is set).
+    if (row.status !== "pending_approval") {
+      const paused = await createAgentLifecycle(db).pauseAgent(hire.id, TEMPLATE_SETUP_PAUSE_REASON);
+      if (paused) hire.status = paused.status;
+    }
+  };
   /** Install a templated agent's access rules and record (idempotent; also for agents an earlier attempt hired). */
   const setUpTemplatedAgent = async (clientKey: string) => {
     const rendered = templates.get(clientKey);
     if (!rendered) return;
     const agentId = hired[clientKey]!.id;
+    await setUpTemplatedAgentRules(rendered, agentId);
+    // Guards are in place: release an agent held for setup.
+    const [row] = await db.select({ holds: agents.lifecycleHolds }).from(agents).where(and(eq(agents.id, agentId), eq(agents.companyId, companyId)));
+    if (row?.holds.includes(TEMPLATE_SETUP_PAUSE_REASON)) {
+      const released = await createAgentLifecycle(db).resumeAgent(agentId, TEMPLATE_SETUP_PAUSE_REASON);
+      if (released) hired[clientKey]!.status = released.status;
+    }
+  };
+  const setUpTemplatedAgentRules = async (rendered: NonNullable<ReturnType<typeof templates.get>>, agentId: string) => {
     for (const policy of await ensureTemplateAgentSetup(db, companyId, agentId, rendered, userId)) {
       templatePolicies.push({ ...policy, agentId });
       // Logged as it is created: the rule stays even if a later step fails.
@@ -515,8 +577,12 @@ export async function applyPlan(db: Db, input: {
     }
     if (Object.keys(hired).length === 0) throw error;
     if (error instanceof PlanPartiallyAppliedError) throw error;
+    const held = await heldTemplatedHires(db, companyId, plan, hired);
+    const heldNote = held.length
+      ? ` ${held.join(", ")} ${held.length === 1 ? "stays" : "stay"} paused until ${held.length === 1 ? "its" : "their"} template setup finishes.`
+      : "";
     throw new PlanPartiallyAppliedError(status,
-      `${reason}. Hired so far: ${describeHired(plan, hired)}. Nothing else from the plan was created; applying the same plan again reuses these agents.`, hired);
+      `${reason}. Hired so far: ${describeHired(plan, hired)}. Nothing else from the plan was created; applying the same plan again reuses these agents.${heldNote}`, hired);
   };
 
   try {
@@ -540,7 +606,7 @@ export async function applyPlan(db: Db, input: {
       await holdLease();
       const rendered = templates.get(agent.clientKey);
       // Template skills must be in the company library before the hire selects them.
-      let template: { instructionsMarkdown: string; desiredSkills: string[] } | undefined;
+      let template: { instructionsMarkdown: string; desiredSkills: string[]; readOnly?: boolean } | undefined;
       if (rendered) {
         const skills = await ensureTemplateSkills(db, companyId, rendered);
         for (const skill of skills.installed) {
@@ -555,7 +621,7 @@ export async function applyPlan(db: Db, input: {
               : { source: "agent_template", templateRef: rendered.ref, importedCount: 1, importedSlugs: [skill.slug], skillId: skill.id },
           });
         }
-        template = { instructionsMarkdown: rendered.agent.instructionsMarkdown, desiredSkills: skills.keys };
+        template = { instructionsMarkdown: rendered.agent.instructionsMarkdown, desiredSkills: skills.keys, readOnly: rendered.readOnly };
       }
       if (rendered) await holdLease();
       const body = planHireBody(agent, agent.reportsToClientKey ? hired[agent.reportsToClientKey]!.id : undefined, assistant, true, template);
@@ -590,8 +656,9 @@ export async function applyPlan(db: Db, input: {
         approvalId: typeof json.approval?.id === "string" ? json.approval.id : null,
         ...(agent.templateRef ? { templateRef: agent.templateRef } : {}),
       };
+      // Guard the new agent before anything else happens; until then it is held.
+      await holdTemplatedHire(agent.clientKey);
       await recordHires();
-      // Guard the new agent before anything else happens.
       await setUpTemplatedAgent(agent.clientKey);
     }
 
