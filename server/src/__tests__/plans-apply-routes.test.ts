@@ -40,6 +40,7 @@ import { agentRoutes } from "../routes/agents.js";
 import { toolAccessRoutes } from "../routes/tool-access.js";
 import { agentAutopilotRoutes } from "../routes/agent-autopilot.js";
 import { planRoutes } from "../routes/plans.js";
+import { approvalRoutes } from "../routes/approvals.js";
 import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
 import { injectApiRequest } from "../services/public-mcp/capabilities.js";
 import { companyBriefService } from "../services/company-brief.js";
@@ -1291,6 +1292,21 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       const [pending] = await db.select().from(agents).where(eq(agents.id, first.body.partial.agents.dev.id as string));
       expect(pending!.status).toBe("pending_approval");
       await expect(prepareAgentHireApproval(db, pending as never, null)).rejects.toThrow("template setup has not finished");
+
+      // Deciding the approval through the route is refused too and leaves it pending.
+      const approvalId = first.body.partial.agents.dev.approvalId as string;
+      expect(approvalId).toBeTruthy();
+      const approvalsApp = express();
+      approvalsApp.use(express.json());
+      approvalsApp.use((req, _res, next) => { req.actor = sessionActor(s); next(); });
+      approvalsApp.use("/api", approvalRoutes(db));
+      approvalsApp.use(errorHandler);
+      const decided = await request(approvalsApp).post(`/api/approvals/${approvalId}/approve`).set("Origin", ORIGIN).send({});
+      expect(decided.status, JSON.stringify(decided.body)).toBe(409);
+      const [approval] = await db.select().from(approvals).where(eq(approvals.id, approvalId));
+      expect(approval!.status).toBe("pending");
+      const [still] = await db.select().from(agents).where(eq(agents.id, pending!.id));
+      expect(still!.status).toBe("pending_approval");
     }, 240_000);
 
     it("skips the connect task for a service the company already connected", async () => {
