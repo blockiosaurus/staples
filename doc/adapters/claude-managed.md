@@ -42,7 +42,7 @@ Package: `packages/adapters/claude-managed`.
 
 | Field | Where | Notes |
 | --- | --- | --- |
-| `env.ANTHROPIC_API_KEY` | Agent setup credential field, or Environment variables | A company secret binding (recommended) or a plain value. When empty, the server's `ANTHROPIC_API_KEY` (hosted inference) is used, under hard-stop monthly caps the server sets first (see [Hosted inference](#hosted-inference)), and only when `apiBaseUrl` is the default. |
+| `env.ANTHROPIC_API_KEY` | Agent setup credential field, or Environment variables | A company secret binding (recommended) or a plain value. When empty, and only when `apiBaseUrl` is the default: with hosted inference on, the server's `STAPLES_HOSTED_ANTHROPIC_API_KEY` is used under hard-stop monthly caps the server sets first (see [Hosted inference](#hosted-inference)); with hosted inference off, the server's plain `ANTHROPIC_API_KEY` is used with no forced caps (the behaviour before hosted inference). |
 | `model` | Model picker | Default `claude-opus-5-5`. Any Managed Agents model id can be typed. |
 | `environmentId` | Configuration | Optional. An existing Managed Agents environment. When empty, Staples creates one per agent. |
 | `instructionsFilePath` | Instructions | Used as the agent's system prompt. |
@@ -57,30 +57,59 @@ calls `GET /v1/agents?limit=1`; it never echoes the key.
 
 ## Hosted inference
 
-When the Staples server has `ANTHROPIC_API_KEY` set (and
-`STAPLES_HOSTED_INFERENCE` is not `off`), new companies' Assistants run on
-Claude (hosted) with no setup, and the Assistant may hire staff agents on
-Claude (hosted) too. In such a company plan hires default to `claude_managed`
-with the Assistant's model, and template recommendations resolve to it.
-Without hosted inference, `claude_managed` is proposable for hires only when
-the company's Assistant runs on it with its own key (a company secret); the
-hires then inherit that key binding.
+Hosted inference is turned on only by a dedicated server variable,
+`STAPLES_HOSTED_ANTHROPIC_API_KEY` (and `STAPLES_HOSTED_INFERENCE` not set to
+`off`). A plain `ANTHROPIC_API_KEY` in the server environment never turns it on:
+many local users export that variable for other tools, and it does not change
+Assistant provisioning, hire defaults, setup-card availability or
+`hostedInferenceAvailable`.
 
-The operator's key pays for every agent that uses it, so before its first use
-(at hire, and again at every run and connection test) the server ensures
-active hard-stop monthly `billed_cents` budget policies:
+When hosted inference is on, new companies' Assistants run on Claude (hosted)
+with no setup, and the Assistant may hire staff agents on Claude (hosted) too.
+In such a company plan hires default to `claude_managed` with the Assistant's
+model, and template recommendations resolve to it. Without hosted inference,
+`claude_managed` is proposable for hires only when the company's Assistant runs
+on it with its own key (a company secret); the hires then inherit that key
+binding.
 
-| Scope | Env var | Default |
+Which server key a `claude_managed` agent without its own key uses:
+
+| Server env | Key used | Caps |
 | --- | --- | --- |
-| The Assistant | `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS` | `2000` ($20) |
-| Any other agent on hosted inference | `STAPLES_HOSTED_AGENT_BUDGET_CENTS` | `2000` ($20) |
-| The company | `STAPLES_HOSTED_COMPANY_BUDGET_CENTS` | `5000` ($50) |
+| `STAPLES_HOSTED_ANTHROPIC_API_KEY` set, hosted inference on | The hosted key, once the server allows it for the run | Hard-stop monthly caps (below), ensured first; if they cannot be set, no key is used |
+| No hosted key, or `STAPLES_HOSTED_INFERENCE=off` | The server's plain `ANTHROPIC_API_KEY`, if set | None forced (the behaviour before hosted inference) |
+
+`STAPLES_HOSTED_INFERENCE=off` disables only the hosted key path. Either server
+key is sent only to the default API base URL, and neither is ever logged or
+returned.
+
+The hosted key pays for every agent that uses it, so before its first use (at
+hire, and again at every run and connection test) the server ensures active
+hard-stop monthly budget policies:
+
+| Scope | Metric | Env var | Default |
+| --- | --- | --- | --- |
+| The Assistant | `billed_cents` | `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS` | `2000` ($20) |
+| Any other agent on hosted inference | `billed_cents` | `STAPLES_HOSTED_AGENT_BUDGET_CENTS` | `2000` ($20) |
+| The company's hosted spend | `hosted_billed_cents` | `STAPLES_HOSTED_COMPANY_BUDGET_CENTS` | `5000` ($50) |
 
 Each value is an integer number of cents; an explicit `0` leaves that scope
 uncapped, and an invalid value uses the default. An existing active hard-stop
-policy is kept at its amount (an existing company budget is never lowered); a
-disabled, soft or zeroed one is re-activated as a hard stop. Agents with their
-own key binding never use the server key and get no forced caps.
+policy is kept at its amount (an existing hosted company cap is never lowered);
+a disabled, soft or zeroed one is re-activated as a hard stop. The server
+records these policy writes in the activity log with a system actor
+(`hosted_inference`). Agents with their own key binding never use the server
+key and get no forced caps.
+
+**The company cap counts hosted spend only.** Cost events of a run that used
+the hosted key are marked (`cost_events.hosted_inference`), and the
+`hosted_billed_cents` policy counts only those. A company with local agents
+and their past spend gets the hosted cap like any other, and local spend never
+counts toward it. When the cap is reached, only runs that would use the hosted
+key are refused ("This company reached its monthly spending cap for hosted
+inference ..."); the company is not paused, and local agents keep working. A
+person-set company budget (`billed_cents`) keeps its meaning: it counts all
+spend and pauses the company as before, and the hosted cap never changes it.
 
 `STAPLES_HOSTED_INFERENCE_ALL_AGENTS` is retired: every `claude_managed` agent
 without its own key may use hosted inference, always under the caps above.
@@ -100,16 +129,17 @@ without its own key may use hosted inference, always under the caps above.
   to be reachable from the internet for this adapter.
 - **The Anthropic API key** is resolved through the normal secrets path, sent
   only to the configured API base URL, and never logged or returned. The
-  server's `ANTHROPIC_API_KEY` fallback ("hosted inference") is decided by the
-  server per run, never from agent config: any `claude_managed` agent without
-  its own key may use it, but only after the server has ensured its hard-stop
-  monthly caps (see [Hosted inference](#hosted-inference)). If a cap cannot be
-  set, the key is withheld. `STAPLES_HOSTED_INFERENCE=off` turns the fallback
-  off entirely. The fallback is used only with the default base URL
-  (`https://api.anthropic.com/v1`). `apiBaseUrl` is per-agent config, so an agent
-  with a custom base URL must carry its own key; otherwise a board user could
-  point an agent at their own host and capture the instance key. The run and the
-  connection test fail with a message that says so.
+  hosted key (`STAPLES_HOSTED_ANTHROPIC_API_KEY`) is granted by the server per
+  run, never from agent config: any `claude_managed` agent without its own key
+  may use it, but only after the server has ensured its hard-stop monthly caps
+  (see [Hosted inference](#hosted-inference)). If a cap cannot be set, the key
+  is withheld, and the plain `ANTHROPIC_API_KEY` is not used in its place.
+  Without hosted inference the plain `ANTHROPIC_API_KEY` fallback works as it
+  did before hosted inference existed. Either server key is used only with the
+  default base URL (`https://api.anthropic.com/v1`). `apiBaseUrl` is per-agent
+  config, so an agent with a custom base URL must carry its own key; otherwise a
+  board user could point an agent at their own host and capture a server key.
+  The run and the connection test fail with a message that says so.
 - **Tool results are scrubbed.** The run token is redacted from tool results
   (successful and failed) before they are sent to Anthropic, in case a tool
   echoes its request headers.
@@ -153,9 +183,24 @@ Networking settings apply only to environments Staples creates. When
   `billingType: "api"` and provider/biller `anthropic`. Usage is reported
   incrementally while the run is in progress, so budget hard stops see spend as
   it happens.
-- The adapter can cap a new session at the agent's remaining budget
-  (`budget.max_list_cost`); the session then stops with `budget_reached` and the
-  run fails with `errorCode: "budget_reached"`.
+- **Per-session spending limit.** The server sets
+  `context.paperclipBudgetRemainingUsd` for every run to the smallest remaining
+  amount of the run's active hard-stop policies: the agent's, its project's and
+  its company's `billed_cents` policies, plus the hosted company cap when the
+  run uses the hosted key (at least one cent; absent when no hard-stop policy
+  applies; a value in the wake context is ignored). The adapter sends it as the
+  session's `budget.max_list_cost`: a new session is capped at it, and a resumed
+  session's cap is moved to its spend so far plus that amount (if the API
+  refuses the change, the run starts a new session instead). The session then
+  stops with `budget_reached` and the run fails with
+  `errorCode: "budget_reached"`. Concurrent runs each get the full remaining
+  amount, so together they can still overshoot it by up to one run's cap.
+- **Out of credit.** When Anthropic reports that the account cannot pay (HTTP
+  402, a `billing_error`, or a "credit balance is too low" message, on an API
+  call or a `session.error`), the run fails with
+  `errorCode: "claude_managed_out_of_credit"`, the non-retryable
+  `configuration` error family and the message "Needs attention: the Anthropic
+  account is out of credit ...". It is not retried.
 
 ## Skills and replies
 
@@ -166,10 +211,15 @@ Networking settings apply only to environments Staples creates. When
   the Managed Agents agent with a pinned version id
   (`{ type: "custom", skill_id, version }`). Each upload holds `SKILL.md` and the
   skill's other text files (binaries and dotfiles are skipped; 2 MB and 200
-  files per skill). The display name is `staples-<runtimeName>-<hash8>`, where
-  the hash covers every file, so identical content is reused: the adapter lists
-  the workspace's custom skills once per server process and reuses an exact
-  title match, otherwise it uploads. Old skill versions are never deleted.
+  files per skill). The display name is `staples-<runtimeName>-<sha256>`, with
+  the full 64-character hash over every file, so identical content is reused:
+  the adapter lists the workspace's custom skills once per server process and
+  reuses an exact title match, otherwise it uploads. The full hash matters
+  because every company on the hosted key shares one workspace: a short prefix
+  could be brute-forced so that another company's agent attaches crafted
+  content. Skills uploaded under the earlier 8-character titles are not reused;
+  each is uploaded once more under its new title. Old skill versions are never
+  deleted.
 - **Skills change the agent.** The pinned skill set is part of the agent
   fingerprint, so a changed skill creates a new agent version and the next run
   starts a new session. Tool-only changes still update the session in place.
@@ -193,11 +243,12 @@ Networking settings apply only to environments Staples creates. When
 
 ## Limitations
 
-- **No budget cap from the host yet.** The host does not pass the remaining
-  budget to adapters. The adapter reads an optional
-  `context.paperclipBudgetRemainingUsd` that nothing sets today, so sessions run
-  without an Anthropic-side cap. Staples budgets still apply after each usage
-  checkpoint. A resumed session keeps the cap it was created with.
+- **Session caps are per run, not shared.** The server passes the remaining
+  budget (see [Budgets and cost](#budgets-and-cost)) and each session is capped
+  at it, but concurrent runs each get the whole remaining amount, and a hosted
+  company cap that is reached refuses new hosted runs without cancelling ones
+  already running. Updating a resumed session's cap is not yet verified against
+  the live API; if it is refused, the run starts a new session.
 - **Model and instructions are fixed per session.** Changing the model or the
   instructions starts a new session (the conversation does not carry over).
   Tool changes are applied to the existing session in place.
@@ -227,9 +278,10 @@ Networking settings apply only to environments Staples creates. When
   in the session's `list_cost` since the session resource was read at the start.
   If the API's session resource omits cost totals, resumed sessions may
   double-count; verify with the smoke test's `resume` scenario.
-- **Budget-capped sessions are not cleared.** A session that stopped with
-  `budget_reached` is kept, and later runs on that task fail until it is
-  cleared. The host sets no cap today, so this cannot happen yet.
+- **Budget-capped sessions are kept.** A session that stopped with
+  `budget_reached` is kept. The next run on that task raises the session's cap
+  to its spend plus the new remaining budget (or starts a new session if the
+  API refuses), so it continues once the budget allows.
 - **Not offered as the Assistant's runtime** during the proof of concept.
 - **Not published to npm** yet (`publishFromCi: false` in the release manifest).
 
