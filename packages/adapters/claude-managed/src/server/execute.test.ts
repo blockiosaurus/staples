@@ -111,7 +111,8 @@ describe("claude_managed execute", () => {
 
     const envReq = requestsMatching("POST", /^\/v1\/environments$/);
     expect(envReq).toHaveLength(1);
-    expect(envReq[0].body).toMatchObject({ name: "staples-agent1234567", config: { type: "cloud", networking: { type: "unrestricted" } } });
+    expect(envReq[0].body).toMatchObject({ config: { type: "cloud", networking: { type: "unrestricted" } } });
+    expect((envReq[0].body as { name: string }).name).toMatch(/^staples-agent1234567-[0-9a-f]{8}$/);
 
     const agentReq = requestsMatching("POST", /^\/v1\/agents$/);
     expect(agentReq).toHaveLength(1);
@@ -360,6 +361,19 @@ describe("claude_managed execute", () => {
     expect(result.exitCode).toBe(0);
     expect(requestsMatching("POST", /^\/v1\/environments$/)).toHaveLength(1);
     expect(requestsMatching("POST", /^\/v1\/sessions$/)[0].body).toMatchObject({ environment_id: env.id });
+  });
+});
+
+describe("environment names", () => {
+  it("differ by a networking fingerprint suffix", async () => {
+    fake.queueTurns(turn("one", 1), turn("two", 1));
+    await execute(harness().ctx);
+    await execute(harness({ config: { networkingMode: "limited", networkAllowedHosts: "example.com" } }).ctx);
+    const names = requestsMatching("POST", /^\/v1\/environments$/).map((r) => (r.body as { name: string }).name);
+    expect(names).toHaveLength(2);
+    expect(names[0]).toMatch(/^staples-agent1234567-[0-9a-f]{8}$/);
+    expect(names[1]).toMatch(/^staples-agent1234567-[0-9a-f]{8}$/);
+    expect(names[0]).not.toBe(names[1]);
   });
 });
 

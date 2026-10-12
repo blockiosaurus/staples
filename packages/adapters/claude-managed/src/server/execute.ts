@@ -599,7 +599,8 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
     }
     const env = await client.createEnvironment(
       {
-        name: `staples-${agent.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12) || "agent"}`,
+        // The fingerprint suffix keeps names distinct when a networking change needs a second environment.
+        name: `staples-${agent.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12) || "agent"}-${envFingerprint.slice(0, 8)}`,
         description: `Cloud environment for the Staples agent "${agent.name}".`,
         config: envConfig,
         metadata: { ...ownerMetadata, staples_env_fingerprint: envFingerprint },
