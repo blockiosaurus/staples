@@ -415,7 +415,7 @@ export function templateDestructiveToolPatterns(rendered: Pick<RenderedAgentTemp
 /**
  * The access rules a templated agent starts with, scoped to the agent. A
  * read-only template gets one read-only guard: the agent may call only
- * read-rated tools whose names lead with a read verb (list, get, search...).
+ * read-rated tools whose first verb is a read verb (list, get, search...) and that name no mutating verb.
  * Others get a destructive guard (always ask first for destructive calls)
  * and, at priority 50, an ask-first rule for writes whose tool name matches
  * the template's outward-action patterns (sending, publishing, deploying...).

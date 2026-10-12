@@ -191,9 +191,12 @@ function namesMatchPatterns(patterns: string[], names: Array<string | null | und
 
 /**
  * Whether an agent's template destructive guard asks first for a call:
- * destructive/high/critical risk, or any non-read call whose name matches
- * the guard's `destructiveToolPatterns` (e.g. closing an issue is rated
- * write but still always asks).
+ * destructive/high/critical risk, or any call whose name matches the guard's
+ * `destructiveToolPatterns` (e.g. closing an issue is rated write but still
+ * always asks). Names apply whatever the tool's risk rating, because the
+ * generic classifier rates unannotated tools `read`; only a read-rated (or
+ * unrated) tool whose names are plainly read-only (`toolNameIsReadOnlyVerb`)
+ * is exempt.
  */
 export function templateDestructiveGuardApplies(
   guard: { config: unknown },
@@ -201,34 +204,76 @@ export function templateDestructiveGuardApplies(
   names: Array<string | null | undefined>,
 ): boolean {
   if (riskLevel && (TEMPLATE_DESTRUCTIVE_RISK_LEVELS as readonly string[]).includes(riskLevel)) return true;
-  if (riskLevel === "read") return false;
+  if (isReadRatedReadOnlyCall(riskLevel, names)) return false;
   return namesMatchPatterns(configStrings(guard.config, "destructiveToolPatterns"), names);
 }
 
-/** Verbs a read-only agent's tool name must lead with (see `toolNameIsReadOnlyVerb`). */
+/**
+ * Whether a call is exempt from a template's name-based patterns: rated `read`
+ * (or `low`, or not rated at all) and every name it is known by is plainly
+ * read-only. A read-rated `close_issue` or `push_files` is not exempt.
+ */
+function isReadRatedReadOnlyCall(riskLevel: string | null | undefined, names: Array<string | null | undefined>): boolean {
+  if (riskLevel && riskLevel !== "read" && riskLevel !== "low") return false;
+  const actual = names.filter((name): name is string => Boolean(name));
+  return actual.length > 0 && actual.every(toolNameIsReadOnlyVerb);
+}
+
+/**
+ * Risk levels a template outward ask-first rule and an Autopilot marker cover
+ * by name: `write`/`medium`, plus a read-rated (or unrated) call unless its
+ * names are plainly read-only. Never destructive/high/critical.
+ */
+export function templateOutwardRiskApplies(riskLevel: string | null | undefined, names: Array<string | null | undefined>): boolean {
+  if (riskLevel === "write" || riskLevel === "medium") return true;
+  if (riskLevel && riskLevel !== "read" && riskLevel !== "low") return false;
+  return !isReadRatedReadOnlyCall(riskLevel, names);
+}
+
+/** Read verbs: the first verb-like word of a read-only agent's tool name must be one of these (see `toolNameIsReadOnlyVerb`). */
 export const READ_ONLY_TOOL_VERBS = [
   "list", "get", "retrieve", "search", "read", "fetch", "query", "describe", "count", "find", "show", "view", "lookup",
 ] as const;
 const READ_ONLY_TOOL_VERB_SET = new Set<string>(READ_ONLY_TOOL_VERBS);
 
+/** Verbs that make a tool name not read-only wherever they appear in it. */
+export const MUTATING_TOOL_VERBS = [
+  "create", "update", "delete", "send", "post", "pay", "refund", "charge", "transfer", "cancel", "capture", "close",
+  "merge", "push", "publish", "deploy", "write", "set", "add", "remove", "attach", "apply", "record", "submit",
+  "execute", "withdraw", "modify", "pause", "resume", "issue", "approve", "confirm", "reverse", "archive", "trash",
+  "move", "upload", "import", "sync",
+] as const;
+const MUTATING_TOOL_VERB_SET = new Set<string>(MUTATING_TOOL_VERBS);
+
+function toolNameWords(name: string): string[] {
+  return name
+    .split(/[^A-Za-z0-9]+/)
+    .flatMap((part) => part.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+/g) ?? [])
+    .map((word) => word.toLowerCase());
+}
+
 /**
- * Whether a tool name contains a read verb as a whole word, case-insensitively:
- * at the start, after a separator or namespace (`_`, `-`, `.`, `/`, `:`...),
- * or as a camelCase segment. `stripe_list_charges`, `listRefunds` and
- * `get-invoice` qualify; `stripe_refund`, `refundPayment` and `listing` do not.
+ * Whether a tool name is plainly read-only. Words are split case-insensitively
+ * on separators and namespaces (`_`, `-`, `.`, `/`, `:`...) and camelCase.
+ * The first verb-like word (after any namespace prefix such as `stripe_` or
+ * `mcp__stripe__`) must be a read verb, and no word anywhere may be a
+ * mutating verb. `stripe_list_charges`, `listRefunds` and `get-invoice`
+ * qualify; `refund_list`, `delete_saved_search`, `get_and_charge`,
+ * `refundPayment` and `listing` do not.
  */
 export function toolNameIsReadOnlyVerb(name: string): boolean {
   if (!name || name.length > 512) return false;
-  const words = name
-    .split(/[^A-Za-z0-9]+/)
-    .flatMap((part) => part.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+/g) ?? []);
-  return words.some((word) => READ_ONLY_TOOL_VERB_SET.has(word.toLowerCase()));
+  const words = toolNameWords(name);
+  const firstVerb = words.find((word) => READ_ONLY_TOOL_VERB_SET.has(word) || MUTATING_TOOL_VERB_SET.has(word));
+  if (!firstVerb || !READ_ONLY_TOOL_VERB_SET.has(firstVerb)) return false;
+  return !words.some((word) => MUTATING_TOOL_VERB_SET.has(word));
 }
 
 /**
  * Allowlist for read-only template agents: the catalog must rate the tool
- * `read` and every name it is known by must contain a read verb. Anything
- * else (unknown risk, a write, a misclassified `stripe_create_refund`) is denied.
+ * `read` and every name it is known by must be plainly read-only (first verb
+ * a read verb, no mutating verb). Anything else (unknown risk, a write, a
+ * misclassified `stripe_create_refund`) is denied.
  */
 export function readOnlyTemplateAllowsTool(input: { riskLevel: ToolRiskLevel | null; toolName: string | null; upstreamToolName?: string | null }): boolean {
   if (input.riskLevel !== "read") return false;
@@ -366,6 +411,9 @@ function argumentFiltersMatch(filters: ToolTrustRuleArgumentFilters | null | und
     for (const [path, pattern] of Object.entries(filters.fieldMatches)) {
       const actual = readPath(ctx.arguments, path);
       if (typeof actual !== "string") return false;
+      // Bounded work per call: never test an over-long string or a pattern
+      // the write-time check would refuse (legacy rows).
+      if (actual.length > POLICY_REGEX_MAX_INPUT_LENGTH || !isSafePolicyRegex(pattern)) return false;
       let re: RegExp;
       try {
         re = new RegExp(pattern);
@@ -592,6 +640,27 @@ function selectorMatches(selector: ToolAccessSelector | Record<string, unknown> 
   );
 }
 
+/**
+ * A template outward ask-first rule and an Autopilot marker match by name
+ * (see `templateOutwardRiskApplies`) instead of by their stored `riskLevels`,
+ * so a read-rated `merge_pull_request` is still asked first (and lifted by
+ * Autopilot) while a read-rated `list_issues` is not.
+ */
+function matchesByOutwardName(policy: { config: unknown }): boolean {
+  const config = policy.config;
+  if (!isRecord(config)) return false;
+  if (config.source === AGENT_AUTOPILOT_POLICY_SOURCE) return true;
+  return config.source === AGENT_TEMPLATE_POLICY_SOURCE && config.templateRule === "outward";
+}
+
+function policySelectorMatches(policy: { config: unknown; selectors: unknown }, ctx: ToolAccessContext): boolean {
+  const selectors = policy.selectors as Record<string, unknown> | null | undefined;
+  if (!matchesByOutwardName(policy) || !isRecord(selectors)) return selectorMatches(selectors, ctx);
+  if (!templateOutwardRiskApplies(ctx.riskLevel, [ctx.toolName, ctx.upstreamToolName])) return false;
+  const { riskLevel: _riskLevel, riskLevels: _riskLevels, ...rest } = selectors;
+  return selectorMatches(rest, ctx);
+}
+
 function conditionRecord(value: unknown): Record<string, unknown> | null {
   return isRecord(value) && Object.keys(value).length > 0 ? value : null;
 }
@@ -808,12 +877,132 @@ function assertGenericPolicyType(policyType: string) {
   }
 }
 
-function isSafePolicyRegex(pattern: string): boolean {
+/** Longest string a policy `fieldMatches` regex is ever tested against. */
+export const POLICY_REGEX_MAX_INPUT_LENGTH = 2_000;
+
+type RegexScanAtom = { text: string | null; quantifier: "none" | "bounded" | "unbounded" };
+
+/** Upper repeat count above which `{n,m}` is treated like `+`. */
+const REGEX_LARGE_REPEAT = 16;
+const REGEX_OVERLAP_SAMPLE = [
+  ...Array.from({ length: 0x7f - 0x20 }, (_, index) => String.fromCharCode(0x20 + index)),
+  "\t", "\n", "\r", "\u00a0", "\u00e9", "\u03bb",
+];
+
+function regexAtomsOverlap(left: RegexScanAtom, right: RegexScanAtom): boolean {
+  if (left.text === null || right.text === null) return true;
+  try {
+    const a = new RegExp(`^(?:${left.text})$`);
+    const b = new RegExp(`^(?:${right.text})$`);
+    return REGEX_OVERLAP_SAMPLE.some((ch) => a.test(ch) && b.test(ch));
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * A small structural scan of a policy regex. Returns null when the pattern
+ * has a quantified group whose body is itself quantified (`(a+)+`,
+ * `(a?){25}`), otherwise the flat list of atoms with their quantifiers
+ * (groups appear as a wildcard atom after their contents).
+ */
+function scanPolicyRegex(pattern: string): RegexScanAtom[] | null {
+  const atoms: RegexScanAtom[] = [];
+  // Per open group: index into atoms where it started and whether it has a quantifier.
+  const groups: Array<{ start: number; quantified: boolean }> = [];
+  let i = 0;
+  const readQuantifier = (): "none" | "bounded" | "unbounded" | "optional" => {
+    const ch = pattern[i];
+    let kind: "none" | "bounded" | "unbounded" | "optional" = "none";
+    if (ch === "*" || ch === "+") { kind = "unbounded"; i += 1; }
+    else if (ch === "?") { kind = "optional"; i += 1; }
+    else if (ch === "{") {
+      const m = /^\{(\d+)(,(\d*))?\}/.exec(pattern.slice(i));
+      if (m) {
+        const max = m[2] === undefined ? Number(m[1]) : m[3] === "" ? Infinity : Number(m[3]);
+        kind = max > REGEX_LARGE_REPEAT ? "unbounded" : max > 1 ? "bounded" : "optional";
+        i += m[0].length;
+      }
+    }
+    if (kind !== "none" && (pattern[i] === "?" || pattern[i] === "+")) i += 1;
+    return kind;
+  };
+  const pushAtom = (text: string | null) => {
+    const quantifier = readQuantifier();
+    if (quantifier !== "none" && groups.length) groups[groups.length - 1]!.quantified = true;
+    atoms.push({ text, quantifier: quantifier === "optional" ? "bounded" : quantifier });
+  };
+  while (i < pattern.length) {
+    const ch = pattern[i]!;
+    if (ch === "\\") {
+      const next = pattern[i + 1] ?? "";
+      let length = 2;
+      if (next === "x") length = 4;
+      else if (next === "u") length = 6;
+      else if (next === "c") length = 3;
+      const text = pattern.slice(i, i + length);
+      i += length;
+      if (next === "b" || next === "B") continue;
+      pushAtom(text);
+    } else if (ch === "[") {
+      let j = i + 1;
+      if (pattern[j] === "^") j += 1;
+      while (j < pattern.length && pattern[j] !== "]") j += pattern[j] === "\\" ? 2 : 1;
+      const text = pattern.slice(i, j + 1);
+      i = j + 1;
+      pushAtom(text);
+    } else if (ch === "(") {
+      const prefix = /^\((?:\?:|\?=|\?!|\?<=|\?<!|\?<[A-Za-z_][A-Za-z0-9_]*>)?/.exec(pattern.slice(i))!;
+      i += prefix[0].length;
+      groups.push({ start: atoms.length, quantified: false });
+    } else if (ch === ")") {
+      i += 1;
+      const group = groups.pop();
+      const quantifier = readQuantifier();
+      if (quantifier === "unbounded" || quantifier === "bounded") {
+        if (group?.quantified) return null;
+      }
+      if (quantifier !== "none" && groups.length) groups[groups.length - 1]!.quantified = true;
+      if (group?.quantified && groups.length) groups[groups.length - 1]!.quantified = true;
+      if (quantifier !== "none") atoms.push({ text: null, quantifier: quantifier === "optional" ? "bounded" : quantifier });
+    } else if (ch === "^" || ch === "$" || ch === "|") {
+      i += 1;
+    } else {
+      i += 1;
+      pushAtom(ch === "." ? "." : ch.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&"));
+    }
+  }
+  return atoms;
+}
+
+/**
+ * Whether a policy `fieldMatches` regex is safe to run on agent-supplied
+ * arguments (which are also capped at POLICY_REGEX_MAX_INPUT_LENGTH). Refuses
+ * backreferences, alternation, nested quantifiers (`(a+)+`, `(a?){25}`),
+ * adjacent overlapping repeats (`\w+\w+`) and three or more overlapping
+ * repeats anywhere (`[\w.-]+\.[\w.-]+\.\w+`), which backtrack
+ * exponentially or polynomially.
+ */
+export function isSafePolicyRegex(pattern: string): boolean {
   if (pattern.length > 256) return false;
   if (/\\[1-9]/.test(pattern)) return false;
   if (/(^|[^\\])\|/.test(pattern)) return false;
   if (/\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*{]/.test(pattern)) return false;
-  return true;
+  try {
+    new RegExp(pattern);
+  } catch {
+    return false;
+  }
+  const atoms = scanPolicyRegex(pattern);
+  if (!atoms) return false;
+  for (let index = 1; index < atoms.length; index += 1) {
+    const previous = atoms[index - 1]!;
+    const current = atoms[index]!;
+    if (previous.quantifier === "unbounded" && current.quantifier === "unbounded" && regexAtomsOverlap(previous, current)) return false;
+  }
+  const repeats = atoms.filter((atom) => atom.quantifier === "unbounded");
+  const overlapping = repeats.filter((atom, index) => repeats.some((other, otherIndex) => otherIndex !== index && regexAtomsOverlap(atom, other)));
+  return overlapping.length < 3;
 }
 
 function assertSupportedPolicyConditions(conditions: Record<string, unknown> | null | undefined) {
@@ -1559,9 +1748,12 @@ export function toolAccessPolicyService(db: Db) {
     });
     const policies = await cachedRead(cache, `enabled-policies:${ctx.companyId}`, async () =>
       db.select().from(toolPolicies).where(and(eq(toolPolicies.companyId, ctx.companyId), eq(toolPolicies.enabled, true))).orderBy(asc(toolPolicies.priority), asc(toolPolicies.createdAt)));
-    for (const policy of policies) {
+    // Conditions (argument regexes included) are evaluated only for policies
+    // whose selectors match this call.
+    const selectedPolicies = policies.filter((policy) => policySelectorMatches(policy, ctx));
+    for (const policy of selectedPolicies) {
       const conditions = policyConditions(policy);
-      if (conditions && selectorMatches(policy.selectors, ctx)) {
+      if (conditions) {
         const parsed = toolPolicyConditionsSchema.safeParse(conditions);
         if (!parsed.success) {
           return decision(
@@ -1584,11 +1776,30 @@ export function toolAccessPolicyService(db: Db) {
             },
           );
         }
+        // A regex condition is never run on an over-long argument or with a
+        // pattern that is no longer considered safe. For an allow such a
+        // condition simply does not match; for a restricting policy (block,
+        // ask first, rate limit) the call fails closed instead of slipping past.
+        const regexArgs = policy.policyType === "allow" ? [] : Object.entries(parsed.data.arguments?.fieldMatches ?? {});
+        const unsafeRegexArg = regexArgs.find(([path, pattern]) => {
+          const actual = readPath(ctx.arguments, path);
+          return !isSafePolicyRegex(pattern) || (typeof actual === "string" && actual.length > POLICY_REGEX_MAX_INPUT_LENGTH);
+        });
+        if (unsafeRegexArg) {
+          return decision(
+            "deny",
+            "deny_policy_block",
+            `Tool access denied because the "${unsafeRegexArg[0]}" argument is too long (over ${POLICY_REGEX_MAX_INPUT_LENGTH} characters) or its policy pattern is unsafe to check.`,
+            effectiveProfileIds,
+            [policy.id],
+            { redactionPlan: redaction.redactionPlan, policyExplanation: { policyId: policy.id, policyType: policy.policyType, selectorMatched: true } },
+          );
+        }
       }
     }
-    const matchingPolicies = policies
+    const matchingPolicies = selectedPolicies
       .map((policy) => ({ policy, conditionEvaluation: evaluatePolicyConditions(policyConditions(policy), ctx) }))
-      .filter(({ policy, conditionEvaluation }) => selectorMatches(policy.selectors, ctx) && conditionEvaluation.matched);
+      .filter(({ conditionEvaluation }) => conditionEvaluation.matched);
     // Template guards are applied by type below, not as ordinary blocks.
     const explicitBlock = matchingPolicies.find(({ policy }) => policy.policyType === "block" && !agentTemplateGuardKind(policy));
     const otherwiseAllowed = async () => permittedByProfile

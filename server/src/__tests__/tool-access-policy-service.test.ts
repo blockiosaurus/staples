@@ -189,6 +189,9 @@ describe("tool-name glob matching", () => {
       "attach_payment_method", "withdraw_funds", "record_payment", "stripe_create_refund", "STRIPE_CREATE_REFUND",
       "payInvoice", "resume_subscription", "modify_order", "execute_trade", "submit_form", "apply_coupon",
       "edit_customer", "add_note", "issue_credit", "listing_publish", "getter",
+      // The first verb must be a read verb, and no mutating verb may appear anywhere.
+      "refund_list", "delete_saved_search", "get_and_charge", "refund_and_get_receipt", "stripe_cancel_list",
+      "list_and_send", "getAndUpdateCustomer",
     ];
     for (const name of blocked) {
       expect(toolNameIsReadOnlyVerb(name), name).toBe(false);
@@ -904,6 +907,51 @@ describeEmbeddedPostgres("tool access policy service", () => {
     await expect(decide("stripe_create_refund", "write")).resolves.toMatchObject({ decision: "deny" });
   });
 
+  it("applies template name patterns to read-rated tools unless the name is plainly read-only", async () => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { connection } = await createTool(db, company.id);
+    const profile = await db.insert(toolProfiles).values({
+      companyId: company.id, profileKey: `profile-${randomUUID()}`, name: "All tools", defaultAction: "allow",
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(toolProfileBindings).values({ companyId: company.id, profileId: profile.id, targetType: "agent", targetId: agent.id });
+    const guard = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Template guard destructive", policyType: "require_approval", priority: 5,
+      selectors: { agentId: agent.id, riskLevels: ["destructive", "high", "critical"] },
+      config: { source: "agent_template", templateRule: "destructive", destructiveToolPatterns: ["*close*", "*trash*"] },
+    }).returning().then((rows) => rows[0]!);
+    const outward = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Template outward", policyType: "require_approval", priority: 50,
+      selectors: { agentId: agent.id, riskLevels: ["write", "medium"], toolNamePatterns: ["*merge*", "*push*", "*reply*", "*post*", "*issue*"] },
+      config: { source: "agent_template", templateRule: "outward" },
+    }).returning().then((rows) => rows[0]!);
+    const decide = (toolName: string, riskLevel: string | null) => toolAccessPolicyService(db).decide({
+      companyId: company.id,
+      actor: { actorType: "agent", actorId: agent.id, agentId: agent.id },
+      request: { connectionId: connection.id, toolName, riskLevel: riskLevel as never },
+    });
+    for (const name of ["close_issue", "trash_message"]) {
+      await expect(decide(name, "read"), name).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [guard.id] });
+    }
+    for (const name of ["merge_pull_request", "push_files", "reply_to_message", "schedule_post"]) {
+      await expect(decide(name, "read"), name).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [outward.id] });
+      await expect(decide(name, null), `${name}/unrated`).resolves.toMatchObject({ decision: "require_approval" });
+    }
+    // A plainly read-only name is exempt even though `*issue*` matches it.
+    await expect(decide("list_issues", "read")).resolves.toMatchObject({ decision: "allow" });
+    await expect(decide("search_posts", "read")).resolves.toMatchObject({ decision: "allow" });
+    // Autopilot lifts the same read-rated outward calls, never the destructive guard.
+    await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Autopilot", policyType: "require_approval", priority: 49,
+      selectors: { agentId: agent.id, connectionId: connection.id, riskLevels: ["write"], toolNamePatterns: ["*merge*", "*post*", "*close*"] },
+      config: { source: "agent_autopilot" },
+    });
+    await expect(decide("merge_pull_request", "read")).resolves.toMatchObject({ decision: "allow" });
+    await expect(decide("schedule_post", "medium")).resolves.toMatchObject({ decision: "allow" });
+    await expect(decide("close_issue", "read")).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [guard.id] });
+    await expect(decide("push_files", "read")).resolves.toMatchObject({ decision: "require_approval", matchedPolicyIds: [outward.id] });
+  });
+
   it("matches tool name selectors against connected MCP upstream tool names", async () => {
     const company = await createCompany(db);
     const agent = await createAgent(db, company.id);
@@ -1257,6 +1305,56 @@ describeEmbeddedPostgres("tool access policy service", () => {
         arguments: { fieldMatches: { body: "^(a+)+$" } },
       },
     })).rejects.toThrow("unsafe regular expression");
+  });
+
+  it("rejects fieldMatches patterns that backtrack exponentially or polynomially", async () => {
+    const company = await createCompany(db);
+    const svc = toolAccessPolicyService(db);
+    for (const pattern of ["(a?){25}a{25}", "^\\w+\\w+\\w+$", "\\w+\\w+$", "[\\w.-]+\\.[\\w.-]+\\.\\w+$", "((a)+)+", "(?:a*)*", ".*.*=.*"]) {
+      await expect(svc.createPolicy(company.id, {
+        name: "Unsafe regex",
+        policyType: "block",
+        conditions: { arguments: { fieldMatches: { body: pattern } } },
+      }), pattern).rejects.toThrow("unsafe regular expression");
+    }
+    for (const pattern of ["^[\\s\\S]{1,200}$", "^[a-z0-9_-]+$", "^acct_\\w+$", "^(?:foo)?bar\\d{2,4}$", "^[^@]+@example\\.com$"]) {
+      await expect(svc.createPolicy(company.id, {
+        name: `Safe regex ${pattern}`,
+        policyType: "block",
+        conditions: { arguments: { fieldMatches: { body: pattern } } },
+      }), pattern).resolves.toBeTruthy();
+    }
+  });
+
+  it("evaluates argument regexes only for matching policies and bounds the tested string", async () => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { connection } = await createTool(db, company.id);
+    await db.insert(principalPermissionGrants).values({
+      companyId: company.id, principalType: "agent", principalId: agent.id, permissionKey: "tools:use", scope: {},
+    });
+    // A legacy row whose regex the write-time check now refuses, on another tool:
+    // it is never evaluated for this call.
+    await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Legacy unsafe", policyType: "block", priority: 10,
+      selectors: { toolName: "other_tool" }, conditions: { arguments: { fieldMatches: { body: "(a?){25}a{25}" } } },
+    });
+    const block = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Block secrets", policyType: "block", priority: 20,
+      selectors: { toolName: "send_email" }, conditions: { arguments: { fieldMatches: { body: "secret" } } },
+    }).returning().then((rows) => rows[0]!);
+    const decide = (body: string, toolName = "send_email") => toolAccessPolicyService(db).decide({
+      companyId: company.id,
+      actor: { actorType: "agent", actorId: agent.id, agentId: agent.id },
+      request: { connectionId: connection.id, toolName, riskLevel: "write", arguments: { body } },
+    });
+    const started = performance.now();
+    await expect(decide("a".repeat(30))).resolves.toMatchObject({ decision: "allow" });
+    await expect(decide("a".repeat(30), "list_things")).resolves.toMatchObject({ decision: "allow" });
+    expect(performance.now() - started).toBeLessThan(2_000);
+    await expect(decide("the secret word")).resolves.toMatchObject({ decision: "deny", matchedPolicyIds: [block.id] });
+    // An over-long argument is never tested; a restricting policy fails closed.
+    await expect(decide("x".repeat(10_000))).resolves.toMatchObject({ decision: "deny", matchedPolicyIds: [block.id] });
   });
 
   it("rejects fieldMatches patterns with ambiguous alternation", async () => {
