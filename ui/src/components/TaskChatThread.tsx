@@ -2973,10 +2973,19 @@ export function TaskChatThread(props: TaskChatThreadProps) {
   // Mount and measure the real thread while concealed, then reveal in one
   // commit. A frame also lets ancestor navigation scroll restoration finish.
   // Readiness is latched per issue: refetches never hide existing conversation.
+  // Hidden documents (background tabs, hidden embedded panes) never fire
+  // animation frames and paint nothing, so reveal there on a task instead of
+  // leaving ready history concealed until the stalled-history timeout.
   useEffect(() => {
     if (historyRevealed || historyPending) return;
-    const frame = requestAnimationFrame(() => setRevealedIssue(issueId));
-    return () => cancelAnimationFrame(frame);
+    const reveal = () => setRevealedIssue(issueId);
+    const frame = requestAnimationFrame(reveal);
+    const hiddenTimer =
+      document.visibilityState === "visible" ? null : window.setTimeout(reveal, 0);
+    return () => {
+      cancelAnimationFrame(frame);
+      if (hiddenTimer !== null) window.clearTimeout(hiddenTimer);
+    };
   }, [historyPending, historyRevealed, issueId]);
   useEffect(() => {
     if (!historyRevealed || !issueId) return;

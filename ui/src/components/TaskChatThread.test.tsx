@@ -363,6 +363,29 @@ it("coordinates first reveal while keeping the composer and visible history moun
   expect(container.querySelector('.task-chat-history-pending')).toBeNull();
 });
 
+it("reveals ready history in a hidden document, where animation frames never fire", async () => {
+  // Hidden documents (background tabs, a hidden embedded browser pane) pause
+  // requestAnimationFrame. The reveal must not depend on a frame there, or the
+  // thread stays concealed as skeletons until the stalled-history timeout.
+  vi.useFakeTimers();
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+  try {
+    sidebarState.isMobile = false;
+    const props = { issueId: "hidden-issue", comments: [], onAdd: async () => {} };
+    render(<TaskChatThread {...props} initialHistoryPending />);
+    render(<TaskChatThread {...props} initialHistoryPending={false} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(container.querySelector('[data-testid="task-chat-history-loading"]')).toBeNull();
+    expect(container.querySelector('[data-testid="task-chat-history-content"]')?.hasAttribute("inert")).toBe(false);
+    expect(container.textContent).not.toContain("Some task history is still loading.");
+  } finally {
+    raf.mockRestore();
+    visibility.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
 it.each([true, false])("reveals saved conversation when initial history stalls (mobile=%s)", async (mobile) => {
   vi.useFakeTimers();
   try {
