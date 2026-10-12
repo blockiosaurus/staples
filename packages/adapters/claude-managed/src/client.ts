@@ -18,7 +18,9 @@ import {
   type ManagedAgentsEvent,
   type ManagedEnvironment,
   type ManagedSession,
+  type ManagedSkill,
   type UpdateAgentParams,
+  type UploadSkillParams,
   type UserEventParams,
 } from "./types.js";
 
@@ -59,6 +61,11 @@ export interface RequestOptions {
 export interface ListParams {
   limit?: number;
   page?: string;
+}
+
+export interface ListSkillsParams extends ListParams {
+  /** `custom` (workspace-authored) or `anthropic`. */
+  source?: "custom" | "anthropic";
 }
 
 /**
@@ -219,6 +226,35 @@ export class ManagedAgentsClient {
     return this.request("GET", `/environments/${enc(environmentId)}`, undefined, options);
   }
 
+  // ---- Skills --------------------------------------------------------------
+
+  /**
+   * Uploads a custom skill (POST /v1/skills, multipart `files[]` + optional
+   * `display_name`). Every file path must start with the same top-level directory,
+   * which holds `SKILL.md`. Never retried on 5xx (it would duplicate the skill).
+   */
+  uploadSkill(params: UploadSkillParams, options?: RequestOptions): Promise<ManagedSkill> {
+    const form = new FormData();
+    if (params.displayName) form.append("display_name", params.displayName);
+    for (const file of params.files) {
+      const bytes = typeof file.content === "string" ? new TextEncoder().encode(file.content) : file.content;
+      form.append("files[]", new Blob([bytes as BlobPart], { type: file.path.endsWith(".md") ? "text/markdown" : "application/octet-stream" }), file.path);
+    }
+    return this.request("POST", "/skills", form, options, skillsRequestShape());
+  }
+
+  /** Lists skills (GET /v1/skills). `page` is the `next_page` cursor of a previous response. */
+  listSkills(params: ListSkillsParams = {}, options?: RequestOptions): Promise<ListPage<ManagedSkill>> {
+    const query = new URLSearchParams(listQuery(params).replace(/^\?/, ""));
+    if (params.source) query.set("source", params.source);
+    const text = query.toString();
+    return this.request("GET", `/skills${text ? `?${text}` : ""}`, undefined, options, skillsRequestShape());
+  }
+
+  getSkill(skillId: string, options?: RequestOptions): Promise<ManagedSkill> {
+    return this.request("GET", `/skills/${enc(skillId)}`, undefined, options, skillsRequestShape());
+  }
+
   // ---- Sessions ------------------------------------------------------------
 
   createSession(params: CreateSessionParams, options?: RequestOptions): Promise<ManagedSession> {
@@ -321,20 +357,27 @@ export class ManagedAgentsClient {
 
   // ---- Internals -----------------------------------------------------------
 
-  private url(path: string): string {
+  private url(path: string, shape: RequestShape = MANAGED_AGENTS_SHAPE): string {
     // `beta=true` mirrors the official SDK's request paths for beta endpoints.
+    if (!shape.betaQuery) return `${this.baseUrl}${path}`;
     return `${this.baseUrl}${path}${path.includes("?") ? "&" : "?"}beta=true`;
   }
 
-  private headers(): Record<string, string> {
+  private headers(shape: RequestShape = MANAGED_AGENTS_SHAPE): Record<string, string> {
     return {
       "x-api-key": this.#apiKey,
       "anthropic-version": ANTHROPIC_VERSION,
-      "anthropic-beta": MANAGED_AGENTS_BETA,
+      ...(shape.betas.length ? { "anthropic-beta": shape.betas.join(",") } : {}),
     };
   }
 
-  private async request<T>(method: "GET" | "POST", path: string, body: unknown, options?: RequestOptions): Promise<T> {
+  private async request<T>(
+    method: "GET" | "POST",
+    path: string,
+    body: unknown,
+    options?: RequestOptions,
+    shape: RequestShape = MANAGED_AGENTS_SHAPE,
+  ): Promise<T> {
     const signal = options?.signal;
     const policy = options?.retry ?? "safe";
     const idempotent = policy === "all" || (policy === "safe" && method === "GET");
@@ -347,14 +390,16 @@ export class ManagedAgentsClient {
     for (;;) {
       let response: Response;
       try {
-        response = await this.fetchImpl(this.url(path), {
+        const multipart = body instanceof FormData;
+        response = await this.fetchImpl(this.url(path, shape), {
           method,
           headers: {
-            ...this.headers(),
+            ...this.headers(shape),
             accept: "application/json",
-            ...(body !== undefined ? { "content-type": "application/json" } : {}),
+            // Multipart: fetch sets the content-type (with its boundary) itself.
+            ...(body !== undefined && !multipart ? { "content-type": "application/json" } : {}),
           },
-          body: body !== undefined ? JSON.stringify(body) : undefined,
+          body: body === undefined ? undefined : multipart ? body : JSON.stringify(body),
           signal,
         });
       } catch (error) {
@@ -429,6 +474,30 @@ export class ManagedAgentsClient {
   private redact(message: string): string {
     return message.split(this.#apiKey).join("[redacted]");
   }
+}
+
+export interface RequestShape {
+  /** Append `?beta=true` (the SDK does for beta endpoints). */
+  betaQuery: boolean;
+  /** `anthropic-beta` values. */
+  betas: string[];
+}
+
+const MANAGED_AGENTS_SHAPE: RequestShape = { betaQuery: true, betas: [MANAGED_AGENTS_BETA] };
+
+/**
+ * API ASSUMPTION (skills): the Skills API docs (2026-10-12) show `/v1/skills` calls
+ * with only `x-api-key` + `anthropic-version` (no beta header) and the SDK exposes
+ * them outside `beta`. We send them WITHOUT `?beta=true` but WITH the
+ * `managed-agents-2026-04-01` beta header that every other call of this client
+ * carries: it is a recognized beta value, so it cannot cause an "unknown beta"
+ * rejection, and it keeps skills reachable for workspaces whose Skills access is
+ * gated behind the Managed Agents beta. If the API rejects this shape, the adapter
+ * falls back to inlining skills in the system prompt (see server/skills.ts).
+ * This is the only place the skills request shape is decided.
+ */
+export function skillsRequestShape(): RequestShape {
+  return { betaQuery: false, betas: [MANAGED_AGENTS_BETA] };
 }
 
 function listQuery(params: ListParams): string {

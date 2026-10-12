@@ -49,6 +49,28 @@ export type TurnStep =
 
 export type TurnScript = TurnStep[];
 
+/** What a turn factory sees when a `user.message` starts a turn. */
+export interface FakeTurnContext {
+  sessionId: string;
+  /** The agent snapshot the session runs with (system, tools, skills, ...). */
+  agent: Record<string, unknown>;
+  /** Files of the custom skills attached to the session's agent, keyed by skill id. */
+  attachedSkillFiles: Map<string, Array<{ path: string; content: string }>>;
+  /** Text of the user.message that started the turn. */
+  userText: string;
+}
+
+/** A queued turn: a fixed script, or a factory evaluated when the turn starts. */
+export type TurnSource = TurnScript | ((context: FakeTurnContext) => TurnScript);
+
+export interface FakeSkill {
+  id: string;
+  display_name: string;
+  latest_version_id: string;
+  versions: Map<string, Array<{ path: string; content: string }>>;
+  created_at: string;
+}
+
 export interface FailRule {
   method?: string;
   /** Matches when the request path (without query) equals this string or matches this regex. */
@@ -76,6 +98,8 @@ export interface FakeManagedAgentsServerOptions {
    * Default false: like the real API, such events are dropped from the stream.
    */
   bufferUntilStream?: boolean;
+  /** Forces the page size of `GET /v1/skills` (overrides the request's `limit`; default: `limit`, else 20). */
+  skillsPageSize?: number;
 }
 
 interface FakeSession {
@@ -170,8 +194,9 @@ export class FakeManagedAgentsServer {
   private readonly agents = new Map<string, Record<string, unknown>>();
   private readonly environments = new Map<string, Record<string, unknown>>();
   private readonly sessions = new Map<string, FakeSession>();
-  private readonly turnQueue: TurnScript[] = [];
-  private readonly sessionTurnQueues = new Map<string, TurnScript[]>();
+  private readonly turnQueue: TurnSource[] = [];
+  private readonly sessionTurnQueues = new Map<string, TurnSource[]>();
+  private readonly skills = new Map<string, FakeSkill>();
   private readonly failRules: Array<FailRule & { remaining: number }> = [];
   private readonly turnPromises = new Set<Promise<void>>();
   private listLimit: number | null = null;
@@ -213,12 +238,31 @@ export class FakeManagedAgentsServer {
   }
 
   /** Queue turn scripts consumed by the next `user.message` events (any session). */
-  queueTurns(...turns: TurnScript[]): void {
+  queueTurns(...turns: TurnSource[]): void {
     this.turnQueue.push(...turns);
   }
 
+  /** Skills uploaded to the fake (newest last). */
+  listUploadedSkills(): FakeSkill[] {
+    return [...this.skills.values()];
+  }
+
+  /** Adds a skill as if uploaded earlier (e.g. by another process). */
+  seedSkill(input: { displayName: string; files: Array<{ path: string; content: string }> }): FakeSkill {
+    const skill: FakeSkill = {
+      id: nextId("skill"),
+      display_name: input.displayName,
+      latest_version_id: nextId("skver"),
+      versions: new Map(),
+      created_at: new Date().toISOString(),
+    };
+    skill.versions.set(skill.latest_version_id, input.files);
+    this.skills.set(skill.id, skill);
+    return skill;
+  }
+
   /** Queue turn scripts for one session (takes precedence over the global queue). */
-  queueSessionTurns(sessionId: string, ...turns: TurnScript[]): void {
+  queueSessionTurns(sessionId: string, ...turns: TurnSource[]): void {
     const queue = this.sessionTurnQueues.get(sessionId) ?? [];
     queue.push(...turns);
     this.sessionTurnQueues.set(sessionId, queue);
@@ -293,9 +337,19 @@ export class FakeManagedAgentsServer {
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const path = url.pathname;
-    const bodyText = await readBody(req);
+    const bodyBytes = await readBody(req);
+    const bodyText = bodyBytes.toString("utf8");
     let body: unknown = undefined;
-    if (bodyText) {
+    const contentType = String(req.headers["content-type"] ?? "");
+    if (contentType.startsWith("multipart/form-data")) {
+      try {
+        body = await new Response(new Uint8Array(bodyBytes), { headers: { "content-type": contentType } }).formData();
+      } catch {
+        this.record(req, path, url.search, "[unparseable multipart]");
+        this.sendError(res, 400, "invalid_request_error", "Request body is not valid multipart/form-data");
+        return;
+      }
+    } else if (bodyText) {
       try {
         body = JSON.parse(bodyText);
       } catch {
@@ -334,7 +388,75 @@ export class FakeManagedAgentsServer {
     if (resource === "agents") return this.handleAgents(res, method, id, action, body);
     if (resource === "environments") return this.handleEnvironments(res, method, id, body);
     if (resource === "sessions") return this.handleSessions(req, res, method, id, action, sub, body);
+    if (resource === "skills") return this.handleSkills(res, method, id, url.searchParams, body);
     this.sendError(res, 404, "not_found_error", "Not found");
+  }
+
+  private skillJson(skill: FakeSkill): Record<string, unknown> {
+    return {
+      id: skill.id,
+      type: "skill",
+      display_name: skill.display_name,
+      latest_version_id: skill.latest_version_id,
+      source: { type: "custom" },
+      created_at: skill.created_at,
+      updated_at: skill.created_at,
+    };
+  }
+
+  private async handleSkills(res: ServerResponse, method: string, id: string | undefined, query: URLSearchParams, body: unknown): Promise<void> {
+    if (!id && method === "POST") {
+      if (!(body instanceof FormData)) return this.sendError(res, 400, "invalid_request_error", "multipart/form-data body is required");
+      const entries = body.getAll("files[]");
+      const files: Array<{ path: string; content: string }> = [];
+      for (const entry of entries) {
+        if (typeof entry === "string") return this.sendError(res, 400, "invalid_request_error", "files[] entries must be files");
+        files.push({ path: entry.name, content: await entry.text() });
+      }
+      if (files.length === 0) return this.sendError(res, 400, "invalid_request_error", "files: at least one file is required");
+      const roots = new Set(files.map((f) => f.path.split("/")[0]));
+      if (roots.size !== 1 || files.some((f) => !f.path.includes("/"))) {
+        return this.sendError(res, 400, "invalid_request_error", "All files must be in the same top-level directory");
+      }
+      const root = [...roots][0]!;
+      const skillMd = files.find((f) => f.path === `${root}/SKILL.md`);
+      if (!skillMd) return this.sendError(res, 400, "invalid_request_error", "SKILL.md is required at the root of the top-level directory");
+      const name = /^---\s*\n[\s\S]*?^name:\s*(.+?)\s*$/m.exec(skillMd.content)?.[1]?.replace(/^["']|["']$/g, "");
+      if (!name || !/^[a-z0-9-]{1,64}$/.test(name) || /anthropic|claude/.test(name)) {
+        return this.sendError(res, 400, "invalid_request_error", "SKILL.md frontmatter name must be lowercase letters, numbers and hyphens (max 64), without reserved words");
+      }
+      const displayName = body.get("display_name");
+      const skill = this.seedSkill({ displayName: typeof displayName === "string" && displayName ? displayName : name, files });
+      return this.sendJson(res, 200, this.skillJson(skill));
+    }
+    if (!id && method === "GET") {
+      const all = [...this.skills.values()].reverse();
+      const pageSize = this.options.skillsPageSize ?? this.listLimit ?? 20;
+      const start = Number(query.get("page") ?? "0") || 0;
+      const data = all.slice(start, start + pageSize).map((skill) => this.skillJson(skill));
+      const next = start + pageSize < all.length ? String(start + pageSize) : null;
+      return this.sendJson(res, 200, { data, next_page: next });
+    }
+    const skill = id ? this.skills.get(id) : undefined;
+    if (!skill) return this.sendError(res, 404, "not_found_error", "Skill not found");
+    if (method === "GET") return this.sendJson(res, 200, this.skillJson(skill));
+    this.sendError(res, 404, "not_found_error", "Not found");
+  }
+
+  /** Files of the custom skills an agent snapshot attaches (pinned version or latest). */
+  private attachedSkillFiles(agent: Record<string, unknown>): Map<string, Array<{ path: string; content: string }>> {
+    const out = new Map<string, Array<{ path: string; content: string }>>();
+    const refs = Array.isArray(agent.skills) ? agent.skills : [];
+    for (const raw of refs) {
+      const ref = asRecord(raw);
+      if (ref.type !== "custom" || typeof ref.skill_id !== "string") continue;
+      const skill = this.skills.get(ref.skill_id);
+      if (!skill) continue;
+      const version = typeof ref.version === "string" && ref.version !== "latest" ? ref.version : skill.latest_version_id;
+      const files = skill.versions.get(version);
+      if (files) out.set(skill.id, files);
+    }
+    return out;
   }
 
   private handleAgents(res: ServerResponse, method: string, id: string | undefined, action: string | undefined, body: unknown): void {
@@ -528,7 +650,15 @@ export class FakeManagedAgentsServer {
 
   private startTurn(session: FakeSession): void {
     const queue = this.sessionTurnQueues.get(session.id);
-    const script = queue?.shift() ?? this.turnQueue.shift() ?? simpleTurn();
+    const source = queue?.shift() ?? this.turnQueue.shift() ?? simpleTurn();
+    const script = typeof source === "function"
+      ? source({
+          sessionId: session.id,
+          agent: session.agent as Record<string, unknown>,
+          attachedSkillFiles: this.attachedSkillFiles(session.agent as Record<string, unknown>),
+          userText: lastUserText(session),
+        })
+      : source;
     // Queue behind any running turn so ordering stays deterministic.
     const run = this.runTurn(session, script);
     this.turnPromises.add(run);
@@ -739,11 +869,17 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
+function lastUserText(session: FakeSession): string {
+  const message = [...session.received].reverse().find((event) => event.type === "user.message");
+  const content = Array.isArray(message?.content) ? message.content : [];
+  return content.map((block) => (typeof asRecord(block).text === "string" ? String(asRecord(block).text) : "")).join("\n");
+}
+
+function readBody(req: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
 }

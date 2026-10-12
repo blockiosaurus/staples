@@ -62,6 +62,8 @@ import { agentConfigurationDoc as cursorCloudAgentConfigurationDoc } from "@pape
 import {
   execute as claudeManagedExecute,
   getConfigSchema as getClaudeManagedConfigSchema,
+  listClaudeManagedSkills,
+  syncClaudeManagedSkills,
   sessionCodec as claudeManagedSessionCodec,
   testEnvironment as claudeManagedTestEnvironment,
 } from "@paperclipai/adapter-claude-managed/server";
@@ -755,6 +757,9 @@ const claudeManagedAdapter: ServerAdapterModule = {
   testEnvironment: claudeManagedTestEnvironment,
   sessionCodec: claudeManagedSessionCodec,
   sessionManagement: getAdapterSessionManagement("claude_managed") ?? undefined,
+  // Desired skills are uploaded as Anthropic custom skills (or inlined) at run time.
+  listSkills: listClaudeManagedSkills,
+  syncSkills: syncClaudeManagedSkills,
   // Tool definitions are re-discovered and applied to the session on every run.
   supportsToolRefreshOnResume: true,
   models: claudeManagedModels,

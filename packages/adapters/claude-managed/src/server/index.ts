@@ -1,9 +1,21 @@
 import type { AdapterConfigSchema } from "@paperclipai/adapter-utils";
 import { DEFAULT_MODEL } from "./execute.js";
 
-export { execute, coreFingerprint, toolsFingerprint, resolveApiKey, usesDefaultApiBaseUrl, resolveNetworking, resolveRemainingBudgetUsd, resolveInstanceId, resolveInactivityTimeoutMs, DEFAULT_INACTIVITY_TIMEOUT_MS, DEFAULT_MODEL } from "./execute.js";
+export { execute, summaryPreview, coreFingerprint, toolsFingerprint, resolveApiKey, usesDefaultApiBaseUrl, resolveNetworking, resolveRemainingBudgetUsd, resolveInstanceId, resolveInactivityTimeoutMs, DEFAULT_INACTIVITY_TIMEOUT_MS, DEFAULT_MODEL } from "./execute.js";
 export type { ClaudeManagedLogEvent, ExecuteDeps } from "./execute.js";
 export { testEnvironment } from "./test-environment.js";
+export {
+  listClaudeManagedSkills,
+  syncClaudeManagedSkills,
+  resolveAgentSkills,
+  readLocalSkill,
+  buildInlineSkillsSection,
+  isSkillsApiRefusal,
+  resetSkillsCache,
+  skillTitle,
+  MAX_INLINE_SKILL_CHARS,
+} from "./skills.js";
+export type { SkillsResolution, LocalSkill } from "./skills.js";
 export { sessionCodec, readSessionParams } from "./session.js";
 export type { ClaudeManagedSessionParams } from "./session.js";
 export { ToolsProxy, buildToolName, mcpResultToToolContent } from "./tools-proxy.js";

@@ -388,3 +388,47 @@ describe("ManagedAgentsClient errors and retries", () => {
     expect(await response.json()).toMatchObject({ type: "error", error: { type: "invalid_request_error" } });
   });
 });
+
+describe("ManagedAgentsClient skills", () => {
+  let fake: FakeManagedAgentsServer;
+  let client: ManagedAgentsClient;
+
+  beforeEach(async () => {
+    fake = await startFakeManagedAgentsServer();
+    client = new ManagedAgentsClient({ apiKey: fake.apiKey, baseUrl: fake.baseUrl, sleep: noSleep });
+  });
+
+  afterEach(async () => {
+    await fake.close();
+  });
+
+  it("uploads a skill as multipart files[] with display_name, then lists and gets it", async () => {
+    const created = await client.uploadSkill({
+      displayName: "staples-demo-0123abcd",
+      files: [
+        { path: "demo/SKILL.md", content: "---\nname: demo\ndescription: Demo.\n---\n\nBody.\n" },
+        { path: "demo/references/a.md", content: new TextEncoder().encode("A") },
+      ],
+    });
+    expect(created).toMatchObject({ type: "skill", display_name: "staples-demo-0123abcd", source: { type: "custom" } });
+    expect(created.latest_version_id).toMatch(/^skver_/);
+    const upload = fake.requests.find((r) => r.method === "POST" && r.path === "/v1/skills")!;
+    expect(String(upload.headers["content-type"])).toMatch(/^multipart\/form-data; boundary=/);
+    expect(fake.listUploadedSkills()[0].versions.get(created.latest_version_id)).toEqual([
+      { path: "demo/SKILL.md", content: "---\nname: demo\ndescription: Demo.\n---\n\nBody.\n" },
+      { path: "demo/references/a.md", content: "A" },
+    ]);
+
+    const page = await client.listSkills({ limit: 10, source: "custom" });
+    expect(page.data.map((s) => s.id)).toEqual([created.id]);
+    expect(fake.requests.at(-1)!.query).toBe("?limit=10&source=custom");
+    expect(await client.getSkill(created.id)).toMatchObject({ id: created.id });
+  });
+
+  it("does not retry a skill upload on a 5xx", async () => {
+    fake.failNext({ method: "POST", path: "/v1/skills", status: 500 });
+    const error = await client.uploadSkill({ files: [{ path: "d/SKILL.md", content: "---\nname: d\n---\n" }] }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ManagedAgentsApiError);
+    expect(fake.requests.filter((r) => r.path === "/v1/skills")).toHaveLength(1);
+  });
+});

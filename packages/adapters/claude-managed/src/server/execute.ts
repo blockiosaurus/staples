@@ -21,6 +21,7 @@ import {
 import { ManagedAgentsApiError, ManagedAgentsClient, budgetFromUsd, type ListPage } from "../client.js";
 import {
   DEFAULT_MANAGED_AGENTS_BASE_URL,
+  type AgentSkillRef,
   type AgentTool,
   type BudgetLimit,
   type CloudEnvironmentConfig,
@@ -32,6 +33,7 @@ import {
   type SessionUsageTotals,
 } from "../types.js";
 import { readSessionParams, type ClaudeManagedSessionParams } from "./session.js";
+import { resolveAgentSkills, workspaceKey, type SkillsResolution } from "./skills.js";
 import { ToolsProxy, type ToolCallOutcome } from "./tools-proxy.js";
 
 type AdapterExecutionErrorFamily = NonNullable<AdapterExecutionResult["errorFamily"]>;
@@ -183,9 +185,14 @@ function sha256(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-/** Session-fixed agent fields: a change needs a new session. */
-export function coreFingerprint(input: { model: string; system: string | null }): string {
-  return sha256({ v: 2, model: input.model, system: input.system, toolset: AGENT_TOOLSET_TYPE });
+/**
+ * Session-fixed agent fields: a change needs a new agent version and a new session.
+ * Skills join the hash only when present, so agents without skills keep their
+ * existing fingerprint (and sessions).
+ */
+export function coreFingerprint(input: { model: string; system: string | null; skills?: AgentSkillRef[] }): string {
+  const skills = input.skills?.length ? { skills: input.skills } : {};
+  return sha256({ v: 2, model: input.model, system: input.system, toolset: AGENT_TOOLSET_TYPE, ...skills });
 }
 
 /** Tool definitions: a change is applied to a resumed session in place. */
@@ -306,6 +313,12 @@ function textOf(content: ContentBlock[] | undefined): string {
 
 function firstNonEmptyLine(text: string): string {
   return text.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? "";
+}
+
+/** One-line preview of a reply (first non-empty line, max 200 chars) for event titles. */
+export function summaryPreview(text: string): string {
+  const first = firstNonEmptyLine(text);
+  return first.length > 200 ? `${first.slice(0, 199)}…` : first;
 }
 
 function errorFamilyFor(error: unknown): AdapterExecutionErrorFamily | null {
@@ -480,8 +493,43 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
 
   const tools: AgentTool[] = [{ type: AGENT_TOOLSET_TYPE }, ...proxy.definitions()];
   const instructions = await readInstructions(config, onLog);
-  const system = instructions || null;
-  const fingerprint = coreFingerprint({ model, system });
+
+  // ---- Skills (native custom skills, or inlined on refusal) -------------------
+  let skills: SkillsResolution;
+  try {
+    skills = await resolveAgentSkills({
+      config,
+      client,
+      workspaceKey: workspaceKey(resolveApiBaseUrl(config), key.apiKey),
+      onLog,
+      signal,
+    });
+  } catch (error) {
+    if (signal?.aborted) {
+      await onLog("stdout", line({ type: "claude_managed.result", status: "cancelled", error: "Run cancelled while preparing skills." }));
+      return cancelledResult({ ...base, ...priorResult, costUsd: 0, costStatus: "reported", clearSession: false }, {
+        providerWorkStarted: false,
+        message: "Run cancelled while preparing skills.",
+      });
+    }
+    const message = `Could not prepare skills: ${messageOf(error)}`;
+    await onLog("stdout", line({ type: "claude_managed.result", status: "failed", error: message }));
+    return {
+      ...base,
+      ...priorResult,
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorCode: "claude_managed_skills_failed",
+      errorFamily: errorFamilyFor(error),
+      errorMessage: message,
+      costUsd: 0,
+      costStatus: "reported",
+      clearSession: false,
+    };
+  }
+  const system = [instructions, skills.systemAppendix].filter(Boolean).join("\n\n") || null;
+  const fingerprint = coreFingerprint({ model, system, skills: skills.refs });
   const toolsFp = toolsFingerprint(tools);
   const definitionFp = `${fingerprint}:${toolsFp}`.slice(0, 200);
   const networking = resolveNetworking(config);
@@ -624,7 +672,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
   }
 
   async function resolveAgent(): Promise<void> {
-    const definition = { name: `Staples: ${agent.name}`, model, system, tools };
+    const definition = { name: `Staples: ${agent.name}`, model, system, tools, skills: skills.refs };
     const metadata = { ...ownerMetadata, staples_fingerprint: definitionFp };
     let current: ManagedAgent | null = null;
     if (prior) {
@@ -811,7 +859,13 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
     await ctx.onMeta({
       adapterType: ADAPTER_TYPE,
       command: "managed-agents-api",
-      commandNotes: [...notes, `Tools: built-in toolset + ${proxy.tools().length} proxied Staples tool(s).`],
+      commandNotes: [
+        ...notes,
+        `Tools: built-in toolset + ${proxy.tools().length} proxied Staples tool(s).`,
+        ...(skills.native.length || skills.inlined.length
+          ? [`Skills: ${skills.native.length} attached natively (${skills.native.filter((s) => s.reused).length} reused), ${skills.inlined.length} inlined in the system prompt${skills.fallback ? " (Skills API unavailable)" : ""}.`]
+          : []),
+      ],
       prompt,
       promptMetrics: {
         promptChars: prompt.length,
@@ -831,6 +885,11 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
           networking: networking.type,
           sessionBudgetCents: sessionBudget ? Number(sessionBudget.max_list_cost.amount) : null,
           tools: proxy.tools().map((t) => ({ name: t.name, server: t.serverName, tool: t.toolName })),
+          skills: {
+            native: skills.native.map((s) => ({ name: s.runtimeName, skillId: s.skillId, version: s.version, reused: s.reused })),
+            inlined: skills.inlined,
+            fallback: skills.fallback,
+          },
         },
       },
     });
@@ -908,6 +967,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
         resumed,
         ...(outcome.status === "budget_reached" ? { budgetStopped: true } : {}),
         ...(outcome.lastMessage ? { result: outcome.lastMessage } : {}),
+        ...(outcome.summary ? { summary: outcome.summary, summaryPreview: summaryPreview(outcome.summary) } : {}),
         ...(outcome.error ? { error: outcome.error } : {}),
       };
       await onLog(
@@ -925,7 +985,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
         eventType: "claude_managed.stop",
         stream: "system",
         level: outcome.status === "succeeded" ? "info" : outcome.status === "cancelled" ? "warn" : "error",
-        message: outcome.summary ?? outcome.error ?? outcome.status,
+        message: (outcome.summary ? summaryPreview(outcome.summary) : "") || outcome.error || outcome.status,
         payload: { status: outcome.status, stopReason: outcome.stopReason ?? null, costUsd: a.costUsd },
       });
       const common = { ...a, ...sessionFields(), summary: outcome.summary ?? null, resultJson, clearSession: outcome.clearSession ?? false };
@@ -1188,7 +1248,8 @@ async function runTurn(input: {
         }
         if (reason === "end_turn") {
           if (lastError) return { status: "failed", stopReason: reason, error: lastError };
-          return { status: "succeeded", stopReason: reason, summary: firstNonEmptyLine(lastMessage) || undefined };
+          // The full final reply: conversation hosts post the summary as the chat reply.
+          return { status: "succeeded", stopReason: reason, summary: lastMessage.trim() || undefined };
         }
         if (reason === "budget_reached") {
           return {

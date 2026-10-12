@@ -105,7 +105,7 @@ describe("claude_managed execute", () => {
     const h = harness();
     const result = await execute(h.ctx);
 
-    expect(result).toMatchObject({ exitCode: 0, summary: "All done.", provider: "anthropic", biller: "anthropic", billingType: "api", model: "claude-opus-5-5" });
+    expect(result).toMatchObject({ exitCode: 0, summary: "All done.\nDetails follow.", provider: "anthropic", biller: "anthropic", billingType: "api", model: "claude-opus-5-5" });
     expect(h.onCancellationReady).toHaveBeenCalledTimes(1);
     expect(h.onDispatch).toHaveBeenCalledTimes(1);
 

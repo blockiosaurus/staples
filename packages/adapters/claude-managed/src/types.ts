@@ -64,8 +64,18 @@ export interface CreateAgentParams {
   description?: string | null;
   tools?: AgentTool[];
   mcp_servers?: Array<Record<string, unknown>>;
-  skills?: Array<Record<string, unknown>>;
+  skills?: AgentSkillRef[];
   metadata?: Record<string, string>;
+}
+
+/**
+ * An entry in the agent's `skills` array (managed-agents/skills docs). For custom
+ * skills `version` is a skill version id (`skver_...`) or `latest` (default).
+ */
+export interface AgentSkillRef {
+  type: "custom" | "anthropic";
+  skill_id: string;
+  version?: string;
 }
 
 export interface UpdateAgentParams extends Partial<Omit<CreateAgentParams, "metadata">> {
@@ -87,6 +97,35 @@ export interface ManagedAgent {
   updated_at: string;
   metadata: Record<string, string>;
   [key: string]: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Skills (POST/GET /v1/skills, documented 2026-10-12)
+// ---------------------------------------------------------------------------
+
+export interface ManagedSkill {
+  id: string;
+  type: "skill";
+  /** Single-line label (max 255 chars); not unique. Derived from SKILL.md `name` when omitted. */
+  display_name: string;
+  /** The newest version id (`skver_...`), what `latest` resolves to. */
+  latest_version_id: string;
+  source: { type: "custom" | "anthropic" | "anthropic_example" | "plugin" | string };
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+/** One file of a skill upload. `path` includes the skill's top-level directory, e.g. `my-skill/SKILL.md`. */
+export interface SkillUploadFile {
+  path: string;
+  content: string | Uint8Array;
+}
+
+export interface UploadSkillParams {
+  /** Sent as the multipart `display_name` field. */
+  displayName?: string;
+  files: SkillUploadFile[];
 }
 
 // ---------------------------------------------------------------------------
