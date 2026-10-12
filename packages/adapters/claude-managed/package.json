@@ -1,0 +1,55 @@
+{
+  "name": "@paperclipai/adapter-claude-managed",
+  "version": "0.3.1",
+  "license": "MIT",
+  "homepage": "https://github.com/paperclipai/paperclip",
+  "bugs": {
+    "url": "https://github.com/paperclipai/paperclip/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/paperclipai/paperclip",
+    "directory": "packages/adapters/claude-managed"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./testing": "./src/testing/fake-managed-agents-server.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./client": {
+        "types": "./dist/client.d.ts",
+        "import": "./dist/client.js"
+      },
+      "./testing": {
+        "types": "./dist/testing/fake-managed-agents-server.d.ts",
+        "import": "./dist/testing/fake-managed-agents-server.js"
+      }
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=24.11.0"
+  }
+}

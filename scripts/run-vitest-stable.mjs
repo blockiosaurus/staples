@@ -26,6 +26,7 @@ const nonServerProjects = [
   "@paperclipai/db",
   "@paperclipai/adapter-utils",
   "@paperclipai/adapter-claude-local",
+  "@paperclipai/adapter-claude-managed",
   "@paperclipai/adapter-codex-local",
   "@paperclipai/adapter-cursor-cloud",
   "@paperclipai/adapter-cursor-local",
