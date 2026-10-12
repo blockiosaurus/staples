@@ -1,10 +1,17 @@
 # Claude (hosted) adapter (`claude_managed`)
 
-Status: proof of concept (2026-10-12). **The [live smoke test](#live-smoke-test)
-passed against the Managed Agents API on 2026-10-12** (`claude-opus-5-5`: one
-turn, one proxied custom tool call, $0.03 reported, session archived). Not yet
-verified live: session resume across runs (and its usage baseline), cancellation,
-budget-capped sessions, limited networking, and models other than Opus 5.5.
+Status: proof of concept (2026-10-12). **The full [live smoke suite](#live-smoke-test)
+(`--scenario all`) passed against the Managed Agents API on 2026-10-12**, $0.48
+total: basic run, resume across runs (same session, per-run cost deltas sum to
+the session total), cancellation (acknowledged, provider stopped, session idle),
+a $0.01 budget cap (stopped with `budget_reached`), tool errors, a truncated
+~250 KB tool result, two tools on two MCP servers, limited networking
+(allowed host fetched, other host blocked), `claude-sonnet-5-5` and
+`claude-haiku-5-5`, and the connection test.
+
+Cost granularity: the API reports session cost in whole cents, so a single small
+run can show $0.00 while the next shows the rounded-up cent; per-run deltas
+always sum to the session's total.
 
 ## What it is
 
