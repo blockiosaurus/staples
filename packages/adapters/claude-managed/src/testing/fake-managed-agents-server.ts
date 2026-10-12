@@ -202,6 +202,8 @@ export class FakeManagedAgentsServer {
   private listLimit: number | null = null;
   /** When true, `user.interrupt` events are recorded but do not stop the turn. */
   ignoreInterrupts = false;
+  /** Simulates an API that refuses budget changes on an existing session. */
+  rejectBudgetUpdates = false;
 
   constructor(options: FakeManagedAgentsServerOptions = {}) {
     this.options = options;
@@ -318,6 +320,11 @@ export class FakeManagedAgentsServer {
     if (!session) return;
     for (const stream of session.streams) stream.destroy();
     session.streams.clear();
+  }
+
+  /** The session's current spending cap (as created or last updated). */
+  sessionBudget(sessionId: string): unknown {
+    return this.sessions.get(sessionId)?.budget ?? null;
   }
 
   /** The agent snapshot (incl. session-local tool updates) a session runs with. */
@@ -615,6 +622,10 @@ export class FakeManagedAgentsServer {
       if (session.status !== "idle") return this.sendError(res, 400, "invalid_request_error", "Session must be idle to update the agent");
       const update = asRecord(asRecord(body).agent);
       if (Array.isArray(update.tools)) (session.agent as Record<string, unknown>).tools = update.tools;
+      if (this.rejectBudgetUpdates && asRecord(body).budget !== undefined) {
+        return this.sendError(res, 400, "invalid_request_error", "budget cannot be updated");
+      }
+      if (asRecord(body).budget !== undefined) session.budget = asRecord(body).budget;
       return this.sendJson(res, 200, this.sessionJson(session));
     }
     if (action === "archive" && method === "POST") {

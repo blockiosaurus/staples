@@ -5,7 +5,7 @@
  * (the same entries claude_local mounts). For each skill this agent wants, the
  * adapter reads its files, hashes them, and makes sure a custom skill with that
  * exact content exists in the Anthropic workspace (display name
- * `staples-<runtimeName>-<hash8>`): it lists the workspace's skills once per
+ * `staples-<runtimeName>-<sha256>`): it lists the workspace's skills once per
  * process and reuses an exact title match, otherwise it uploads. The agent
  * definition pins each skill's version id.
  *
@@ -49,7 +49,7 @@ export interface LocalSkill {
   runtimeName: string;
   /** sha256 over the runtime name and every file's path + content. */
   hash: string;
-  /** `staples-<runtimeName>-<hash8>`. */
+  /** `staples-<runtimeName>-<sha256>` (full 64-character content hash). */
   title: string;
   /** Paths relative to the skill root (`SKILL.md`, `references/x.md`, ...). */
   files: Array<{ path: string; content: string }>;
@@ -124,10 +124,17 @@ async function walk(root: string, rel = ""): Promise<string[]> {
   return out;
 }
 
-/** Display names are single-line, max 255 chars; keep the runtime name readable. */
+/**
+ * `staples-<slug>-<sha256 hex>`: the FULL 64-character content hash. The
+ * workspace (one per API key) is shared by every company on the operator's
+ * hosted key, and an exact title match is reused, so a short hash prefix could
+ * be brute-forced to make another company's agent attach crafted content.
+ * Display names are single-line, max 255 chars: the slug is capped so the
+ * title always fits (8 + 180 + 1 + 64 = 253).
+ */
 export function skillTitle(runtimeName: string, hash: string): string {
-  const slug = runtimeName.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 200) || "skill";
-  return `staples-${slug}-${hash.slice(0, 8)}`;
+  const slug = runtimeName.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 180).replace(/-+$/g, "") || "skill";
+  return `staples-${slug}-${hash}`;
 }
 
 /** Reads one skill directory: SKILL.md first, then other text files (capped). Null when SKILL.md is missing. */

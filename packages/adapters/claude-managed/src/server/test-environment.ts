@@ -5,7 +5,7 @@ import type {
 } from "@paperclipai/adapter-utils";
 import { parseObject } from "@paperclipai/adapter-utils/server-utils";
 import { ManagedAgentsApiError, ManagedAgentsClient } from "../client.js";
-import { HOSTED_KEY_WITHHELD_MESSAGE, resolveApiBaseUrl, resolveApiKey, usesDefaultApiBaseUrl } from "./execute.js";
+import { HOSTED_KEY_WITHHELD_MESSAGE, hostedKeyWithheld, resolveApiBaseUrl, resolveApiKey, usesDefaultApiBaseUrl } from "./execute.js";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -88,7 +88,7 @@ export async function testEnvironment(
   const key = resolveApiKey(config, env, { serverKeyAllowed });
 
   if (!key) {
-    const serverKeyWithheld = !serverKeyAllowed && Boolean((env.ANTHROPIC_API_KEY ?? "").trim());
+    const serverKeyWithheld = hostedKeyWithheld(config, env, { serverKeyAllowed });
     checks.push(serverKeyWithheld
       ? {
           code: "claude_managed_api_key_missing",
@@ -115,6 +115,8 @@ export async function testEnvironment(
       level: "info",
       message: key.source === "adapter_config"
         ? "An Anthropic API key is set for this agent."
+        : key.source === "hosted_inference"
+        ? "Using the Staples server's hosted-inference key, under its spending caps."
         : "Using the Anthropic API key from the Staples server environment.",
     });
     try {

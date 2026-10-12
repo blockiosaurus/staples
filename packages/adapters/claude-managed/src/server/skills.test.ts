@@ -81,7 +81,8 @@ describe("claude_managed native skills", () => {
     const form = uploads[0].body as FormData;
     const local = (await readLocalSkill({ key: "company/codeword", runtimeName: "codeword", source: codeword }))!;
     expect(form.get("display_name")).toBe(local.title);
-    expect(local.title).toMatch(/^staples-codeword-[0-9a-f]{8}$/);
+    expect(local.title).toMatch(/^staples-codeword-[0-9a-f]{64}$/);
+    expect(local.title).toBe(`staples-codeword-${local.hash}`);
     expect((form.getAll("files[]") as File[]).map((f) => f.name).sort()).toEqual([`${local.title}/SKILL.md`, `${local.title}/references/notes.md`]);
     // No ?beta=true on skills calls (see skillsRequestShape).
     expect(uploads[0].query).toBe("");
@@ -141,6 +142,25 @@ describe("claude_managed native skills", () => {
     expect((req("POST", /^\/v1\/agents$/)[0].body as Record<string, unknown>).skills).toEqual([
       { type: "custom", skill_id: seeded.id, version: seeded.latest_version_id },
     ]);
+  });
+
+  it("never reuses a skill whose title only shares a short hash prefix (re-uploads once under the full-hash title)", async () => {
+    const codeword = await writeSkill("codeword", "Answer BANANA-7.");
+    const local = (await readLocalSkill({ key: "company/codeword", runtimeName: "codeword", source: codeword }))!;
+    // An old-format (8-character) title, or a crafted one with the same prefix, is not an exact match.
+    fake.seedSkill({ displayName: `staples-codeword-${local.hash.slice(0, 8)}`, files: [{ path: `staples-codeword-${local.hash.slice(0, 8)}/SKILL.md`, content: "Answer EVIL." }] });
+    fake.queueTurns(turn("ok"));
+    await execute(harness({ config: skillConfig([{ name: "codeword", source: codeword }]) }).ctx);
+    const uploads = req("POST", /^\/v1\/skills$/);
+    expect(uploads).toHaveLength(1);
+    expect((uploads[0].body as FormData).get("display_name")).toBe(local.title);
+  });
+
+  it("keeps a long runtime name within the 255-character display name limit", () => {
+    const hash = "a".repeat(64);
+    const title = skillTitle("x".repeat(400), hash);
+    expect(title.length).toBeLessThanOrEqual(255);
+    expect(title.endsWith(`-${hash}`)).toBe(true);
   });
 
   it("follows skills list pagination", async () => {

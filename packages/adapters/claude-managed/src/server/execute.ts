@@ -130,32 +130,61 @@ export function usesDefaultApiBaseUrl(config: Record<string, unknown>): boolean 
   return resolveApiBaseUrl(config).replace(/\/+$/, "") === DEFAULT_MANAGED_AGENTS_BASE_URL.replace(/\/+$/, "");
 }
 
+/** Server env var holding the operator's hosted-inference key (never the plain ANTHROPIC_API_KEY). */
+export const HOSTED_ANTHROPIC_API_KEY_ENV = "STAPLES_HOSTED_ANTHROPIC_API_KEY";
+
 /**
- * Resolves the Anthropic API key: adapter env (plain or resolved secret) first, then
- * the server env. The server-env key ("hosted inference") is used only when the
- * server allows it for this agent (`serverKeyAllowed`, decided server-side for a
- * claude_managed agent without its own key, once its hosted budget caps are
- * ensured), and is only
- * ever sent to the default Anthropic API base URL: `apiBaseUrl` is per-agent
- * config, so a custom base URL needs the agent's own key (otherwise any board user
- * could point it at their host and capture the instance key).
+ * True when the server runs hosted inference: `STAPLES_HOSTED_ANTHROPIC_API_KEY`
+ * is set (non-blank) and `STAPLES_HOSTED_INFERENCE` is not `off`. Mirrors the
+ * server's `hostedInference()`; both read the same server env.
+ */
+export function hostedInferenceConfigured(env: Record<string, string | undefined> = process.env): boolean {
+  if ((env.STAPLES_HOSTED_INFERENCE ?? "").trim().toLowerCase() === "off") return false;
+  return Boolean((env[HOSTED_ANTHROPIC_API_KEY_ENV] ?? "").trim());
+}
+
+/**
+ * Resolves the Anthropic API key. The agent's own key (adapter env, plain or a
+ * resolved secret) always comes first. Without one, and only for the default
+ * Anthropic API base URL (`apiBaseUrl` is per-agent config, so a custom base URL
+ * needs the agent's own key; otherwise any board user could point it at their
+ * host and capture a server key):
+ * - Hosted inference on (`STAPLES_HOSTED_ANTHROPIC_API_KEY` set, not opted out):
+ *   the hosted key, only when the server allows it for this agent
+ *   (`serverKeyAllowed`, decided server-side once its hard-stop caps are
+ *   ensured). Otherwise no key: the plain `ANTHROPIC_API_KEY` is never a
+ *   fallback here, so the caps cannot be bypassed.
+ * - Hosted inference off: the server's plain `ANTHROPIC_API_KEY`, with no forced
+ *   caps (the behaviour before hosted inference existed).
  */
 export function resolveApiKey(
   config: Record<string, unknown>,
   env: Record<string, string | undefined> = process.env,
   options: { serverKeyAllowed?: boolean } = {},
-): { apiKey: string; source: "adapter_config" | "server_env" } | null {
+): { apiKey: string; source: "adapter_config" | "hosted_inference" | "server_env" } | null {
   const fromConfig = readConfigEnvValue(config, "ANTHROPIC_API_KEY");
   if (fromConfig) return { apiKey: fromConfig, source: "adapter_config" };
-  if (options.serverKeyAllowed !== true) return null;
   if (!usesDefaultApiBaseUrl(config)) return null;
+  if (hostedInferenceConfigured(env)) {
+    if (options.serverKeyAllowed !== true) return null;
+    return { apiKey: (env[HOSTED_ANTHROPIC_API_KEY_ENV] ?? "").trim(), source: "hosted_inference" };
+  }
   const fromEnv = (env.ANTHROPIC_API_KEY ?? "").trim();
   if (fromEnv) return { apiKey: fromEnv, source: "server_env" };
   return null;
 }
 
 export const HOSTED_KEY_WITHHELD_MESSAGE =
-  "This agent needs its own Anthropic API key; the server's hosted inference is not available to it (hosted inference is off, or its spending caps could not be set).";
+  "This agent needs its own Anthropic API key; the server's hosted inference is not available to it (its spending caps could not be set).";
+
+/** Whether a missing key is the hosted key being withheld (hosted on, default base URL, not allowed). */
+export function hostedKeyWithheld(
+  config: Record<string, unknown>,
+  env: Record<string, string | undefined>,
+  options: { serverKeyAllowed?: boolean } = {},
+): boolean {
+  return options.serverKeyAllowed !== true && usesDefaultApiBaseUrl(config) && hostedInferenceConfigured(env);
+}
 
 /**
  * Explains a missing key; names the custom-base-URL rule or the withheld
@@ -166,7 +195,7 @@ export function missingApiKeyMessage(
   env: Record<string, string | undefined> = {},
   options: { serverKeyAllowed?: boolean } = {},
 ): string {
-  if (options.serverKeyAllowed !== true && (env.ANTHROPIC_API_KEY ?? "").trim()) return HOSTED_KEY_WITHHELD_MESSAGE;
+  if (hostedKeyWithheld(config, env, options)) return HOSTED_KEY_WITHHELD_MESSAGE;
   return usesDefaultApiBaseUrl(config)
     ? "ANTHROPIC_API_KEY is required for claude_managed. Add it to this agent's environment variables (or set it on the Staples server)."
     : "This agent uses a custom API base URL, so it needs its own ANTHROPIC_API_KEY in its environment variables. The Staples server's key is only sent to the default Anthropic API.";
@@ -211,10 +240,11 @@ export function resolveNetworking(config: Record<string, unknown>): CloudNetwork
 }
 
 /**
- * Remaining monthly budget for this agent, in USD, if the run context exposes one.
- * As of 2026-10-12 the host does not put budget data in AdapterExecutionContext, so
- * this reads an optional `context.paperclipBudgetRemainingUsd` number that nothing
- * sets yet; when absent, no session cap is applied.
+ * Remaining budget for this run, in USD: `context.paperclipBudgetRemainingUsd`,
+ * which the server sets from the smallest remaining hard-stop amount of the
+ * run's budget policies (agent, project, company, and the hosted-inference
+ * company cap when the run uses the server's hosted key). When absent (no
+ * hard-stop policy applies), no session cap is applied.
  */
 export function resolveRemainingBudgetUsd(context: Record<string, unknown>): number | null {
   const value = context.paperclipBudgetRemainingUsd;
@@ -361,7 +391,30 @@ export function summaryPreview(text: string): string {
   return first.length > 200 ? `${first.slice(0, 199)}…` : first;
 }
 
+export const OUT_OF_CREDIT_ERROR_CODE = "claude_managed_out_of_credit";
+export const OUT_OF_CREDIT_MESSAGE =
+  "Needs attention: the Anthropic account is out of credit. Add credit to the account in the Anthropic Console (Billing), then run the agent again.";
+
+/**
+ * The one classifier for "the Anthropic account cannot pay": an HTTP 402, an
+ * Anthropic `billing_error`, or a credit/balance message such as "Your credit
+ * balance is too low to access the Anthropic API". Used for API call errors
+ * and for `session.error` events alike. Retrying cannot fix it, so it maps to
+ * the non-retryable `configuration` family with a plain needs-attention message.
+ */
+export function isOutOfCreditError(input: { status?: number | null; type?: string | null; message?: string | null }): boolean {
+  if (input.status === 402) return true;
+  if ((input.type ?? "").trim().toLowerCase() === "billing_error") return true;
+  return /credit balance is too low|insufficient (?:credit|credits|funds|balance)|out of credits?\b|billing_error|payment required/i.test(input.message ?? "");
+}
+
+function apiErrorIsOutOfCredit(error: unknown): boolean {
+  return error instanceof ManagedAgentsApiError
+    && isOutOfCreditError({ status: error.status, type: error.errorType, message: error.message });
+}
+
 function errorFamilyFor(error: unknown): AdapterExecutionErrorFamily | null {
+  if (apiErrorIsOutOfCredit(error)) return "configuration";
   if (error instanceof ManagedAgentsApiError) {
     if (error.status === 401 || error.status === 403 || error.status === 400 || error.status === 404) return "configuration";
     if (error.status === 429 || error.status >= 500 || error.status === 0) return "transient_upstream";
@@ -555,7 +608,8 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
         message: "Run cancelled while preparing skills.",
       });
     }
-    const message = `Could not prepare skills: ${messageOf(error)}`;
+    const outOfCredit = apiErrorIsOutOfCredit(error);
+    const message = outOfCredit ? OUT_OF_CREDIT_MESSAGE : `Could not prepare skills: ${messageOf(error)}`;
     await onLog("stdout", line({ type: "claude_managed.result", status: "failed", error: message }));
     return {
       ...base,
@@ -563,7 +617,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
       exitCode: 1,
       signal: null,
       timedOut: false,
-      errorCode: "claude_managed_skills_failed",
+      errorCode: outOfCredit ? OUT_OF_CREDIT_ERROR_CODE : "claude_managed_skills_failed",
       errorFamily: errorFamilyFor(error),
       errorMessage: message,
       costUsd: 0,
@@ -674,7 +728,8 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
       await onLog("stdout", line({ type: "claude_managed.result", status: "cancelled", error: message }));
       return cancelledResult({ ...accounting(true), ...sessionFields(), clearSession: false }, { message });
     }
-    const message = messageOf(error);
+    const outOfCredit = apiErrorIsOutOfCredit(error);
+    const message = outOfCredit ? OUT_OF_CREDIT_MESSAGE : messageOf(error);
     await onLog("stdout", line({ type: "claude_managed.result", status: "failed", error: message }));
     return {
       ...accounting(true),
@@ -683,6 +738,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
       signal: null,
       timedOut: false,
       errorMessage: message,
+      ...(outOfCredit ? { errorCode: OUT_OF_CREDIT_ERROR_CODE } : {}),
       errorFamily: errorFamilyFor(error),
       clearSession: false,
     };
@@ -902,6 +958,21 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
           if (signal?.aborted) throw error;
           notes.push(`Could not update the tools of session ${existing.id} (${messageOf(error)}); starting a new session.`);
           existing = null;
+        }
+      }
+      if (existing && remainingBudgetUsd !== null) {
+        // A resumed session keeps a session-total cap: move it to what the
+        // session has spent so far plus this run's remaining budget.
+        const resumeBudget = budgetFromUsd(totalsFromSessionUsage(existing.usage).cents / 100 + remainingBudgetUsd);
+        if (resumeBudget && existing.budget?.max_list_cost?.amount !== resumeBudget.max_list_cost.amount) {
+          try {
+            existing = await client.updateSession(existing.id, { budget: resumeBudget }, { signal });
+            notes.push(`Set the spending cap of session ${existing.id} to $${(Number(resumeBudget.max_list_cost.amount) / 100).toFixed(2)} (session total).`);
+          } catch (error) {
+            if (signal?.aborted) throw error;
+            notes.push(`Could not update the spending cap of session ${existing.id} (${messageOf(error)}); starting a new session.`);
+            existing = null;
+          }
         }
       }
       if (existing) {
@@ -1165,6 +1236,11 @@ async function runTurn(input: {
   let idleObserved = false;
   let lastMessage = "";
   let lastError: string | null = null;
+  /** The last session error said the Anthropic account is out of credit. */
+  let lastErrorOutOfCredit = false;
+  const outOfCredit = (stopReason?: string): TurnOutcome => ({
+    status: "failed", ...(stopReason ? { stopReason } : {}), error: OUT_OF_CREDIT_MESSAGE, errorCode: OUT_OF_CREDIT_ERROR_CODE, errorFamily: "configuration",
+  });
   let graceTimer: ReturnType<typeof setTimeout> | null = null;
   let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
   let inactive = false;
@@ -1239,6 +1315,9 @@ async function runTurn(input: {
       // A failed send (e.g. a 5xx) may still have been accepted and started a turn: stop it.
       if (sendAttempted) await interrupt(STREAM_FAILURE_INTERRUPT_TIMEOUT_MS);
       await refreshUsage();
+      if (apiErrorIsOutOfCredit(error)) {
+        return await input.finish({ status: "failed", error: OUT_OF_CREDIT_MESSAGE, errorCode: OUT_OF_CREDIT_ERROR_CODE, errorFamily: "configuration" });
+      }
       return await input.finish({ status: "failed", error: messageOf(error), errorFamily: errorFamilyFor(error) ?? undefined });
     }
     ctx.signal?.addEventListener("abort", onAbort, { once: true });
@@ -1331,7 +1410,9 @@ async function runTurn(input: {
         await onLog("stdout", line({ type: "claude_managed.error", message, errorType: event.error?.type, retrying }));
         if (retrying) return null;
         lastError = message;
+        lastErrorOutOfCredit = isOutOfCreditError({ type: event.error?.type, message: event.error?.message });
         if (event.error?.retry_status?.type === "terminal") {
+          if (lastErrorOutOfCredit) return outOfCredit("error");
           return { status: "failed", stopReason: "error", error: message, errorFamily: "transient_upstream" };
         }
         return null;
@@ -1362,6 +1443,7 @@ async function runTurn(input: {
           return { status: "cancelled", stopReason: reason };
         }
         if (reason === "end_turn") {
+          if (lastErrorOutOfCredit) return outOfCredit(reason);
           if (lastError) return { status: "failed", stopReason: reason, error: lastError };
           // The full final reply: conversation hosts post the summary as the chat reply.
           return { status: "succeeded", stopReason: reason, summary: lastMessage.trim() || undefined };
@@ -1376,6 +1458,7 @@ async function runTurn(input: {
             errorFamily: "provider_quota",
           };
         }
+        if (lastErrorOutOfCredit) return outOfCredit(reason);
         if (reason === "retries_exhausted") {
           return { status: "failed", stopReason: reason, error: lastError ?? "The Managed Agents session stopped after exhausting its retries.", errorFamily: "transient_upstream" };
         }

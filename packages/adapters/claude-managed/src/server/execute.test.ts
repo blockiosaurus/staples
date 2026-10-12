@@ -11,7 +11,7 @@ import {
   type TurnScript,
 } from "../testing/fake-managed-agents-server.js";
 import { startFakeMcpServer, type FakeMcpServer } from "../testing/fake-mcp-server.js";
-import { execute, HOSTED_STAPLES_API_NOTE, HOSTED_STAPLES_API_READ_ONLY_NOTE, resolveNetworking } from "./execute.js";
+import { execute, HOSTED_KEY_WITHHELD_MESSAGE, isOutOfCreditError, OUT_OF_CREDIT_ERROR_CODE, OUT_OF_CREDIT_MESSAGE, HOSTED_STAPLES_API_NOTE, HOSTED_STAPLES_API_READ_ONLY_NOTE, resolveApiKey, resolveNetworking } from "./execute.js";
 import { sessionCodec } from "./session.js";
 import { DEFAULT_MANAGED_AGENTS_BASE_URL } from "../types.js";
 import { testEnvironment } from "./test-environment.js";
@@ -288,10 +288,57 @@ describe("claude_managed execute", () => {
     expect(logEvents(h.logs).at(-1)).toMatchObject({ type: "claude_managed.result", status: "budget_reached" });
   });
 
+  it("moves a resumed session's cap to its spend so far plus the run's remaining budget", async () => {
+    fake.queueTurns(turn("first", 30));
+    const first = await execute(harness({ context: { paperclipBudgetRemainingUsd: 1 } }).ctx);
+    const sessionId = fake.sessionIds()[0];
+    expect(fake.sessionBudget(sessionId)).toMatchObject({ max_list_cost: { amount: "100" } });
+
+    fake.queueTurns(turn("second", 40));
+    const second = await execute(harness({ sessionParams: first.sessionParams, context: { paperclipBudgetRemainingUsd: 0.5 } }).ctx);
+    expect(second.exitCode).toBe(0);
+    expect(fake.sessionIds()).toEqual([sessionId]);
+    expect(requestsMatching("POST", new RegExp(`^/v1/sessions/${sessionId}$`)).map((r) => r.body))
+      .toContainEqual({ budget: { type: "limit", max_list_cost: { amount: "80", currency: "USD" } } });
+    expect(fake.sessionBudget(sessionId)).toMatchObject({ max_list_cost: { amount: "80" } });
+
+    // If the API refuses the change, the run starts a new session capped at the remaining budget.
+    fake.rejectBudgetUpdates = true;
+    fake.queueTurns(turn("third", 1));
+    const third = await execute(harness({ sessionParams: second.sessionParams, context: { paperclipBudgetRemainingUsd: 0.25 } }).ctx);
+    expect(third.exitCode).toBe(0);
+    const newSession = fake.sessionIds().find((id) => id !== sessionId)!;
+    expect(newSession).toBeTruthy();
+    expect(fake.sessionBudget(newSession)).toMatchObject({ max_list_cost: { amount: "25" } });
+  });
+
   it("creates the session without a cap when no budget is known", async () => {
     fake.queueTurns(turn("ok", 1));
     await execute(harness().ctx);
     expect((requestsMatching("POST", /^\/v1\/sessions$/)[0].body as Record<string, unknown>).budget).toBeUndefined();
+  });
+
+  it("classifies an out-of-credit account as a non-retryable needs-attention failure", async () => {
+    expect(isOutOfCreditError({ type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits." })).toBe(true);
+    expect(isOutOfCreditError({ type: "billing_error", message: "x" })).toBe(true);
+    expect(isOutOfCreditError({ status: 402 })).toBe(true);
+    expect(isOutOfCreditError({ type: "api_error", message: "Upstream exploded" })).toBe(false);
+    expect(isOutOfCreditError({ type: "overloaded_error", message: "Model is overloaded" })).toBe(false);
+
+    // A terminal session.error from the session.
+    fake.queueTurns([
+      { kind: "emit", event: fakeEvents.running() },
+      { kind: "emit", event: fakeEvents.error("billing_error", "Your credit balance is too low to access the Anthropic API.", "terminal") },
+      { kind: "emit", event: fakeEvents.idle() },
+    ]);
+    const fromSession = await execute(harness().ctx);
+    expect(fromSession).toMatchObject({ exitCode: 1, errorCode: OUT_OF_CREDIT_ERROR_CODE, errorFamily: "configuration", errorMessage: OUT_OF_CREDIT_MESSAGE });
+
+    // A refused API call (session creation) with the credit message.
+    fake.failNext({ method: "POST", path: "/v1/sessions", status: 400, errorType: "invalid_request_error",
+      message: "Your credit balance is too low to access the Anthropic API." });
+    const fromApi = await execute(harness().ctx);
+    expect(fromApi).toMatchObject({ exitCode: 1, errorCode: OUT_OF_CREDIT_ERROR_CODE, errorFamily: "configuration", errorMessage: OUT_OF_CREDIT_MESSAGE });
   });
 
   it("fails with the session.error message", async () => {
@@ -359,53 +406,72 @@ describe("claude_managed execute", () => {
     expect(fake.requests).toHaveLength(0);
   });
 
-  it("falls back to the server ANTHROPIC_API_KEY only when the server allows it, for the default API base URL", async () => {
+  it("uses the hosted key only when the server allows it, for the default API base URL", async () => {
     fake.queueTurns(turn("ok", 1));
     // Default base URL: requests are rerouted to the fake by the fetch seam.
     const toFake: typeof fetch = (input, init) => fetch(String(input).replace(DEFAULT_MANAGED_AGENTS_BASE_URL, fake.baseUrl), init);
     const h = harness({ config: { env: {}, apiBaseUrl: "" } });
     h.ctx.hostedInferenceAllowed = true;
-    const result = await execute(h.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiFetch: toFake });
+    // The plain ANTHROPIC_API_KEY is a different (wrong) key: the hosted key must be the one sent.
+    const result = await execute(h.ctx, { env: { STAPLES_HOSTED_ANTHROPIC_API_KEY: fake.apiKey, ANTHROPIC_API_KEY: "sk-ant-other" }, apiFetch: toFake });
     expect(result.exitCode).toBe(0);
   });
 
-  it("refuses the server key for an agent the server did not allow hosted inference for", async () => {
+  it("refuses the hosted key for an agent the server did not allow, and never falls back to ANTHROPIC_API_KEY", async () => {
     const toFake: typeof fetch = (input, init) => fetch(String(input).replace(DEFAULT_MANAGED_AGENTS_BASE_URL, fake.baseUrl), init);
+    const env = { STAPLES_HOSTED_ANTHROPIC_API_KEY: fake.apiKey, ANTHROPIC_API_KEY: fake.apiKey };
     const h = harness({ config: { env: {}, apiBaseUrl: "" } });
     const requestsBefore = fake.requests.length;
-    const result = await execute(h.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiFetch: toFake });
+    const result = await execute(h.ctx, { env, apiFetch: toFake });
     expect(result).toMatchObject({ exitCode: 1, errorCode: "claude_managed_api_key_missing", errorFamily: "configuration",
-      errorMessage: "This agent needs its own Anthropic API key; the server's hosted inference is not available to it (hosted inference is off, or its spending caps could not be set)." });
+      errorMessage: HOSTED_KEY_WITHHELD_MESSAGE });
     expect(fake.requests.length).toBe(requestsBefore);
     // A config flag cannot grant it: only the server-owned context field counts.
     const spoofed = harness({ config: { env: {}, apiBaseUrl: "", hostedInferenceAllowed: true } });
-    expect(await execute(spoofed.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiFetch: toFake }))
+    expect(await execute(spoofed.ctx, { env, apiFetch: toFake }))
       .toMatchObject({ errorCode: "claude_managed_api_key_missing" });
 
     const check = await testEnvironment(
       { companyId: "company-1", adapterType: "claude_managed", config: { hostedInferenceAllowed: true } },
-      { env: { ANTHROPIC_API_KEY: fake.apiKey } },
+      { env },
     );
-    expect(check.checks).toEqual([expect.objectContaining({ code: "claude_managed_api_key_missing",
-      message: "This agent needs its own Anthropic API key; the server's hosted inference is not available to it (hosted inference is off, or its spending caps could not be set)." })]);
+    expect(check.checks).toEqual([expect.objectContaining({ code: "claude_managed_api_key_missing", message: HOSTED_KEY_WITHHELD_MESSAGE })]);
     expect(JSON.stringify(check)).not.toContain(fake.apiKey);
   });
 
-  it("never sends the server key to a custom API base URL", async () => {
+  it("without hosted inference, falls back to the server's ANTHROPIC_API_KEY as before (no server flag needed)", async () => {
+    const toFake: typeof fetch = (input, init) => fetch(String(input).replace(DEFAULT_MANAGED_AGENTS_BASE_URL, fake.baseUrl), init);
+    expect(resolveApiKey({}, { ANTHROPIC_API_KEY: "sk-ant-plain" })).toEqual({ apiKey: "sk-ant-plain", source: "server_env" });
+    // STAPLES_HOSTED_INFERENCE=off disables only the hosted key path.
+    expect(resolveApiKey({}, { ANTHROPIC_API_KEY: "sk-ant-plain", STAPLES_HOSTED_ANTHROPIC_API_KEY: "sk-ant-hosted", STAPLES_HOSTED_INFERENCE: "off" }))
+      .toEqual({ apiKey: "sk-ant-plain", source: "server_env" });
+    expect(resolveApiKey({}, { ANTHROPIC_API_KEY: "sk-ant-plain", STAPLES_HOSTED_ANTHROPIC_API_KEY: "sk-ant-hosted" }, { serverKeyAllowed: true }))
+      .toEqual({ apiKey: "sk-ant-hosted", source: "hosted_inference" });
+    expect(resolveApiKey({ env: { ANTHROPIC_API_KEY: "sk-ant-own" } }, { STAPLES_HOSTED_ANTHROPIC_API_KEY: "sk-ant-hosted" }, { serverKeyAllowed: true }))
+      .toEqual({ apiKey: "sk-ant-own", source: "adapter_config" });
+    fake.queueTurns(turn("ok", 1));
+    const h = harness({ config: { env: {}, apiBaseUrl: "" } });
+    const result = await execute(h.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiFetch: toFake });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("never sends a server key to a custom API base URL", async () => {
     const h = harness({ config: { env: {} } }); // apiBaseUrl is the fake (custom)
     h.ctx.hostedInferenceAllowed = true;
-    const result = await execute(h.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey } });
-    expect(result).toMatchObject({ exitCode: 1, errorCode: "claude_managed_api_key_missing", errorFamily: "configuration" });
-    expect(result.errorMessage).toContain("custom API base URL");
-    expect(fake.requests).toHaveLength(0);
+    for (const env of [{ STAPLES_HOSTED_ANTHROPIC_API_KEY: fake.apiKey }, { ANTHROPIC_API_KEY: fake.apiKey }]) {
+      const result = await execute(h.ctx, { env });
+      expect(result).toMatchObject({ exitCode: 1, errorCode: "claude_managed_api_key_missing", errorFamily: "configuration" });
+      expect(result.errorMessage).toContain("custom API base URL");
+      expect(fake.requests).toHaveLength(0);
 
-    const check = await testEnvironment(
-      { companyId: "company-1", adapterType: "claude_managed", config: { apiBaseUrl: fake.baseUrl }, hostedInferenceAllowed: true },
-      { env: { ANTHROPIC_API_KEY: fake.apiKey } },
-    );
-    expect(check.status).toBe("fail");
-    expect(check.checks).toEqual([expect.objectContaining({ code: "claude_managed_api_key_missing", message: expect.stringContaining("custom API base URL") })]);
-    expect(fake.requests).toHaveLength(0);
+      const check = await testEnvironment(
+        { companyId: "company-1", adapterType: "claude_managed", config: { apiBaseUrl: fake.baseUrl }, hostedInferenceAllowed: true },
+        { env },
+      );
+      expect(check.status).toBe("fail");
+      expect(check.checks).toEqual([expect.objectContaining({ code: "claude_managed_api_key_missing", message: expect.stringContaining("custom API base URL") })]);
+      expect(fake.requests).toHaveLength(0);
+    }
   });
 
   it("honors a configured environmentId", async () => {

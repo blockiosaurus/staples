@@ -239,7 +239,7 @@ export interface AdapterExecutionContext {
   agentIdentity?: AgentRuntimeIdentity;
   /**
    * Server-owned: whether this agent may use instance-level provider
-   * credentials (e.g. the server's ANTHROPIC_API_KEY, "hosted inference").
+   * credentials (the server's STAPLES_HOSTED_ANTHROPIC_API_KEY, "hosted inference").
    * Decided by the server per run; never read from agent config.
    */
   hostedInferenceAllowed?: boolean;
