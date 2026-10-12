@@ -1,4 +1,5 @@
 import { usePrimaryAgentPresentation } from "./primary-agent/PrimaryAgentPresentation";
+import { TEMPLATE_SETUP_PAUSE_MESSAGE, TEMPLATE_SETUP_PAUSE_REASON } from "../lib/agent-pause";
 import { useWorkspaceIsolationControls } from "@/hooks/useWorkspaceIsolationControls";
 import { useState, useEffect, useRef, useCallback, useMemo, type CSSProperties, type DragEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -1343,7 +1344,9 @@ export function NewIssueDialog() {
                           work on this task until it is resumed
                           {selectedAssigneeAgent.pauseReason === "import"
                             ? " — it arrived paused from an organization import"
-                            : ""}
+                            : selectedAssigneeAgent.pauseReason === TEMPLATE_SETUP_PAUSE_REASON
+                              ? ` — ${TEMPLATE_SETUP_PAUSE_MESSAGE}`
+                              : ""}
                           . You can resume it from the task page after creating the task.
                         </InlineBanner>
                       </div>

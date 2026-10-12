@@ -483,6 +483,37 @@ describe("agent cross-tenant route authorization", () => {
     }));
   });
 
+  it("refuses board resume of an agent held for template setup, but allows it once setup is complete", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      companyIds: [companyId],
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+    const held = {
+      ...baseAgent,
+      status: "paused",
+      pauseReason: "template_setup",
+      pausedAt: new Date(),
+      metadata: { staplesTemplate: { setupPending: true } },
+    };
+    mockAgentService.getById.mockResolvedValue(held);
+    const refused = await requestApp(app, (baseUrl) =>
+      request(baseUrl).post(`/api/agents/${agentId}/resume`).send({}),
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe("Finishing setup — apply the plan again to complete it");
+    expect(mockAgentService.resume).not.toHaveBeenCalled();
+
+    mockAgentService.getById.mockResolvedValue({ ...held, metadata: { staplesTemplate: { setupPending: false } } });
+    mockAgentService.resume.mockResolvedValue({ ...held, status: "idle", pauseReason: null, pausedAt: null });
+    const allowed = await requestApp(app, (baseUrl) =>
+      request(baseUrl).post(`/api/agents/${agentId}/resume`).send({}),
+    );
+    expect(allowed.status).toBe(200);
+  });
+
   it("allows a same-company agent with a direct agents:configure grant to resume", async () => {
     mockAccessService.decide.mockResolvedValue({
       allowed: true,

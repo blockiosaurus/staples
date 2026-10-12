@@ -6,6 +6,7 @@ import { InstructionHistory } from "../components/InstructionHistory";
 import { AgentCharacter } from "../components/AgentCharacter";
 import { characterStateForAgent } from "@paperclipai/shared";
 import { mergeRunLogChunks, readChunkSeq } from "../lib/run-log-chunks";
+import { TEMPLATE_SETUP_PAUSE_MESSAGE, isTemplateSetupPause } from "../lib/agent-pause";
 import { getPageVisibility, usePageVisibility } from "../lib/page-visibility";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useParams, useNavigate, Link, Navigate, useBeforeUnload, type NavigateFunction } from "@/lib/router";
@@ -1223,6 +1224,12 @@ export function AgentDetail() {
           >
             ×
           </button>
+        </div>
+      ) : null}
+      {isTemplateSetupPause(agent) ? (
+        <div data-testid="agent-template-setup-pause" className="flex items-start gap-3 border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p className="min-w-0">{TEMPLATE_SETUP_PAUSE_MESSAGE}.</p>
         </div>
       ) : null}
       {pausedEscalationWarning ? (

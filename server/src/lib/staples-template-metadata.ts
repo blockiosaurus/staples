@@ -58,3 +58,12 @@ export function withStaplesTemplateMarkerFrom(stored: unknown, incoming: Record<
   if (marker === undefined) return withoutStaplesTemplateMarker(incoming);
   return { ...(incoming ?? {}), [STAPLES_TEMPLATE_METADATA_KEY]: marker };
 }
+
+export const TEMPLATE_SETUP_RESUME_MESSAGE = "Finishing setup — apply the plan again to complete it";
+
+/** A templated agent paused for `template_setup` whose setup has not finished (resuming it would skip its guards). */
+export function isHeldForTemplateSetup(agent: { status?: string | null; pauseReason?: string | null; metadata?: unknown }): boolean {
+  if (agent.status !== "paused" || agent.pauseReason !== "template_setup") return false;
+  const marker = rawStaplesTemplateMarker(agent.metadata);
+  return isPlainRecord(marker) && marker.setupPending === true;
+}

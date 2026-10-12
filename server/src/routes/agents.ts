@@ -1,4 +1,5 @@
 import { cancellationRequestId } from "../services/native-runtime/native-cancellation-request.js";
+import { isHeldForTemplateSetup, TEMPLATE_SETUP_RESUME_MESSAGE } from "../lib/staples-template-metadata.js";
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
 import { assistantAdapterAvailability, assistantConfigureRoleAllowed, assistantSetupRequestSchema, assistantSetupStatus, canConfigureAssistant, geminiCredentialsPresent, readAssistantLifecycle, resolveAssistantSetupEngine, type AssistantSetupRequest } from "../services/assistant-setup.js";
@@ -5526,6 +5527,13 @@ export function agentRoutes(
       return;
     }
     await assertCanResumeAgent(req, existing);
+    if (isHeldForTemplateSetup(existing)) {
+      res.status(409).json({
+        error: TEMPLATE_SETUP_RESUME_MESSAGE,
+        code: "agent_template_setup_pending",
+      });
+      return;
+    }
     if (existing.orgChainHealth?.status === "invalid_org_chain") {
       res.status(409).json({
         error: existing.orgChainHealth?.repairGuidance ?? "Repair this agent's reporting chain before resuming it",

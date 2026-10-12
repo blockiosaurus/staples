@@ -1,5 +1,6 @@
 import { resolveIssueChatHumanAuthor } from "@/lib/issue-chat-human-author";
 import type { ProposedActionAcceptResult } from "../api/issues";
+import { TEMPLATE_SETUP_PAUSE_MESSAGE, TEMPLATE_SETUP_PAUSE_REASON } from "../lib/agent-pause";
 import { useWorkspaceBaseRefRecovery } from "./WorkspaceBaseRefRecovery";
 import { WorkspaceBaseRefRecoveryNotice } from "./WorkspaceBaseRefRecoveryNotice";
 import { DispositionRecoveryNotice, useDispositionRecoverySnapshot } from "./DispositionRecoveryNotice";
@@ -865,6 +866,8 @@ export function IssueAssigneePausedNotice({
   const pauseDetail =
     agent.pauseReason === "budget"
       ? "It was paused by a budget hard stop."
+      : agent.pauseReason === TEMPLATE_SETUP_PAUSE_REASON
+      ? `${TEMPLATE_SETUP_PAUSE_MESSAGE}.`
       : agent.pauseReason === "import"
         ? "It arrived paused from an organization import — imported agents stay parked until you resume them."
         : agent.pauseReason === "system"
@@ -872,7 +875,7 @@ export function IssueAssigneePausedNotice({
           : "It was paused manually.";
   // Budget pauses clear on their own when the budget resets; resuming by hand
   // would fight the hard stop, so the action is only offered for the rest.
-  const canResume = Boolean(onResume) && agent.pauseReason !== "budget";
+  const canResume = Boolean(onResume) && agent.pauseReason !== "budget" && agent.pauseReason !== TEMPLATE_SETUP_PAUSE_REASON;
 
   return (
     <div data-testid="issue-assignee-paused-notice" className="mb-3">
