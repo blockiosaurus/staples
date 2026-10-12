@@ -1,7 +1,7 @@
 import type { AdapterConfigSchema } from "@paperclipai/adapter-utils";
 import { DEFAULT_MODEL } from "./execute.js";
 
-export { execute, coreFingerprint, toolsFingerprint, resolveApiKey, resolveNetworking, resolveRemainingBudgetUsd, resolveInstanceId, DEFAULT_MODEL } from "./execute.js";
+export { execute, coreFingerprint, toolsFingerprint, resolveApiKey, usesDefaultApiBaseUrl, resolveNetworking, resolveRemainingBudgetUsd, resolveInstanceId, DEFAULT_MODEL } from "./execute.js";
 export type { ClaudeManagedLogEvent, ExecuteDeps } from "./execute.js";
 export { testEnvironment } from "./test-environment.js";
 export { sessionCodec, readSessionParams } from "./session.js";

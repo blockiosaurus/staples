@@ -5,7 +5,7 @@ import type {
 } from "@paperclipai/adapter-utils";
 import { parseObject } from "@paperclipai/adapter-utils/server-utils";
 import { ManagedAgentsApiError, ManagedAgentsClient } from "../client.js";
-import { resolveApiBaseUrl, resolveApiKey } from "./execute.js";
+import { resolveApiBaseUrl, resolveApiKey, usesDefaultApiBaseUrl } from "./execute.js";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -86,12 +86,19 @@ export async function testEnvironment(
   const key = resolveApiKey(config, deps.env ?? process.env);
 
   if (!key) {
-    checks.push({
-      code: "claude_managed_api_key_missing",
-      level: "error",
-      message: "No Anthropic API key is set.",
-      hint: "Add ANTHROPIC_API_KEY to this agent's environment variables (a company secret works), or set it on the Staples server.",
-    });
+    checks.push(usesDefaultApiBaseUrl(config)
+      ? {
+          code: "claude_managed_api_key_missing",
+          level: "error",
+          message: "No Anthropic API key is set.",
+          hint: "Add ANTHROPIC_API_KEY to this agent's environment variables (a company secret works), or set it on the Staples server.",
+        }
+      : {
+          code: "claude_managed_api_key_missing",
+          level: "error",
+          message: "This agent uses a custom API base URL, so it needs its own Anthropic API key.",
+          hint: "Add ANTHROPIC_API_KEY to this agent's environment variables (a company secret works). The Staples server's key is only sent to the default Anthropic API.",
+        });
   } else {
     checks.push({
       code: "claude_managed_api_key_present",

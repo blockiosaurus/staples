@@ -93,20 +93,39 @@ export function readConfigEnvValue(config: Record<string, unknown>, key: string)
   return "";
 }
 
-/** Resolves the Anthropic API key: adapter env (plain or resolved secret) first, then the server env. */
+export function resolveApiBaseUrl(config: Record<string, unknown>): string {
+  return asString(config.apiBaseUrl, "").trim() || DEFAULT_MANAGED_AGENTS_BASE_URL;
+}
+
+/** True when the agent talks to the default Anthropic API base URL (trailing slashes ignored). */
+export function usesDefaultApiBaseUrl(config: Record<string, unknown>): boolean {
+  return resolveApiBaseUrl(config).replace(/\/+$/, "") === DEFAULT_MANAGED_AGENTS_BASE_URL.replace(/\/+$/, "");
+}
+
+/**
+ * Resolves the Anthropic API key: adapter env (plain or resolved secret) first, then
+ * the server env. The server-env key is only ever sent to the default Anthropic API
+ * base URL: `apiBaseUrl` is per-agent config, so a custom base URL needs the agent's
+ * own key (otherwise any board user could point it at their host and capture the
+ * instance key).
+ */
 export function resolveApiKey(
   config: Record<string, unknown>,
   env: Record<string, string | undefined> = process.env,
 ): { apiKey: string; source: "adapter_config" | "server_env" } | null {
   const fromConfig = readConfigEnvValue(config, "ANTHROPIC_API_KEY");
   if (fromConfig) return { apiKey: fromConfig, source: "adapter_config" };
+  if (!usesDefaultApiBaseUrl(config)) return null;
   const fromEnv = (env.ANTHROPIC_API_KEY ?? "").trim();
   if (fromEnv) return { apiKey: fromEnv, source: "server_env" };
   return null;
 }
 
-export function resolveApiBaseUrl(config: Record<string, unknown>): string {
-  return asString(config.apiBaseUrl, "").trim() || DEFAULT_MANAGED_AGENTS_BASE_URL;
+/** Explains a missing key; names the custom-base-URL rule when it is the reason. */
+export function missingApiKeyMessage(config: Record<string, unknown>): string {
+  return usesDefaultApiBaseUrl(config)
+    ? "ANTHROPIC_API_KEY is required for claude_managed. Add it to this agent's environment variables (or set it on the Staples server)."
+    : "This agent uses a custom API base URL, so it needs its own ANTHROPIC_API_KEY in its environment variables. The Staples server's key is only sent to the default Anthropic API.";
 }
 
 /**
@@ -398,7 +417,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
       timedOut: false,
       errorCode: "claude_managed_api_key_missing",
       errorFamily: "configuration",
-      errorMessage: "ANTHROPIC_API_KEY is required for claude_managed. Add it to this agent's environment variables (or set it on the Staples server).",
+      errorMessage: missingApiKeyMessage(config),
       costUsd: 0,
       costStatus: "reported",
       clearSession: false,

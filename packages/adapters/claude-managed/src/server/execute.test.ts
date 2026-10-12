@@ -13,6 +13,7 @@ import {
 import { startFakeMcpServer, type FakeMcpServer } from "../testing/fake-mcp-server.js";
 import { execute, resolveNetworking } from "./execute.js";
 import { sessionCodec } from "./session.js";
+import { DEFAULT_MANAGED_AGENTS_BASE_URL } from "../types.js";
 import { testEnvironment } from "./test-environment.js";
 
 const RUN_TOKEN = "staples-run-jwt-SECRET-0001";
@@ -323,11 +324,29 @@ describe("claude_managed execute", () => {
     expect(fake.requests).toHaveLength(0);
   });
 
-  it("falls back to the server ANTHROPIC_API_KEY", async () => {
+  it("falls back to the server ANTHROPIC_API_KEY only for the default API base URL", async () => {
     fake.queueTurns(turn("ok", 1));
-    const h = harness({ config: { env: {} } });
-    const result = await execute(h.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey } });
+    // Default base URL: requests are rerouted to the fake by the fetch seam.
+    const toFake: typeof fetch = (input, init) => fetch(String(input).replace(DEFAULT_MANAGED_AGENTS_BASE_URL, fake.baseUrl), init);
+    const h = harness({ config: { env: {}, apiBaseUrl: "" } });
+    const result = await execute(h.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey }, apiFetch: toFake });
     expect(result.exitCode).toBe(0);
+  });
+
+  it("never sends the server key to a custom API base URL", async () => {
+    const h = harness({ config: { env: {} } }); // apiBaseUrl is the fake (custom)
+    const result = await execute(h.ctx, { env: { ANTHROPIC_API_KEY: fake.apiKey } });
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "claude_managed_api_key_missing", errorFamily: "configuration" });
+    expect(result.errorMessage).toContain("custom API base URL");
+    expect(fake.requests).toHaveLength(0);
+
+    const check = await testEnvironment(
+      { companyId: "company-1", adapterType: "claude_managed", config: { apiBaseUrl: fake.baseUrl } },
+      { env: { ANTHROPIC_API_KEY: fake.apiKey } },
+    );
+    expect(check.status).toBe("fail");
+    expect(check.checks).toEqual([expect.objectContaining({ code: "claude_managed_api_key_missing", message: expect.stringContaining("custom API base URL") })]);
+    expect(fake.requests).toHaveLength(0);
   });
 
   it("honors a configured environmentId", async () => {
