@@ -22,6 +22,38 @@ export class PaperclipApiError extends Error {
   }
 }
 
+/**
+ * Sends one already-validated API request somewhere other than `fetch` (a server
+ * hosting these tools dispatches in-process). `path` is relative to the API base,
+ * starts with "/", and includes the query string.
+ */
+export type PaperclipApiTransport = (request: {
+  method: string;
+  path: string;
+  headers: Record<string, string>;
+  body: unknown;
+}) => Promise<{ status: number; body: unknown }>;
+
+/**
+ * Resolves `path` against the API base and refuses anything that would leave it:
+ * another origin (`/https://host`, `/\\host`, `//host`) or a path outside the base
+ * path (dot segments, encoded or not). Runs before any request is sent.
+ */
+export function resolveApiRequestUrl(apiUrl: string, path: string): { url: URL; relativePath: string } {
+  if (!path.startsWith("/")) {
+    throw new Error(`API path must start with "/": ${path}`);
+  }
+  if (path.startsWith("//") || path.includes("\\") || path.includes("://") || /[\u0000-\u001f\u007f]/.test(path)) {
+    throw new Error("API path must be a path under the Paperclip API, not a URL");
+  }
+  const base = new URL(`${apiUrl.replace(/\/+$/, "")}/`);
+  const url = new URL(path.slice(1), base);
+  if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname) || url.username || url.password) {
+    throw new Error("API path must stay under the Paperclip API base URL");
+  }
+  return { url, relativePath: `/${url.pathname.slice(base.pathname.length)}${url.search}` };
+}
+
 export interface JsonRequestOptions {
   body?: unknown;
   includeRunId?: boolean;
@@ -49,7 +81,10 @@ async function parseResponseBody(response: Response): Promise<unknown> {
 }
 
 export class PaperclipApiClient {
-  constructor(private readonly config: PaperclipMcpConfig) {}
+  constructor(
+    private readonly config: PaperclipMcpConfig,
+    private readonly transport?: PaperclipApiTransport,
+  ) {}
 
   get defaults() {
     return {
@@ -76,11 +111,7 @@ export class PaperclipApiClient {
   }
 
   async requestJson<T>(method: string, path: string, options: JsonRequestOptions = {}): Promise<T> {
-    if (!path.startsWith("/")) {
-      throw new Error(`API path must start with "/": ${path}`);
-    }
-
-    const url = new URL(path.slice(1), `${this.config.apiUrl}/`);
+    const { url, relativePath } = resolveApiRequestUrl(this.config.apiUrl, path);
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.config.apiKey}`,
       Accept: "application/json",
@@ -92,20 +123,27 @@ export class PaperclipApiClient {
       headers["X-Paperclip-Run-Id"] = this.config.runId;
     }
 
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    });
-    const parsedBody = await parseResponseBody(response);
+    let status: number;
+    let parsedBody: unknown;
+    if (this.transport) {
+      ({ status, body: parsedBody } = await this.transport({ method: method.toUpperCase(), path: relativePath, headers, body: options.body }));
+    } else {
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      });
+      status = response.status;
+      parsedBody = await parseResponseBody(response);
+    }
 
-    if (!response.ok) {
+    if (status < 200 || status >= 300) {
       throw new PaperclipApiError({
-        status: response.status,
+        status,
         method: method.toUpperCase(),
         path,
         body: parsedBody,
-        message: buildErrorMessage(method.toUpperCase(), path, response.status, parsedBody),
+        message: buildErrorMessage(method.toUpperCase(), path, status, parsedBody),
       });
     }
 

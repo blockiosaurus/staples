@@ -204,7 +204,9 @@ const createApprovalToolSchema = z.object({
 
 const apiRequestSchema = z.object({
   method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
-  path: z.string().min(1),
+  path: z.string().min(1)
+    .refine((path) => path.startsWith("/") && !path.startsWith("//"), "path must start with / and be relative to /api (not //)")
+    .refine((path) => !path.includes("://") && !path.includes("\\"), "path must be an /api path, not a URL"),
   jsonBody: z.string().optional(),
 });
 

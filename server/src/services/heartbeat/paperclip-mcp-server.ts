@@ -8,7 +8,8 @@ const HOSTED_ADAPTER_TYPES = new Set(["claude_managed"]);
 /**
  * The run-scoped Paperclip tool set (issues, comments, documents, approvals,
  * questions, `paperclipApiRequest`) for a hosted run, authenticated with the run
- * JWT. Local adapters keep reaching the API directly and do not get it.
+ * JWT. Local adapters keep reaching the API directly and do not get it. The
+ * endpoint serves the provisioned Assistant a read-only subset.
  */
 export function paperclipRuntimeMcpServer(input: {
   adapterType: string;

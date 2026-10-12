@@ -5,12 +5,12 @@
  * agent's machine and renders each input schema as plain JSON Schema.
  */
 import { z } from "zod";
-import { PaperclipApiClient, PaperclipApiError } from "./client.js";
+import { PaperclipApiClient, PaperclipApiError, resolveApiRequestUrl, type PaperclipApiTransport } from "./client.js";
 import { normalizeApiUrl, type PaperclipMcpConfig } from "./config.js";
 import { createToolDefinitions, type ToolDefinition } from "./tools.js";
 
-export { PaperclipApiClient, PaperclipApiError, normalizeApiUrl, createToolDefinitions };
-export type { PaperclipMcpConfig, ToolDefinition };
+export { PaperclipApiClient, PaperclipApiError, normalizeApiUrl, createToolDefinitions, resolveApiRequestUrl };
+export type { PaperclipApiTransport, PaperclipMcpConfig, ToolDefinition };
 
 /**
  * Tools left out of the hosted set: the connection tools read run-scoped endpoints
@@ -25,8 +25,48 @@ export const RUNTIME_EXCLUDED_TOOL_NAMES: ReadonlySet<string> = new Set([
   "paperclipWaitForIssueWorkspaceService",
 ]);
 
-export function createRuntimeToolDefinitions(client: PaperclipApiClient): ToolDefinition[] {
-  return createToolDefinitions(client).filter((tool) => !RUNTIME_EXCLUDED_TOOL_NAMES.has(tool.name));
+/**
+ * The read-only subset: reads of the agent, issues, comments, documents, projects,
+ * goals and approvals. No create, update, comment, upsert, interaction or
+ * decision tool, and no `paperclipApiRequest` (it can reach any endpoint).
+ */
+export const RUNTIME_READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "paperclipMe",
+  "paperclipInboxLite",
+  "paperclipListAgents",
+  "paperclipListSkills",
+  "paperclipGetAgent",
+  "paperclipListIssues",
+  "paperclipGetIssue",
+  "paperclipGetHeartbeatContext",
+  "paperclipListComments",
+  "paperclipGetComment",
+  "paperclipListIssueApprovals",
+  "paperclipListDocuments",
+  "paperclipGetDocument",
+  "paperclipListDocumentRevisions",
+  "paperclipListProjects",
+  "paperclipGetProject",
+  "paperclipListGoals",
+  "paperclipGetGoal",
+  "paperclipListApprovals",
+  "paperclipGetApproval",
+  "paperclipGetApprovalIssues",
+  "paperclipListApprovalComments",
+]);
+
+export interface RuntimeToolOptions {
+  /** Only the read tools (RUNTIME_READ_ONLY_TOOL_NAMES). */
+  readOnly?: boolean;
+}
+
+export function runtimeToolAllowed(name: string, options: RuntimeToolOptions = {}): boolean {
+  if (RUNTIME_EXCLUDED_TOOL_NAMES.has(name)) return false;
+  return !options.readOnly || RUNTIME_READ_ONLY_TOOL_NAMES.has(name);
+}
+
+export function createRuntimeToolDefinitions(client: PaperclipApiClient, options: RuntimeToolOptions = {}): ToolDefinition[] {
+  return createToolDefinitions(client).filter((tool) => runtimeToolAllowed(tool.name, options));
 }
 
 /** Drops keys that only add size: `$schema`, and the regex beside `format: "uuid"`. */

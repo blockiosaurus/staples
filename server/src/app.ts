@@ -831,7 +831,7 @@ export async function createApp(
   api.use(assetRoutes(db, opts.storageService));
   api.use(agentProfileAvatarRoutes(db, opts.storageService));
   api.use(projectToolRoutes(db));
-  api.use(paperclipToolRoutes());
+  api.use(paperclipToolRoutes(db, api));
   // In-process dispatch through this same router: each tool call runs as the
   // run's person with full route authorization, validation and audit.
   api.use(assistantToolRoutes(db, createAssistantTools(db, {

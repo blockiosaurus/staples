@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { activityLog, agents, issueComments, issues } from "@paperclipai/db";
+import { activityLog, agents, builtInManagedResources, heartbeatRuns, issueComments, issues } from "@paperclipai/db";
+import { ASSISTANT_BUILT_IN_AGENT_KEY } from "@paperclipai/shared";
+import { withBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
 import type { AdapterExecutionContext, AdapterRuntimeMcpServer } from "@paperclipai/adapter-utils";
 import { HOSTED_STAPLES_API_NOTE } from "@paperclipai/adapter-claude-managed/server";
 import {
@@ -235,6 +239,92 @@ const support = await getEmbeddedPostgresTestSupport();
 
       const unknown = await rpc(url(), token, "tools/call", { name: "connections_search", arguments: {} });
       expect(unknown.body?.error?.code).toBe(-32602);
+    });
+
+    it("rejects an expired run token and a cancelled run's token", async () => {
+      const f = await server.fixture();
+      const now = Date.now();
+      const spy = vi.spyOn(Date, "now").mockReturnValue(now - 72 * 60 * 60 * 1000);
+      const expired = createLocalAgentJwt(f.agentId, f.companyId, "claude_managed", f.runId)!;
+      spy.mockRestore();
+      expect((await rpc(url(), expired, "tools/list")).status).toBe(401);
+
+      const token = createLocalAgentJwt(f.agentId, f.companyId, "claude_managed", f.runId)!;
+      expect((await rpc(url(), token, "tools/list")).status).toBe(200);
+      await server.db.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date() }).where(eq(heartbeatRuns.id, f.runId));
+      const cancelled = await rpc(url(), token, "tools/call", { name: "paperclipAddComment", arguments: { issueId: f.issueId, body: "after cancel" } });
+      expect(cancelled.status).toBe(403);
+      expect((await rpc(url(), token, "tools/call", { name: "paperclipGetIssue", arguments: { issueId: f.issueId } })).status).toBe(403);
+      expect(await server.db.select().from(issueComments).where(and(eq(issueComments.issueId, f.issueId), eq(issueComments.body, "after cancel")))).toHaveLength(0);
+    });
+
+    it("never sends the run token off the API: URL-shaped paths are refused with no outbound request", async () => {
+      const f = await server.fixture();
+      const token = createLocalAgentJwt(f.agentId, f.companyId, "claude_managed", f.runId)!;
+      const hits: string[] = [];
+      const attacker = createServer((req, res) => { hits.push(`${req.method} ${req.url} ${req.headers.authorization ?? ""}`); res.end("{}"); });
+      await new Promise<void>((resolve) => attacker.listen(0, "127.0.0.1", resolve));
+      const port = (attacker.address() as AddressInfo).port;
+      try {
+        for (const path of [
+          `/http://127.0.0.1:${port}/x`,
+          `/\\127.0.0.1:${port}/x`,
+          `//127.0.0.1:${port}/x`,
+          `/http:/\\127.0.0.1:${port}/x`,
+          "/issues/../../../x",
+        ]) {
+          for (const method of ["GET", "POST"]) {
+            const result = toolText((await rpc(url(), token, "tools/call", { name: "paperclipApiRequest", arguments: { method, path, jsonBody: "{}" } })).body);
+            expect(result.isError, `${method} ${path}`).toBe(true);
+          }
+        }
+        // A plain API path still works, in-process.
+        const ok = toolText((await rpc(url(), token, "tools/call", { name: "paperclipApiRequest", arguments: { method: "GET", path: `/issues/${f.issueId}` } })).body);
+        expect(ok).toMatchObject({ isError: false, value: { id: f.issueId } });
+        // The endpoint cannot be used to call itself.
+        const self = toolText((await rpc(url(), token, "tools/call", { name: "paperclipApiRequest", arguments: { method: "POST", path: "/mcp/paperclip-tools", jsonBody: "{}" } })).body);
+        expect(self.isError).toBe(true);
+      } finally {
+        await new Promise<void>((resolve) => attacker.close(() => resolve()));
+      }
+      expect(hits).toEqual([]);
+    });
+
+    it("gives the provisioned Assistant only the read tools and refuses its write calls", async () => {
+      const f = await server.fixture();
+      const [assistant] = await server.db.insert(agents).values({
+        companyId: f.companyId, name: "Assistant", role: "assistant", adapterType: "claude_managed",
+        adapterConfig: {}, runtimeConfig: { heartbeat: { enabled: false } }, status: "idle",
+        metadata: withBuiltInAgentMarker({}, { key: ASSISTANT_BUILT_IN_AGENT_KEY, featureKeys: [] }),
+      }).returning();
+      await server.db.insert(builtInManagedResources).values({
+        companyId: f.companyId, bundleKey: ASSISTANT_BUILT_IN_AGENT_KEY, resourceKind: "instructions", resourceKey: "AGENTS.md",
+        resourceId: assistant!.id, stockVersion: "1", stockHash: "hash",
+      });
+      const [run] = await server.db.insert(heartbeatRuns).values({
+        companyId: f.companyId, agentId: assistant!.id, status: "running", invocationSource: "assignment", triggerDetail: "system",
+        contextSnapshot: { issueId: f.issueId },
+      }).returning();
+      const token = createLocalAgentJwt(assistant!.id, f.companyId, "claude_managed", run!.id)!;
+
+      const names = ((await rpc(url(), token, "tools/list")).body?.result?.tools ?? []).map((t) => t.name);
+      expect(names).toEqual(expect.arrayContaining(["paperclipGetIssue", "paperclipListComments", "paperclipGetDocument", "paperclipListApprovals"]));
+      for (const write of ["paperclipUpdateIssue", "paperclipAddComment", "paperclipCreateIssue", "paperclipUpsertIssueDocument", "paperclipAskUserQuestions", "paperclipApiRequest"]) {
+        expect(names).not.toContain(write);
+      }
+      const read = toolText((await rpc(url(), token, "tools/call", { name: "paperclipGetIssue", arguments: { issueId: f.issueId } })).body);
+      expect(read).toMatchObject({ isError: false, value: { id: f.issueId } });
+      for (const [name, args] of [
+        ["paperclipAddComment", { issueId: f.issueId, body: "assistant write" }],
+        ["paperclipUpdateIssue", { issueId: f.issueId, status: "done" }],
+        ["paperclipApiRequest", { method: "PATCH", path: `/issues/${f.issueId}`, jsonBody: "{\"status\":\"done\"}" }],
+      ] as const) {
+        const refused = await rpc(url(), token, "tools/call", { name, arguments: args });
+        expect(refused.body?.error?.message, name).toMatch(/not available to the Assistant/);
+      }
+      expect(await server.db.select().from(issueComments).where(and(eq(issueComments.issueId, f.issueId), eq(issueComments.body, "assistant write")))).toHaveLength(0);
+      const [issue] = await server.db.select().from(issues).where(eq(issues.id, f.issueId));
+      expect(issue!.status).toBe("in_progress");
     });
   });
 });

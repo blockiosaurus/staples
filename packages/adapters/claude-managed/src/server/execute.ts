@@ -56,6 +56,16 @@ export const HOSTED_STAPLES_API_NOTE = [
   "For any other endpoint, `paperclip__paperclipApiRequest` takes a method and a path relative to `/api` (for example `GET /companies/{companyId}/issues`); `paperclip__paperclipMe` returns your agent and company ids.",
   "These tools act as you: your agent id, company and run are applied automatically, so you never need an API key or a run id header.",
 ].join("\n");
+/**
+ * The note for a read-only Staples API tool set (the provisioned Assistant, whose
+ * changes go through proposals a person confirms). It names no write step.
+ */
+export const HOSTED_STAPLES_API_READ_ONLY_NOTE = [
+  "## Staples API access (hosted run)",
+  "You run in a cloud sandbox that cannot reach the Staples API, so `PAPERCLIP_API_URL` and curl calls to it do not work here.",
+  "To read Staples data, use the `paperclip__*` tools. For example, use `paperclip__paperclipGetIssue`, `paperclip__paperclipGetHeartbeatContext` and `paperclip__paperclipListComments` for tasks, `paperclip__paperclipGetDocument` for documents, and `paperclip__paperclipListApprovals` for approvals. They are read-only and act as you.",
+  "Make changes only through your other tools, which turn them into proposals for the person to confirm.",
+].join("\n");
 const DEFAULT_CANCEL_GRACE_MS = 3_000;
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -523,7 +533,12 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
   }
 
   const tools: AgentTool[] = [{ type: AGENT_TOOLSET_TYPE }, ...proxy.definitions()];
-  const hostedNote = proxy.tools().some((tool) => tool.serverName === STAPLES_API_TOOLS_SERVER_NAME) ? HOSTED_STAPLES_API_NOTE : null;
+  const staplesApiTools = proxy.tools().filter((tool) => tool.serverName === STAPLES_API_TOOLS_SERVER_NAME);
+  const hostedNote = staplesApiTools.length === 0
+    ? null
+    : staplesApiTools.some((tool) => tool.toolName === "paperclipUpdateIssue")
+      ? HOSTED_STAPLES_API_NOTE
+      : HOSTED_STAPLES_API_READ_ONLY_NOTE;
   const instructions = await readInstructions(config, onLog);
 
   // ---- Skills (native custom skills, or inlined on refusal) -------------------

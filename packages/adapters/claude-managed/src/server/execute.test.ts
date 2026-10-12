@@ -11,7 +11,7 @@ import {
   type TurnScript,
 } from "../testing/fake-managed-agents-server.js";
 import { startFakeMcpServer, type FakeMcpServer } from "../testing/fake-mcp-server.js";
-import { execute, HOSTED_STAPLES_API_NOTE, resolveNetworking } from "./execute.js";
+import { execute, HOSTED_STAPLES_API_NOTE, HOSTED_STAPLES_API_READ_ONLY_NOTE, resolveNetworking } from "./execute.js";
 import { sessionCodec } from "./session.js";
 import { DEFAULT_MANAGED_AGENTS_BASE_URL } from "../types.js";
 import { testEnvironment } from "./test-environment.js";
@@ -178,7 +178,10 @@ describe("claude_managed execute", () => {
   it("tells the agent to use the paperclip__ tools only when the Staples API tool server is attached", async () => {
     mcp = await startFakeMcpServer({
       token: RUN_TOKEN,
-      tools: [{ name: "paperclipGetIssue", description: "Get an issue", inputSchema: { type: "object", properties: { issueId: { type: "string" } } }, handler: () => ({ content: [{ type: "text", text: "{}" }] }) }],
+      tools: [
+        { name: "paperclipGetIssue", description: "Get an issue", inputSchema: { type: "object", properties: { issueId: { type: "string" } } }, handler: () => ({ content: [{ type: "text", text: "{}" }] }) },
+        { name: "paperclipUpdateIssue", description: "Patch an issue", inputSchema: { type: "object", properties: { issueId: { type: "string" } } }, handler: () => ({ content: [{ type: "text", text: "{}" }] }) },
+      ],
     });
     const file = path.join(tmpDir, "AGENTS.md");
     await fs.writeFile(file, "Be brief.");
@@ -192,6 +195,18 @@ describe("claude_managed execute", () => {
     await execute(harness({ config: { instructionsFilePath: file }, servers: [{ name: "Other tools", url: mcp.url, token: RUN_TOKEN, connectionId: "c1" }] }).ctx);
     const systems = fake.requests.filter((r) => r.method === "POST" && /^\/v1\/agents/.test(r.path)).map((r) => (r.body as { system?: string }).system);
     expect(systems.at(-1)).toBe("Be brief.");
+  });
+
+  it("gives a read-only Staples API tool set the read-only note, with no write step", async () => {
+    mcp = await startFakeMcpServer({
+      token: RUN_TOKEN,
+      tools: [{ name: "paperclipGetIssue", description: "Get an issue", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text", text: "{}" }] }) }],
+    });
+    fake.queueTurns(turn("one", 1));
+    await execute(harness({ servers: [{ name: "paperclip", url: mcp.url, token: RUN_TOKEN, connectionId: "paperclip-tools" }] }).ctx);
+    const created = requestsMatching("POST", /^\/v1\/agents$/)[0].body as { system: string };
+    expect(created.system).toBe(HOSTED_STAPLES_API_READ_ONLY_NOTE);
+    expect(created.system).not.toMatch(/UpdateIssue|AddComment|status/);
   });
 
   it("starts a new session when the stored one was archived", async () => {
