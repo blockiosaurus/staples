@@ -155,6 +155,13 @@ export const AGENT_AUTOPILOT_POLICY_SOURCE = "agent_autopilot";
 /** `config.source` values only the server writes; the generic policy API refuses them. */
 export const RESERVED_TOOL_POLICY_SOURCES: readonly string[] = [AGENT_TEMPLATE_POLICY_SOURCE, AGENT_AUTOPILOT_POLICY_SOURCE];
 
+/** Why the generic policy API refuses to remove or switch off a server-owned row. */
+function reservedPolicyChangeMessage(source: unknown): string {
+  return source === AGENT_AUTOPILOT_POLICY_SOURCE
+    ? "This is an agent's Autopilot setting; change it from the agent's Autopilot panel instead."
+    : "This rule protects a hired agent; change the agent instead.";
+}
+
 /** Whether a policy is an agent's Autopilot rule. */
 export function isAgentAutopilotPolicy(policy: { config: unknown }): boolean {
   const config = policy.config;
@@ -1260,18 +1267,21 @@ export function toolAccessPolicyService(db: Db) {
     const existing = await getGenericPolicyRow(db, input.companyId, input.policyId);
     const existingSource = isRecord(existing.config) ? existing.config.source : undefined;
     if (typeof existingSource === "string" && RESERVED_TOOL_POLICY_SOURCES.includes(existingSource)) {
-      // Server-owned rows: agent-template rules can only be renamed (they
-      // cannot be switched off here); Autopilot markers can also be switched
-      // off or on.
-      const editable = new Set(existingSource === AGENT_AUTOPILOT_POLICY_SOURCE ? ["enabled", "name", "description"] : ["name", "description"]);
-      const other = Object.entries(input.body).filter(([key, value]) => value !== undefined && !editable.has(key)).map(([key]) => key);
+      // Server-owned rows can only be renamed here. Agent-template rules
+      // change with the agent; an Autopilot marker is switched on or off
+      // only through the agent's Autopilot API (which checks
+      // agent-configuration access).
+      if (input.body.enabled !== undefined && input.body.enabled !== existing.enabled) {
+        throw unprocessable(reservedPolicyChangeMessage(existingSource));
+      }
+      const editable = new Set(["name", "description"]);
+      const other = Object.entries(input.body).filter(([key, value]) => value !== undefined && key !== "enabled" && !editable.has(key)).map(([key]) => key);
       if (other.length) {
         throw unprocessable(`This tool policy is managed by Staples; only ${[...editable].join(", ")} can be changed (got ${other.join(", ")})`);
       }
       const [policy] = await db.update(toolPolicies).set({
         ...(input.body.name !== undefined ? { name: input.body.name } : {}),
         ...(input.body.description !== undefined ? { description: input.body.description ?? null } : {}),
-        ...(input.body.enabled !== undefined ? { enabled: input.body.enabled } : {}),
         updatedAt: new Date(),
       }).where(eq(toolPolicies.id, existing.id)).returning();
       return policy;
@@ -1301,6 +1311,10 @@ export function toolAccessPolicyService(db: Db) {
 
   async function deletePolicy(input: { companyId: string; policyId: string }) {
     const existing = await getGenericPolicyRow(db, input.companyId, input.policyId);
+    const existingSource = isRecord(existing.config) ? existing.config.source : undefined;
+    if (typeof existingSource === "string" && RESERVED_TOOL_POLICY_SOURCES.includes(existingSource)) {
+      throw unprocessable(reservedPolicyChangeMessage(existingSource));
+    }
     const [deleted] = await db
       .delete(toolPolicies)
       .where(eq(toolPolicies.id, existing.id))

@@ -907,6 +907,28 @@ describeEmbeddedPostgres("tool access policy service", () => {
     await expect(decide("stripe_create_refund", "write")).resolves.toMatchObject({ decision: "deny" });
   });
 
+  it("refuses to delete or switch off server-owned template guards and Autopilot markers", async () => {
+    const { company, guard } = await seedGuardedAgent("destructive");
+    const svc = toolAccessPolicyService(db);
+    await expect(svc.deletePolicy({ companyId: company.id, policyId: guard.id }))
+      .rejects.toThrow("This rule protects a hired agent; change the agent instead.");
+    await expect(svc.updatePolicy({ companyId: company.id, policyId: guard.id, body: { enabled: false } }))
+      .rejects.toThrow("This rule protects a hired agent");
+    await expect(svc.updatePolicy({ companyId: company.id, policyId: guard.id, body: { priority: 900 } }))
+      .rejects.toThrow("managed by Staples");
+    await expect(svc.updatePolicy({ companyId: company.id, policyId: guard.id, body: { name: "Renamed guard", enabled: true } }))
+      .resolves.toMatchObject({ name: "Renamed guard", enabled: true });
+    const marker = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Marker", policyType: "require_approval", priority: 49,
+      selectors: { riskLevels: ["write"], toolNamePatterns: ["*send*"] }, config: { source: "agent_autopilot", capability: "email" },
+    }).returning().then((rows) => rows[0]!);
+    await expect(svc.deletePolicy({ companyId: company.id, policyId: marker.id })).rejects.toThrow("Autopilot panel");
+    await expect(svc.updatePolicy({ companyId: company.id, policyId: marker.id, body: { enabled: false } })).rejects.toThrow("Autopilot panel");
+    const rows = await db.select().from(toolPolicies).where(eq(toolPolicies.companyId, company.id));
+    expect(rows.find((row) => row.id === guard.id)?.enabled).toBe(true);
+    expect(rows.find((row) => row.id === marker.id)?.enabled).toBe(true);
+  });
+
   it("applies template name patterns to read-rated tools unless the name is plainly read-only", async () => {
     const company = await createCompany(db);
     const agent = await createAgent(db, company.id);

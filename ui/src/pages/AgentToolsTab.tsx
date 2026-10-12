@@ -158,6 +158,22 @@ export function policyGovernsAgent(policy: ToolPolicy, agentId: string): boolean
   return true;
 }
 
+/**
+ * Server-owned policy rows (an agent template's guards and rules, and an
+ * agent's Autopilot setting) are read-only here: the server refuses to edit,
+ * switch off or delete them through the policy API. Returns the note shown in
+ * place of any controls, or null for an ordinary policy.
+ */
+export function serverOwnedPolicyNote(policy: ToolPolicy, agentName: string): string | null {
+  const config = policy.config;
+  const source = config && typeof config === "object" && !Array.isArray(config)
+    ? (config as Record<string, unknown>).source
+    : undefined;
+  if (source === "agent_template") return `Managed by ${agentName}'s template`;
+  if (source === "agent_autopilot") return `Managed by ${agentName}'s Autopilot settings`;
+  return null;
+}
+
 export function mergeInstallDraft(
   serverDraft: Record<string, boolean>,
   currentDraft: Record<string, boolean>,
@@ -735,6 +751,11 @@ export function AgentToolsTab({ agent, companyId }: { agent: AgentDetailRecord; 
                     {policy.description ? (
                       <div className="mt-0.5 truncate text-(length:--text-micro) text-muted-foreground">
                         {policy.description}
+                      </div>
+                    ) : null}
+                    {serverOwnedPolicyNote(policy, agent.name) ? (
+                      <div className="mt-0.5 text-(length:--text-micro) text-muted-foreground" data-testid="policy-managed-note">
+                        {serverOwnedPolicyNote(policy, agent.name)}
                       </div>
                     ) : null}
                   </div>

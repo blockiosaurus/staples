@@ -301,8 +301,14 @@ describeEmbeddedPostgres("agent Autopilot", () => {
     const policies = toolAccessPolicyService(db);
     const get = async () => (await request(app(boardActor(s))).get(`/api/agents/${dev}/autopilot`)).body.categories[0];
 
-    // Switched off through the generic policy API (PATCH enabled: false).
-    await policies.updatePolicy({ companyId: s.companyId, policyId: marker!.id, body: { enabled: false } });
+    // The generic policy API cannot switch a marker off or delete it: only the Autopilot API can.
+    await expect(policies.updatePolicy({ companyId: s.companyId, policyId: marker!.id, body: { enabled: false } }))
+      .rejects.toThrow("Autopilot panel");
+    await expect(policies.deletePolicy({ companyId: s.companyId, policyId: marker!.id })).rejects.toThrow("Autopilot panel");
+    await expect(policies.updatePolicy({ companyId: s.companyId, policyId: marker!.id, body: { name: "Renamed marker" } }))
+      .resolves.toMatchObject({ name: "Renamed marker", enabled: true });
+    // A marker switched off some other way (e.g. a legacy row) shows as stale.
+    await db.update(toolPolicies).set({ enabled: false }).where(eq(toolPolicies.id, marker!.id));
     expect(await get()).toMatchObject({ mode: "ask", stale: true, canToggle: true });
     await expect(github.decide(dev, "merge_pull_request")).resolves.toMatchObject({ decision: "require_approval" });
     const repaired = await put(boardActor(s), dev, "code", "auto");
