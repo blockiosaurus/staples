@@ -1,8 +1,9 @@
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
   companies,
+  costEvents,
   issueThreadInteractions,
   issues,
   toolApplications,
@@ -24,9 +25,12 @@ import {
   type BriefingItemKind,
   type BriefingRecommendation,
   type BriefingRecommendationAnswer,
+  type BriefingSpend,
 } from "@paperclipai/shared";
 import { autopilotCategoriesFromMetadata } from "./agent-autopilot.js";
 import { attentionService } from "./attention.js";
+import { HOSTED_BILLED_CENTS_METRIC, budgetService } from "./budgets.js";
+import { getUtcMonthStart } from "./dashboard.js";
 import { authorizationService, issueReadSqlCondition, type AuthorizationActor } from "./authorization.js";
 import { issueService } from "./issues.js";
 import { executionIssueCondition } from "./issue-visibility.js";
@@ -62,7 +66,7 @@ export interface BriefingServiceOptions {
   now?: () => number;
   /** Test seam: the attention feed source. Defaults to `attentionService(db)`. */
   attention?: Pick<ReturnType<typeof attentionService>, "list">;
-  /** Test seam: agent read decisions. Defaults to `authorizationService(db)`. */
+  /** Test seam: agent and company-cost read decisions. Defaults to `authorizationService(db)`. */
   authorization?: Pick<ReturnType<typeof authorizationService>, "decide">;
 }
 
@@ -553,6 +557,37 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     return items;
   }
 
+  /**
+   * This calendar month's spend (all cost events, as on the dashboard), with
+   * the active person-set company budget and the active hosted cap (whose
+   * spend counts hosted inference only), from the budget overview. Null when
+   * the person may not read the company's costs.
+   */
+  async function spend(input: BriefingGetInput, now: number): Promise<BriefingSpend | null> {
+    // Costs follow the costs routes' boundary: company-scope read.
+    const authz = serviceOptions.authorization ?? authorizationService(db);
+    const decision = await authz.decide({ actor: input.actor, action: "company_scope:read", resource: { type: "company", companyId: input.companyId } });
+    if (!decision.allowed) return null;
+    const companyId = input.companyId;
+    const end = new Date(now);
+    const [[row], overview] = await Promise.all([
+      db.select({ total: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::double precision` })
+        .from(costEvents)
+        .where(and(eq(costEvents.companyId, companyId), gte(costEvents.occurredAt, getUtcMonthStart(end)), lte(costEvents.occurredAt, end))),
+      budgetService(db).overview(companyId),
+    ]);
+    const companyPolicy = (metric: string) => overview.policies.find((policy) =>
+      policy.scopeType === "company" && policy.scopeId === companyId && policy.metric === metric
+      && policy.windowKind === "calendar_month_utc" && policy.isActive && policy.amount > 0);
+    const budget = companyPolicy("billed_cents");
+    const hosted = companyPolicy(HOSTED_BILLED_CENTS_METRIC);
+    return {
+      monthSpendCents: Math.round(Number(row?.total ?? 0)),
+      companyBudgetCents: budget ? budget.amount : null,
+      hosted: hosted ? { capCents: hosted.amount, spentCents: hosted.observedAmount } : null,
+    };
+  }
+
   return {
     get: async (input: BriefingGetInput): Promise<Briefing> => {
       const now = serviceOptions.now?.() ?? Date.now();
@@ -561,11 +596,12 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         companyPrefix(input.companyId),
         issueReadSqlCondition(db, input.actor),
       ]);
-      const [needs, moving, doneTasks, rollups] = await Promise.all([
+      const [needs, moving, doneTasks, rollups, monthSpend] = await Promise.all([
         needsYou(input, prefix, readCondition, nowIso),
         inProgress(input, readCondition, nowIso),
         doneRecently(input, readCondition, now, nowIso),
         agentActionRollups(input, now, nowIso),
+        spend(input, now),
       ]);
       // Newest first across finished tasks and agent roll-ups.
       const done = [...doneTasks, ...rollups].sort((a, b) => toTime(b.createdAt) - toTime(a.createdAt));
@@ -574,6 +610,7 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         inProgress: moving.slice(0, BRIEFING_IN_PROGRESS_LIMIT),
         doneRecently: done.slice(0, BRIEFING_DONE_RECENTLY_LIMIT),
         counts: { needsYou: needs.length, inProgress: moving.length, doneRecently: done.length },
+        spend: monthSpend,
         generatedAt: nowIso,
       };
     },

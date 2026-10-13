@@ -70,10 +70,29 @@ function shortMessage(value: string) {
  * with the person's own session, through the app's api client. Never throws:
  * failures are reported as a `failed` result for the accept call.
  */
+/** "$110" from cents; cents kept only when there are some. */
+function wholeDollars(cents: number) {
+  const value = cents / 100;
+  return Number.isInteger(value) ? `$${value}` : `$${value.toFixed(2)}`;
+}
+
+/** What a plan apply did to the company's hosted limit, if anything. */
+function hostedLimitSentence(limit: { fromCents?: unknown; toCents?: unknown; neededCents?: unknown; limited?: unknown } | undefined): string {
+  if (!limit || typeof limit.fromCents !== "number" || typeof limit.toCents !== "number") return "";
+  const raised = limit.toCents > limit.fromCents
+    ? ` Hosted limit raised from ${wholeDollars(limit.fromCents)} to ${wholeDollars(limit.toCents)}.`
+    : "";
+  if (limit.limited !== true || typeof limit.neededCents !== "number") return raised;
+  return `${raised} The agents' monthly budgets come to ${wholeDollars(limit.neededCents)}, more than the hosted limit allows, so some may stop before their budgets run out.`;
+}
+
 /** One line for the Assistant about what a plan apply created. */
 function planApplySummary(status: number, body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
-  const record = body as { agents?: Record<string, unknown>; tasks?: Record<string, unknown>; pendingAssignments?: unknown[]; routines?: unknown[] };
+  const record = body as {
+    agents?: Record<string, unknown>; tasks?: Record<string, unknown>; pendingAssignments?: unknown[]; routines?: unknown[];
+    hostedLimit?: { fromCents?: unknown; toCents?: unknown; neededCents?: unknown; limited?: unknown };
+  };
   const count = (value: unknown) => (value && typeof value === "object" ? Object.keys(value).length : 0);
   const agents = count(record.agents);
   const tasks = count(record.tasks);
@@ -82,7 +101,7 @@ function planApplySummary(status: number, body: unknown): string | null {
   const parts = [`${agents} agent${agents === 1 ? "" : "s"}`, `${tasks} task${tasks === 1 ? "" : "s"}`];
   if (routines) parts.push(`${routines} routine${routines === 1 ? "" : "s"}`);
   const waiting = pending ? ` ${pending} task${pending === 1 ? " waits" : "s wait"} for hire approval.` : "";
-  return `${status === 200 ? "Plan was already created" : "Plan created"}: ${parts.join(", ")}.${waiting}`;
+  return `${status === 200 ? "Plan was already created" : "Plan created"}: ${parts.join(", ")}.${waiting}${hostedLimitSentence(record.hostedLimit)}`;
 }
 
 function browserTimeZone(): string | null {

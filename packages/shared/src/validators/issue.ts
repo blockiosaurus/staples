@@ -1683,6 +1683,13 @@ export const requestConfirmationProposedActionPayloadSchema = z.object({
     budgetMonthlyCents: z.number().int().min(0).nullable(),
     readOnly: z.boolean().optional(),
   })).max(8).optional(),
+  planBudget: z.object({
+    hiresMonthlyCents: z.number().int().min(0),
+    hostedCapCents: z.number().int().min(0).nullable(),
+    hostedNeededCents: z.number().int().min(0).nullable(),
+    hostedCapAfterCents: z.number().int().min(0).nullable(),
+    ceilingCents: z.number().int().min(0),
+  }).optional(),
 }).superRefine((value, ctx) => {
   const max = proposedActionBodyMaxBytes(value.category);
   const bytes = proposedActionBodyBytes(value.body);

@@ -8,6 +8,7 @@ import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { HOSTED_HIRE_ADAPTER_TYPE, PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { hostedInference as hostedInferenceStatus } from "./hosted-inference.js";
+import { planBudgetSummary } from "./hosted-inference-access.js";
 import { publicMcpCapabilities } from "./public-mcp/capabilities.js";
 import { defaultAgentTemplates, planHireAdapterDefaults, planTemplateContext, planTemplateSummariesFor } from "./plan-templates.js";
 import { APPROVAL_DECISION_PATH, PROPOSABLE_AGENT_ROLES, ProposedActionError, pinBriefProposalBody, pinPlanProposalBody, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
@@ -462,6 +463,16 @@ export async function planHireConnectionsFor(db: Db, companyId: string, body: un
 }
 
 /**
+ * The plan card's budget line (display only, like planHireConnectionsFor): the
+ * hires' monthly budgets, and the hosted limit they fit or will raise.
+ */
+export async function planBudgetFor(db: Db, companyId: string, body: unknown) {
+  const plan = applyPlanSchema.safeParse(body);
+  if (!plan.success) return null;
+  return planBudgetSummary(db, companyId, plan.data);
+}
+
+/**
  * Create a governed Confirm card on the run's own Assistant conversation,
  * addressed to the run's person. The interaction is created directly through
  * the service because proposedAction is server-owned and refused on the
@@ -499,6 +510,7 @@ async function proposeAction(db: Db, context: AssistantToolContext, args: Record
   }
   const planHireConnections = category === "plan" ? await planHireConnectionsFor(db, context.companyId, body) : [];
   const planTemplateSummaries = category === "plan" ? await planTemplateSummariesFor(body) : [];
+  const planBudget = category === "plan" ? await planBudgetFor(db, context.companyId, body) : null;
   const approvalContext = category === "approval" ? await approvalDecisionContext(db, context.companyId, path) : null;
   const proposedAction = {
     version: 1 as const, method: method as (typeof PROPOSED_ACTION_METHODS)[number], path, body, summary, category, hash,
@@ -506,6 +518,7 @@ async function proposeAction(db: Db, context: AssistantToolContext, args: Record
     ...(approvalContext ? { context: approvalContext } : {}),
     ...(planHireConnections.length ? { planHireConnections } : {}),
     ...(planTemplateSummaries.length ? { planTemplateSummaries } : {}),
+    ...(planBudget ? { planBudget } : {}),
   };
   const interaction = await issueThreadInteractionService(db).create(issue, {
     kind: "request_confirmation",

@@ -48,3 +48,13 @@ describe("hosted hire and company budgets", () => {
     expect(hostedCompanyBudgetCents({ STAPLES_HOSTED_COMPANY_BUDGET_CENTS: "-1" })).toBe(5000);
   });
 });
+
+describe("hostedCompanyBudgetCeilingCents", () => {
+  it("defaults to $200, with an explicit override (0 = plans never raise the cap)", async () => {
+    const { hostedCompanyBudgetCeilingCents } = await import("../services/hosted-inference.js");
+    expect(hostedCompanyBudgetCeilingCents({})).toBe(20000);
+    expect(hostedCompanyBudgetCeilingCents({ STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS: "50000" })).toBe(50000);
+    expect(hostedCompanyBudgetCeilingCents({ STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS: "0" })).toBe(0);
+    expect(hostedCompanyBudgetCeilingCents({ STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS: "lots" })).toBe(20000);
+  });
+});

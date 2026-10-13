@@ -1426,6 +1426,29 @@ export interface RequestConfirmationProposedActionPayload {
    * `asksBefore` the outward-action labels.
    */
   planTemplateSummaries?: PlanTemplateSummary[];
+  /**
+   * Plan proposals with new agents only. Server-computed display data, not
+   * hashed and never read by apply: the hires' monthly budgets against the
+   * company's hosted-inference limit.
+   */
+  planBudget?: PlanBudgetSummary;
+}
+
+/**
+ * The plan card's budget line. `hiresMonthlyCents` sums the new agents'
+ * monthly budgets (a hosted hire without one counts the hosted agent default).
+ * The hosted fields are null unless the plan hires agents on the hosted key
+ * and the company's hosted limit is capped: `hostedCapCents` is the limit now,
+ * `hostedNeededCents` the monthly budgets of every agent on the hosted key
+ * once the plan is applied, and `hostedCapAfterCents` the limit after apply
+ * (raised to the need, never lowered, at most `ceilingCents`).
+ */
+export interface PlanBudgetSummary {
+  hiresMonthlyCents: number;
+  hostedCapCents: number | null;
+  hostedNeededCents: number | null;
+  hostedCapAfterCents: number | null;
+  ceilingCents: number;
 }
 
 export interface PlanTemplateSummary {

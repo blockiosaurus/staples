@@ -39,6 +39,7 @@ export function hostedInference(env: NodeJS.ProcessEnv = process.env): HostedInf
 const DEFAULT_HOSTED_ASSISTANT_BUDGET_CENTS = 2000;
 const DEFAULT_HOSTED_AGENT_BUDGET_CENTS = 2000;
 const DEFAULT_HOSTED_COMPANY_BUDGET_CENTS = 5000;
+const DEFAULT_HOSTED_COMPANY_BUDGET_MAX_CENTS = 20000;
 
 /** An integer >= 0 from the env (explicit 0 = no cap), else the default. */
 function centsFromEnv(raw: string | undefined, fallback: number): number {
@@ -73,6 +74,16 @@ export function hostedAgentBudgetCents(env: NodeJS.ProcessEnv = process.env): nu
  */
 export function hostedCompanyBudgetCents(env: NodeJS.ProcessEnv = process.env): number {
   return centsFromEnv(env.STAPLES_HOSTED_COMPANY_BUDGET_CENTS, DEFAULT_HOSTED_COMPANY_BUDGET_CENTS);
+}
+
+/**
+ * The most a plan may raise a company's hosted cap to (the operator's
+ * ceiling). Default $200; `STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS` overrides
+ * it with an integer >= 0 (an explicit 0 means plans never raise the cap).
+ * A cap already above the ceiling is kept; it is never lowered.
+ */
+export function hostedCompanyBudgetCeilingCents(env: NodeJS.ProcessEnv = process.env): number {
+  return centsFromEnv(env.STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS, DEFAULT_HOSTED_COMPANY_BUDGET_MAX_CENTS);
 }
 
 /**

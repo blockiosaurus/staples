@@ -92,6 +92,7 @@ hard-stop monthly budget policies:
 | The Assistant | `billed_cents` | `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS` | `2000` ($20) |
 | Any other agent on hosted inference | `billed_cents` | `STAPLES_HOSTED_AGENT_BUDGET_CENTS` | `2000` ($20) |
 | The company's hosted spend | `hosted_billed_cents` | `STAPLES_HOSTED_COMPANY_BUDGET_CENTS` | `5000` ($50) |
+| Ceiling for a plan's raise of the company's hosted cap | — | `STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS` | `20000` ($200) |
 
 Each value is an integer number of cents; an explicit `0` leaves that scope
 uncapped, and an invalid value uses the default. An existing active hard-stop
@@ -100,6 +101,27 @@ a disabled, soft or zeroed one is re-activated as a hard stop. The server
 records these policy writes in the activity log with a system actor
 (`hosted_inference`). Agents with their own key binding never use the server
 key and get no forced caps.
+
+An agent with its own monthly budget (for example one its plan set) gets
+that amount as its hard-stop cap instead of the agent default.
+
+**Plans raise the company cap to fit their hosted hires.** When an applied
+plan hires agents on the hosted key (Claude (hosted) with no key of its own,
+hosted inference on), the server raises the company's `hosted_billed_cents`
+cap to at least the monthly budgets of every agent on the hosted key (the
+Assistant included; an agent without a budget counts the default above), at
+most `STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS`. It only ever raises: a cap
+already high enough, or already above the ceiling, is kept. When the budgets
+come to more than the ceiling, the cap is raised to the ceiling and the plan
+card and the apply result (`hostedLimit`, with `limited: true`) say so.
+An explicit `STAPLES_HOSTED_COMPANY_BUDGET_CENTS=0` (uncapped) is never raised
+or changed, and the card then says nothing about the hosted limit; a ceiling
+of `0` means plans never raise the cap. Hires on a local adapter or on the
+company's own key never raise it. The raise is logged like the other hosted
+policy writes (`budget.policy_upserted`, system actor `hosted_inference`).
+Before the person confirms, the plan card shows the hires' monthly budgets and
+whether they fit the hosted limit or raise it (server-computed `planBudget`
+on the proposal).
 
 **The company cap counts hosted spend only.** Cost events of a run that used
 the hosted key are marked (`cost_events.hosted_inference`), and the

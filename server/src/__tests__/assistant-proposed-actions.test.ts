@@ -641,6 +641,11 @@ const support = await getEmbeddedPostgresTestSupport();
       clientKey: "mail", ref: "staples/email-secretary", name: detail.name, needs: ["AgentMail or Gmail"],
       asksBefore: ["Sending email", "Accepting meetings or changing your calendar"], routineCount: 2, budgetMonthlyCents: 3000, readOnly: false,
     }]);
+    // The budget line rides on the proposal, not in the hashed body; a local hire says nothing about a hosted limit.
+    expect((action as { planBudget?: unknown }).planBudget).toEqual({
+      hiresMonthlyCents: 3000, hostedCapCents: null, hostedNeededCents: null, hostedCapAfterCents: null, ceilingCents: 20000,
+    });
+    expect(JSON.stringify(action.body)).not.toContain("planBudget");
     // No instructions in the proposal: they come from the template at apply.
     expect(JSON.stringify(action.body)).not.toMatch(/instructions/i);
   }, 60_000);

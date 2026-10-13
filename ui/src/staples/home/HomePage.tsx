@@ -10,10 +10,11 @@ import { briefingApi } from "@/api/briefing";
 import { issuesApi } from "@/api/issues";
 import { applyCompanyPrefix } from "@/lib/company-routes";
 import { queryKeys } from "@/lib/queryKeys";
-import { useActiveCompanyPrefix } from "@/lib/router";
+import { Link, useActiveCompanyPrefix } from "@/lib/router";
 import { useAskAssistant } from "@/staples/assistant/AssistantProvider";
 import { assistantUnavailableNotice } from "@/staples/assistant/unavailableNotice";
 import { BriefingCompactRow, BriefingRow, canAcceptInline } from "./BriefingRow";
+import { spendLineText } from "./spendLine";
 
 export const BRIEFING_REFETCH_INTERVAL_MS = 30_000;
 
@@ -204,6 +205,11 @@ export function HomePage() {
         <p className="text-sm text-muted-foreground" data-testid="briefing-summary">
           {summary}
         </p>
+        {briefing.spend ? (
+          <Link to="/activity/costs" className="self-start text-sm text-muted-foreground hover:text-foreground hover:underline" data-testid="briefing-spend">
+            {spendLineText(briefing.spend)}
+          </Link>
+        ) : null}
         {refreshFailed ? (
           <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="briefing-refresh-error">
             <span>Couldn't refresh — showing what we had.</span>

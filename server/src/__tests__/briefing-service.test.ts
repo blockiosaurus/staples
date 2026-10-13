@@ -9,6 +9,7 @@ import {
   budgetIncidents,
   budgetPolicies,
   companies,
+  costEvents,
   createDb,
   heartbeatRunEvents,
   heartbeatRuns,
@@ -229,6 +230,7 @@ describeEmbeddedPostgres("briefing service", () => {
     await db.delete(heartbeatRuns);
     await db.delete(budgetIncidents);
     await db.delete(budgetPolicies);
+    await db.delete(costEvents);
     await db.delete(activityLog);
     await db.delete(approvals);
     await db.delete(issues);
@@ -710,6 +712,53 @@ describeEmbeddedPostgres("briefing service", () => {
     expect(briefing.needsYou.map((item) => item.id)).toEqual([own.errorAgentId]);
   });
 
+  describe("spend", () => {
+    const spend = async (companyId: string, agentId: string, cents: number, options: { hosted?: boolean; occurredAt?: Date } = {}) => {
+      await db.insert(costEvents).values({ companyId, agentId, provider: "anthropic", biller: "anthropic", billingType: "metered_api",
+        model: "claude", costCents: cents, occurredAt: options.occurredAt ?? new Date(), hostedInference: options.hosted ?? false });
+    };
+    const policy = (companyId: string, metric: string, amount: number, isActive = true) => db.insert(budgetPolicies).values({
+      companyId, scopeType: "company", scopeId: companyId, metric, windowKind: "calendar_month_utc", amount, hardStopEnabled: true, isActive,
+    });
+
+    it("reports this month's spend with no limits when the company has no budgets", async () => {
+      const { companyId, workerId } = await seedCompany("BSP");
+      await spend(companyId, workerId, 1200);
+      // Last month's spend does not count.
+      const now = new Date();
+      await spend(companyId, workerId, 9999, { occurredAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) - DAY_MS) });
+      const briefing = await briefingService(db).get({ companyId, userId: "board-user", actor: boardActor(companyId) });
+      expect(briefing.spend).toEqual({ monthSpendCents: 1200, companyBudgetCents: null, hosted: null });
+    });
+
+    it("adds the company budget and the hosted cap with its hosted-only usage", async () => {
+      const { companyId, workerId } = await seedCompany("BSQ");
+      await spend(companyId, workerId, 1200);
+      await spend(companyId, workerId, 800, { hosted: true });
+      await policy(companyId, "billed_cents", 9000);
+      await policy(companyId, "hosted_billed_cents", 5000);
+      const briefing = await briefingService(db).get({ companyId, userId: "board-user", actor: boardActor(companyId) });
+      expect(briefing.spend).toEqual({ monthSpendCents: 2000, companyBudgetCents: 9000, hosted: { capCents: 5000, spentCents: 800 } });
+    });
+
+    it("ignores disabled budgets and keeps other companies' spend out", async () => {
+      const own = await seedCompany("BSR");
+      const other = await seedCompany("BSS");
+      await spend(own.companyId, own.workerId, 300);
+      await spend(other.companyId, other.workerId, 5000);
+      await policy(own.companyId, "billed_cents", 9000, false);
+      const briefing = await briefingService(db).get({ companyId: own.companyId, userId: "board-user", actor: boardActor(own.companyId) });
+      expect(briefing.spend).toEqual({ monthSpendCents: 300, companyBudgetCents: null, hosted: null });
+    });
+
+    it("is null when the person may not read the company's costs", async () => {
+      const { companyId } = await seedCompany("BST");
+      const authorization = { decide: async (input: { action: string }) => ({ allowed: input.action !== "company_scope:read" }) };
+      const briefing = await briefingService(db, { authorization: authorization as never }).get({ companyId, userId: "board-user", actor: boardActor(companyId) });
+      expect(briefing.spend).toBeNull();
+    });
+  });
+
   describe("templated agent roll-ups", () => {
     const EMAIL_TEMPLATE = {
       ref: "staples/email-secretary",
@@ -863,7 +912,7 @@ describeEmbeddedPostgres("briefing service", () => {
       const briefing = await briefingService(db, { authorization: authorization as never }).get({
         companyId, userId: "board-user", actor: boardActor(companyId),
       });
-      expect(asked.sort()).toEqual([`agent:read:${hiddenId}`, `agent:read:${shownId}`].sort());
+      expect(asked.filter((entry) => entry.startsWith("agent:read")).sort()).toEqual([`agent:read:${hiddenId}`, `agent:read:${shownId}`].sort());
       expect(briefing.doneRecently.map((item) => item.title)).toEqual(["Shown sent 1 email"]);
       expect(JSON.stringify(briefing)).not.toContain(hiddenId);
     });

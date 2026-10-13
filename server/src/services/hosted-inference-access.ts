@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { agents, budgetPolicies, companySecrets, type Db } from "@paperclipai/db";
-import { ASSISTANT_BUILT_IN_AGENT_KEY } from "@paperclipai/shared";
+import { ASSISTANT_BUILT_IN_AGENT_KEY, type ApplyPlan, type ApplyPlanResult, type PlanBudgetSummary } from "@paperclipai/shared";
 import { HOSTED_BILLED_CENTS_METRIC, budgetService } from "./budgets.js";
 import { isUniqueViolation } from "../db-errors.js";
 import {
@@ -8,6 +8,7 @@ import {
   HOSTED_INFERENCE_MODEL,
   hostedAgentBudgetCents,
   hostedAssistantBudgetCents,
+  hostedCompanyBudgetCeilingCents,
   hostedCompanyBudgetCents,
   hostedInference,
   usesHostedInferenceKey,
@@ -64,7 +65,8 @@ async function ensureHardStopMonthlyPolicy(db: Db, companyId: string, scope: Bud
 /**
  * An agent on hosted inference spends the operator's key, so before that key
  * is used it must carry an ACTIVE hard-stop monthly budget, and so must its
- * company's hosted spend. Agent cap (`billed_cents`): the Assistant's
+ * company's hosted spend. Agent cap (`billed_cents`): the agent's own monthly
+ * budget when it has one, else the Assistant's
  * `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS` (default $20) or, for any other
  * agent, `STAPLES_HOSTED_AGENT_BUDGET_CENTS` (default $20). Company cap
  * (`hosted_billed_cents`, counting only spend billed to the hosted key):
@@ -83,11 +85,160 @@ export async function ensureHostedAgentBudgets(
   // An unsaved agent (an environment test before create) has no agent scope yet.
   if (agent.id) {
     const assistant = options.assistant ?? await isProvisionedAssistant(db, agent);
-    await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "agent", scopeId: agent.id }, "billed_cents",
-      assistant ? hostedAssistantBudgetCents(env) : hostedAgentBudgetCents(env));
+    const fallback = assistant ? hostedAssistantBudgetCents(env) : hostedAgentBudgetCents(env);
+    // A new cap takes the agent's own monthly budget (e.g. the one its plan
+    // set) when it has one; an explicit 0 default still leaves it uncapped.
+    let cents = fallback;
+    if (fallback > 0) {
+      const [row] = await db.select({ budgetMonthlyCents: agents.budgetMonthlyCents }).from(agents)
+        .where(and(eq(agents.id, agent.id), eq(agents.companyId, agent.companyId)));
+      if (row && row.budgetMonthlyCents > 0) cents = row.budgetMonthlyCents;
+    }
+    await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "agent", scopeId: agent.id }, "billed_cents", cents);
   }
   await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "company", scopeId: agent.companyId }, HOSTED_BILLED_CENTS_METRIC,
     hostedCompanyBudgetCents(env));
+}
+
+/**
+ * An agent's monthly budget as counted toward the company's hosted cap: its
+ * own positive budget, else the hosted default the server gives it (an
+ * explicit 0 default, uncapped, counts as 0).
+ */
+export function hostedAgentMonthlyCents(
+  budgetMonthlyCents: number | null | undefined, assistant: boolean, env: NodeJS.ProcessEnv = process.env,
+): number {
+  if (budgetMonthlyCents && budgetMonthlyCents > 0) return budgetMonthlyCents;
+  return assistant ? hostedAssistantBudgetCents(env) : hostedAgentBudgetCents(env);
+}
+
+/**
+ * The company's hosted cap after a plan's raise: at least what the agents on
+ * the hosted key need, at most the operator's ceiling, and never below the
+ * cap it has now.
+ */
+export function hostedCapAfterRaise(input: { currentCents: number; neededCents: number; ceilingCents: number }): number {
+  return Math.max(input.currentCents, Math.min(input.neededCents, input.ceilingCents));
+}
+
+/** The monthly budgets of every agent in the company that runs on the hosted key. */
+export async function hostedAgentsMonthlyCents(db: Db, companyId: string, env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  if (!hostedInference(env).available) return 0;
+  const rows = await db.select({
+    id: agents.id, adapterType: agents.adapterType, adapterConfig: agents.adapterConfig, budgetMonthlyCents: agents.budgetMonthlyCents,
+  }).from(agents).where(and(
+    eq(agents.companyId, companyId), eq(agents.adapterType, HOSTED_INFERENCE_ADAPTER_TYPE), ne(agents.status, "terminated"),
+  ));
+  const hostedRows = rows.filter((row) => usesHostedInferenceKey(row, env));
+  if (!hostedRows.length) return 0;
+  const assistantId = await resolveCompanyAssistantAgentId(db, companyId);
+  return hostedRows.reduce((sum, row) => sum + hostedAgentMonthlyCents(row.budgetMonthlyCents, row.id === assistantId, env), 0);
+}
+
+async function hostedCompanyCapPolicy(db: Db, companyId: string) {
+  const [row] = await db.select().from(budgetPolicies).where(and(
+    eq(budgetPolicies.companyId, companyId),
+    eq(budgetPolicies.scopeType, "company"),
+    eq(budgetPolicies.scopeId, companyId),
+    eq(budgetPolicies.metric, HOSTED_BILLED_CENTS_METRIC),
+    eq(budgetPolicies.windowKind, "calendar_month_utc"),
+  ));
+  return row ?? null;
+}
+
+/**
+ * The company's hosted cap as it is (or will be once ensured): its policy's
+ * positive amount, else the server default. Null when the operator left
+ * company hosted spend uncapped (`STAPLES_HOSTED_COMPANY_BUDGET_CENTS=0`):
+ * such a company's hosted cap is never raised or changed by a plan.
+ */
+export async function currentHostedCompanyCapCents(db: Db, companyId: string, env: NodeJS.ProcessEnv = process.env): Promise<number | null> {
+  const fallback = hostedCompanyBudgetCents(env);
+  if (fallback === 0) return null;
+  const policy = await hostedCompanyCapPolicy(db, companyId);
+  return policy && policy.amount > 0 ? policy.amount : fallback;
+}
+
+/** Whether a plan hire will run on the hosted key (Claude (hosted), no company key, hosted inference on). */
+export function planHireUsesHostedKey(
+  agent: { adapterType?: string }, options: Pick<HostedHireOptions, "hostedInference" | "companyKeyBinding">,
+): boolean {
+  return agent.adapterType === HOSTED_INFERENCE_ADAPTER_TYPE && options.hostedInference && !options.companyKeyBinding;
+}
+
+/**
+ * The plan card's budget line, computed from the database when the plan is
+ * proposed (display only; apply decides for itself). Null for a plan with no
+ * new agents.
+ */
+export async function planBudgetSummary(
+  db: Db, companyId: string, plan: Pick<ApplyPlan, "agents">, env: NodeJS.ProcessEnv = process.env,
+): Promise<PlanBudgetSummary | null> {
+  if (!plan.agents.length) return null;
+  const options = await hostedHireOptions(db, companyId, env);
+  const onHostedKey = (agent: ApplyPlan["agents"][number]) => planHireUsesHostedKey(agent, options);
+  const hireCents = (agent: ApplyPlan["agents"][number]) => onHostedKey(agent)
+    ? hostedAgentMonthlyCents(agent.budgetMonthlyCents, false, env)
+    : agent.budgetMonthlyCents ?? 0;
+  const hiresMonthlyCents = plan.agents.reduce((sum, agent) => sum + hireCents(agent), 0);
+  const ceilingCents = hostedCompanyBudgetCeilingCents(env);
+  const none = { hiresMonthlyCents, hostedCapCents: null, hostedNeededCents: null, hostedCapAfterCents: null, ceilingCents };
+  const hostedHires = plan.agents.filter(onHostedKey);
+  if (!hostedHires.length) return none;
+  const currentCents = await currentHostedCompanyCapCents(db, companyId, env);
+  if (currentCents === null) return none;
+  const neededCents = await hostedAgentsMonthlyCents(db, companyId, env)
+    + hostedHires.reduce((sum, agent) => sum + hireCents(agent), 0);
+  return {
+    hiresMonthlyCents,
+    hostedCapCents: currentCents,
+    hostedNeededCents: neededCents,
+    hostedCapAfterCents: hostedCapAfterRaise({ currentCents, neededCents, ceilingCents }),
+    ceilingCents,
+  };
+}
+
+/**
+ * After a plan hires agents on the hosted key: raise the company's hosted cap
+ * (`hosted_billed_cents`) to at least the monthly budgets of every agent on
+ * the hosted key, at most the operator's ceiling
+ * (`STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS`, default $200). Raise only: a cap
+ * is never lowered, and an uncapped company (default 0) is left alone. The
+ * write is logged with the hosted-inference system actor. Returns what
+ * happened when the cap was raised or could not be raised far enough, else
+ * null (the budgets already fit).
+ */
+export async function raiseHostedCompanyCapForHires(
+  db: Db, companyId: string, env: NodeJS.ProcessEnv = process.env,
+): Promise<NonNullable<ApplyPlanResult["hostedLimit"]> | null> {
+  const ceilingCents = hostedCompanyBudgetCeilingCents(env);
+  const attempt = async () => {
+    const fromCents = await currentHostedCompanyCapCents(db, companyId, env);
+    if (fromCents === null) return null;
+    const neededCents = await hostedAgentsMonthlyCents(db, companyId, env);
+    const toCents = hostedCapAfterRaise({ currentCents: fromCents, neededCents, ceilingCents });
+    if (toCents > fromCents) {
+      await budgetService(db).upsertPolicy(companyId, {
+        scopeType: "company",
+        scopeId: companyId,
+        metric: HOSTED_BILLED_CENTS_METRIC,
+        windowKind: "calendar_month_utc",
+        amount: toCents,
+        hardStopEnabled: true,
+        isActive: true,
+      }, null, { actor: HOSTED_INFERENCE_ACTOR });
+    } else if (neededCents <= fromCents) {
+      return null;
+    }
+    return { fromCents, toCents, neededCents, ceilingCents, limited: neededCents > toCents };
+  };
+  try {
+    return await attempt();
+  } catch (error) {
+    // Only the race with a first run inserting the same policy is retried.
+    if (!isUniqueViolation(error)) throw error;
+    return attempt();
+  }
 }
 
 /** The provisioned Assistant's hosted budgets (agent and company scope). */

@@ -1451,6 +1451,45 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         expect(await hostedInferenceAllowedFor(db, hired!)).toBe(true);
       }, 120_000);
 
+      it("raises the hosted cap to fit hosted hires' budgets, up to the ceiling, and says so in the result; local hires never raise it", async () => {
+        hostedOn();
+        const hostedCap = async (companyId: string) => (await db.select().from(budgetPolicies).where(and(
+          eq(budgetPolicies.scopeType, "company"), eq(budgetPolicies.scopeId, companyId), eq(budgetPolicies.metric, "hosted_billed_cents"),
+        )))[0] ?? null;
+        const hires = (cents: number, adapterType = "claude_managed") => ({
+          agents: ["a", "b", "c"].map((key) => ({ clientKey: key, name: `Agent ${key}`, role: "general", adapterType, budgetMonthlyCents: cents })),
+          tasks: [{ clientKey: "t", title: "Start", assigneeClientKey: "a" }],
+        });
+        const { planBudgetFor } = await import("../services/assistant-tools.js");
+        const s = await seed();
+        await assistantOnHosted(s);
+        // The card's line, computed when the plan is proposed.
+        expect(await planBudgetFor(db, s.companyId, hires(3000))).toEqual({
+          hiresMonthlyCents: 9000, hostedCapCents: 5000, hostedNeededCents: 11000, hostedCapAfterCents: 11000, ceilingCents: 20000,
+        });
+        const response = await apply(buildApp(sessionActor(s)).app, s.companyId, hires(3000));
+        expect(response.status, JSON.stringify(response.body)).toBe(201);
+        // Each hosted hire keeps the budget its plan set.
+        expect(await monthlyPolicy("agent", response.body.agents.a.id)).toMatchObject({ amount: 3000, isActive: true, hardStopEnabled: true });
+        // 3 x $30 plus the Assistant's $20.
+        expect(response.body.hostedLimit).toEqual({ fromCents: 5000, toCents: 11000, neededCents: 11000, ceilingCents: 20000, limited: false });
+        expect(await hostedCap(s.companyId)).toMatchObject({ amount: 11000, isActive: true, hardStopEnabled: true });
+
+        const t = await seed();
+        await assistantOnHosted(t);
+        const over = await apply(buildApp(sessionActor(t)).app, t.companyId, hires(9000));
+        expect(over.status, JSON.stringify(over.body)).toBe(201);
+        expect(over.body.hostedLimit).toEqual({ fromCents: 5000, toCents: 20000, neededCents: 29000, ceilingCents: 20000, limited: true });
+        expect(await hostedCap(t.companyId)).toMatchObject({ amount: 20000 });
+
+        const u = await seed();
+        await assistantOnHosted(u);
+        const local = await apply(buildApp(sessionActor(u)).app, u.companyId, hires(9000, "claude_local"));
+        expect(local.status, JSON.stringify(local.body)).toBe(201);
+        expect(local.body.hostedLimit).toBeUndefined();
+        expect(await hostedCap(u.companyId)).toBeNull();
+      }, 120_000);
+
       it("never lowers an existing company budget, and an explicit 0 leaves the company uncapped", async () => {
         hostedOn();
         const s = await seed();

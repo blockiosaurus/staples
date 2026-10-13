@@ -20,7 +20,9 @@ import { STAPLES_TEMPLATE_METADATA_KEY } from "../lib/staples-template-metadata.
 import { STAPLES_TEMPLATED_PERMISSION_FLAG } from "../lib/agent-permissions.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
 import { HOSTED_HIRE_ADAPTER_TYPE, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
-import { ensureHostedAgentBudgets, hostedHireAdapterConfig, hostedHireOptions, type HostedHireOptions } from "./hosted-inference-access.js";
+import {
+  ensureHostedAgentBudgets, hostedHireAdapterConfig, hostedHireOptions, planHireUsesHostedKey, raiseHostedCompanyCapForHires, type HostedHireOptions,
+} from "./hosted-inference-access.js";
 import { canonicalJson, currentBriefRevisionId, planExistingAssigneeViolation, planRuleViolation } from "./assistant-proposed-actions.js";
 import { writeCompanyBrief } from "./company-brief.js";
 import { getDefaultCompanyGoal, goalService } from "./goals.js";
@@ -583,6 +585,7 @@ export async function applyPlan(db: Db, input: {
   const hired: HiredAgents = application ? await reusableHires(db, companyId, application.agents) : {};
   const templatePolicies: AppliedPlan["templatePolicies"] = [];
   let connected: ReadonlySet<string> = new Set();
+  let hostedLimit: ApplyPlanResult["hostedLimit"] = undefined;
   /**
    * Hold a just-hired templated agent until its guards exist: pause it
    * (pauseReason `template_setup`) and record its template with
@@ -757,6 +760,16 @@ export async function applyPlan(db: Db, input: {
       await setUpTemplatedAgent(agent.clientKey);
     }
 
+    // Agents on the hosted key: raise the company's hosted cap to fit their
+    // monthly budgets (raise only, up to the operator's ceiling). A failure
+    // leaves the cap as it was; the hires stay within their own budgets.
+    if (hosted && plan.agents.some((agent) => planHireUsesHostedKey(agent, hosted))) {
+      hostedLimit = (await raiseHostedCompanyCapForHires(db, companyId).catch((error) => {
+        logger.warn({ err: error, companyId }, "Could not raise the company's hosted cap for a plan's hires");
+        return null;
+      })) ?? undefined;
+    }
+
     // The new agents exist now: check the person may assign them work
     // (templated agents always get starter tasks and routines).
     const assigned = new Set([
@@ -923,6 +936,7 @@ export async function applyPlan(db: Db, input: {
         }])),
         pendingAssignments,
         ...(templates.size ? { routines } : {}),
+        ...(hostedLimit ? { hostedLimit } : {}),
       };
       if (application) {
         // Marked applied in the same transaction that created everything.

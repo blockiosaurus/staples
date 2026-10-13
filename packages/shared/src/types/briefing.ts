@@ -52,6 +52,18 @@ export interface BriefingItem {
   createdAt: string;
 }
 
+/**
+ * This calendar month's (UTC) spend for Home. `companyBudgetCents` is the
+ * person-set company budget (counts all spend), when one is active.
+ * `hosted` is the company's hosted-inference cap (counts hosted spend only),
+ * when one is active.
+ */
+export interface BriefingSpend {
+  monthSpendCents: number;
+  companyBudgetCents: number | null;
+  hosted: { capCents: number; spentCents: number } | null;
+}
+
 export interface Briefing {
   /** Capped at 20, newest first. */
   needsYou: BriefingItem[];
@@ -65,6 +77,8 @@ export interface Briefing {
   doneRecently: BriefingItem[];
   /** Uncapped totals. */
   counts: { needsYou: number; inProgress: number; doneRecently: number };
+  /** This month's spend against the company's budgets; null when the person may not read costs. */
+  spend: BriefingSpend | null;
   generatedAt: string;
 }
 

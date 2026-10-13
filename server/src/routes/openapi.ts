@@ -6136,6 +6136,11 @@ const briefingSchema = z.object({
     inProgress: z.number().int(),
     doneRecently: z.number().int(),
   }),
+  spend: z.object({
+    monthSpendCents: z.number().int(),
+    companyBudgetCents: z.number().int().nullable(),
+    hosted: z.object({ capCents: z.number().int(), spentCents: z.number() }).nullable(),
+  }).nullable(),
   generatedAt: z.string().datetime(),
 });
 registry.register("Briefing", briefingSchema);

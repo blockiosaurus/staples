@@ -91,6 +91,7 @@ function fixture(overrides: Partial<Briefing> = {}): Briefing {
     inProgress,
     doneRecently,
     counts: { needsYou: needsYou.length, inProgress: inProgress.length, doneRecently: doneRecently.length },
+    spend: { monthSpendCents: 1200, companyBudgetCents: 9000, hosted: null },
     generatedAt: NOW,
     ...overrides,
   };
@@ -182,6 +183,34 @@ describe("HomePage", () => {
     expect(row("run-1")?.querySelector('[aria-label="Running now"]')).not.toBeNull();
     expect(section("Done recently")?.textContent).toContain("Write the pricing page");
     expect(container.querySelector('textarea[aria-label="Ask the Assistant"]')).not.toBeNull();
+  });
+
+  it("shows this month's spend against the company budget, linking to Costs", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture());
+    await render();
+    const spend = container.querySelector<HTMLAnchorElement>('[data-testid="briefing-spend"]')!;
+    expect(spend.textContent).toBe("$12 of $90 this month");
+    expect(spend.getAttribute("href")).toBe("/PAP/activity/costs");
+  });
+
+  it("says no limit is set when the company has no budgets", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ spend: { monthSpendCents: 1250, companyBudgetCents: null, hosted: null } }));
+    await render();
+    const spend = container.querySelector<HTMLAnchorElement>('[data-testid="briefing-spend"]')!;
+    expect(spend.textContent).toBe("$12.50 this month · no limit set");
+    expect(spend.getAttribute("href")).toBe("/PAP/activity/costs");
+  });
+
+  it("shows the hosted limit's use when there is one", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ spend: { monthSpendCents: 1200, companyBudgetCents: null, hosted: { capCents: 5000, spentCents: 800 } } }));
+    await render();
+    expect(container.querySelector('[data-testid="briefing-spend"]')?.textContent).toBe("$12 this month · $8 of $50 hosted limit");
+  });
+
+  it("shows no spend line when the person may not read costs", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ spend: null }));
+    await render();
+    expect(container.querySelector('[data-testid="briefing-spend"]')).toBeNull();
   });
 
   it("shows a templated agent's roll-up under Done recently, linking to the agent", async () => {

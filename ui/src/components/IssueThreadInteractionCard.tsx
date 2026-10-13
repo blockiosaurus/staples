@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Agent, PlanTemplateSummary } from "@paperclipai/shared";
+import type { Agent, PlanBudgetSummary, PlanTemplateSummary } from "@paperclipai/shared";
 import { AlertTriangle, ArrowUpRight, Bot, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDashed, Clock, ExternalLink, FileText, GitBranch, ImagePlus, KeyRound, Loader2, MessageSquareQuote, MinusCircle, ShieldAlert, ThumbsUp, TriangleAlert, Wrench, X, XCircle } from "lucide-react";
 import { Link } from "@/lib/router";
 import { formatAssigneeUserLabel } from "../lib/assignees";
@@ -2042,8 +2042,9 @@ function PlanPreviewSection({ label, children }: { label: string; children: Reac
  * project, new agents, and the tasks in the order they will be created, with
  * what each waits on and who it is assigned to. The exact request follows.
  */
-function ProposedPlanPreview({ path, body, hireConnections, templateSummaries }: {
+function ProposedPlanPreview({ path, body, hireConnections, templateSummaries, budget }: {
   path: string; body: unknown; hireConnections?: Array<{ clientKey: string; provider: string | null }>; templateSummaries?: PlanTemplateSummary[];
+  budget?: PlanBudgetSummary;
 }) {
   const companyId = PLAN_PROPOSAL_PATH.exec(path)?.[1] ?? null;
   const parsed = applyPlanSchema.safeParse(body);
@@ -2126,6 +2127,9 @@ function ProposedPlanPreview({ path, body, hireConnections, templateSummaries }:
               </li>
             ))}
           </ul>
+          {budget && budget.hiresMonthlyCents > 0 ? (
+            <p data-testid="proposed-plan-budget" className="mt-1 text-muted-foreground">{planBudgetLine(budget, plan.agents.length)}</p>
+          ) : null}
         </PlanPreviewSection>
       ) : null}
       <PlanPreviewSection label={`Tasks (${plan.tasks.length})`}>
@@ -2156,6 +2160,32 @@ function planTemplateLine(summary: PlanTemplateSummary) {
   parts.push(`${summary.routineCount} routine${summary.routineCount === 1 ? "" : "s"}`);
   if (summary.budgetMonthlyCents !== null) parts.push(`${formatCents(summary.budgetMonthlyCents).replace(/\.00$/, "")}/mo`);
   return parts.join(" · ");
+}
+
+/** Whole dollars when there are no cents: "$90", "$12.50". */
+function dollars(cents: number) {
+  return formatCents(cents).replace(/\.00$/, "");
+}
+
+/**
+ * "Monthly budgets: $90 across 3 agents · fits your $200 hosted limit", or
+ * "· raises your hosted limit from $50 to $110". When the budgets need more
+ * than the operator allows, the card says the limit stops there.
+ */
+function planBudgetLine(budget: PlanBudgetSummary, agentCount: number) {
+  const base = `Monthly budgets: ${dollars(budget.hiresMonthlyCents)} across ${agentCount} agent${agentCount === 1 ? "" : "s"}`;
+  const { hostedCapCents: from, hostedCapAfterCents: to, hostedNeededCents: needed } = budget;
+  if (from === null || to === null || needed === null) return base;
+  const short = needed > to;
+  if (to > from) {
+    const raise = `raises your hosted limit from ${dollars(from)} to ${dollars(to)}`;
+    return short
+      ? `${base} · ${raise}, the most allowed, so some agents may stop before their budgets run out`
+      : `${base} · ${raise}`;
+  }
+  return short
+    ? `${base} · more than your ${dollars(from)} hosted limit, the most allowed, so some agents may stop before their budgets run out`
+    : `${base} · fits your ${dollars(from)} hosted limit`;
 }
 
 /** "Uses your Claude connection"; a pool binding has no single provider. */
@@ -2307,7 +2337,7 @@ function ProposedActionCard({
       </div>
       {action.context ? <ProposedActionContextBlock context={action.context} /> : null}
       {action.category === "brief" ? <ProposedBriefPreview path={action.path} body={action.body} /> : null}
-      {action.category === "plan" ? <ProposedPlanPreview path={action.path} body={action.body} hireConnections={action.planHireConnections} templateSummaries={action.planTemplateSummaries} /> : null}
+      {action.category === "plan" ? <ProposedPlanPreview path={action.path} body={action.body} hireConnections={action.planHireConnections} templateSummaries={action.planTemplateSummaries} budget={action.planBudget} /> : null}
       <details data-testid="proposed-action-request" className="mt-3 text-sm">
         <summary className="cursor-pointer text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">Technical details</summary>
         <div className="mt-2 space-y-2">

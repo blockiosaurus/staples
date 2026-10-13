@@ -210,6 +210,7 @@ export { ATTENTION_SOURCE_KINDS } from "./types/attention.js";
 export type {
   Briefing,
   BriefingItem,
+  BriefingSpend,
   BriefingItemKind,
   BriefingRecommendation,
   BriefingRecommendationAnswer,
@@ -1244,6 +1245,7 @@ export type {
   RequestConfirmationProposedActionPayload,
   ProposedActionContext,
   PlanTemplateSummary,
+  PlanBudgetSummary,
   RequestConfirmationProposedActionResult,
   ProposedActionMethod,
   ProposedActionCategory,

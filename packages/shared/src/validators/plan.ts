@@ -91,6 +91,12 @@ export type ApplyPlanResult = {
   routines?: Array<{ id: string; title: string; agentClientKey: string; status: string; assigneeAgentId: string | null }>;
   /** Tasks whose new agent awaits hire approval: created unassigned in the backlog, linked to the approval. */
   pendingAssignments: Array<{ taskClientKey: string; agentClientKey: string; agentId: string; approvalId: string | null }>;
+  /**
+   * Set when the plan hired agents on the hosted key and the company's hosted
+   * limit was raised for them, or could not be raised far enough
+   * (`limited`: the monthly budgets come to more than the operator's ceiling).
+   */
+  hostedLimit?: { fromCents: number; toCents: number; neededCents: number; ceilingCents: number; limited: boolean };
 };
 
 export class PlanStructureError extends Error {}

@@ -9,6 +9,7 @@ import { TaskChatInteractionCard } from "./task-chat/TaskChatInteractionCard";
 import { ThemeProvider } from "../context/ThemeContext";
 import { TooltipProvider } from "./ui/tooltip";
 import type { RequestConfirmationInteraction } from "../lib/issue-thread-interactions";
+import type { PlanBudgetSummary } from "@paperclipai/shared";
 import { pendingRequestConfirmationInteraction } from "../fixtures/issueThreadInteractionFixtures";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -450,6 +451,61 @@ describe("ProposedActionCard", () => {
       await click(button(host, "Create plan"));
       expect(accept).toHaveBeenCalledWith(expect.anything(), undefined, undefined, undefined,
         expect.objectContaining({ status: "executed", message: "Plan created: 1 agent, 1 task, 2 routines." }));
+    });
+
+    describe("monthly budget line", () => {
+      async function renderWithBudget(planBudget?: PlanBudgetSummary) {
+        fetchMock.mockImplementation(async (url: string) => (url === `/api/companies/${COMPANY}/agents` ? json(200, []) : json(404, { error: "unexpected" })));
+        const interaction = planProposal();
+        if (planBudget) interaction.payload.proposedAction!.planBudget = planBudget;
+        const host = await render({ interaction, onAcceptInteraction: vi.fn(), onRejectInteraction: vi.fn() });
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+        return host.querySelector('[data-testid="proposed-plan-budget"]')?.textContent ?? null;
+      }
+      const local = { hiresMonthlyCents: 2500, hostedCapCents: null, hostedNeededCents: null, hostedCapAfterCents: null, ceilingCents: 20000 };
+
+      it("totals the hires' budgets without a hosted limit for local hires", async () => {
+        expect(await renderWithBudget(local)).toBe("Monthly budgets: $25 across 1 agent");
+      });
+
+      it("says the budgets fit the hosted limit", async () => {
+        expect(await renderWithBudget({ ...local, hostedCapCents: 5000, hostedNeededCents: 4500, hostedCapAfterCents: 5000 }))
+          .toBe("Monthly budgets: $25 across 1 agent · fits your $50 hosted limit");
+      });
+
+      it("says the plan raises the hosted limit", async () => {
+        expect(await renderWithBudget({ ...local, hiresMonthlyCents: 9000, hostedCapCents: 5000, hostedNeededCents: 11000, hostedCapAfterCents: 11000 }))
+          .toBe("Monthly budgets: $90 across 1 agent · raises your hosted limit from $50 to $110");
+      });
+
+      it("says when the raise stops at the most allowed", async () => {
+        expect(await renderWithBudget({ ...local, hiresMonthlyCents: 30000, hostedCapCents: 5000, hostedNeededCents: 32000, hostedCapAfterCents: 20000 }))
+          .toBe("Monthly budgets: $300 across 1 agent · raises your hosted limit from $50 to $200, the most allowed, so some agents may stop before their budgets run out");
+        expect(await renderWithBudget({ ...local, hiresMonthlyCents: 30000, hostedCapCents: 25000, hostedNeededCents: 32000, hostedCapAfterCents: 25000 }))
+          .toContain("· more than your $250 hosted limit, the most allowed");
+      });
+
+      it("shows no budget line without the server's summary", async () => {
+        expect(await renderWithBudget()).toBeNull();
+      });
+    });
+
+    it("reports a hosted limit raise in the apply result", async () => {
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/claim-proposed-action")) return claimed();
+        if (url === PLAN_PATH && init?.method === "POST") {
+          return json(201, { agents: { writer: { id: "a1", status: "idle", approvalId: null } }, tasks: { first: {} }, pendingAssignments: [], brief: null, goal: null, project: null,
+            hostedLimit: { fromCents: 5000, toCents: 20000, neededCents: 32000, ceilingCents: 20000, limited: true } });
+        }
+        return json(200, []);
+      });
+      const accept = vi.fn(async () => undefined);
+      const host = await render({ interaction: planProposal(), onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
+      await click(button(host, "Create plan"));
+      expect(accept).toHaveBeenCalledWith(expect.anything(), undefined, undefined, undefined, expect.objectContaining({
+        status: "executed",
+        message: "Plan created: 1 agent, 1 task. Hosted limit raised from $50 to $200. The agents' monthly budgets come to $320, more than the hosted limit allows, so some may stop before their budgets run out.",
+      }));
     });
 
     it("shows no template line for untemplated hires", async () => {
