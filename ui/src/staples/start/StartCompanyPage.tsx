@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PaperclipLoading } from "@/components/AnimatedPaperclipIcon";
 import { useCompany } from "@/context/CompanyContext";
+import { useCanCreateCompany } from "@/hooks/useCanCreateCompany";
 import { useCloudInstance } from "@/hooks/useCloudInstance";
 import { cloudStackCreateUrl } from "@/lib/cloudLinks";
 import { navigateTopLevel } from "@/lib/browserNavigation";
@@ -25,11 +26,12 @@ export function StartCompanyPage() {
   const { companies, selectedCompany, loading, setSelectedCompanyId } = useCompany();
   const cloudInstance = useCloudInstance();
   const createStackUrl = cloudStackCreateUrl(cloudInstance?.cloudBaseUrl ?? null);
+  const { canCreate, loaded: canCreateLoaded } = useCanCreateCompany();
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (loading) return <PaperclipLoading />;
+  if (loading || (!cloudInstance && !canCreateLoaded)) return <PaperclipLoading />;
 
   const existing = selectedCompany ?? companies[0] ?? null;
   const backLink = existing ? (
@@ -57,6 +59,20 @@ export function StartCompanyPage() {
     );
   }
 
+  // Only admins create companies unless the instance turned on self-serve
+  // (PAPERCLIP_SELF_SERVE_COMPANIES). Say so instead of a form that would 403.
+  if (!canCreate) {
+    return (
+      <StartShell title={existing ? "Only an admin can create a company here" : "Ask the person who invited you for access"} footer={backLink}>
+        <p className="text-sm text-muted-foreground">
+          {existing
+            ? "Ask an admin of this Paperclip to create the company, or to add you to one."
+            : "You're signed in, but this account isn't part of a company here yet. The person who invited you can add you."}
+        </p>
+      </StartShell>
+    );
+  }
+
   const trimmed = name.trim();
 
   async function onSubmit(event: FormEvent) {
@@ -67,6 +83,8 @@ export function StartCompanyPage() {
     try {
       const company = await companiesApi.create({ name: trimmed });
       await queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      // A self-serve creator's first company changes their board access.
+      await queryClient.invalidateQueries({ queryKey: queryKeys.access.currentBoardAccess });
       setSelectedCompanyId(company.id);
       navigate(`/${company.issuePrefix}/assistant`, { replace: true });
     } catch (err) {

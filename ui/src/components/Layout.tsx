@@ -304,7 +304,9 @@ function LayoutShell({ sidebarSections }: { sidebarSections?: ReactNode }) {
     // Deployment mode and Cloud-managed state decide whether /start can work at
     // all; until health is in, "no company" could still be a managed stack.
     if (!health) return;
-    if (health?.deploymentMode === "authenticated") return;
+    // Authenticated instances only send people to /start when they can create
+    // there (self-serve). Otherwise CloudAccessGate shows the ask-for-access page.
+    if (health?.deploymentMode === "authenticated" && health.features?.selfServeCompanies !== true) return;
     // Cloud provisions the single company for a stack, and POST /companies is a
     // 403 floor there — sending the user to /start could only dead-end.
     if (health?.cloud) return;

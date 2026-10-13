@@ -23,6 +23,7 @@ import {
   inferBindModeFromHost,
   resolveRuntimeBind,
   validateConfiguredBindMode,
+  DEFAULT_SELF_SERVE_COMPANY_LIMIT,
 } from "@paperclipai/shared";
 import {
   resolveDefaultBackupDir,
@@ -97,6 +98,10 @@ export interface Config {
   heartbeatSchedulerEnabled: boolean;
   heartbeatSchedulerIntervalMs: number;
   companyDeletionEnabled: boolean;
+  /** PAPERCLIP_SELF_SERVE_COMPANIES: signed-in users may create companies (authenticated mode only). */
+  selfServeCompanies: boolean;
+  /** PAPERCLIP_SELF_SERVE_COMPANY_LIMIT: active companies a non-admin self-serve user may own. */
+  selfServeCompanyLimit: number;
   telemetryEnabled: boolean;
   announcementsEnabled: boolean;
   announcementsFeedUrl: string;
@@ -256,6 +261,8 @@ export function loadConfig(): Config {
     companyDeletionEnvRaw !== undefined
       ? companyDeletionEnvRaw === "true"
       : deploymentMode === "local_trusted";
+  const selfServeCompanies = process.env.PAPERCLIP_SELF_SERVE_COMPANIES === "true";
+  const selfServeCompanyLimit = parseSelfServeCompanyLimit(process.env.PAPERCLIP_SELF_SERVE_COMPANY_LIMIT);
   const databaseBackupEnabled =
     process.env.PAPERCLIP_DB_BACKUP_ENABLED !== undefined
       ? process.env.PAPERCLIP_DB_BACKUP_ENABLED === "true"
@@ -363,8 +370,15 @@ export function loadConfig(): Config {
     heartbeatSchedulerEnabled: process.env.HEARTBEAT_SCHEDULER_ENABLED !== "false",
     heartbeatSchedulerIntervalMs: Math.max(10000, Number(process.env.HEARTBEAT_SCHEDULER_INTERVAL_MS) || 30000),
     companyDeletionEnabled,
+    selfServeCompanies,
+    selfServeCompanyLimit,
     telemetryEnabled: fileConfig?.telemetry?.enabled ?? true,
     announcementsEnabled: process.env.PAPERCLIP_ANNOUNCEMENTS_ENABLED !== "false",
     announcementsFeedUrl: process.env.PAPERCLIP_ANNOUNCEMENTS_FEED_URL?.trim() || "https://pages.paperclip.ing/announcements/v1/current.json",
   };
+}
+
+export function parseSelfServeCompanyLimit(raw: string | undefined): number {
+  const parsed = Number.parseInt(raw?.trim() ?? "", 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_SELF_SERVE_COMPANY_LIMIT;
 }

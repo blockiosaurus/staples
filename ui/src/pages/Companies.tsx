@@ -4,6 +4,7 @@ import { useNavigate } from "@/lib/router";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCloudInstance } from "../hooks/useCloudInstance";
+import { useCanCreateCompany } from "../hooks/useCanCreateCompany";
 import { companiesApi } from "../api/companies";
 import { queryKeys } from "../lib/queryKeys";
 import { formatCents, relativeTime } from "../lib/utils";
@@ -46,6 +47,7 @@ export function Companies() {
   // A cloud stack holds exactly one company; creating another is a 403 floor
   // server-side, so the wizard entry point is hidden rather than dead-ending.
   const isCloud = Boolean(useCloudInstance());
+  const { canCreate: canCreateCompany } = useCanCreateCompany();
 
   const { data: stats } = useQuery({
     queryKey: queryKeys.companies.stats,
@@ -110,7 +112,7 @@ export function Companies() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-end">
-        {isCloud ? null : (
+        {isCloud || !canCreateCompany ? null : (
           <Button size="sm" onClick={() => navigate("/start")}>
             <Plus className="h-3.5 w-3.5 mr-1.5" />
             New Organization

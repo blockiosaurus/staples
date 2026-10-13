@@ -14,6 +14,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CloudSignIn } from "@/components/CloudSignIn";
 import { clearCloudSignInAttempt } from "@/lib/cloud-sign-in";
+import { useSignOut } from "@/hooks/useSignOut";
 
 const RECONNECT_INTERVAL_MS = 5_000;
 
@@ -48,18 +49,25 @@ export function CloudAccessError({
   );
 }
 
+/**
+ * A signed-in account with no company on an instance where only admins create
+ * companies. This is an expected state for a new teammate, not an error.
+ */
 function NoBoardAccessPage() {
+  const signOutMutation = useSignOut();
   return (
-    <div className="mx-auto max-w-xl py-10">
+    <div className="mx-auto max-w-xl px-4 py-10">
       <Card className="block p-6">
-        <h1 className="text-xl font-semibold">No organization access</h1>
+        <h1 className="text-xl font-semibold">Ask the person who invited you for access</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          This account is signed in, but it does not have an active organization membership or instance-admin access on
-          this Paperclip instance.
+          You&apos;re signed in, but this account isn&apos;t part of a company here yet. The person who invited you
+          can add you, or send you an invite link to open.
         </p>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Use an organization invite or sign in with an account that already belongs to this org.
-        </p>
+        <div className="mt-4">
+          <Button variant="outline" onClick={() => signOutMutation.mutate()} disabled={signOutMutation.isPending}>
+            {signOutMutation.isPending ? "Signing out..." : "Sign out"}
+          </Button>
+        </div>
       </Card>
     </div>
   );
@@ -133,7 +141,10 @@ export function CloudAccessGate({ allowMembershipRequest = false }: { allowMembe
     healthQuery.isLoading ||
     (isAuthenticatedMode && sessionQuery.isLoading) ||
     (isAuthenticatedMode && !isBootstrapPending && !!sessionQuery.data && boardAccessQuery.isLoading);
-  const hasBoardAccess = allowMembershipRequest || !isAuthenticatedMode
+  // Self-serve instances let a signed-in user with no company through, so the
+  // index redirect can take them to /start to name their first company.
+  const selfServeCompanies = healthQuery.data?.features?.selfServeCompanies === true;
+  const hasBoardAccess = allowMembershipRequest || !isAuthenticatedMode || selfServeCompanies
     || !!boardAccessQuery.data?.isInstanceAdmin || (boardAccessQuery.data?.companyIds.length ?? 0) > 0;
   const canAccessBoard = !isLoading && !blockingError && !isBootstrapPending
     && (!isAuthenticatedMode || !!sessionQuery.data) && hasBoardAccess;

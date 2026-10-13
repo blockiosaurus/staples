@@ -947,6 +947,8 @@ async function startServerWithDatabaseTeardown(
     chatWebhookPublicBaseUrl: config.chatWebhookPublicBaseUrl,
     authReady,
     companyDeletionEnabled: config.companyDeletionEnabled,
+    selfServeCompanies: config.selfServeCompanies,
+    selfServeCompanyLimit: config.selfServeCompanyLimit,
     announcements: { enabled: config.announcementsEnabled, feedUrl: config.announcementsFeedUrl },
     pluginMigrationDb: pluginMigrationDb as any,
     betterAuthHandler,

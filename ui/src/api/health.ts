@@ -42,6 +42,8 @@ export type HealthStatus = {
   warmStandby?: boolean;
   features?: {
     companyDeletionEnabled?: boolean;
+    /** PAPERCLIP_SELF_SERVE_COMPANIES is on and the instance is authenticated. */
+    selfServeCompanies?: boolean;
   };
   serverInfo?: ServerInfoSnapshot;
   devServer?: DevServerHealthStatus;

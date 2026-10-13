@@ -1,6 +1,7 @@
 import { and, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
+  companies,
   companyMemberships,
   companySecretBindings,
   companySecrets,
@@ -426,6 +427,27 @@ export function accessService(db: Db) {
       .from(companyMemberships)
       .where(and(eq(companyMemberships.companyId, companyId), eq(companyMemberships.id, memberId)))
       .then((rows) => rows[0] ?? null);
+  }
+
+  /**
+   * Companies a user actively owns that are not archived. Used for the
+   * self-serve company creation limit (PAPERCLIP_SELF_SERVE_COMPANY_LIMIT).
+   */
+  async function countActiveOwnedCompanies(userId: string) {
+    const rows = await db
+      .select({ value: sql<number>`count(*)` })
+      .from(companyMemberships)
+      .innerJoin(companies, eq(companies.id, companyMemberships.companyId))
+      .where(
+        and(
+          eq(companyMemberships.principalType, "user"),
+          eq(companyMemberships.principalId, userId),
+          eq(companyMemberships.membershipRole, "owner"),
+          eq(companyMemberships.status, "active"),
+          ne(companies.status, "archived"),
+        ),
+      );
+    return Number(rows[0]?.value ?? 0);
   }
 
   async function listActiveUserMemberships(companyId: string) {
@@ -1136,6 +1158,7 @@ export function accessService(db: Db) {
     ensureMembership,
     listMembers,
     listActiveUserMemberships,
+    countActiveOwnedCompanies,
     copyActiveUserMemberships,
     ensureRoleDefaultGrants,
     archiveMember,

@@ -13,7 +13,10 @@ import {
 } from "@paperclipai/shared/portability-zip";
 import {
   DEFAULT_FEEDBACK_DATA_SHARING_TERMS_VERSION,
+  DEFAULT_SELF_SERVE_COMPANY_LIMIT,
+  SELF_SERVE_COMPANY_LIMIT_ERROR_CODE,
   SETTINGS_OPERATOR_MANAGED_ERROR_CODE,
+  type DeploymentMode,
   companyArtifactsQuerySchema,
   companyPortabilityExportSchema,
   companyPortabilityImportSchema,
@@ -274,6 +277,12 @@ function wantsAsyncImport(req: Request) {
 export interface CompanyRoutesOptions {
   /** Overridable in tests; defaults to `<instance root>/import-transfers`. */
   importTransferSpoolRoot?: string;
+  /** Instance deployment mode; self-serve creation only applies to `authenticated`. */
+  deploymentMode?: DeploymentMode;
+  /** PAPERCLIP_SELF_SERVE_COMPANIES: let any signed-in user create a company. */
+  selfServeCompanies?: boolean;
+  /** PAPERCLIP_SELF_SERVE_COMPANY_LIMIT: active companies a non-admin may own. */
+  selfServeCompanyLimit?: number;
 }
 
 export function companyRoutes(db: Db, storage?: StorageService, options?: CompanyRoutesOptions) {
@@ -1207,8 +1216,29 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
     next();
   }, validate(createCompanySchema), async (req, res) => {
     assertBoard(req);
-    if (!(req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) {
-      throw forbidden("Instance admin required");
+    const isAdminCreator = req.actor.source === "local_implicit" || req.actor.isInstanceAdmin === true;
+    let selfServe = false;
+    if (!isAdminCreator) {
+      const selfServeAllowed =
+        options?.selfServeCompanies === true &&
+        options.deploymentMode === "authenticated" &&
+        req.actor.source === "session" &&
+        typeof req.actor.userId === "string" &&
+        req.actor.userId.length > 0 &&
+        typeof req.actor.sessionId === "string" &&
+        req.actor.sessionId.length > 0;
+      if (!selfServeAllowed) {
+        throw forbidden("Instance admin required");
+      }
+      const limit = options?.selfServeCompanyLimit ?? DEFAULT_SELF_SERVE_COMPANY_LIMIT;
+      const owned = await access.countActiveOwnedCompanies(req.actor.userId!);
+      if (owned >= limit) {
+        throw forbidden(
+          `You already own ${owned} active ${owned === 1 ? "company" : "companies"}, which is the limit on this instance. Archive one or ask an admin for more.`,
+          { code: SELF_SERVE_COMPANY_LIMIT_ERROR_CODE, limit, owned },
+        );
+      }
+      selfServe = true;
     }
     const ownerPrincipalId = req.actor.userId ?? "local-board";
     const company = await svc.create({
@@ -1229,7 +1259,7 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
       action: "company.created",
       entityType: "company",
       entityId: company.id,
-      details: { name: company.name },
+      details: { name: company.name, ...(selfServe ? { selfServe: true } : {}) },
     });
     if (company.budgetMonthlyCents > 0) {
       await budgets.upsertPolicy(

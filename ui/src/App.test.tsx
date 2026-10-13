@@ -158,11 +158,35 @@ describe("CloudAccessGate", () => {
     });
 
     const root = renderGate(container);
-    await waitForText(container, "No organization access");
-
-    expect(container.textContent).toContain("No organization access");
+    await waitForText(container, "Ask the person who invited you for access");
     expect(container.textContent).not.toContain("Outlet content");
 
+    unmountRoot(root);
+  });
+
+  it("lets a signed-in user with no company through when self-serve creation is on", async () => {
+    mockHealthApi.get.mockResolvedValue({
+      status: "ok",
+      deploymentMode: "authenticated",
+      deploymentExposure: "public",
+      bootstrapStatus: "ready",
+      features: { selfServeCompanies: true },
+    });
+    mockAuthApi.getSession.mockResolvedValue({
+      session: { id: "session-1", userId: "user-1" },
+      user: { id: "user-1", email: "user@example.com", name: "User", image: null },
+    });
+    mockAccessApi.getCurrentBoardAccess.mockResolvedValue({
+      userId: "user-1",
+      isInstanceAdmin: false,
+      companyIds: [],
+      source: "session",
+      keyId: null,
+    });
+
+    const root = renderGate(container);
+    await waitForText(container, "Outlet content");
+    expect(container.textContent).not.toContain("Ask the person who invited you for access");
     unmountRoot(root);
   });
 
@@ -219,7 +243,7 @@ describe("CloudAccessGate", () => {
     await waitForText(container, "Outlet content");
 
     expect(container.textContent).toContain("Outlet content");
-    expect(container.textContent).not.toContain("No organization access");
+    expect(container.textContent).not.toContain("Ask the person who invited you for access");
 
     unmountRoot(root);
   });

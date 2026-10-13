@@ -204,6 +204,36 @@ For `authenticated/public`, browser first-admin claim is intentionally disabled.
 Public deployments must use the high-entropy bootstrap invite path unless a
 future public-hosted setup design explicitly changes this policy.
 
+### Self-serve company creation (authenticated only)
+
+By default only an instance admin (or the local board in `local_trusted`) can
+create a company with `POST /api/companies`. A signed-in user with no company
+sees "Ask the person who invited you for access".
+
+Two environment variables open this up for a trial or team instance:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `PAPERCLIP_SELF_SERVE_COMPANIES` | `false` | When `true` and the mode is `authenticated`, any user with a browser session can create a company. Ignored in `local_trusted`. |
+| `PAPERCLIP_SELF_SERVE_COMPANY_LIMIT` | `3` | The most active (not archived) companies a non-admin may own before `POST /api/companies` returns `403` with code `self_serve_company_limit`. Instance admins are not limited. |
+
+With the flag on:
+
+- the creator becomes the company `owner` with the same membership, default
+  grants and built-in agents (including the Staples Assistant) an admin
+  creator gets;
+- the creation is activity-logged as `company.created` with the user as actor
+  and `details.selfServe: true`;
+- only browser sessions qualify; board API keys, agents and Cloud tenants do not;
+- company boundaries are unchanged, so a self-serve user sees and changes only
+  the companies they belong to, and joins others only through an invite;
+- `GET /api/health` reports `features.selfServeCompanies: true` to signed-in
+  callers, and the UI sends a user with no company to `/start` ("Name your
+  company") and shows "Create organization" in the company switcher.
+
+With the flag off, creation stays admin-only and the switcher hides
+"Create organization" from non-admins.
+
 ## 9. Current Code Reality (As Of 2026-02-23)
 
 - runtime values are `local_trusted | authenticated`

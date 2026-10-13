@@ -125,6 +125,7 @@ export function healthRoutes(
     deploymentExposure: DeploymentExposure;
     authReady: boolean;
     companyDeletionEnabled: boolean;
+    selfServeCompanies?: boolean;
     serverInfo?: ServerInfoSnapshot;
     databaseBackupHealth?: InspectDatabaseBackupHealthOptions;
     runtimeEnv?: CloudInstanceEnv;
@@ -233,6 +234,10 @@ export function healthRoutes(
 
   router.get("/", async (req, res) => {
     const actorType = "actor" in req ? req.actor?.type : null;
+    // Self-serve creation only applies to authenticated mode; report what the
+    // create route will actually allow.
+    const selfServeCompaniesActive =
+      opts.selfServeCompanies === true && opts.deploymentMode === "authenticated";
     const exposeFullDetails = shouldExposeFullHealthDetails(
       actorType,
       opts.deploymentMode,
@@ -443,6 +448,7 @@ export function healthRoutes(
       bootstrapInviteActive,
       features: {
         companyDeletionEnabled: opts.companyDeletionEnabled,
+        selfServeCompanies: selfServeCompaniesActive,
       },
       serverInfo,
       startupRecovery,

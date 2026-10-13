@@ -772,6 +772,8 @@ export {
   type PluginApiRouteCheckoutPolicy,
   type PluginEventType,
   type PluginBridgeErrorCode,
+  DEFAULT_SELF_SERVE_COMPANY_LIMIT,
+  SELF_SERVE_COMPANY_LIMIT_ERROR_CODE,
 } from "./constants.js";
 
 export {

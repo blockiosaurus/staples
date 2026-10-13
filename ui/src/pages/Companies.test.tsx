@@ -86,7 +86,7 @@ describe("Companies page", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    if (cloud) queryClient.setQueryData(queryKeys.health, CLOUD_HEALTH);
+    queryClient.setQueryData(queryKeys.health, cloud ? CLOUD_HEALTH : { status: "ok", deploymentMode: "local_trusted" });
     const root = createRoot(container);
     act(() => {
       root.render(

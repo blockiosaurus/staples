@@ -160,6 +160,9 @@ describe("SidebarCompanyMenu", () => {
     vi.clearAllMocks();
   });
 
+  // Self-hosted local trusted mode, where anyone may create a company.
+  const LOCAL_TRUSTED_HEALTH = { status: "ok", deploymentMode: "local_trusted" };
+
   function renderMenu(options: { cloud?: boolean; health?: unknown } = {}) {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -244,6 +247,7 @@ describe("SidebarCompanyMenu", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
+    queryClient.setQueryData(queryKeys.health, LOCAL_TRUSTED_HEALTH);
 
     act(() => {
       root.render(
@@ -493,7 +497,7 @@ describe("SidebarCompanyMenu", () => {
   });
 
   it("keeps the in-app company wizard and never leaves the app when self-hosted", async () => {
-    const { root } = renderMenu();
+    const { root } = renderMenu({ health: LOCAL_TRUSTED_HEALTH });
     await flushReact();
     await flushReact();
 
@@ -510,6 +514,24 @@ describe("SidebarCompanyMenu", () => {
 
     expect(mockNavigate).toHaveBeenCalledWith("/start");
     expect(mockNavigateTopLevel).not.toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("offers Create organization to a signed-in member when self-serve creation is on", async () => {
+    const { root } = renderMenu({
+      health: { status: "ok", deploymentMode: "authenticated", features: { selfServeCompanies: true } },
+    });
+    await flushReact();
+    await flushReact();
+
+    await openMenu("Open Acme Labs organization switcher");
+
+    const createItem = Array.from(document.body.querySelectorAll('[data-slot="dropdown-menu-item"]'))
+      .find((element) => element.textContent?.includes("Create organization"));
+    expect(createItem).toBeTruthy();
 
     act(() => {
       root.unmount();

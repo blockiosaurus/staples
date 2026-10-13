@@ -11,6 +11,7 @@ import { excludeAssistantAgents } from "../lib/assistant-agent";
 import { projectsApi } from "../api/projects";
 import { buildCompanyUserProfileMap } from "../lib/company-members";
 import { useCompany } from "../context/CompanyContext";
+import { useCanCreateCompany } from "../hooks/useCanCreateCompany";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
 import { MetricCard } from "../components/MetricCard";
@@ -69,6 +70,7 @@ export function derivePausedAgentBanner(allAgents: Agent[] | undefined): PausedA
 export function Dashboard() {
   const { selectedCompanyId, companies } = useCompany();
   const navigate = useNavigate();
+  const { canCreate: canCreateCompany, loaded: companyCreationKnown } = useCanCreateCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const [animatedActivityIds, setAnimatedActivityIds] = useState<Set<string>>(new Set());
   const seenActivityIdsRef = useRef<Set<string>>(new Set());
@@ -246,6 +248,14 @@ export function Dashboard() {
 
   if (!selectedCompanyId) {
     if (companies.length === 0) {
+      if (companyCreationKnown && !canCreateCompany) {
+        return (
+          <EmptyState
+            icon={LayoutDashboard}
+            message="Ask the person who invited you for access to their organization."
+          />
+        );
+      }
       return (
         <EmptyState
           icon={LayoutDashboard}

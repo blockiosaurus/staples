@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   navigateTopLevel: vi.fn(),
   company: { companies: [] as unknown[], selectedCompany: null as unknown, loading: false },
   cloud: null as null | { cloudBaseUrl: string | null },
+  canCreate: { canCreate: true, loaded: true },
 }));
 
 vi.mock("@/api/companies", () => ({ companiesApi: { create: mocks.create } }));
@@ -29,6 +30,7 @@ vi.mock("@/context/CompanyContext", () => ({
   useCompany: () => ({ ...mocks.company, setSelectedCompanyId: mocks.setSelectedCompanyId }),
 }));
 vi.mock("@/hooks/useCloudInstance", () => ({ useCloudInstance: () => mocks.cloud }));
+vi.mock("@/hooks/useCanCreateCompany", () => ({ useCanCreateCompany: () => mocks.canCreate }));
 
 const ACME = { id: "c1", issuePrefix: "ACM", name: "Acme" };
 
@@ -46,6 +48,7 @@ describe("StartCompanyPage", () => {
     mocks.navigateTopLevel.mockReset();
     mocks.company = { companies: [], selectedCompany: null, loading: false };
     mocks.cloud = null;
+    mocks.canCreate = { canCreate: true, loaded: true };
   });
 
   afterEach(() => {
@@ -154,6 +157,30 @@ describe("StartCompanyPage", () => {
     expect(container.querySelector("input")).toBeNull();
     expect(container.querySelector("button")).toBeNull();
     expect(container.textContent).toContain("Paperclip Cloud");
+  });
+
+  it("tells a signed-in user with no company to ask for access when they cannot create", async () => {
+    mocks.canCreate = { canCreate: false, loaded: true };
+    await render();
+    expect(container.querySelector("input")).toBeNull();
+    expect(container.textContent).toContain("Ask the person who invited you for access");
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it("explains admin-only creation to a member who already has a company", async () => {
+    mocks.canCreate = { canCreate: false, loaded: true };
+    mocks.company = { companies: [ACME], selectedCompany: ACME, loading: false };
+    await render();
+    expect(container.querySelector("input")).toBeNull();
+    expect(container.textContent).toContain("Only an admin can create a company here");
+    expect(container.querySelector("[data-testid=back-link]")?.getAttribute("href")).toBe("/ACM/assistant");
+  });
+
+  it("waits for the creation policy before showing the form", async () => {
+    mocks.canCreate = { canCreate: false, loaded: false };
+    await render();
+    expect(container.querySelector("input")).toBeNull();
+    expect(container.textContent).not.toContain("Ask the person who invited you");
   });
 
   it("renders nothing interactive while companies load", async () => {

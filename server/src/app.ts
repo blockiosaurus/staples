@@ -520,6 +520,8 @@ export async function createApp(
     chatWebhookPublicBaseUrl?: string;
     authReady: boolean;
     companyDeletionEnabled: boolean;
+    selfServeCompanies?: boolean;
+    selfServeCompanyLimit?: number;
     announcements?: { enabled: boolean; feedUrl: string };
     instanceId?: string;
     hostVersion?: string;
@@ -552,6 +554,7 @@ export async function createApp(
     deploymentExposure: opts.deploymentExposure,
     authReady: opts.authReady,
     companyDeletionEnabled: opts.companyDeletionEnabled,
+    selfServeCompanies: opts.selfServeCompanies ?? false,
     databaseBackupHealth: opts.databaseBackupHealth,
     isWarmStandby,
   });
@@ -727,7 +730,11 @@ export async function createApp(
   api.use("/health", health);
   api.use(openApiRoutes());
   api.use("/cloud", cloudRoutes());
-  api.use("/companies", companyRoutes(db, opts.storageService));
+  api.use("/companies", companyRoutes(db, opts.storageService, {
+    deploymentMode: opts.deploymentMode,
+    selfServeCompanies: opts.selfServeCompanies ?? false,
+    selfServeCompanyLimit: opts.selfServeCompanyLimit,
+  }));
   api.use(llmRoutes(db));
   api.use(folderRoutes(db));
   api.use(companySkillRoutes(db));

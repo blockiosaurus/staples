@@ -529,6 +529,51 @@ describe("GET /health", () => {
     });
   });
 
+  it("reports features.selfServeCompanies only when the flag is on in authenticated mode", async () => {
+    const devServerStatus = await import("../dev-server-status.js");
+    vi.spyOn(devServerStatus, "readPersistedDevServerStatus").mockReturnValue(undefined);
+    const { healthRoutes } = await import("../routes/health.js");
+    const db = {
+      execute: vi.fn().mockResolvedValue([{ "?column?": 1 }]),
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([{ count: 1 }]),
+        })),
+      })),
+    } as unknown as Db;
+    const build = (
+      deploymentMode: "authenticated" | "local_trusted",
+      selfServeCompanies: boolean | undefined,
+    ) => {
+      const app = express();
+      app.use((req, _res, next) => {
+        (req as any).actor = { type: "board", userId: "user-1", source: "session" };
+        next();
+      });
+      app.use(
+        "/health",
+        healthRoutes(db, {
+          deploymentMode,
+          deploymentExposure: "public",
+          authReady: true,
+          companyDeletionEnabled: false,
+          selfServeCompanies,
+          serverInfo: testServerInfo,
+        }),
+      );
+      return app;
+    };
+
+    const on = await request(build("authenticated", true)).get("/health");
+    expect(on.body.features).toMatchObject({ selfServeCompanies: true });
+    const off = await request(build("authenticated", false)).get("/health");
+    expect(off.body.features).toMatchObject({ selfServeCompanies: false });
+    const unset = await request(build("authenticated", undefined)).get("/health");
+    expect(unset.body.features).toMatchObject({ selfServeCompanies: false });
+    const localTrusted = await request(build("local_trusted", true)).get("/health");
+    expect(localTrusted.body.features).toMatchObject({ selfServeCompanies: false });
+  });
+
   it("reports bootstrap_pending in authenticated mode when no instance admin exists", async () => {
     const { healthRoutes } = await import("../routes/health.js");
     const db = {
