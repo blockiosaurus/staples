@@ -2,7 +2,7 @@
 
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Briefing, BriefingItem } from "@paperclipai/shared";
 import { BreadcrumbProvider, useBreadcrumbs } from "@/context/BreadcrumbContext";
@@ -18,7 +18,16 @@ const mocks = vi.hoisted(() => ({
   respond: vi.fn(),
   accept: vi.fn(),
   askAssistant: vi.fn(),
+  retryFailedRun: vi.fn(),
+  resume: vi.fn(),
+  clearError: vi.fn(),
+  resolveIncident: vi.fn(),
 }));
+
+vi.mock("@/api/agents", () => ({
+  agentsApi: { retryFailedRun: mocks.retryFailedRun, resume: mocks.resume, clearError: mocks.clearError },
+}));
+vi.mock("@/api/budgets", () => ({ budgetsApi: { resolveIncident: mocks.resolveIncident } }));
 
 vi.mock("@/api/briefing", () => ({ briefingApi: { get: mocks.getBriefing } }));
 vi.mock("@/api/issues", () => ({
@@ -244,8 +253,202 @@ describe("HomePage", () => {
       "Nothing needs you · Nothing in progress",
     );
     expect(section("Needs you")?.textContent).toContain("Nothing needs you right now.");
-    expect(section("In progress")?.textContent).toContain("Nothing running.");
+    expect(section("In progress")?.textContent).toContain("Nothing in progress.");
     expect(section("Done recently")).toBeNull();
+  });
+
+  it("keeps refreshing while the document is hidden, so Home never sits on a stale empty state", async () => {
+    // Hidden documents (a background tab, an embedded browser pane) close the
+    // live-updates socket and pause plain intervals; Home must still poll.
+    mocks.getBriefing.mockResolvedValue(fixture({ inProgress: [] }));
+    focusManager.setFocused(false);
+    // Only the poll interval is faked; React and the query client keep real timers.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      await render();
+      expect(mocks.getBriefing).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('[data-testid="briefing-summary"]')?.textContent).toContain("Nothing in progress");
+
+      mocks.getBriefing.mockResolvedValue(fixture());
+      await act(async () => { vi.advanceTimersByTime(BRIEFING_REFETCH_INTERVAL_MS); });
+      await settle();
+      expect(mocks.getBriefing).toHaveBeenCalledTimes(2);
+      expect(container.querySelector('[data-testid="briefing-summary"]')?.textContent).toBe("3 things need you · 2 in progress");
+      expect(section("In progress")?.querySelectorAll('[data-testid="briefing-compact-row"]')).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+      focusManager.setFocused(undefined);
+    }
+  });
+
+  it("labels up-next and waiting work in progress and counts it in the header", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({
+      needsYou: [],
+      inProgress: [
+        item({ kind: "queued_task", id: "issue-40", title: "Write the launch post", subtitle: "PAP-40 · Riley", label: "Up next" }),
+        item({ kind: "waiting_task", id: "issue-41", title: "Publish the site", subtitle: "PAP-41", label: "Waiting on Pick the domain" }),
+      ],
+    }));
+    await render();
+    expect(container.querySelector('[data-testid="briefing-summary"]')?.textContent).toBe("Nothing needs you · 2 in progress");
+    expect(row("issue-40")?.textContent).toContain("Up next · PAP-40 · Riley");
+    expect(row("issue-41")?.textContent).toContain("Waiting on Pick the domain · PAP-41");
+    expect(section("In progress")?.textContent).not.toContain("Nothing in progress");
+  });
+
+  const FAILED_RUN = item({
+    kind: "failed_run",
+    id: "run-9",
+    title: "Riley couldn't finish its work",
+    href: "/agents/agent-1/runs/run-9",
+    reason: "Riley took too long and was stopped.",
+    action: { kind: "retry_run", label: "Try again", agentId: "agent-1", runId: "run-9" },
+  });
+  const PAUSED_RUN = item({
+    kind: "failed_run",
+    id: "run-10",
+    title: "Sam couldn't finish its work",
+    href: "/agents/agent-2/runs/run-10",
+    reason: "Sam is paused, so it can't work.",
+    action: { kind: "resume_agent", label: "Resume", agentId: "agent-2" },
+  });
+  const AGENT_ERROR = item({
+    kind: "agent_error",
+    id: "agent-3",
+    title: "Broken Agent",
+    href: "/agents/agent-3",
+    reason: "Broken Agent hit an error and stopped.",
+    action: { kind: "clear_agent_error", label: "Dismiss error", agentId: "agent-3" },
+  });
+  const HOSTED_LIMIT = item({
+    kind: "budget_incident",
+    id: "incident-1",
+    title: "Riley reached its monthly hosted limit",
+    href: "/costs",
+    reason: "Riley spent $50.10 of its $50 monthly hosted limit. Its hosted runs are on hold until you raise it.",
+    action: {
+      kind: "raise_budget",
+      label: "Raise limit",
+      budget: {
+        incidentId: "incident-1", policyId: "policy-1", metric: "hosted_billed_cents", scopeType: "agent",
+        scopeId: "agent-1", limitCents: 5000, observedCents: 5010, suggestedCents: 10000,
+      },
+    },
+  });
+  const NOT_CONNECTED = item({
+    kind: "failed_run",
+    id: "run-11",
+    title: "Riley couldn't finish its work",
+    href: "/agents/agent-1/runs/run-11",
+    reason: "A service Riley uses isn't connected. Reconnect it, then try again.",
+    action: { kind: "open_settings", label: "Open settings", href: "/agents/agent-1/tools" },
+  });
+  const UNKNOWN = item({
+    kind: "failed_run",
+    id: "run-12",
+    title: "Riley couldn't finish its work",
+    href: "/agents/agent-1/runs/run-12",
+    reason: "Riley stopped with an error it couldn't recover from.",
+  });
+
+  it("shows each fix's plain reason and runs the matching API", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [FAILED_RUN, PAUSED_RUN, AGENT_ERROR] }));
+    mocks.retryFailedRun.mockResolvedValue({ runId: "run-13", issueId: null });
+    mocks.resume.mockResolvedValue({});
+    mocks.clearError.mockResolvedValue({});
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    await render();
+
+    expect(row("run-9")?.querySelector('[data-testid="briefing-reason"]')?.textContent).toBe("Riley took too long and was stopped.");
+    await click(buttonIn(row("run-9"), "Try again"));
+    expect(mocks.retryFailedRun).toHaveBeenCalledWith("agent-1", "run-9", "company-1");
+    expect(row("run-9")).toBeNull();
+
+    await click(buttonIn(row("run-10"), "Resume"));
+    expect(mocks.resume).toHaveBeenCalledWith("agent-2", "company-1");
+    expect(row("run-10")).toBeNull();
+
+    await click(buttonIn(row("agent-3"), "Dismiss error"));
+    expect(mocks.clearError).toHaveBeenCalledWith("agent-3", "company-1");
+    expect(row("agent-3")).toBeNull();
+
+    const keys = invalidate.mock.calls.map(([filters]) => JSON.stringify(filters?.queryKey));
+    expect(keys).toEqual(expect.arrayContaining([
+      JSON.stringify(queryKeys.briefing("company-1")),
+      JSON.stringify(queryKeys.attention("company-1")),
+      JSON.stringify(queryKeys.agents.list("company-1")),
+    ]));
+  });
+
+  it("raises a hosted limit from an inline form defaulting to twice the limit", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [HOSTED_LIMIT] }));
+    mocks.resolveIncident.mockResolvedValue({});
+    await render();
+
+    await click(buttonIn(row("incident-1"), "Raise limit"));
+    const form = row("incident-1")!.querySelector<HTMLFormElement>('form[aria-label="Raise limit"]')!;
+    expect(form).not.toBeNull();
+    const input = form.querySelector<HTMLInputElement>('input[aria-label="New limit in dollars"]')!;
+    expect(input.value).toBe("100");
+    expect(form.textContent).toContain("New monthly hosted limit (USD)");
+    // Cancel on the left, the primary action on the right, in one row.
+    const footer = buttonIn(form, "Cancel")!.parentElement!;
+    expect([...footer.querySelectorAll("button")].map((button) => button.textContent?.trim())).toEqual(["Cancel", "Raise limit"]);
+    expect(footer.className).toContain("justify-between");
+
+    // At or under what's spent: refused inline.
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "50");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(form.querySelector('[role="alert"]')?.textContent).toContain("more than the $50.10 already spent");
+    expect((buttonIn(form, "Raise limit") as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "120");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(buttonIn(form, "Raise limit"));
+    expect(mocks.resolveIncident).toHaveBeenCalledWith("company-1", "incident-1", {
+      action: "raise_budget_and_resume",
+      amount: 12000,
+    });
+    expect(row("incident-1")).toBeNull();
+  });
+
+  it("closes the raise form on Cancel without calling the API", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [HOSTED_LIMIT] }));
+    await render();
+    await click(buttonIn(row("incident-1"), "Raise limit"));
+    await click(buttonIn(row("incident-1"), "Cancel"));
+    expect(row("incident-1")?.querySelector("form")).toBeNull();
+    expect(mocks.resolveIncident).not.toHaveBeenCalled();
+  });
+
+  it("keeps the row and points to the Assistant when a fix fails", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [FAILED_RUN] }));
+    mocks.retryFailedRun.mockRejectedValue(new Error("The previous retry has already stopped."));
+    await render();
+    await click(buttonIn(row("run-9"), "Try again"));
+    expect(row("run-9")).not.toBeNull();
+    expect(row("run-9")?.querySelector('[role="alert"]')?.textContent).toBe(
+      "Couldn't try again: The previous retry has already stopped. Ask the Assistant for help.",
+    );
+    await click(buttonIn(row("run-9"), "Ask Assistant"));
+    expect(mocks.askAssistant).toHaveBeenCalledWith({
+      text: "Help me fix this: Riley couldn't finish its work. Riley took too long and was stopped.",
+      context: { label: "Riley couldn't finish its work", href: "/PAP/agents/agent-1/runs/run-9" },
+    });
+  });
+
+  it("links settings fixes and leaves unknown failures to the Assistant", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [NOT_CONNECTED, UNKNOWN] }));
+    await render();
+    const settings = [...(row("run-11")?.querySelectorAll("a") ?? [])].find((link) => link.textContent === "Open settings");
+    expect(settings?.getAttribute("href")).toBe("/PAP/agents/agent-1/tools");
+    expect(row("run-12")?.textContent).toContain("Riley stopped with an error it couldn't recover from.");
+    const buttons = [...(row("run-12")?.querySelectorAll("button") ?? [])].map((button) => button.textContent?.trim());
+    expect(buttons).toEqual(["Ask Assistant"]);
   });
 
   it("accepts a question's recommendation with its answers and removes the row", async () => {

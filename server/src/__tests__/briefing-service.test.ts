@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import express from "express";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -14,6 +15,7 @@ import {
   heartbeatRunEvents,
   heartbeatRuns,
   inboxDismissals,
+  issueRelations,
   issueThreadInteractions,
   issues,
   toolApplications,
@@ -37,7 +39,64 @@ import {
   requestConfirmationRecommendation,
 } from "../services/briefing.js";
 
+import {
+  budgetIncidentCopy,
+  failureCause,
+  failureReason,
+  suggestedBudgetCents,
+} from "../services/briefing-reasons.js";
+import { budgetService } from "../services/budgets.js";
+
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+describe("briefing failure reasons", () => {
+  it.each([
+    [{ errorCode: "claude_managed_out_of_credit", error: "Needs attention: the Anthropic account is out of credit." }, "out_of_credit"],
+    [{ error: "This agent reached its monthly hosted inference limit (Claude hosted on the Staples server's key)." }, "hosted_limit"],
+    [{ error: "This company reached its monthly spending cap for hosted inference (Claude hosted on the Staples server's key)." }, "hosted_limit"],
+    [{ error: "Available budget is reserved by unfinished runs" }, "budget_reached"],
+    [{ errorCode: "binding_missing", error: "Tool binding missing" }, "not_connected"],
+    [{ errorCode: "claude_managed_api_key_missing" }, "not_connected"],
+    [{ error: "Agent is paused and cannot start new work" }, "agent_paused"],
+    [{ errorCode: "adapter_failed", agentPaused: true }, "agent_paused"],
+    [{ errorCode: "timeout" }, "timed_out"],
+    [{ runStatus: "timed_out" }, "timed_out"],
+    [{ errorCode: "adapter_failed", error: "Error: ENOENT at /tmp/x.js:12" }, "unknown"],
+  ] as const)("classifies %o as %s", (input, cause) => {
+    expect(failureCause(input)).toBe(cause);
+  });
+
+  it("writes plain, short sentences without internal terms", () => {
+    for (const cause of ["out_of_credit", "hosted_limit", "budget_reached", "not_connected", "agent_paused", "timed_out", "unknown"] as const) {
+      for (const kind of ["run", "agent"] as const) {
+        const reason = failureReason(cause, "Riley", kind);
+        expect(reason.length).toBeLessThanOrEqual(140);
+        expect(reason).not.toMatch(/error_?code|adapter|heartbeat|errorFamily|run failed|_/i);
+      }
+    }
+    expect(failureReason("hosted_limit", "Riley", "run")).toBe("Riley reached its monthly hosted limit, so it stopped.");
+    expect(failureReason("unknown", "x".repeat(200), "run").length).toBe(140);
+  });
+
+  it("suggests twice the limit, always above what was spent", () => {
+    expect(suggestedBudgetCents(5000, 5100)).toBe(10000);
+    expect(suggestedBudgetCents(5000, 12000)).toBe(12100);
+    expect(suggestedBudgetCents(0, 0)).toBe(100);
+  });
+
+  it("words hosted and spending budget incidents plainly", () => {
+    const base = {
+      incidentId: "i1", policyId: "p1", scopeType: "agent" as const, scopeId: "a1", scopeName: "Riley",
+      thresholdType: "hard", amountLimit: 5000, amountObserved: 5012, observedPercent: 100,
+    };
+    expect(budgetIncidentCopy({ ...base, metric: "hosted_billed_cents" }, "Acme")).toEqual({
+      title: "Riley reached its monthly hosted limit",
+      reason: "Riley spent $50.12 of its $50 monthly hosted limit. Its hosted runs are on hold until you raise it.",
+    });
+    expect(budgetIncidentCopy({ ...base, metric: "billed_cents", scopeType: "company", scopeId: "c1", thresholdType: "soft", observedPercent: 87.4 }, "Acme"))
+      .toEqual({ title: "Acme is close to its budget", reason: "Your company has used 87% of its $50 budget." });
+  });
+});
 
 describe("briefing recommendation derivation", () => {
   it("recommends the single recommended option of a lone single-select question", () => {
@@ -949,6 +1008,190 @@ describeEmbeddedPostgres("briefing service", () => {
       const hidden = await briefingService(db).get({ companyId: other.companyId, userId: "outsider", actor: outsider });
       expect(hidden.doneRecently.filter((item) => item.kind === "agent_actions")).toEqual([]);
     });
+  });
+
+  function feedItem(sourceKind: AttentionSourceKind, subject: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+    return {
+      id: `${sourceKind}:${subject.id}`,
+      sourceKind,
+      subject,
+      whyNow: "why",
+      relatedIssue: null,
+      originAgentName: null,
+      createdAt: "2026-10-01T00:00:00.000Z",
+      ...extra,
+    } as unknown as AttentionItem;
+  }
+
+  it("gives each Needs you failure a plain reason and the fix for its cause", async () => {
+    const { companyId, workerId, errorAgentId } = await seedCompany("BRF");
+    const pausedId = randomUUID();
+    await db.insert(agents).values({
+      id: pausedId, companyId, name: "Sam", role: "engineer", status: "paused", pauseReason: "manual",
+      adapterType: "codex_local", adapterConfig: {}, runtimeConfig: {}, permissions: {},
+    });
+    const run = (id: string, agentId: string, agentName: string, metadata: Record<string, unknown>, status = "failed") =>
+      feedItem("failed_run", {
+        kind: "run", id, companyId, title: `${agentName} run ${status}`, identifier: null, status,
+        href: `/BRF/agents/${agentId}/runs/${id}`, metadata: { agentId, agentName, issueId: null, ...metadata },
+      });
+    const hostedIncident = feedItem("budget_alert", {
+      kind: "budget_incident", id: "incident-hosted", companyId, title: "Riley budget hard stop", identifier: null, status: "open",
+      href: "/BRF/costs",
+      metadata: {
+        policyId: "policy-hosted", scopeType: "agent", scopeId: workerId, scopeName: "Riley", metric: "hosted_billed_cents",
+        thresholdType: "hard", amountLimit: 5000, amountObserved: 5010, observedPercent: 100,
+      },
+    });
+    const feed = {
+      items: [
+        run("run-credit", workerId, "Riley", { errorCode: "claude_managed_out_of_credit", error: "Needs attention: the Anthropic account is out of credit." }),
+        run("run-hosted", workerId, "Riley", { error: "This agent reached its monthly hosted inference limit (Claude hosted on the Staples server's key)." }),
+        run("run-budget", workerId, "Riley", { error: "Available budget is reserved by unfinished runs" }),
+        run("run-connect", workerId, "Riley", { errorCode: "binding_missing", error: "binding missing" }),
+        run("run-paused", pausedId, "Sam", { errorCode: "adapter_failed", error: "stopped" }),
+        run("run-timeout", workerId, "Riley", { errorCode: "timeout" }, "timed_out"),
+        run("run-unknown", workerId, "Riley", { errorCode: "adapter_failed", error: "TypeError: x is undefined at y.js:1" }),
+        feedItem("agent_error_alert", {
+          kind: "agent", id: errorAgentId, companyId, title: "Broken Agent", identifier: null, status: "error",
+          href: `/BRF/agents/${errorAgentId}`, metadata: { role: "engineer", errorReason: "adapter config missing" },
+        }),
+        hostedIncident,
+        feedItem("blocker_attention", {
+          kind: "issue", id: randomUUID(), companyId, title: "BRF-9", identifier: "BRF-9", status: "blocked",
+          href: "/BRF/issues/BRF-9", metadata: {},
+        }, { whyNow: "Blocks 2 tasks and needs human attention." }),
+      ],
+    } as unknown as AttentionFeed;
+
+    const briefing = await briefingService(db, { attention: { list: async () => feed } })
+      .get({ companyId, userId: "board-user", actor: boardActor(companyId) });
+    const byId = new Map(briefing.needsYou.map((item) => [item.id, item]));
+
+    expect(byId.get("run-credit")).toMatchObject({
+      title: "Riley couldn't finish its work",
+      reason: "The AI account is out of credit. Add credit to the Anthropic account, then try again.",
+      action: { kind: "retry_run", label: "Try again", agentId: workerId, runId: "run-credit" },
+    });
+    const raise = {
+      kind: "raise_budget",
+      label: "Raise limit",
+      budget: {
+        incidentId: "incident-hosted", policyId: "policy-hosted", metric: "hosted_billed_cents", scopeType: "agent",
+        scopeId: workerId, limitCents: 5000, observedCents: 5010, suggestedCents: 10000,
+      },
+    };
+    expect(byId.get("run-hosted")).toMatchObject({
+      reason: "Riley reached its monthly hosted limit, so it stopped.",
+      action: raise,
+    });
+    // No open spending incident to raise: link to the limits instead.
+    expect(byId.get("run-budget")).toMatchObject({
+      reason: "Riley reached its spending limit, so it stopped.",
+      action: { kind: "open_settings", label: "Review limits", href: "/activity/costs" },
+    });
+    expect(byId.get("run-connect")).toMatchObject({
+      reason: "A service Riley uses isn't connected. Reconnect it, then try again.",
+      action: { kind: "open_settings", label: "Open settings", href: `/agents/${workerId}/tools` },
+    });
+    expect(byId.get("run-paused")).toMatchObject({
+      reason: "Sam is paused, so it can't work.",
+      action: { kind: "resume_agent", label: "Resume", agentId: pausedId },
+    });
+    expect(byId.get("run-timeout")).toMatchObject({
+      reason: "Riley took too long and was stopped.",
+      action: { kind: "retry_run", runId: "run-timeout" },
+    });
+    expect(byId.get("run-unknown")).toMatchObject({ reason: "Riley stopped with an error it couldn't recover from." });
+    expect(byId.get("run-unknown")?.action).toBeUndefined();
+    expect(JSON.stringify(byId.get("run-unknown"))).not.toContain("TypeError");
+    expect(byId.get(errorAgentId)).toMatchObject({
+      kind: "agent_error",
+      reason: "Broken Agent hit an error and stopped.",
+      action: { kind: "clear_agent_error", label: "Dismiss error", agentId: errorAgentId },
+    });
+    expect(byId.get("incident-hosted")).toMatchObject({
+      kind: "budget_incident",
+      title: "Riley reached its monthly hosted limit",
+      reason: "Riley spent $50.10 of its $50 monthly hosted limit. Its hosted runs are on hold until you raise it.",
+      action: raise,
+    });
+    expect(briefing.needsYou.find((item) => item.kind === "blocked_task"))
+      .toMatchObject({ reason: "Blocks 2 tasks and needs human attention." });
+    for (const item of briefing.needsYou) expect((item.reason ?? "").length).toBeLessThanOrEqual(140);
+  });
+
+  it("targets a real hosted incident's policy and metric, and resolving it raises that hosted limit", async () => {
+    const { companyId, workerId } = await seedCompany("BRH");
+    const policyId = randomUUID();
+    await db.insert(budgetPolicies).values({
+      id: policyId, companyId, scopeType: "agent", scopeId: workerId, metric: "hosted_billed_cents",
+      windowKind: "calendar_month_utc", amount: 5000,
+    });
+    const now = new Date();
+    const windowStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const windowEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const incidentId = randomUUID();
+    await db.insert(budgetIncidents).values({
+      id: incidentId, companyId, policyId, scopeType: "agent", scopeId: workerId, metric: "hosted_billed_cents",
+      windowKind: "calendar_month_utc", windowStart, windowEnd, thresholdType: "hard", amountLimit: 5000,
+      amountObserved: 5000, status: "open",
+    });
+
+    const briefing = await briefingService(db).get({ companyId, userId: "board-user", actor: boardActor(companyId) });
+    const item = briefing.needsYou.find((entry) => entry.id === incidentId);
+    expect(item).toMatchObject({
+      kind: "budget_incident",
+      title: "Riley reached its monthly hosted limit",
+      action: { kind: "raise_budget", budget: { policyId, metric: "hosted_billed_cents", scopeType: "agent", scopeId: workerId, limitCents: 5000, suggestedCents: 10000 } },
+    });
+
+    await budgetService(db).resolveIncident(companyId, incidentId, {
+      action: "raise_budget_and_resume", amount: item!.action!.budget!.suggestedCents,
+    }, "board-user");
+    const [policy] = await db.select().from(budgetPolicies).where(eq(budgetPolicies.id, policyId));
+    expect(policy).toMatchObject({ amount: 10000, metric: "hosted_billed_cents" });
+    const [incident] = await db.select().from(budgetIncidents).where(eq(budgetIncidents.id, incidentId));
+    expect(incident?.status).toBe("resolved");
+    const after = await briefingService(db).get({ companyId, userId: "board-user", actor: boardActor(companyId) });
+    expect(after.needsYou.some((entry) => entry.id === incidentId)).toBe(false);
+  });
+
+  it("lists up-next and waiting tasks in progress, once each, and skips blocked tasks that need the person", async () => {
+    const { companyId, workerId } = await seedCompany("BRQ");
+    const liveTodoId = await insertIssue({ companyId, identifier: "BRQ-1", title: "Queued with a live run", status: "todo", assigneeAgentId: workerId });
+    const upNextId = await insertIssue({ companyId, identifier: "BRQ-2", title: "Write the launch post", status: "todo", assigneeAgentId: workerId });
+    await insertIssue({ companyId, identifier: "BRQ-3", title: "Nobody owns this", status: "todo" });
+    const blockerId = await insertIssue({ companyId, identifier: "BRQ-4", title: "Pick the domain", status: "in_progress", assigneeAgentId: workerId });
+    const doneBlockerId = await insertIssue({ companyId, identifier: "BRQ-5", title: "Old finished blocker", status: "done", completedAt: new Date() });
+    const waitingId = await insertIssue({ companyId, identifier: "BRQ-6", title: "Publish the site", status: "blocked", assigneeAgentId: workerId });
+    const needsPersonId = await insertIssue({ companyId, identifier: "BRQ-7", title: "Needs a decision", status: "blocked", assigneeAgentId: workerId });
+    const noBlockerId = await insertIssue({ companyId, identifier: "BRQ-8", title: "Blocked without a link", status: "blocked" });
+    await db.insert(issueRelations).values([
+      { companyId, issueId: blockerId, relatedIssueId: waitingId, type: "blocks" },
+      { companyId, issueId: doneBlockerId, relatedIssueId: noBlockerId, type: "blocks" },
+    ]);
+    await db.insert(heartbeatRuns).values({ id: randomUUID(), companyId, agentId: workerId, status: "queued", scopeKind: "issue", issueId: liveTodoId });
+    const feed = {
+      items: [feedItem("blocker_attention", {
+        kind: "issue", id: needsPersonId, companyId, title: "Needs a decision", identifier: "BRQ-7", status: "blocked",
+        href: "/BRQ/issues/BRQ-7", metadata: {},
+      })],
+    } as unknown as AttentionFeed;
+
+    const briefing = await briefingService(db, { attention: { list: async () => feed } })
+      .get({ companyId, userId: "board-user", actor: boardActor(companyId) });
+
+    expect(briefing.inProgress.map((item) => item.kind))
+      .toEqual(["live_run", "active_task", "queued_task", "waiting_task", "waiting_task"]);
+    expect(briefing.inProgress.map((item) => item.issueId).slice(0, 3)).toEqual([liveTodoId, blockerId, upNextId]);
+    expect(new Set(briefing.inProgress.slice(3).map((item) => item.issueId))).toEqual(new Set([waitingId, noBlockerId]));
+    expect(briefing.inProgress.find((item) => item.issueId === upNextId)).toMatchObject({ label: "Up next", subtitle: "BRQ-2 · Riley" });
+    expect(briefing.inProgress.find((item) => item.issueId === waitingId)).toMatchObject({ label: "Waiting on Pick the domain" });
+    expect(briefing.inProgress.find((item) => item.issueId === noBlockerId)).toMatchObject({ label: "Waiting" });
+    expect(briefing.inProgress.some((item) => item.issueId === needsPersonId)).toBe(false);
+    expect(briefing.needsYou.map((item) => item.issueId)).toEqual([needsPersonId]);
+    expect(briefing.counts.inProgress).toBe(briefing.inProgress.length);
   });
 
   it("serves the briefing to board users and rejects agents", async () => {

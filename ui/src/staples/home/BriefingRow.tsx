@@ -1,5 +1,8 @@
+import { useState, type FormEvent } from "react";
 import type { BriefingItem, BriefingItemKind } from "@paperclipai/shared";
 import {
+  Clock,
+  Hourglass,
   CircleCheck,
   CircleCheckBig,
   CircleDot,
@@ -17,8 +20,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Link } from "@/lib/router";
-import { relativeTime } from "@/lib/utils";
+import { formatDollars, relativeTime } from "@/lib/utils";
 
 const KIND_ICONS: Record<BriefingItemKind, LucideIcon> = {
   approval: ShieldCheck,
@@ -31,6 +35,8 @@ const KIND_ICONS: Record<BriefingItemKind, LucideIcon> = {
   agent_error: TriangleAlert,
   active_task: CircleDot,
   live_run: Play,
+  queued_task: Clock,
+  waiting_task: Hourglass,
   done_task: CircleCheck,
   agent_actions: Zap,
 };
@@ -46,9 +52,13 @@ const KIND_LABELS: Record<BriefingItemKind, string> = {
   agent_error: "Agent error",
   active_task: "Task in progress",
   live_run: "Running now",
+  queued_task: "Up next",
+  waiting_task: "Waiting",
   done_task: "Done",
   agent_actions: "Agent actions",
 };
+
+const FAILURE_KINDS = new Set<BriefingItemKind>(["failed_run", "agent_error", "budget_incident"]);
 
 /** True when Home can resolve the item in one click with its recommendation. */
 export function canAcceptInline(item: BriefingItem): boolean {
@@ -78,13 +88,87 @@ function LiveDot() {
   );
 }
 
-/** A "Needs you" row: what it is, the recommendation, and what to do about it. */
+function centsToInput(cents: number): string {
+  return (cents / 100).toFixed(2).replace(/\.00$/, "");
+}
+
+/** Whole cents from a dollar amount the person typed; null when it isn't one. */
+export function parseDollars(value: string): number | null {
+  const trimmed = value.replace(/[$,\s]/g, "");
+  if (!/^\d+(\.\d{0,2})?$/.test(trimmed)) return null;
+  return Math.round(Number(trimmed) * 100);
+}
+
+/** The small "Raise limit" form: a new amount, then Cancel (left) and Raise limit (right) in one row. */
+function RaiseLimitForm({
+  limitCents,
+  observedCents,
+  suggestedCents,
+  hosted,
+  pending,
+  onCancel,
+  onSubmit,
+}: {
+  limitCents: number;
+  observedCents: number;
+  suggestedCents: number;
+  hosted: boolean;
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (amountCents: number) => void;
+}) {
+  const [draft, setDraft] = useState(() => centsToInput(suggestedCents));
+  const cents = parseDollars(draft);
+  const tooLow = cents !== null && cents <= observedCents;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (cents === null || tooLow || pending) return;
+    onSubmit(cents);
+  };
+  return (
+    <form className="flex flex-col gap-2 rounded-md bg-muted p-3" onSubmit={submit} aria-label="Raise limit">
+      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+        <span>{hosted ? "New monthly hosted limit (USD)" : "New limit (USD)"}</span>
+        <Input
+          aria-label="New limit in dollars"
+          inputMode="decimal"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          autoFocus
+        />
+      </label>
+      <p className="text-xs text-muted-foreground">
+        Now {formatDollars(limitCents)} · {formatDollars(observedCents)} spent
+      </p>
+      {cents === null ? (
+        <p role="alert" className="text-xs text-destructive">Enter an amount in dollars, like 100.</p>
+      ) : tooLow ? (
+        <p role="alert" className="text-xs text-destructive">
+          The new limit has to be more than the {formatDollars(observedCents)} already spent.
+        </p>
+      ) : null}
+      <div className="flex items-center justify-between gap-2">
+        <Button type="button" variant="ghost" size="xs" onClick={onCancel} disabled={pending}>
+          Cancel
+        </Button>
+        <Button type="submit" size="xs" disabled={pending || cents === null || tooLow}>
+          {pending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+          Raise limit
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/** A "Needs you" row: what it is, why, the recommendation or fix, and what to do about it. */
 export function BriefingRow({
   item,
   accepting,
   error,
   onAccept,
   onAsk,
+  fixing = false,
+  onFix,
 }: {
   /** `item.href` is company-relative; the router `Link` adds the company prefix. */
   item: BriefingItem;
@@ -92,8 +176,15 @@ export function BriefingRow({
   error: string | null;
   onAccept: (item: BriefingItem) => void;
   onAsk: (item: BriefingItem) => void;
+  fixing?: boolean;
+  /** Runs the row's fix; `amountCents` is the new limit for "raise_budget". */
+  onFix?: (item: BriefingItem, amountCents?: number) => void;
 }) {
   const inline = canAcceptInline(item);
+  const action = item.action;
+  const [raising, setRaising] = useState(false);
+  // Something went wrong and Home has no fix for it: asking the Assistant is the next step.
+  const askLeads = !inline && !action && FAILURE_KINDS.has(item.kind);
   return (
     <li data-testid="briefing-row" data-item-id={item.id} className="flex flex-col gap-2 py-3">
       <div className="flex items-start gap-3">
@@ -108,6 +199,11 @@ export function BriefingRow({
             </time>
           </div>
           {item.subtitle ? <p className="truncate text-xs text-muted-foreground">{item.subtitle}</p> : null}
+          {item.reason ? (
+            <p className="text-sm text-muted-foreground" data-testid="briefing-reason">
+              {item.reason}
+            </p>
+          ) : null}
           {item.recommendation ? (
             <p className="self-start rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
               Recommended: <span className="text-foreground">{item.recommendation.label}</span>
@@ -116,13 +212,28 @@ export function BriefingRow({
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2" aria-label="Actions">
-        <Button type="button" variant="ghost" size="xs" onClick={() => onAsk(item)}>
+        <Button type="button" variant={askLeads ? "default" : "ghost"} size="xs" onClick={() => onAsk(item)}>
           <Sparkles aria-hidden="true" />
           Ask Assistant
         </Button>
         <Button asChild type="button" variant="outline" size="xs">
           <Link to={item.href}>Open</Link>
         </Button>
+        {action?.kind === "open_settings" && action.href ? (
+          <Button asChild type="button" size="xs">
+            <Link to={action.href}>{action.label}</Link>
+          </Button>
+        ) : action && onFix && !(action.kind === "raise_budget" && raising) ? (
+          <Button
+            type="button"
+            size="xs"
+            disabled={fixing}
+            onClick={() => (action.kind === "raise_budget" ? setRaising(true) : onFix(item))}
+          >
+            {fixing ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+            {action.label}
+          </Button>
+        ) : null}
         {inline ? (
           <Button type="button" size="xs" disabled={accepting} onClick={() => onAccept(item)}>
             {accepting ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
@@ -130,6 +241,17 @@ export function BriefingRow({
           </Button>
         ) : null}
       </div>
+      {action?.kind === "raise_budget" && action.budget && raising && onFix ? (
+        <RaiseLimitForm
+          limitCents={action.budget.limitCents}
+          observedCents={action.budget.observedCents}
+          suggestedCents={action.budget.suggestedCents}
+          hosted={action.budget.metric === "hosted_billed_cents"}
+          pending={fixing}
+          onCancel={() => setRaising(false)}
+          onSubmit={(amountCents) => onFix(item, amountCents)}
+        />
+      ) : null}
       {error ? (
         <p role="alert" className="text-xs text-destructive">
           {error}
@@ -147,7 +269,11 @@ export function BriefingCompactRow({ item }: { item: BriefingItem }) {
         {item.kind === "live_run" ? <LiveDot /> : <KindIcon kind={item.kind} />}
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-sm text-foreground">{item.title}</span>
-          {item.subtitle ? <span className="truncate text-xs text-muted-foreground">{item.subtitle}</span> : null}
+          {item.label || item.subtitle ? (
+            <span className="truncate text-xs text-muted-foreground">
+              {[item.label, item.subtitle].filter(Boolean).join(" · ")}
+            </span>
+          ) : null}
         </span>
         <time dateTime={item.createdAt} className="shrink-0 text-xs text-muted-foreground">
           {relativeTime(item.createdAt)}

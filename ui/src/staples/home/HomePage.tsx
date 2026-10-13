@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useCompany } from "@/context/CompanyContext";
+import { agentsApi } from "@/api/agents";
 import { briefingApi } from "@/api/briefing";
+import { budgetsApi } from "@/api/budgets";
 import { issuesApi } from "@/api/issues";
 import { applyCompanyPrefix } from "@/lib/company-routes";
 import { queryKeys } from "@/lib/queryKeys";
@@ -17,6 +19,9 @@ import { BriefingCompactRow, BriefingRow, canAcceptInline } from "./BriefingRow"
 import { spendLineText } from "./spendLine";
 
 export const BRIEFING_REFETCH_INTERVAL_MS = 30_000;
+
+/** Kinds whose row is about something that went wrong rather than a decision. */
+const FIX_KINDS = new Set<BriefingItem["kind"]>(["failed_run", "agent_error", "budget_incident"]);
 
 function needsYouSummary(count: number): string {
   if (count === 0) return "Nothing needs you";
@@ -35,6 +40,39 @@ function inProgressSummary(count: number): string {
 function acceptErrorMessage(error: unknown): string {
   const reason = error instanceof Error && error.message ? error.message : "Something went wrong.";
   return `Couldn't accept the recommendation: ${reason} Open it to answer there.`;
+}
+
+function fixErrorMessage(item: BriefingItem, error: unknown): string {
+  const reason = error instanceof Error && error.message ? error.message : "Something went wrong.";
+  const verb = item.action?.label ?? "fix this";
+  return `Couldn't ${verb.toLowerCase()}: ${reason} Ask the Assistant for help.`;
+}
+
+/** Runs a row's fix with the same endpoints the agent and Costs pages use. */
+function runFix(companyId: string, item: BriefingItem, amountCents?: number): Promise<unknown> {
+  const action = item.action;
+  switch (action?.kind) {
+    case "retry_run":
+      if (action.agentId && action.runId) return agentsApi.retryFailedRun(action.agentId, action.runId, companyId);
+      break;
+    case "resume_agent":
+      if (action.agentId) return agentsApi.resume(action.agentId, companyId);
+      break;
+    case "clear_agent_error":
+      if (action.agentId) return agentsApi.clearError(action.agentId, companyId);
+      break;
+    case "raise_budget":
+      if (action.budget && amountCents !== undefined) {
+        return budgetsApi.resolveIncident(companyId, action.budget.incidentId, {
+          action: "raise_budget_and_resume",
+          amount: amountCents,
+        });
+      }
+      break;
+    default:
+      break;
+  }
+  return Promise.reject(new Error("This can't be fixed from Home."));
 }
 
 /** Resolves a briefing item with its recommendation, using the same endpoints as the task thread. */
@@ -132,6 +170,11 @@ export function HomePage() {
     queryFn: () => briefingApi.get(companyId),
     enabled: Boolean(selectedCompanyId),
     refetchInterval: BRIEFING_REFETCH_INTERVAL_MS,
+    // Live updates pause while the document is hidden (a background tab, or
+    // an embedded browser pane the person isn't looking at), and so does a
+    // plain interval. Keep polling there, or Home keeps showing whatever it
+    // first loaded, e.g. "Nothing in progress" while agents are running.
+    refetchIntervalInBackground: true,
   });
 
   // Rows accepted from Home disappear right away; a failure brings the row back with its error.
@@ -161,10 +204,32 @@ export function HomePage() {
     },
   });
 
+  const fix = useMutation({
+    mutationFn: ({ item, amountCents }: { item: BriefingItem; amountCents?: number }) =>
+      runFix(companyId, item, amountCents),
+    onMutate: ({ item }) => {
+      const key = briefingItemKey(item);
+      setErrors(({ [key]: _cleared, ...rest }) => rest);
+    },
+    onError: (error, { item }) => {
+      setErrors((current) => ({ ...current, [briefingItemKey(item)]: fixErrorMessage(item, error) }));
+    },
+    onSuccess: (_result, { item }) => {
+      setRemoved((current) => new Set(current).add(briefingItemKey(item)));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.briefing(companyId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.attention(companyId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(companyId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.budgets.overview(companyId) });
+      void queryClient.invalidateQueries({ queryKey: ["costs", companyId] });
+    },
+  });
+
   const askAbout = useCallback(
     (item: BriefingItem) =>
       askAssistant({
-        text: `Help me decide: ${item.title}`,
+        text: FIX_KINDS.has(item.kind)
+          ? `Help me fix this: ${item.title}${item.reason ? `. ${item.reason}` : ""}`
+          : `Help me decide: ${item.title}`,
         context: { label: item.title, href: applyCompanyPrefix(item.href, companyPrefix) },
       }),
     [askAssistant, companyPrefix],
@@ -240,6 +305,8 @@ export function HomePage() {
                 error={errors[briefingItemKey(item)] ?? null}
                 onAccept={(target) => accept.mutate(target)}
                 onAsk={askAbout}
+                fixing={fix.isPending && fix.variables !== undefined && briefingItemKey(fix.variables.item) === briefingItemKey(item)}
+                onFix={(target, amountCents) => fix.mutate({ item: target, amountCents })}
               />
             ))}
           </ul>
@@ -248,7 +315,7 @@ export function HomePage() {
 
       <Section title="In progress">
         {briefing.inProgress.length === 0 ? (
-          <p className="py-2 text-sm text-muted-foreground">Nothing running.</p>
+          <p className="py-2 text-sm text-muted-foreground">Nothing in progress.</p>
         ) : (
           <ul className="flex flex-col">
             {briefing.inProgress.map((item) => (

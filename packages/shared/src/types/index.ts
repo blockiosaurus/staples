@@ -57,6 +57,9 @@ export type {
 export { ATTENTION_SOURCE_KINDS } from "./attention.js";
 export type {
   Briefing,
+  BriefingAction,
+  BriefingActionKind,
+  BriefingBudgetTarget,
   BriefingItem,
   BriefingSpend,
   BriefingItemKind,
@@ -70,6 +73,7 @@ export {
   BRIEFING_AGENT_ACTIONS_WINDOW_HOURS,
   BRIEFING_IN_PROGRESS_LIMIT,
   BRIEFING_NEEDS_YOU_LIMIT,
+  BRIEFING_REASON_MAX,
 } from "./briefing.js";
 export type {
   DecisionQueue,

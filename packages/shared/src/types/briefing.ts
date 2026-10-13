@@ -16,6 +16,10 @@ export type BriefingItemKind =
   | "agent_error"
   | "active_task"
   | "live_run"
+  /** In progress: an assigned task waiting its turn ("Up next"). */
+  | "queued_task"
+  /** In progress: a blocked task that does not need the person ("Waiting on …"). */
+  | "waiting_task"
   | "done_task"
   /** Done recently: one roll-up per templated agent of its outward write actions in the last 24 hours. */
   | "agent_actions";
@@ -37,6 +41,42 @@ export interface BriefingRecommendation {
   accept?: true;
 }
 
+/** The one-click fix a Needs you row offers. */
+export type BriefingActionKind =
+  | "retry_run"
+  | "resume_agent"
+  | "clear_agent_error"
+  | "raise_budget"
+  | "open_settings";
+
+/** The budget a "raise_budget" action raises: the incident's own policy and metric. */
+export interface BriefingBudgetTarget {
+  incidentId: string;
+  policyId: string;
+  /** "billed_cents" (all spend) or "hosted_billed_cents" (hosted inference only). */
+  metric: string;
+  scopeType: "company" | "agent" | "project";
+  scopeId: string;
+  limitCents: number;
+  observedCents: number;
+  /** Twice the limit, and always above what has been spent. */
+  suggestedCents: number;
+}
+
+export interface BriefingAction {
+  kind: BriefingActionKind;
+  /** e.g. "Try again", "Resume", "Dismiss error", "Raise limit". */
+  label: string;
+  /** retry_run, resume_agent, clear_agent_error. */
+  agentId?: string;
+  /** retry_run: the failed run to retry. */
+  runId?: string;
+  /** raise_budget. */
+  budget?: BriefingBudgetTarget;
+  /** open_settings: company-relative link. */
+  href?: string;
+}
+
 export interface BriefingItem {
   kind: BriefingItemKind;
   /** Source id (interaction, approval, issue, run, agent or incident id). */
@@ -49,6 +89,12 @@ export interface BriefingItem {
   /** The issue an interaction lives on; needed to resolve it. */
   issueId?: string | null;
   recommendation?: BriefingRecommendation;
+  /** Needs you: why it needs the person, in one plain sentence (at most 140 characters). */
+  reason?: string | null;
+  /** Needs you: the fix Home can run in place. */
+  action?: BriefingAction;
+  /** In progress: a short state label, e.g. "Up next" or "Waiting on Write the brief". */
+  label?: string | null;
   createdAt: string;
 }
 
@@ -67,7 +113,11 @@ export interface BriefingSpend {
 export interface Briefing {
   /** Capped at 20, newest first. */
   needsYou: BriefingItem[];
-  /** Capped at 20: live runs first, then in-progress tasks. */
+  /**
+   * Capped at 20: live runs first, then in-progress tasks, then assigned
+   * to-do tasks ("Up next"), then blocked tasks not already under Needs you
+   * ("Waiting on …"). One row per task.
+   */
   inProgress: BriefingItem[];
   /**
    * Done within the last 7 days, newest first, capped at 10. Includes one
@@ -83,6 +133,7 @@ export interface Briefing {
 }
 
 export const BRIEFING_NEEDS_YOU_LIMIT = 20;
+export const BRIEFING_REASON_MAX = 140;
 export const BRIEFING_IN_PROGRESS_LIMIT = 20;
 export const BRIEFING_DONE_RECENTLY_LIMIT = 10;
 export const BRIEFING_DONE_RECENTLY_WINDOW_DAYS = 7;

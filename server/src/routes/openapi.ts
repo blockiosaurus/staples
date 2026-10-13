@@ -6103,6 +6103,24 @@ const briefingRecommendationSchema = z.object({
   accept: z.literal(true).optional(),
 });
 
+const briefingActionSchema = z.object({
+  kind: z.enum(["retry_run", "resume_agent", "clear_agent_error", "raise_budget", "open_settings"]),
+  label: z.string(),
+  agentId: z.string().optional(),
+  runId: z.string().optional(),
+  budget: z.object({
+    incidentId: z.string(),
+    policyId: z.string(),
+    metric: z.string(),
+    scopeType: z.enum(["company", "agent", "project"]),
+    scopeId: z.string(),
+    limitCents: z.number().int(),
+    observedCents: z.number().int(),
+    suggestedCents: z.number().int(),
+  }).optional(),
+  href: z.string().optional().describe("open_settings: company-relative link"),
+});
+
 const briefingItemSchema = z.object({
   kind: z.enum([
     "approval",
@@ -6115,6 +6133,8 @@ const briefingItemSchema = z.object({
     "agent_error",
     "active_task",
     "live_run",
+    "queued_task",
+    "waiting_task",
     "done_task",
     "agent_actions",
   ]),
@@ -6124,6 +6144,9 @@ const briefingItemSchema = z.object({
   href: z.string().describe("Company-relative link, e.g. /issues/TES-12"),
   issueId: z.string().nullable().optional(),
   recommendation: briefingRecommendationSchema.optional(),
+  reason: z.string().max(140).nullable().optional().describe("Needs you: why it needs the person, in one plain sentence"),
+  action: briefingActionSchema.optional(),
+  label: z.string().nullable().optional().describe('In progress: a short state label, e.g. "Up next"'),
   createdAt: z.string().datetime(),
 });
 

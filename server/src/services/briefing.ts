@@ -1,9 +1,10 @@
-import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, notInArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
   companies,
   costEvents,
+  issueRelations,
   issueThreadInteractions,
   issues,
   toolApplications,
@@ -21,6 +22,7 @@ import {
   type AttentionItem,
   type AttentionSourceKind,
   type Briefing,
+  type BriefingAction,
   type BriefingItem,
   type BriefingItemKind,
   type BriefingRecommendation,
@@ -28,6 +30,16 @@ import {
   type BriefingSpend,
 } from "@paperclipai/shared";
 import { autopilotCategoriesFromMetadata } from "./agent-autopilot.js";
+import {
+  budgetIncidentCopy,
+  clipReason,
+  COSTS_HREF,
+  failureCause,
+  failureReason,
+  raiseBudgetAction,
+  type BudgetIncidentFacts,
+  type FailureCause,
+} from "./briefing-reasons.js";
 import { attentionService } from "./attention.js";
 import { HOSTED_BILLED_CENTS_METRIC, budgetService } from "./budgets.js";
 import { getUtcMonthStart } from "./dashboard.js";
@@ -115,6 +127,18 @@ export function clipText(value: string, max: number): string {
 }
 
 const TITLE_MAX = 120;
+const WAITING_LABEL_MAX = 80;
+
+interface NeedsYouContext {
+  companyId: string;
+  prefix: string;
+  companyName: string;
+  nowIso: string;
+  interactionById: Map<string, { id: string; issueId: string; kind: string; payload: unknown }>;
+  issueById: Map<string, { id: string; identifier: string | null; title: string }>;
+  agentById: Map<string, { id: string; status: string; pauseReason: string | null }>;
+  incidents: BudgetIncidentFacts[];
+}
 export const RECOMMENDATION_LABEL_MAX = 60;
 
 /**
@@ -230,21 +254,22 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     ?? attentionService(db, serviceOptions.now ? { now: serviceOptions.now } : {});
   const issueSvc = issueService(db);
 
-  async function companyPrefix(companyId: string) {
+  async function companyFacts(companyId: string) {
     const row = await db
-      .select({ issuePrefix: companies.issuePrefix })
+      .select({ issuePrefix: companies.issuePrefix, name: companies.name })
       .from(companies)
       .where(eq(companies.id, companyId))
       .then((rows) => rows[0] ?? null);
-    return row?.issuePrefix ?? "PAP";
+    return { prefix: row?.issuePrefix ?? "PAP", name: row?.name ?? "" };
   }
 
   async function needsYou(
     input: BriefingGetInput,
     prefix: string,
+    companyName: string,
     readCondition: Awaited<ReturnType<typeof issueReadSqlCondition>>,
     nowIso: string,
-  ): Promise<BriefingItem[]> {
+  ): Promise<{ items: BriefingItem[]; issueIds: Set<string> }> {
     const feed = await attention.list(input.companyId, {
       userId: input.userId,
       actor: input.actor,
@@ -276,19 +301,100 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
       .where(and(eq(issues.companyId, input.companyId), inArray(issues.id, interactionIssueIds), readCondition));
     const issueById = new Map(issueRows.map((row) => [row.id, row]));
 
-    const items = kept.map((item) => toNeedsYouItem(item, prefix, nowIso, interactionById, issueById));
-    return items
+    // Current agent state decides between "Resume" and other fixes.
+    const agentIds = [...new Set(kept.flatMap((item) => {
+      if (item.sourceKind === "agent_error_alert") return [item.subject.id];
+      if (item.sourceKind === "failed_run") {
+        const agentId = nonEmptyString(readRecord(item.subject.metadata).agentId);
+        return agentId ? [agentId] : [];
+      }
+      return [];
+    }))];
+    const agentRows = agentIds.length === 0 ? [] : await db
+      .select({ id: agents.id, status: agents.status, pauseReason: agents.pauseReason })
+      .from(agents)
+      .where(and(eq(agents.companyId, input.companyId), inArray(agents.id, agentIds)));
+    const agentById = new Map(agentRows.map((row) => [row.id, row]));
+    const incidents = kept
+      .filter((item) => item.sourceKind === "budget_alert")
+      .map((item) => budgetFacts(item))
+      .filter((facts): facts is BudgetIncidentFacts => facts !== null);
+
+    const context: NeedsYouContext = { companyId: input.companyId, prefix, companyName, nowIso, interactionById, issueById, agentById, incidents };
+    const items = kept
+      .map((item) => toNeedsYouItem(item, context))
       .filter((item): item is BriefingItem => item !== null)
       .sort((a, b) => toTime(b.createdAt) - toTime(a.createdAt));
+    // Every task a Needs you row covers, so In progress never lists it twice.
+    const issueIds = new Set<string>();
+    for (const item of kept) {
+      if (item.subject.kind === "issue") issueIds.add(item.subject.id);
+      if (item.relatedIssue?.id) issueIds.add(item.relatedIssue.id);
+    }
+    for (const item of items) if (item.issueId) issueIds.add(item.issueId);
+    return { items, issueIds };
   }
 
-  function toNeedsYouItem(
-    item: AttentionItem,
-    prefix: string,
-    nowIso: string,
-    interactionById: Map<string, { id: string; issueId: string; kind: string; payload: unknown }>,
-    issueById: Map<string, { id: string; identifier: string | null; title: string }>,
-  ): BriefingItem | null {
+  function budgetFacts(item: AttentionItem): BudgetIncidentFacts | null {
+    const metadata = readRecord(item.subject.metadata);
+    const policyId = nonEmptyString(metadata.policyId);
+    const scopeId = nonEmptyString(metadata.scopeId);
+    const scopeType = metadata.scopeType;
+    if (!policyId || !scopeId || (scopeType !== "company" && scopeType !== "agent" && scopeType !== "project")) return null;
+    const amountLimit = Number(metadata.amountLimit);
+    const amountObserved = Number(metadata.amountObserved);
+    const observedPercent = Number(metadata.observedPercent);
+    return {
+      incidentId: item.subject.id,
+      policyId,
+      metric: nonEmptyString(metadata.metric) ?? "billed_cents",
+      scopeType,
+      scopeId,
+      scopeName: nonEmptyString(metadata.scopeName),
+      thresholdType: nonEmptyString(metadata.thresholdType) ?? "hard",
+      amountLimit: Number.isFinite(amountLimit) ? amountLimit : 0,
+      amountObserved: Number.isFinite(amountObserved) ? amountObserved : 0,
+      observedPercent: Number.isFinite(observedPercent) ? observedPercent : null,
+    };
+  }
+
+  /** The open incident that stopped this agent: its own limit first, then the company's. */
+  function incidentFor(incidents: BudgetIncidentFacts[], agentId: string | null, companyId: string, hosted: boolean) {
+    const metricMatches = (facts: BudgetIncidentFacts) =>
+      hosted ? facts.metric === HOSTED_BILLED_CENTS_METRIC : facts.metric !== HOSTED_BILLED_CENTS_METRIC;
+    const candidates = incidents.filter((facts) => metricMatches(facts) && facts.thresholdType === "hard");
+    return (agentId ? candidates.find((facts) => facts.scopeType === "agent" && facts.scopeId === agentId) : undefined)
+      ?? candidates.find((facts) => facts.scopeType === "company" && facts.scopeId === companyId)
+      ?? null;
+  }
+
+  /** The fix for a failed run or errored agent, by cause. Unknown causes get none: Ask Assistant covers them. */
+  function failureAction(
+    cause: FailureCause,
+    kind: "run" | "agent",
+    agentId: string | null,
+    runId: string | null,
+    errorCode: string | null,
+    companyId: string,
+    incidents: BudgetIncidentFacts[],
+  ): BriefingAction | undefined {
+    if (cause === "hosted_limit" || cause === "budget_reached") {
+      const incident = incidentFor(incidents, agentId, companyId, cause === "hosted_limit");
+      return incident ? raiseBudgetAction(incident) : { kind: "open_settings", label: "Review limits", href: COSTS_HREF };
+    }
+    if (!agentId) return undefined;
+    if (cause === "agent_paused") return { kind: "resume_agent", label: "Resume", agentId };
+    if (cause === "not_connected") {
+      const view = errorCode === "binding_missing" ? "tools" : errorCode?.startsWith("user_secret") ? "secrets" : "runtime";
+      return { kind: "open_settings", label: "Open settings", href: `/agents/${agentId}/${view}` };
+    }
+    if (kind === "agent") return { kind: "clear_agent_error", label: "Dismiss error", agentId };
+    if ((cause === "timed_out" || cause === "out_of_credit") && runId) return { kind: "retry_run", label: "Try again", agentId, runId };
+    return undefined;
+  }
+
+  function toNeedsYouItem(item: AttentionItem, context: NeedsYouContext): BriefingItem | null {
+    const { prefix, nowIso, interactionById, issueById } = context;
     let kind = NEEDS_YOU_KIND_BY_SOURCE[item.sourceKind];
     if (!kind) return null;
     const metadata = readRecord(item.subject.metadata);
@@ -298,6 +404,8 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     let recommendation: BriefingRecommendation | undefined;
     let title = item.subject.title ?? item.whyNow;
     let subtitle: string | null = null;
+    let reason: string | null = null;
+    let action: BriefingAction | undefined;
 
     if (item.sourceKind === "issue_thread_interaction") {
       const row = interactionById.get(item.subject.id);
@@ -315,6 +423,39 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
       } else {
         kind = "confirmation";
       }
+    } else if (item.sourceKind === "failed_run") {
+      const agentId = nonEmptyString(metadata.agentId);
+      const agent = agentId ? context.agentById.get(agentId) : undefined;
+      const errorCode = nonEmptyString(metadata.errorCode);
+      const cause = agent?.status === "paused" && agent.pauseReason === "budget"
+        ? "budget_reached"
+        : failureCause({
+          errorCode,
+          error: nonEmptyString(metadata.error) ?? nonEmptyString(metadata.retryExhaustedReason),
+          runStatus: item.subject.status,
+          agentPaused: agent?.status === "paused",
+        });
+      const agentName = nonEmptyString(metadata.agentName) ?? item.originAgentName;
+      title = agentName ? `${agentName} couldn't finish its work` : title;
+      reason = failureReason(cause, agentName, "run");
+      action = failureAction(cause, "run", agentId, item.subject.id, errorCode, context.companyId, context.incidents);
+    } else if (item.sourceKind === "agent_error_alert") {
+      const agentId = item.subject.id;
+      const agent = context.agentById.get(agentId);
+      const errorReason = nonEmptyString(metadata.errorReason);
+      const cause = failureCause({ error: errorReason, agentPaused: agent?.status === "paused" });
+      reason = failureReason(cause, item.subject.title, "agent");
+      action = failureAction(cause, "agent", agentId, null, null, context.companyId, context.incidents);
+    } else if (item.sourceKind === "budget_alert") {
+      const facts = budgetFacts(item);
+      if (facts) {
+        const copy = budgetIncidentCopy(facts, context.companyName);
+        title = copy.title;
+        reason = copy.reason;
+        action = raiseBudgetAction(facts);
+      }
+    } else if (item.sourceKind === "blocker_attention") {
+      reason = item.whyNow ? clipReason(item.whyNow) : null;
     }
 
     const issueIdentifier = item.relatedIssue?.identifier ?? item.subject.identifier ?? null;
@@ -327,6 +468,8 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
       href: companyRelativeHref(item.subject.href, prefix) ?? fallbackHref,
       issueId,
       ...(recommendation ? { recommendation } : {}),
+      ...(reason ? { reason } : {}),
+      ...(action ? { action } : {}),
       createdAt: toIso(item.createdAt, nowIso),
     };
   }
@@ -336,14 +479,17 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     readCondition: Awaited<ReturnType<typeof issueReadSqlCondition>>,
     nowIso: string,
   ): Promise<BriefingItem[]> {
-    const [liveRuns, activeIssues, agentRows] = await Promise.all([
+    const listStatus = (status: string) => issueSvc.list(input.companyId, {
+      status,
+      readCondition,
+      sortField: "updated",
+      sortDir: "desc",
+    });
+    const [liveRuns, activeIssues, todoIssues, blockedIssues, agentRows] = await Promise.all([
       listLiveRuns(db, input.companyId),
-      issueSvc.list(input.companyId, {
-        status: "in_progress",
-        readCondition,
-        sortField: "updated",
-        sortDir: "desc",
-      }),
+      listStatus("in_progress"),
+      listStatus("todo"),
+      listStatus("blocked"),
       db.select({ id: agents.id, name: agents.name }).from(agents).where(eq(agents.companyId, input.companyId)),
     ]);
     const agentNameById = new Map(agentRows.map((row) => [row.id, row.name]));
@@ -413,7 +559,64 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         createdAt: toIso(issue.startedAt ?? issue.updatedAt, nowIso),
       }));
 
-    return [...liveItems, ...taskItems];
+    const assignedName = (issue: { assigneeAgentId: string | null }) =>
+      issue.assigneeAgentId ? agentNameById.get(issue.assigneeAgentId) ?? null : null;
+    const upNextItems: BriefingItem[] = todoIssues
+      .filter((issue) => !representedIssueIds.has(issue.id) && (issue.assigneeAgentId || issue.assigneeUserId))
+      .map((issue) => ({
+        kind: "queued_task" as const,
+        id: issue.id,
+        title: issue.title,
+        subtitle: joinSubtitle(issue.identifier, assignedName(issue)),
+        href: issuePath(issue),
+        issueId: issue.id,
+        label: "Up next",
+        createdAt: toIso(issue.updatedAt, nowIso),
+      }));
+
+    const waiting = blockedIssues.filter((issue) => !representedIssueIds.has(issue.id));
+    const blockerTitleById = await openBlockerTitles(input.companyId, waiting.map((issue) => issue.id), readCondition);
+    const waitingItems: BriefingItem[] = waiting.map((issue) => {
+      const blocker = blockerTitleById.get(issue.id);
+      return {
+        kind: "waiting_task" as const,
+        id: issue.id,
+        title: issue.title,
+        subtitle: joinSubtitle(issue.identifier, assignedName(issue)),
+        href: issuePath(issue),
+        issueId: issue.id,
+        label: blocker ? clipText(`Waiting on ${blocker}`, WAITING_LABEL_MAX) : "Waiting",
+        createdAt: toIso(issue.updatedAt, nowIso),
+      };
+    });
+
+    return [...liveItems, ...taskItems, ...upNextItems, ...waitingItems];
+  }
+
+  /** The title of one unfinished blocker the person can read, per blocked task. */
+  async function openBlockerTitles(
+    companyId: string,
+    blockedIssueIds: string[],
+    readCondition: Awaited<ReturnType<typeof issueReadSqlCondition>>,
+  ): Promise<Map<string, string>> {
+    if (blockedIssueIds.length === 0) return new Map();
+    const rows = await db
+      .select({ blockedId: issueRelations.relatedIssueId, title: issues.title, updatedAt: issues.updatedAt })
+      .from(issueRelations)
+      .innerJoin(issues, eq(issueRelations.issueId, issues.id))
+      .where(and(
+        eq(issueRelations.companyId, companyId),
+        eq(issueRelations.type, "blocks"),
+        inArray(issueRelations.relatedIssueId, blockedIssueIds),
+        eq(issues.companyId, companyId),
+        notInArray(issues.status, ["done", "cancelled"]),
+        readCondition,
+      ));
+    const map = new Map<string, string>();
+    for (const row of rows.sort((a, b) => toTime(b.updatedAt) - toTime(a.updatedAt))) {
+      if (!map.has(row.blockedId)) map.set(row.blockedId, row.title);
+    }
+    return map;
   }
 
   async function doneRecently(
@@ -592,17 +795,20 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     get: async (input: BriefingGetInput): Promise<Briefing> => {
       const now = serviceOptions.now?.() ?? Date.now();
       const nowIso = new Date(now).toISOString();
-      const [prefix, readCondition] = await Promise.all([
-        companyPrefix(input.companyId),
+      const [company, readCondition] = await Promise.all([
+        companyFacts(input.companyId),
         issueReadSqlCondition(db, input.actor),
       ]);
-      const [needs, moving, doneTasks, rollups, monthSpend] = await Promise.all([
-        needsYou(input, prefix, readCondition, nowIso),
+      const [needsResult, movingAll, doneTasks, rollups, monthSpend] = await Promise.all([
+        needsYou(input, company.prefix, company.name, readCondition, nowIso),
         inProgress(input, readCondition, nowIso),
         doneRecently(input, readCondition, now, nowIso),
         agentActionRollups(input, now, nowIso),
         spend(input, now),
       ]);
+      const needs = needsResult.items;
+      // A blocked task already under Needs you is not listed again as waiting.
+      const moving = movingAll.filter((item) => item.kind !== "waiting_task" || !needsResult.issueIds.has(item.id));
       // Newest first across finished tasks and agent roll-ups.
       const done = [...doneTasks, ...rollups].sort((a, b) => toTime(b.createdAt) - toTime(a.createdAt));
       return {

@@ -270,6 +270,42 @@ describe("LiveUpdatesProvider issue invalidation", () => {
     });
   });
 
+  it.each([
+    ["a plan is applied", { type: "activity.logged", payload: { action: "plan.applied", entityType: "company", entityId: "company-1", actorType: "user", actorId: "user-1" } }],
+    ["an interaction is answered", { type: "activity.logged", payload: { action: "issue.thread_interaction_answered", entityType: "issue", entityId: "issue-1", actorType: "user", actorId: "user-1" } }],
+    ["a run is queued", { type: "heartbeat.run.queued", payload: { runId: "run-1", agentId: "agent-1", status: "queued" } }],
+    ["a run starts", { type: "heartbeat.run.status", payload: { runId: "run-1", agentId: "agent-1", status: "running" } }],
+    ["a run finishes", { type: "heartbeat.run.status", payload: { runId: "run-1", agentId: "agent-1", status: "succeeded" } }],
+  ])("refreshes the Home briefing when %s", (_label, event) => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    __liveUpdatesTestUtils.handleLiveEvent(
+      client,
+      "company-1",
+      "/PAP/home",
+      { ...event, companyId: "company-1" } as never,
+      () => null,
+      { cooldownHits: new Map(), suppressUntil: 0, observedRunOutcomes: new Set() },
+      { userId: "user-1", agentId: null },
+      () => {},
+    );
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.briefing("company-1") });
+    // Another company's event never touches this company's briefing.
+    invalidate.mockClear();
+    __liveUpdatesTestUtils.handleLiveEvent(
+      client,
+      "company-1",
+      "/PAP/home",
+      { ...event, companyId: "company-2" } as never,
+      () => null,
+      { cooldownHits: new Map(), suppressUntil: 0, observedRunOutcomes: new Set() },
+      { userId: "user-1", agentId: null },
+      () => {},
+    );
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.briefing("company-1") });
+    client.clear();
+  });
+
   it("refreshes the selected run detail after lifecycle events", () => {
     const invalidations: unknown[] = [];
     const queryClient = {
