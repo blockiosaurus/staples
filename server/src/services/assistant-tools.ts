@@ -452,7 +452,7 @@ function assistantCapabilities(db: Db): Capability[] {
       description: [
         "Save this week's update for the company: what shipped, what's blocked and what you need from the person, spend against budget, and next week, as Markdown (follow the staples-weekly-update skill).",
         "It is saved as the document \"Weekly update — <date>\" on the company's \"Weekly updates\" task, which the server creates and owns; you cannot choose another task or key. Saving again the same day replaces that day's update.",
-        "Returns the task, the document key, an href to share, and timezone/timezoneKnown (when false, dates use UTC; say so in the update).",
+        "Returns the task, the document key, an href to share, and timezone/timezoneKnown (when false, dates use UTC; do not save again, just say so in a final chat line).",
       ].join(" "),
       schema: z.object({
         ...companyField,

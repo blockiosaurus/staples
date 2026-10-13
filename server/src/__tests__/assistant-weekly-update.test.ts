@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { and, eq, like, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -63,12 +64,21 @@ describe("weekly update helpers", () => {
 
   it("ships the weekly update routine in the Assistant bundle with a bumped stock version", () => {
     const assistant = listBuiltInAgentDefinitions().find((definition) => definition.key === "assistant")!;
-    expect(assistant.bundle?.stockVersion).toBe("2026-10-13b");
+    expect(assistant.bundle?.stockVersion).toBe("2026-10-13c");
     expect(assistant.bundle?.routine).toMatchObject({
       routineKey: "weekly-update", title: "Weekly update", status: "active",
       triggers: [{ kind: "schedule", cronExpression: "0 9 * * 1", timezone: "person", enabled: true }],
     });
     expect(assistant.defaultSkillKeys).toContain("paperclipai/paperclip/staples-weekly-update");
+  });
+
+  it("never tells the Assistant to save the weekly update twice for an unknown time zone", () => {
+    const skill = readFileSync(new URL("../../../skills/staples-weekly-update/SKILL.md", import.meta.url), "utf8");
+    const routine = readFileSync(new URL("../built-ins/agents/assistant/routines/weekly-update.md", import.meta.url), "utf8");
+    for (const text of [skill, routine]) {
+      expect(text).not.toMatch(/save again\.?:? ?"|and save again/);
+      expect(text).toMatch(/do not save again/);
+    }
   });
 });
 
@@ -167,7 +177,7 @@ const support = await getEmbeddedPostgresTestSupport();
 
     const state = await service.get(f.companyId, "assistant");
     expect(state.resources.find((resource) => resource.resourceKind === "routine"))
-      .toMatchObject({ stockVersion: "2026-10-13b", stockStatus: "stock_current", scheduleEnabled: true });
+      .toMatchObject({ stockVersion: "2026-10-13c", stockStatus: "stock_current", scheduleEnabled: true });
 
     await service.ensure(f.companyId, "assistant");
     await service.ensure(f.companyId, "assistant");

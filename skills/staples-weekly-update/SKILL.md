@@ -32,7 +32,7 @@ Do not add a title: the update is saved as "Weekly update — <date>". Do not in
 
 Call `staples_save_weekly_update` with the Markdown as `body`. The server saves it as the document "Weekly update — <date>" on the company's "Weekly updates" task; you do not choose the task. Saving again the same day replaces that day's update.
 
-If the result has `timezoneKnown: false`, add this last line and save again: "Dates use UTC because I don't know your time zone yet."
+Save only once; the first save closes the routine's task and a second save is refused. If the result has `timezoneKnown: false`, do not save again. End your run with this one chat line instead: "Dates use UTC because I don't know your time zone yet."
 
 The save also closes the routine's task: end your run. Do not comment, create tasks, answer questions or propose actions in that run.
 
