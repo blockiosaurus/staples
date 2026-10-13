@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, like, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, like, ne, or, sql, type SQL } from "drizzle-orm";
 import {
   activityLog,
   documents,
@@ -454,6 +454,27 @@ export function weeklyUpdateExcerpt(body: string, title: string | null, max = BR
   const text = lines.join("\n");
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
+/** How long after a saved weekly update "Update me now" refuses to start another. */
+export const WEEKLY_UPDATE_COOLDOWN_MS = 10 * 60_000;
+
+/** Whether a weekly update document was saved or revised at or after `since`. */
+export async function weeklyUpdateSavedSince(db: Pick<Db, "select">, companyId: string, since: Date): Promise<boolean> {
+  const issue = await findWeeklyUpdatesIssue(db, companyId);
+  if (!issue) return false;
+  const [row] = await db
+    .select({ id: documents.id })
+    .from(issueDocuments)
+    .innerJoin(documents, eq(issueDocuments.documentId, documents.id))
+    .where(and(
+      eq(issueDocuments.issueId, issue.id),
+      eq(issueDocuments.companyId, companyId),
+      like(issueDocuments.key, `${WEEKLY_UPDATE_DOCUMENT_KEY_PREFIX}%`),
+      gte(documents.updatedAt, since),
+    ))
+    .limit(1);
+  return Boolean(row);
 }
 
 /**

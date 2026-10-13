@@ -819,6 +819,35 @@ describe("HomePage", () => {
     expect(section("Ask the Assistant")?.querySelector('[role="alert"]')?.textContent).toBe("Couldn't start the update: Missing permission: tasks:assign");
   });
 
+  it("hides Update me now from a member without tasks:assign, though Home fixes stay", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [PAUSED_RUN] }));
+    mocks.boardAccess.mockResolvedValue({
+      userId: "user-1", isInstanceAdmin: false, companyIds: ["company-1"], source: "session", keyId: null, user: null,
+      memberships: [{ companyId: "company-1", membershipRole: "operator", status: "active", canAssignTasks: false }],
+    });
+    await render();
+    expect(buttonIn(section("Ask the Assistant"), "Update me now")).toBeNull();
+    expect(buttonIn(row("run-10"), "Resume")).not.toBeNull();
+  });
+
+  it("says why Update me now was refused in plain words", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture());
+    await render();
+    const notice = () => container.querySelector('[data-testid="update-now-notice"]')?.textContent;
+    mocks.runRoutine.mockRejectedValue(new ApiError("Missing permission: tasks:assign", 403, null));
+    await click(buttonIn(section("Ask the Assistant"), "Update me now"));
+    expect(notice()).toBe("You don't have permission to request an update.");
+    mocks.runRoutine.mockRejectedValue(new ApiError("Routine is archived", 409, null));
+    await click(buttonIn(section("Ask the Assistant"), "Update me now"));
+    expect(notice()).toBe("Weekly updates are turned off for this company.");
+    mocks.runRoutine.mockRejectedValue(new ApiError("Built-in routine not found", 404, null));
+    await click(buttonIn(section("Ask the Assistant"), "Update me now"));
+    expect(notice()).toBe("Weekly updates are turned off for this company.");
+    mocks.runRoutine.mockRejectedValue(new ApiError("An update was just written.", 409, { code: "weekly_update_recent" }));
+    await click(buttonIn(section("Ask the Assistant"), "Update me now"));
+    expect(notice()).toBe("An update was just written — see it above.");
+  });
+
   it("shows a retryable error when the briefing fails to load", async () => {
     mocks.getBriefing.mockRejectedValue(new Error("Server unavailable"));
     await render();

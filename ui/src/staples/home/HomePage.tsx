@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useCompany } from "@/context/CompanyContext";
 import { accessApi, type CurrentBoardAccess } from "@/api/access";
+import { ApiError } from "@/api/client";
 import { agentsApi } from "@/api/agents";
 import { artifactsApi } from "@/api/artifacts";
 import { briefingApi } from "@/api/briefing";
@@ -169,6 +170,36 @@ export function canRequestWeeklyUpdate(companyId: string, access: CurrentBoardAc
   return Boolean(membership && membership.membershipRole !== "viewer");
 }
 
+/**
+ * Whether the server will let this person start the weekly update ("Update me
+ * now"): it needs the same permission as assigning tasks. Falls back to "not a
+ * viewer" when the server did not say.
+ */
+export function canStartWeeklyUpdate(companyId: string, access: CurrentBoardAccess | undefined): boolean {
+  if (!companyId || !access) return false;
+  if (access.source === "local_implicit" || access.isInstanceAdmin) return true;
+  const membership = access.memberships?.find((item) => item.companyId === companyId && item.status === "active");
+  if (typeof membership?.canAssignTasks === "boolean") return membership.canAssignTasks;
+  return canRequestWeeklyUpdate(companyId, access);
+}
+
+export const UPDATE_NOW_NO_PERMISSION_NOTICE = "You don't have permission to request an update.";
+export const UPDATE_NOW_TURNED_OFF_NOTICE = "Weekly updates are turned off for this company.";
+export const UPDATE_NOW_JUST_WRITTEN_NOTICE = "An update was just written — see it above.";
+
+/** Plain copy for the ways "Update me now" is refused; anything else keeps the server's reason. */
+export function updateNowErrorNotice(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 403) return UPDATE_NOW_NO_PERMISSION_NOTICE;
+    if (error.status === 409 && (error.body as { code?: string } | null)?.code === "weekly_update_recent") {
+      return UPDATE_NOW_JUST_WRITTEN_NOTICE;
+    }
+    if (error.status === 404 || error.status === 409) return UPDATE_NOW_TURNED_OFF_NOTICE;
+  }
+  const reason = error instanceof Error && error.message ? error.message : "Something went wrong.";
+  return `Couldn't start the update: ${reason}`;
+}
+
 function AskComposer({ companyId, canUpdateNow }: { companyId: string; canUpdateNow: boolean }) {
   const askAssistant = useAskAssistant();
   const [text, setText] = useState("");
@@ -182,10 +213,7 @@ function AskComposer({ companyId, canUpdateNow }: { companyId: string; canUpdate
       builtInAgentsApi.runRoutine(companyId, ASSISTANT_BUILT_IN_AGENT_KEY, ASSISTANT_WEEKLY_UPDATE_ROUTINE_KEY) as Promise<RoutineRun>,
     onMutate: () => setUpdateNotice(null),
     onSuccess: (run) => setUpdateNotice({ text: updateNowNotice(run), failed: false }),
-    onError: (error) => {
-      const reason = error instanceof Error && error.message ? error.message : "Something went wrong.";
-      setUpdateNotice({ text: `Couldn't start the update: ${reason}`, failed: true });
-    },
+    onError: (error) => setUpdateNotice({ text: updateNowErrorNotice(error), failed: true }),
   });
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
@@ -509,7 +537,7 @@ export function HomePage() {
         </Section>
       ) : null}
 
-      <AskComposer companyId={companyId} canUpdateNow={canAct} />
+      <AskComposer companyId={companyId} canUpdateNow={canStartWeeklyUpdate(companyId, boardAccessQuery.data)} />
     </div>
   );
 }

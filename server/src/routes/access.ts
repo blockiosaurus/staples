@@ -2889,7 +2889,15 @@ export function accessRoutes(
       userId: req.actor.userId,
       isInstanceAdmin: accessSnapshot.isInstanceAdmin,
       companyIds: accessSnapshot.companyIds,
-      memberships: accessSnapshot.memberships,
+      // Whether each company lets this person assign tasks: what the server checks for
+      // built-in routine runs ("Update me now"), so the UI can hide what would be refused.
+      memberships: await Promise.all(accessSnapshot.memberships.map(async (membership) => ({
+        ...membership,
+        canAssignTasks:
+          accessSnapshot.isInstanceAdmin ||
+          req.actor.source === "local_implicit" ||
+          (await access.canUser(membership.companyId, req.actor.userId, "tasks:assign")),
+      }))),
       source: req.actor.source ?? "none",
       keyId: req.actor.source === "board_key" ? req.actor.keyId ?? null : null,
     });

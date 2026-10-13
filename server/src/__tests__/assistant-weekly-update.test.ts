@@ -469,6 +469,20 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(await openTasks(f.companyId, f.routine.id)).toHaveLength(1);
   }, 60_000);
 
+  it("Update me now refuses to start another run within 10 minutes of a saved update", async () => {
+    const f = await setup();
+    const service = builtInAgentService(server.db);
+    const saved = await saveWeeklyUpdate(server.db, { companyId: f.companyId, agentId: f.assistantId, runId: f.runId, body: "Fresh" });
+    await expect(service.runRoutine(f.companyId, "assistant", "weekly-update", { userId: f.responsibleUserId }))
+      .rejects.toMatchObject({ status: 409, details: { code: "weekly_update_recent" } });
+    expect(await openTasks(f.companyId, f.routine.id)).toHaveLength(0);
+
+    // Older than the cooldown: the person can ask again.
+    await server.db.update(documents).set({ updatedAt: new Date(Date.now() - 11 * 60_000) }).where(eq(documents.id, saved.documentId));
+    const run = await service.runRoutine(f.companyId, "assistant", "weekly-update", { userId: f.responsibleUserId });
+    expect(run.linkedIssueId).toBeTruthy();
+  }, 60_000);
+
   it("shows no card to a person who cannot read the Weekly updates task, and replaces a cancelled one", async () => {
     const f = await setup();
     const saved = await saveWeeklyUpdate(server.db, { companyId: f.companyId, agentId: f.assistantId, runId: f.runId, body: "Hello" });

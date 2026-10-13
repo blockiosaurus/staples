@@ -309,6 +309,35 @@ describe("cli auth routes", () => {
     );
   });
 
+  it("reports whether the person may assign tasks in each company they belong to", async () => {
+    mockBoardAuthService.resolveBoardAccess.mockResolvedValue({
+      user: { id: "user-1", name: "User One", email: "user@example.com" },
+      companyIds: ["company-1", "company-2"],
+      memberships: [
+        { companyId: "company-1", membershipRole: "viewer", status: "active" },
+        { companyId: "company-2", membershipRole: "operator", status: "active" },
+      ],
+      isInstanceAdmin: false,
+    });
+    mockAccessService.canUser.mockImplementation(async (companyId: string) => companyId === "company-2");
+
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "session",
+      isInstanceAdmin: false,
+      companyIds: ["company-1", "company-2"],
+    });
+    const res = await request(app).get("/api/cli-auth/me");
+
+    expect(res.status).toBe(200);
+    expect(res.body.memberships).toEqual([
+      { companyId: "company-1", membershipRole: "viewer", status: "active", canAssignTasks: false },
+      { companyId: "company-2", membershipRole: "operator", status: "active", canAssignTasks: true },
+    ]);
+    expect(mockAccessService.canUser).toHaveBeenCalledWith("company-1", "user-1", "tasks:assign");
+  });
+
   it("logs approve activity for instance admins without company memberships", async () => {
     mockBoardAuthService.approveCliAuthChallenge.mockResolvedValue({
       status: "approved",

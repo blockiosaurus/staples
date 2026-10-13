@@ -33,7 +33,7 @@ import {
 } from "../lib/built-in-agent-metadata.js";
 import { companySkillService } from "./company-skills.js";
 import { routineService } from "./routines.js";
-import { companyPersonTimezone } from "./assistant-weekly-update.js";
+import { companyPersonTimezone, WEEKLY_UPDATE_COOLDOWN_MS, weeklyUpdateSavedSince } from "./assistant-weekly-update.js";
 import { BUILT_IN_BUNDLES_ACTOR_USER_ID, PERSON_TIMEZONE, weeklyUpdateRunsUnattended } from "./assistant-weekly-update-origin.js";
 import { accessService } from "./access.js";
 import { listAdapterModels } from "../adapters/registry.js";
@@ -2394,6 +2394,13 @@ export function builtInAgentService(db: Db) {
     actor: { agentId?: string | null; userId?: string | null; runId?: string | null } = {},
   ) {
     const { agent, routine } = await requireBundleRoutine(companyId, key, routineKey);
+    // "Update me now" right after an update was written would only write it again.
+    if (
+      key === ASSISTANT_BUILT_IN_AGENT_KEY && routineKey === ASSISTANT_WEEKLY_UPDATE_ROUTINE_KEY
+      && await weeklyUpdateSavedSince(db, companyId, new Date(Date.now() - WEEKLY_UPDATE_COOLDOWN_MS))
+    ) {
+      throw conflict("An update was just written.", { code: "weekly_update_recent" });
+    }
     await ensureBuiltInAgentAssignable(agent);
     return routineSvc.runRoutine(routine.id, { source: "manual" }, actor);
   }
