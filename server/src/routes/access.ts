@@ -1,5 +1,5 @@
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
-import { assertSelfServeCompanyAgent } from "../services/self-serve-policy.js";
+import { assertSelfServeCompanyAgent, getSelfServePolicy } from "../services/self-serve-policy.js";
 import {
   createHash,
   generateKeyPairSync,
@@ -167,13 +167,24 @@ function buildCliAuthApprovalPath(challengeId: string, token: string) {
   return `/cli-auth/${challengeId}?token=${encodeURIComponent(token)}`;
 }
 
-function readSkillMarkdown(skillName: string): string | null {
+/**
+ * The operator's own Claude skills folder (`~/.claude/skills`) is server-host
+ * content. While self-serve companies are on, only instance admins (and the
+ * local board) see it; everyone else gets the bundled Paperclip skills only.
+ */
+function canReadOperatorSkills(req: Request): boolean {
+  if (!getSelfServePolicy().enabled) return true;
+  const actor = req.actor;
+  return actor?.type === "board" && (actor.source === "local_implicit" || actor.isInstanceAdmin === true);
+}
+
+function readSkillMarkdown(skillName: string, options: { includeOperatorSkills?: boolean } = {}): string | null {
   const normalized = skillName.trim().toLowerCase();
   if (!isSafeSkillName(normalized)) {
     return null;
   }
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-  const claudeSkillsDir = resolveClaudeSkillsDir();
+  const claudeSkillsDir = options.includeOperatorSkills === false ? null : resolveClaudeSkillsDir();
   const candidates = [
     claudeSkillsDir ? path.resolve(claudeSkillsDir, normalized, "SKILL.md") : null,
     path.resolve(moduleDir, "../../skills", normalized, "SKILL.md"), // published: dist/routes/ -> <pkg>/skills/
@@ -246,8 +257,8 @@ function resolveClaudeSkillsDir(): string {
   return path.join(claudeHome, "skills");
 }
 
-function listAvailableSkills(): AvailableSkill[] {
-  const claudeSkillsDir = resolveClaudeSkillsDir();
+function listAvailableSkills(options: { includeOperatorSkills?: boolean } = {}): AvailableSkill[] {
+  const claudeSkillsDir = options.includeOperatorSkills === false ? null : resolveClaudeSkillsDir();
   const paperclipSkillsDir = resolvePaperclipSkillsDir();
 
   // Build set of Paperclip-managed skill names
@@ -262,7 +273,7 @@ function listAvailableSkills(): AvailableSkill[] {
 
   const skills: AvailableSkill[] = [];
 
-  try {
+  if (claudeSkillsDir) try {
     const entries = fs.readdirSync(claudeSkillsDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
@@ -3300,7 +3311,7 @@ export function accessRoutes(
 
   router.get("/skills/available", (req, res) => {
     assertAuthenticated(req);
-    res.json({ skills: listAvailableSkills() });
+    res.json({ skills: listAvailableSkills({ includeOperatorSkills: canReadOperatorSkills(req) }) });
   });
 
   router.get("/skills/index", (req, res) => {
@@ -3327,7 +3338,7 @@ export function accessRoutes(
   router.get("/skills/:skillName", (req, res) => {
     assertAuthenticated(req);
     const skillName = (req.params.skillName as string).trim().toLowerCase();
-    const markdown = readSkillMarkdown(skillName);
+    const markdown = readSkillMarkdown(skillName, { includeOperatorSkills: canReadOperatorSkills(req) });
     if (!markdown) throw notFound("Skill not found");
     res.type("text/markdown").send(markdown);
   });
@@ -3607,7 +3618,9 @@ export function accessRoutes(
 
     const skillName = (req.params.skillName as string).trim().toLowerCase();
     if (skillName !== "paperclip") throw notFound("Skill not found");
-    const markdown = readSkillMarkdown(skillName);
+    // Invite holders are unauthenticated: never the operator's own skills folder
+    // while self-serve is on.
+    const markdown = readSkillMarkdown(skillName, { includeOperatorSkills: !getSelfServePolicy().enabled });
     if (!markdown) throw notFound("Skill not found");
     res.type("text/markdown").send(markdown);
   });

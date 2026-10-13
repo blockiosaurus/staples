@@ -1,5 +1,5 @@
 import { canActorReadWorkspaceOperation } from "../services/heartbeat-run-privacy.js";
-import { assertSelfServeCompanyHostAccess } from "../services/self-serve-policy.js";
+import { assertSelfServeCompanyHostAccess, assertSelfServeRepoUrl } from "../services/self-serve-policy.js";
 import { canActorReadExecutionWorkspace, executionWorkspaceReadSqlCondition } from "../services/authorization.js";
 import { spawn } from "node:child_process";
 import { accessSync, constants as fsConstants, existsSync, readFileSync } from "node:fs";
@@ -1181,6 +1181,15 @@ export function executionWorkspaceRoutes(db: Db, opts: { pluginWorkerManager?: P
       ...(req.body.providerRef !== undefined && req.body.providerRef !== existing.providerRef ? ["providerRef"] : []),
       ...collectWorkspaceHostPathKeys({ config: req.body.config, metadata: req.body.metadata }),
     ]);
+    // Self-serve: a changed repository URL must be https:// to a public host,
+    // and refs are never read by git as options.
+    await assertSelfServeRepoUrl(db, existing.companyId, {
+      repoUrl: req.body.repoUrl !== undefined && req.body.repoUrl !== existing.repoUrl ? req.body.repoUrl : null,
+      refs: [
+        req.body.baseRef !== undefined && req.body.baseRef !== existing.baseRef ? req.body.baseRef : undefined,
+        req.body.branchName !== undefined && req.body.branchName !== existing.branchName ? req.body.branchName : undefined,
+      ],
+    });
     const patch: Record<string, unknown> = {
       ...(req.body.name === undefined ? {} : { name: req.body.name }),
       ...(req.body.cwd === undefined ? {} : { cwd: req.body.cwd }),

@@ -364,6 +364,27 @@ const DENIED_HOST_ROOTS = [
 ];
 const DENIED_INSTANCE_ENTRIES = ["db", "secrets", "config.json", ".env", "data", "logs"];
 const deniedHostPrefixCache = new Map<string, Promise<string[]>>();
+const DENIED_CONFIGURED_KEY = Symbol.for("paperclip.deniedConfiguredHostLocations");
+type DeniedConfiguredHolder = { [DENIED_CONFIGURED_KEY]?: readonly string[] };
+
+/**
+ * Register the configured database, backup, storage, log, secrets-key and
+ * config locations, which may live outside the instance root. The file browser
+ * never serves them, for any company. Called at startup with the loaded config.
+ */
+export function registerDeniedHostLocations(locations: ReadonlyArray<string | null | undefined>) {
+  const absolute = locations
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => path.resolve(value.trim()))
+    // Never deny the filesystem root itself, which would hide every workspace.
+    .filter((value) => path.dirname(value) !== value);
+  (globalThis as DeniedConfiguredHolder)[DENIED_CONFIGURED_KEY] = [...new Set(absolute)];
+  deniedHostPrefixCache.clear();
+}
+
+function configuredDeniedHostLocations(): readonly string[] {
+  return (globalThis as DeniedConfiguredHolder)[DENIED_CONFIGURED_KEY] ?? [];
+}
 
 async function realPathOrSelf(target: string) {
   try {
@@ -376,17 +397,23 @@ async function realPathOrSelf(target: string) {
 /** Lexical and real forms of every denied host location (cached per instance root). */
 function deniedHostPrefixes(): Promise<string[]> {
   const instanceRoot = path.resolve(resolvePaperclipInstanceRoot());
-  let cached = deniedHostPrefixCache.get(instanceRoot);
+  // A configured location that contains the instance root (e.g. storage set to
+  // the instance folder) would hide every managed workspace; the instance's own
+  // sensitive entries are denied individually instead.
+  const configured = configuredDeniedHostLocations().filter((location) => !isInsideRoot(location, instanceRoot));
+  const cacheKey = `${instanceRoot}\0${configured.join("\0")}`;
+  let cached = deniedHostPrefixCache.get(cacheKey);
   if (!cached) {
     cached = (async () => {
       const lexical = [
         ...DENIED_HOST_ROOTS,
         ...DENIED_INSTANCE_ENTRIES.map((entry) => path.join(instanceRoot, entry)),
+        ...configured,
       ];
       const real = await Promise.all(lexical.map(realPathOrSelf));
       return [...new Set([...lexical, ...real])];
     })();
-    deniedHostPrefixCache.set(instanceRoot, cached);
+    deniedHostPrefixCache.set(cacheKey, cached);
   }
   return cached;
 }

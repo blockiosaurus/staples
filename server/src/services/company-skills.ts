@@ -3,7 +3,7 @@ import { isSelfServeCompany, SELF_SERVE_HOST_EXECUTION_ERROR_CODE } from "./self
 import { logger } from "../middleware/logger.js";
 import { removeRuntimeSkillCache, resolveRuntimeSkillCache, runtimeSkillCacheSpec } from "./runtime-skill-cache.js";
 import { createHash, randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { skillFileBytes, snapshotFile, assertSkillSnapshotPath } from "./skill-snapshot.js";
@@ -2445,6 +2445,78 @@ function resolveLocalSkillFilePath(skill: CompanySkill, relativePath: string) {
   return directPath;
 }
 
+function localSkillFileRoot(skill: CompanySkill): string | null {
+  const skillDir = normalizeSkillDirectory(skill);
+  if (skillDir) return path.resolve(skillDir);
+  return skill.sourceLocator ? path.resolve(skill.sourceLocator) : null;
+}
+
+/**
+ * Refuse a skill file path that leaves the skill folder or passes through a
+ * symbolic link below it (a planted link must never redirect a read or write
+ * to a server file). Missing trailing segments are fine: a write creates them.
+ */
+async function assertSkillFilePathNoFollow(root: string, absolutePath: string) {
+  const relative = path.relative(root, absolutePath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw notFound("Skill file not found");
+  let current = root;
+  for (const segment of relative.split(path.sep)) {
+    current = path.join(current, segment);
+    const stat = await fs.lstat(current).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+      throw error;
+    });
+    if (!stat) return;
+    if (stat.isSymbolicLink()) throw unprocessable("Skill files can't be symbolic links.");
+  }
+}
+
+/**
+ * Read a skill file without following a symbolic link. Null when it is missing
+ * or is (or sits under) a link: the caller then serves the stored SKILL.md or
+ * reports the file unavailable.
+ */
+async function readSkillFileNoFollow(root: string, absolutePath: string): Promise<{ bytes: Buffer; mode: number } | null> {
+  try {
+    await assertSkillFilePathNoFollow(root, absolutePath);
+  } catch {
+    return null;
+  }
+  const handle = await fs.open(absolutePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "ELOOP") return null;
+    throw error;
+  });
+  if (!handle) return null;
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) return null;
+    return { bytes: await handle.readFile(), mode: stat.mode };
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Write a skill file without following a symbolic link at the target or any folder below the skill root. */
+async function writeSkillFileNoFollow(root: string, absolutePath: string, bytes: Buffer, mode: number) {
+  await assertSkillFilePathNoFollow(root, absolutePath);
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await assertSkillFilePathNoFollow(root, absolutePath);
+  const handle = await fs.open(
+    absolutePath,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW,
+    mode,
+  ).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ELOOP") throw unprocessable("Skill files can't be symbolic links.");
+    throw error;
+  });
+  try {
+    await handle.writeFile(bytes);
+    await handle.chmod(mode);
+  } finally {
+    await handle.close();
+  }
+}
+
 async function collectSkillFileBytes(skillDir: string): Promise<{
   files: Array<{ path: string; bytes: Buffer; sizeBytes: number; kind: CompanySkillFileInventoryEntry["kind"] }>;
   findings: CompanySkillAuditFinding[];
@@ -2951,10 +3023,41 @@ async function listLastEditorsBySkillId(
   return editors;
 }
 
+const SELF_SERVE_SKILL_SOURCE_HOSTS: ReadonlySet<string> = new Set([
+  "github.com",
+  "www.github.com",
+  "api.github.com",
+  "raw.githubusercontent.com",
+]);
+
 export function companySkillService(db: Db) {
   const folderSvc = folderService(db);
   const agents = agentService(db);
   const projects = projectService(db);
+
+  /**
+   * Self-serve company: skills are fetched only from GitHub (github.com and its
+   * raw/API hosts). Any other host, e.g. a GitHub Enterprise hostname or a plain
+   * URL, is a server-side fetch to an address the user picked (SSRF).
+   */
+  async function assertSkillSourceHostAllowed(companyId: string, source: { url?: string | null; hostname?: string | null }) {
+    if (!(await isSelfServeCompany(db, companyId))) return;
+    let hostname = source.hostname?.trim().toLowerCase() ?? "";
+    let protocol = "https:";
+    if (source.url) {
+      try {
+        const parsed = new URL(source.url.trim());
+        hostname = parsed.hostname.toLowerCase();
+        protocol = parsed.protocol;
+      } catch {
+        hostname = "";
+      }
+    }
+    if (protocol === "https:" && SELF_SERVE_SKILL_SOURCE_HOSTS.has(hostname)) return;
+    throw forbidden("Skills can only be imported from github.com in this company on this instance.", {
+      code: SELF_SERVE_HOST_EXECUTION_ERROR_CODE,
+    });
+  }
 
   async function assertLocalImportSourceAllowed(companyId: string, source: string) {
     // Self-serve company: no imports from the server's filesystem (a managed
@@ -4326,6 +4429,7 @@ export function companySkillService(db: Db) {
     }
 
     const hostname = asString(metadata.hostname) || "github.com";
+    await assertSkillSourceHostAllowed(skill.companyId, { hostname });
     const apiBase = gitHubApiBase(hostname);
     const latestRef = await resolveGitHubCommitSha(owner, repo, trackingRef, apiBase);
     return {
@@ -4366,9 +4470,10 @@ export function companySkillService(db: Db) {
 
     if (skill.sourceType === "local_path" || skill.sourceType === "catalog") {
       const absolutePath = resolveLocalSkillFilePath(skill, normalizedPath);
-      const diskBytes = absolutePath ? await fs.readFile(absolutePath).catch(() => null) : null;
-      if (diskBytes !== null) {
-        const file = snapshotFile(normalizedPath, fileEntry.kind, diskBytes, Boolean((await fs.stat(absolutePath!)).mode & 0o111));
+      const root = localSkillFileRoot(skill);
+      const disk = absolutePath && root ? await readSkillFileNoFollow(root, absolutePath) : null;
+      if (disk !== null) {
+        const file = snapshotFile(normalizedPath, fileEntry.kind, disk.bytes, Boolean(disk.mode & 0o111));
         return { ...file, skillId: skill.id, language: file.encoding === "base64" ? null : inferLanguageFromPath(normalizedPath),
           markdown: file.encoding !== "base64" && isMarkdownPath(normalizedPath), editable: source.editable && file.encoding !== "base64" };
       } else if (normalizedPath === "SKILL.md") {
@@ -4381,6 +4486,7 @@ export function companySkillService(db: Db) {
       const owner = asString(metadata.owner);
       const repo = asString(metadata.repo);
       const hostname = asString(metadata.hostname) || "github.com";
+      await assertSkillSourceHostAllowed(skill.companyId, { hostname });
       const ref = skill.sourceRef ?? asString(metadata.ref) ?? "main";
       const rawRepoSkillDir = typeof metadata.repoSkillDir === "string" ? metadata.repoSkillDir.trim() : null;
       // An explicit "."/"" repoSkillDir means SKILL.md lives at the repo root;
@@ -4703,21 +4809,21 @@ export function companySkillService(db: Db) {
       if (format.encoding === "base64" && bytes.toString("base64") !== content) {
         throw unprocessable("Binary files must use canonical base64 encoding.");
       }
-      const previousContent = await fs.readFile(absolutePath).catch(() => null);
-      const previousMode = (await fs.stat(absolutePath).catch(() => null))?.mode ?? 0o644;
+      const root = localSkillFileRoot(skill);
+      if (!root) throw notFound("Skill file not found");
+      // Refuse a symlinked target or folder before anything (including rollback) touches it.
+      await assertSkillFilePathNoFollow(root, absolutePath);
+      const previous = await readSkillFileNoFollow(root, absolutePath);
+      const previousContent = previous?.bytes ?? null;
+      const previousMode = previous?.mode ?? 0o644;
       const restore = async () => {
         if (previousContent === null) await fs.rm(absolutePath, { force: true });
-        else {
-          await fs.writeFile(absolutePath, previousContent);
-          await fs.chmod(absolutePath, previousMode);
-        }
+        else await writeSkillFileNoFollow(root, absolutePath, previousContent, previousMode & 0o777);
       };
       format.onRollback?.(restore, skill.currentVersionId);
       const mode = (format.executable ?? Boolean(previousMode & 0o111)) ? 0o755 : 0o644;
       try {
-        await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-        await fs.writeFile(absolutePath, bytes);
-        await fs.chmod(absolutePath, mode);
+        await writeSkillFileNoFollow(root, absolutePath, bytes, mode);
 
         if (normalizedPath === "SKILL.md") {
           const parsed = parseFrontmatterMarkdown(content);
@@ -4791,7 +4897,10 @@ export function companySkillService(db: Db) {
       }
 
       const absolutePath = resolveLocalSkillFilePath(skill, normalizedPath);
-      if (!absolutePath) throw notFound("Skill file not found");
+      const root = localSkillFileRoot(skill);
+      if (!absolutePath || !root) throw notFound("Skill file not found");
+      // Never delete through a symlinked folder below the skill root.
+      await assertSkillFilePathNoFollow(root, path.dirname(absolutePath) === root ? absolutePath : path.dirname(absolutePath));
 
       await fs.rm(absolutePath, {
         recursive: input.target === "folder",
@@ -4933,6 +5042,7 @@ export function companySkillService(db: Db) {
       throw unprocessable("Skill source locator is missing.");
     }
 
+    await assertSkillSourceHostAllowed(companyId, { url: skill.sourceLocator });
     const result = await readUrlSkillImports(companyId, skill.sourceLocator, skill.slug);
     const matching = result.skills.find((entry) => entry.key === skill.key) ?? result.skills[0] ?? null;
     if (!matching) {
@@ -6338,6 +6448,8 @@ export function companySkillService(db: Db) {
     const local = !/^https?:\/\//i.test(parsed.resolvedSource);
     if (local) {
       await assertLocalImportSourceAllowed(companyId, parsed.resolvedSource);
+    } else {
+      await assertSkillSourceHostAllowed(companyId, { url: parsed.resolvedSource });
     }
     const { skills, warnings } = local
       ? {

@@ -1,4 +1,4 @@
-import { configureSelfServePolicy } from "./services/self-serve-policy.js";
+import { configureSelfServePolicy, registerSelfServeCompanyLookup } from "./services/self-serve-policy.js";
 import { voiceSessionRoutes, voiceWebhookRoutes } from "./routes/voice-sessions.js";
 import { createDeliveryWorkCoordinator } from "./services/delivery-work-coordinator.js";
 import { DELIVERY_QUEUES } from "./services/delivery-work-notifications.js";
@@ -556,6 +556,7 @@ export async function createApp(
     deploymentMode: opts.deploymentMode,
     adapterTypes: opts.selfServeAdapterTypes,
   });
+  registerSelfServeCompanyLookup(db);
   const health = healthRoutes(db, {
     deploymentMode: opts.deploymentMode,
     deploymentExposure: opts.deploymentExposure,

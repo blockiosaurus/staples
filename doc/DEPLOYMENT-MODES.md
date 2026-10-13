@@ -307,7 +307,29 @@ for its agents. Any other root is reported as unavailable
 (`workspace_root_not_allowed`). For every company, the file browser never
 serves anything under `/proc`, `/sys`, `/dev`, `/etc`, `/run/secrets`,
 `/var/run/secrets`, or the instance's `db`, `secrets`, `data` and `logs`
-folders, `config.json` or `.env` (`denied_host_path`).
+folders, `config.json` or `.env` (`denied_host_path`). The configured
+embedded-database, backup, storage and log folders, the secrets key file, the
+config file and `.env` are refused too, even when they live outside the
+instance root. Git commands the server runs in a workspace folder (for example
+the file browser's `git status`) pass `-c core.fsmonitor=false` and
+`-c core.hooksPath=/dev/null`, so a planted `.git/config` can't run a program.
+
+**Repository URLs.** The server clones a project or execution workspace
+`repoUrl` into the company's managed folder, which the file browser serves. In
+a self-serve company a `repoUrl` must be `https://` to a public host: `file://`,
+a bare server path, `ssh://`, `git://`, `http://`, `ext::` and loopback,
+private or link-local hosts are refused with `403 self_serve_repo_url_not_allowed`.
+This applies to project workspace create and update (route and service),
+project create (`workspace.repoUrl` and `repositoryUrls`) and the
+execution-workspace PATCH. A git ref (`repoRef`, `defaultRef`, `baseRef`,
+`branchName`) that starts with `-` is refused the same way. At clone time the
+host is resolved and must reach only public addresses (the remote endpoint
+guard), and the clone runs with `-c http.followRedirects=false`. For every
+company, a clone, fetch or `ls-remote` of a user-supplied URL refuses the
+`ext::` transport; while self-serve is on it also refuses the `file` transport
+(`file://` and bare paths), so no company's clone can copy another tenant's
+folder or a server file. An instance without self-serve keeps local-path clones
+for trusted operators.
 
 **Built-in agents in a self-serve company run on Claude (hosted).** A built-in
 that can't run hosted is skipped, never provisioned on a local CLI. The
@@ -323,6 +345,9 @@ onboarding seed's first agent is `claude_managed`.
 - project workspace `cwd` (a server folder) and plugin local folders;
 - skill imports from a server folder, and project skill browse/scan (GitHub and
   catalog sources still work);
+- skill imports and updates from any host other than GitHub (`github.com`,
+  `api.github.com`, `raw.githubusercontent.com`), such as a GitHub Enterprise
+  hostname or a plain URL;
 - adding a local command (stdio) MCP template;
 - company package imports.
 
@@ -332,6 +357,14 @@ onboarding seed's first agent is `claude_managed`.
   addresses (for example `*.railway.internal`, `127.0.0.1`, `10.x`).
   Link-local and metadata addresses are always refused.
 - `POST /api/health/dev-server/restart` for anyone who is not an instance admin.
+- The operator's own Claude skills folder (`$CLAUDE_HOME/skills`, default
+  `~/.claude/skills`) through `GET /api/skills/available` and
+  `GET /api/skills/:name`. Instance admins still see it; everyone else gets
+  only the bundled Paperclip skills (the routes and their shape are unchanged).
+  The invite-scoped `paperclip` skill is always the bundled copy.
+
+**For every company, always:** a company skill file is never read, written or
+deleted through a symbolic link below the skill folder.
 
 **Already admin-only and unchanged:** environments; plugin install, enable and
 config; adapter install. The external-instructions route

@@ -90,11 +90,12 @@ exit 128
     const bin = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fake-checkout-"));
     const previousPath = process.env.PATH;
     await fs.writeFile(path.join(bin, "git"), `#!/bin/sh
-if [ "$1" = clone ]; then
+# Hardening config (-c ...) precedes the subcommand.
+case " $* " in *" clone "*)
   for argument in "$@"; do destination="$argument"; done
   /bin/mkdir -p "$destination/.git"
   exit 0
-fi
+esac
 printf '%s\\n' "fatal: Authentication failed for 'https://example.test/repo.git'" >&2
 exit 128
 `, { mode: 0o755 });

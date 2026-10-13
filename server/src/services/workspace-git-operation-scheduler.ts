@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { MANAGED_WORKSPACE_GIT_CONFIG_ARGS } from "./git-hardening.js";
 import fs from "node:fs/promises";
 import { setExpensiveWorkspaceGitExecutor } from "@paperclipai/adapter-utils/git-workspace-sync";
 import { runWorkspaceGitProcess } from "@paperclipai/adapter-utils/workspace-git-stream";
@@ -322,7 +323,10 @@ export class WorkspaceGitOperationScheduler {
     this.now = options.now ?? Date.now;
     this.runner = options.runner ?? createSpawnRunner({
       gitBinary: options.gitBinary ?? "git",
-      gitArgsPrefix: options.gitArgsPrefix ?? [],
+      // Every scan runs against a workspace folder whose .git/config the
+      // server does not control: a planted core.fsmonitor or hooks folder
+      // must never run a program on a read.
+      gitArgsPrefix: options.gitArgsPrefix ?? MANAGED_WORKSPACE_GIT_CONFIG_ARGS,
     });
   }
 

@@ -133,6 +133,8 @@ import {
 import { initializeCloudRuntimeIdentity } from "./services/cloud-runtime-identity.js";
 import { systemdNotify } from "./services/systemd-notify.js";
 import { flushInFlightRunLogMirrors } from "./services/run-log-store.js";
+import { registerDeniedHostLocations } from "./services/workspace-file-resources.js";
+import { resolvePaperclipConfigPath, resolvePaperclipEnvPath } from "./paths.js";
 import {
   createEmbeddedPostgresSupervisor,
   type EmbeddedPostgresSupervisor,
@@ -912,6 +914,18 @@ async function startServerWithDatabaseTeardown(
   // document parsed fail-closed above (`plugins.autoInstall`). Absent env means
   // self-hosted: createApp falls back to its built-in kubernetes-only default.
   const managedPluginAutoInstall = managedConfig?.plugins.autoInstall ?? null;
+  // The file browser never serves the configured database, backup, storage,
+  // log, secrets-key or config locations, even outside the instance root.
+  registerDeniedHostLocations([
+    config.embeddedPostgresDataDir,
+    config.databaseBackupDir,
+    config.storageLocalDiskBaseDir,
+    config.logDir,
+    config.secretsMasterKeyFilePath,
+    resolvePaperclipConfigPath(),
+    resolvePaperclipEnvPath(),
+    process.env.RUN_LOG_BASE_PATH,
+  ]);
   const app = await createApp(db as any, {
     prepareIdleDatabaseBackup: idleDatabaseBackupEnabled
       ? async () => (await runServerDatabaseBackup("idle")) !== null

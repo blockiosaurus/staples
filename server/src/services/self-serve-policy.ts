@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { isIP } from "node:net";
 import path from "node:path";
 import type { Request } from "express";
 import { eq } from "drizzle-orm";
@@ -7,6 +8,12 @@ import type { DeploymentMode } from "@paperclipai/shared";
 import { DEFAULT_SELF_SERVE_ADAPTER_TYPES } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
+import {
+  isAlwaysDeniedLinkLocalIp,
+  isPrivateOrReservedIp,
+  resolveApprovedRemoteHttpAddresses,
+  type RemoteHttpEndpointLookup,
+} from "./remote-http-endpoint-guard.js";
 
 /**
  * Self-serve floor (PAPERCLIP_SELF_SERVE_COMPANIES).
@@ -350,4 +357,109 @@ export async function assertSelfServeCompanyHostAccess(
 ) {
   if (!(await isSelfServeCompany(db, companyId))) return;
   refuse(`${surface} can't be used in this company on this instance.`);
+}
+
+// ---------------------------------------------------------------------------
+// Repository URLs (managed clones)
+// ---------------------------------------------------------------------------
+
+/** Error code when a self-serve company names a repository the server may not clone. */
+export const SELF_SERVE_REPO_URL_ERROR_CODE = "self_serve_repo_url_not_allowed";
+
+const COMPANY_LOOKUP_KEY = Symbol.for("paperclip.selfServeCompanyLookup");
+type LookupHolder = { [COMPANY_LOOKUP_KEY]?: Pick<Db, "select"> | null };
+
+/**
+ * Register the database the clone-time floor uses to tell whether a company is
+ * self-serve. Managed clones run deep inside workspace realization, where no
+ * database handle is threaded through; createApp registers it next to the policy.
+ */
+export function registerSelfServeCompanyLookup(db: Pick<Db, "select"> | null) {
+  (globalThis as LookupHolder)[COMPANY_LOOKUP_KEY] = db;
+}
+
+/**
+ * True when the clone-time floor applies to this company. With the policy on and
+ * no registered database the answer is yes (fail closed).
+ */
+export async function isSelfServeCompanyForClone(companyId: string | null | undefined): Promise<boolean> {
+  if (!readPolicy().enabled) return false;
+  const db = (globalThis as LookupHolder)[COMPANY_LOOKUP_KEY] ?? null;
+  if (!db || !companyId) return true;
+  return isSelfServeCompany(db, companyId);
+}
+
+/**
+ * Why a repository URL is not allowed in a self-serve company, or null. Only
+ * `https://` is allowed (never `file://`, a bare path, `ssh`, `git` or `ext::`),
+ * and never a literal loopback, private, reserved or link-local host. Hostnames
+ * are resolved at clone time ({@link assertSelfServeCloneSourceAllowed}).
+ */
+export function selfServeRepoUrlViolation(repoUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(repoUrl.trim());
+  } catch {
+    return "Repository URLs in this company must be https:// URLs.";
+  }
+  if (parsed.protocol !== "https:") return "Repository URLs in this company must be https:// URLs.";
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!hostname) return "Repository URLs in this company must name a host.";
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+    return "Repository URLs in this company can't point at the server or a private network.";
+  }
+  if (isIP(hostname) !== 0 && (isAlwaysDeniedLinkLocalIp(hostname) || isPrivateOrReservedIp(hostname))) {
+    return "Repository URLs in this company can't point at the server or a private network.";
+  }
+  return null;
+}
+
+/** A git ref the server passes to git: never one that git would read as an option. */
+export function selfServeGitRefViolation(ref: string | null | undefined): string | null {
+  if (typeof ref !== "string") return null;
+  const trimmed = ref.trim();
+  if (trimmed.startsWith("-")) return "Git refs can't start with '-'.";
+  if (/[\0\r\n]/.test(trimmed)) return "Git refs can't contain control characters.";
+  return null;
+}
+
+/** Write-time floor: a self-serve company may only store https:// repository URLs. */
+export async function assertSelfServeRepoUrl(
+  db: Pick<Db, "select">,
+  companyId: string,
+  fields: { repoUrl?: string | null; refs?: Array<string | null | undefined> },
+) {
+  const repoUrl = typeof fields.repoUrl === "string" ? fields.repoUrl.trim() : "";
+  const refs = fields.refs ?? [];
+  if (!repoUrl && refs.every((ref) => typeof ref !== "string")) return;
+  if (!(await isSelfServeCompany(db, companyId))) return;
+  const violation = (repoUrl ? selfServeRepoUrlViolation(repoUrl) : null)
+    ?? refs.map(selfServeGitRefViolation).find((value) => value !== null)
+    ?? null;
+  if (violation) throw forbidden(violation, { code: SELF_SERVE_REPO_URL_ERROR_CODE });
+}
+
+/**
+ * Clone-time floor for a self-serve company: the URL must pass
+ * {@link selfServeRepoUrlViolation} and its host must resolve only to public
+ * addresses (the DNS-resolving remote endpoint guard, private networks refused).
+ */
+export async function assertSelfServeCloneSourceAllowed(
+  companyId: string | null | undefined,
+  repoUrl: string,
+  options: { lookup?: RemoteHttpEndpointLookup } = {},
+) {
+  if (!(await isSelfServeCompanyForClone(companyId))) return;
+  const violation = selfServeRepoUrlViolation(repoUrl);
+  if (violation) throw forbidden(violation, { code: SELF_SERVE_REPO_URL_ERROR_CODE });
+  await resolveApprovedRemoteHttpAddresses(
+    new URL(repoUrl.trim()),
+    { allowPrivateNetwork: false, lookup: options.lookup },
+    (_message, reason) => forbidden(
+      reason === "remote_http_dns_failed"
+        ? "The repository host could not be resolved."
+        : "Repository URLs in this company can't point at the server or a private network.",
+      { code: SELF_SERVE_REPO_URL_ERROR_CODE, reason },
+    ),
+  );
 }

@@ -29,6 +29,7 @@ import {
 import {
   resolveDefaultBackupDir,
   resolveDefaultEmbeddedPostgresDir,
+  resolveDefaultLogsDir,
   resolveDefaultSecretsKeyFilePath,
   resolveDefaultStorageDir,
   resolveHomeAwarePath,
@@ -89,6 +90,8 @@ export interface Config {
   secretsMasterKeyFilePath: string;
   storageProvider: StorageProvider;
   storageLocalDiskBaseDir: string;
+  /** Where the server writes its log files (config `logging.logDir`). */
+  logDir: string;
   storageS3Bucket: string;
   storageS3Region: string;
   storageS3Endpoint: string | undefined;
@@ -362,6 +365,7 @@ export function loadConfig(): Config {
           fileSecrets?.localEncrypted.keyFilePath ??
           resolveDefaultSecretsKeyFilePath(),
       ),
+    logDir: resolveHomeAwarePath(fileConfig?.logging?.logDir ?? resolveDefaultLogsDir()),
     storageProvider,
     storageLocalDiskBaseDir,
     storageS3Bucket,

@@ -1418,8 +1418,9 @@ process.stderr.write(${JSON.stringify(stderr)}, () => { process.exitCode = ${cod
     expect(JSON.stringify(diagnostic)).not.toContain("private-");
     expect(JSON.stringify(diagnostic)).not.toContain("example.invalid");
     expect((await fs.readFile(calls, "utf8")).trim().split("\n").map(line => JSON.parse(line))).toEqual([
-      ["fetch", "--prune", "origin", "+refs/heads/absent-fixture:refs/remotes/origin/absent-fixture"],
-      ["ls-remote", "--symref", "origin", "HEAD"],
+      // ext:: is always refused on a user-reachable remote (file too, on a self-serve instance).
+      ["-c", "protocol.ext.allow=never", "fetch", "--prune", "origin", "+refs/heads/absent-fixture:refs/remotes/origin/absent-fixture"],
+      ["-c", "protocol.ext.allow=never", "ls-remote", "--symref", "origin", "HEAD"],
     ]);
     expect(error.defaultBranch).toBeNull();
   });

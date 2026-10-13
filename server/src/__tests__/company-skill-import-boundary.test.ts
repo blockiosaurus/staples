@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { companies, companySkills, createDb, projects, projectWorkspaces } from "@paperclipai/db";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { companySkillService } from "../services/company-skills.js";
@@ -111,6 +111,46 @@ describeEmbeddedPostgres("company skill local import boundary", () => {
         details: { code: "self_serve_host_execution_forbidden" },
       });
     } finally {
+      policy.resetSelfServePolicy();
+    }
+  });
+
+  it("limits a self-serve company's URL skill sources to github.com", async () => {
+    const policy = await import("../services/self-serve-policy.js");
+    policy.configureSelfServePolicy({ selfServeCompanies: true, deploymentMode: "authenticated", adapterTypes: ["claude_managed"] });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      const companyId = randomUUID();
+      await db.insert(companies).values({
+        id: companyId,
+        name: "Self-serve URL Co",
+        issuePrefix: `U${companyId.replaceAll("-", "").slice(0, 6).toUpperCase()}`,
+        selfServe: true,
+        selfServeCreatedByUserId: "u1",
+      });
+      const service = companySkillService(db);
+      for (const source of [
+        "https://ghe.internal.example/acme/skills",
+        "https://127.0.0.1/acme/skills/SKILL.md",
+        "https://169.254.169.254/latest/meta-data/SKILL.md",
+      ]) {
+        await expect(service.importFromSource(companyId, source), source).rejects.toMatchObject({
+          status: 403,
+          details: { code: "self_serve_host_execution_forbidden" },
+        });
+      }
+      // A stored GitHub skill whose metadata names another host is never fetched.
+      const [row] = await db.insert(companySkills).values({
+        companyId, key: `company/${companyId}/ghe`, slug: "ghe", name: "GHE",
+        markdown: "# GHE", sourceType: "github", sourceLocator: "https://ghe.internal.example/acme/skills",
+        sourceRef: "a".repeat(40), trustLevel: "markdown_only", compatibility: "compatible",
+        metadata: { hostname: "ghe.internal.example", owner: "acme", repo: "skills", repoSkillDir: "." },
+        fileInventory: [{ path: "SKILL.md", kind: "skill" }, { path: "notes.md", kind: "reference" }],
+      }).returning();
+      await expect(service.readFile(companyId, row!.id, "notes.md")).rejects.toMatchObject({ status: 403 });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
       policy.resetSelfServePolicy();
     }
   });

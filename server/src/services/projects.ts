@@ -35,7 +35,7 @@ import { listCurrentRuntimeServicesForProjectWorkspaces } from "./workspace-runt
 import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-policy.js";
 import { mergeProjectWorkspaceRuntimeConfig, readProjectWorkspaceRuntimeConfig } from "./project-workspace-runtime-config.js";
 import { resolveManagedProjectWorkspaceDir } from "../home-paths.js";
-import { assertSelfServeWorkspaceRoot } from "./self-serve-policy.js";
+import { assertSelfServeRepoUrl, assertSelfServeWorkspaceRoot } from "./self-serve-policy.js";
 import { recordProjectLifecycleEvent, recordResourceCreationEvent } from "./resource-lifecycle-events.js";
 
 type ProjectRow = typeof projects.$inferSelect;
@@ -1101,6 +1101,12 @@ export function projectService(db: Db, options: { captureWorkspaceUpdates?: bool
       const cwd = normalizeWorkspaceCwd(data.cwd);
       await assertSelfServeWorkspaceRoot(db, project.companyId, cwd);
       const repoUrl = readNonEmptyString(data.repoUrl);
+      // Self-serve: the server clones this URL into the company's folder, so
+      // only https:// to a public host (never file://, a path, ssh or ext::).
+      await assertSelfServeRepoUrl(db, project.companyId, {
+        repoUrl,
+        refs: [readNonEmptyString(data.repoRef), readNonEmptyString(data.defaultRef)],
+      });
       const sourceType = readNonEmptyString(data.sourceType) ?? (repoUrl ? "git_repo" : cwd ? "local_path" : "remote_managed");
       const remoteWorkspaceRef = readNonEmptyString(data.remoteWorkspaceRef);
       if (sourceType === "remote_managed") {
@@ -1202,6 +1208,13 @@ export function projectService(db: Db, options: { captureWorkspaceUpdates?: bool
         data.repoUrl !== undefined
           ? readNonEmptyString(data.repoUrl)
           : readNonEmptyString(existing.repoUrl);
+      await assertSelfServeRepoUrl(db, existing.companyId, {
+        repoUrl: data.repoUrl !== undefined ? nextRepoUrl : null,
+        refs: [
+          data.repoRef !== undefined ? readNonEmptyString(data.repoRef) : undefined,
+          data.defaultRef !== undefined ? readNonEmptyString(data.defaultRef) : undefined,
+        ],
+      });
       const nextSourceType =
         data.sourceType !== undefined
           ? readNonEmptyString(data.sourceType)

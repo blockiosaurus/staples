@@ -4408,6 +4408,7 @@ export function heartbeatService(
           eq(projectWorkspaces.projectId, executionWorkspace.projectId),
         )).orderBy(asc(projectWorkspaces.createdAt), asc(projectWorkspaces.id));
         const repositories = await prepareProjectRepositoryWorkspaces({
+          companyId: agent.companyId,
           cwd: executionWorkspace.cwd,
           anchorRepoUrl: executionWorkspace.repoUrl,
           workspaces: repositoryRows,

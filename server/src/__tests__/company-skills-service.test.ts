@@ -444,6 +444,39 @@ describeEmbeddedPostgres("companySkillService.list", () => {
     expect(await prepare()).toBeUndefined();
   });
 
+  it("never follows a symbolic link when reading or writing a skill file", async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: "Symlinked skill files", issuePrefix: `T${companyId.slice(0, 6)}` });
+    const skill = await svc.createLocalSkill(companyId, { name: "Linked files", slug: "linked-files" });
+    const source = skill.sourceLocator!;
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-skill-outside-"));
+    cleanupDirs.add(outside);
+    await fs.writeFile(path.join(outside, "secret.txt"), "SERVER_SECRET");
+    await fs.symlink(path.join(outside, "secret.txt"), path.join(source, "secret.md"));
+    await fs.symlink(outside, path.join(source, "refs"));
+    await db.update(companySkills).set({
+      fileInventory: [
+        ...skill.fileInventory,
+        { path: "secret.md", kind: "reference" },
+        { path: "refs/secret.txt", kind: "reference" },
+        { path: "refs/new.md", kind: "reference" },
+      ],
+    }).where(eq(companySkills.id, skill.id));
+
+    for (const filePath of ["secret.md", "refs/secret.txt"]) {
+      const read = await svc.readFile(companyId, skill.id, filePath).catch((error: unknown) => error);
+      expect(JSON.stringify(read), filePath).not.toContain("SERVER_SECRET");
+      await expect(svc.updateFile(companyId, skill.id, filePath, "OVERWRITTEN"), filePath).rejects.toMatchObject({ status: 422 });
+    }
+    await expect(svc.updateFile(companyId, skill.id, "refs/new.md", "PLANTED")).rejects.toMatchObject({ status: 422 });
+    expect(await fs.readFile(path.join(outside, "secret.txt"), "utf8")).toBe("SERVER_SECRET");
+    await expect(fs.stat(path.join(outside, "new.md"))).rejects.toMatchObject({ code: "ENOENT" });
+    // The links themselves are left alone, and real files still save.
+    expect((await fs.lstat(path.join(source, "secret.md"))).isSymbolicLink()).toBe(true);
+    await svc.updateFile(companyId, skill.id, "notes.md", "Real file");
+    expect(await fs.readFile(path.join(source, "notes.md"), "utf8")).toBe("Real file");
+  });
+
   it("lists skills without exposing markdown content", async () => {
     const companyId = randomUUID();
     const skillId = randomUUID();

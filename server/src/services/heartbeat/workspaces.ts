@@ -83,6 +83,12 @@ import {
   resolveExecutionWorkspaceMode,
 } from "../execution-workspace-policy.js";
 import { isUnsafeSessionWorkspaceCwd } from "../session-workspace-cwd.js";
+import {
+  MANAGED_WORKSPACE_GIT_CONFIG_ARGS,
+  SELF_SERVE_CLONE_GIT_CONFIG_ARGS,
+  untrustedRemoteGitConfigArgs,
+} from "../git-hardening.js";
+import { assertSelfServeCloneSourceAllowed, isSelfServeCompanyForClone } from "../self-serve-policy.js";
 import { assertLowTrustWorkspaceIsolation } from "../low-trust-runtime-containment.js";
 import type { TrustPresetResolution } from "../trust-preset-resolver.js";
 import {
@@ -473,7 +479,7 @@ export async function ensureManagedProjectWorkspace(input: {
   });
   let cwd = defaultCwd;
   if (input.repoUrl && await fs.stat(path.join(cwd, ".git")).catch(() => null)) {
-    const origin = await execFile("git", ["-C", cwd, "remote", "get-url", "origin"], { timeout: 10_000 })
+    const origin = await execFile("git", [...MANAGED_WORKSPACE_GIT_CONFIG_ARGS, "-C", cwd, "remote", "get-url", "origin"], { timeout: 10_000 })
       .then((result) => result.stdout.trim()).catch(() => null);
     if (origin && origin !== input.repoUrl) {
       cwd = `${cwd}-${createHash("sha256").update(input.repoUrl).digest("hex").slice(0, 12)}`;
@@ -485,7 +491,7 @@ export async function ensureManagedProjectWorkspace(input: {
     // The winner may have cloned a different repository with the same basename.
     return ensureManagedProjectWorkspace(input);
   }
-  const attempt = materializeManagedProjectWorkspace(cwd, input).finally(() => {
+  const attempt = materializeManagedProjectWorkspace(cwd, { ...input, companyId: input.companyId }).finally(() => {
     managedCheckoutMaterializations.delete(cwd);
   });
   managedCheckoutMaterializations.set(cwd, attempt);
@@ -493,7 +499,7 @@ export async function ensureManagedProjectWorkspace(input: {
   if (input.repoUrl) {
     // A different server process can publish a same-name checkout between the
     // initial origin check and the atomic rename. Never adopt its other repo.
-    const origin = await execFile("git", ["-C", cwd, "remote", "get-url", "origin"], { timeout: 10_000 })
+    const origin = await execFile("git", [...MANAGED_WORKSPACE_GIT_CONFIG_ARGS, "-C", cwd, "remote", "get-url", "origin"], { timeout: 10_000 })
       .then((value) => value.stdout.trim()).catch(() => null);
     if (origin && origin !== input.repoUrl) {
       if (cwd !== defaultCwd) throw new Error("Managed checkout origin does not match the requested repository");
@@ -506,12 +512,21 @@ export async function ensureManagedProjectWorkspace(input: {
 async function materializeManagedProjectWorkspace(
   cwd: string,
   input: {
+    /** The company whose folder receives the clone; drives the self-serve clone floor. */
+    companyId?: string | null;
     repoUrl: string | null;
     repoRef?: string | null;
     localSource?: string | null;
     resolveGitAuth?: GitRemoteAuthProvider | null;
   },
 ): Promise<{ cwd: string; warning: string | null }> {
+  if (input.repoUrl && !input.localSource) {
+    // Self-serve: https only, and the host must resolve to public addresses.
+    await assertSelfServeCloneSourceAllowed(input.companyId, input.repoUrl);
+  }
+  if (input.repoRef && input.repoRef.trim().startsWith("-")) {
+    throw new Error(`Managed checkout ref "${input.repoRef}" is not a valid git ref`);
+  }
   await fs.mkdir(path.dirname(cwd), { recursive: true });
   const stats = await fs.stat(cwd).catch(() => null);
 
@@ -554,7 +569,17 @@ async function materializeManagedProjectWorkspace(
     try {
       await execFile(
         "git",
-        [...(auth?.configArgs ?? []), "clone", "--no-hardlinks", "--", input.localSource ?? input.repoUrl, cloneTmpDir],
+        [
+          ...MANAGED_WORKSPACE_GIT_CONFIG_ARGS,
+          // A user-supplied URL never uses ext:: and, on a self-serve instance,
+          // never the file transport (a path into another tenant's folder or the
+          // server). localSource is the project's configured folder, so it keeps
+          // the local transport.
+          ...(input.localSource ? ["-c", "protocol.ext.allow=never"] : untrustedRemoteGitConfigArgs()),
+          ...(!input.localSource && await isSelfServeCompanyForClone(input.companyId) ? SELF_SERVE_CLONE_GIT_CONFIG_ARGS : []),
+          ...(auth?.configArgs ?? []),
+          "clone", "--no-hardlinks", "--", input.localSource ?? input.repoUrl, cloneTmpDir,
+        ],
         {
           env: {
             // Spread order matters: the sanitizer strips PAPERCLIP_*, which would remove the
@@ -586,9 +611,9 @@ async function materializeManagedProjectWorkspace(
         if (baseline) await disposeDirectorySnapshot(baseline);
         await disposeGitWorkspaceSnapshot(snapshot);
       }
-      await execFile("git", ["-C", cloneTmpDir, "remote", "set-url", "origin", input.repoUrl], { timeout: 10_000 });
+      await execFile("git", [...MANAGED_WORKSPACE_GIT_CONFIG_ARGS, "-C", cloneTmpDir, "remote", "set-url", "origin", input.repoUrl], { timeout: 10_000 });
     } else if (input.repoRef) {
-      await execFile("git", ["-C", cloneTmpDir, "checkout", input.repoRef], { timeout: MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS });
+      await execFile("git", [...MANAGED_WORKSPACE_GIT_CONFIG_ARGS, "-C", cloneTmpDir, "checkout", input.repoRef], { timeout: MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS });
     }
   } catch (error) {
     await fs
@@ -632,6 +657,8 @@ async function materializeManagedProjectWorkspace(
 
 /** Keep every distinct project repository inside the task's writable/synced root. */
 export async function prepareProjectRepositoryWorkspaces(input: {
+  /** The company that owns the repositories; drives the self-serve clone floor. */
+  companyId?: string | null;
   cwd: string;
   anchorRepoUrl: string | null;
   workspaces: Array<Pick<typeof projectWorkspaces.$inferSelect, "id" | "repoUrl" | "repoRef"> & { cwd?: string | null }>;
@@ -668,7 +695,7 @@ export async function prepareProjectRepositoryWorkspaces(input: {
     const localSource = workspace.cwd && workspace.cwd !== REPO_ONLY_CWD_SENTINEL
       && await fs.stat(workspace.cwd).then((entry) => entry.isDirectory()).catch(() => false)
       ? workspace.cwd : null;
-    const result = await materializeManagedProjectWorkspace(cwd, { repoUrl, repoRef: workspace.repoRef, localSource, resolveGitAuth: input.resolveGitAuth });
+    const result = await materializeManagedProjectWorkspace(cwd, { companyId: input.companyId, repoUrl, repoRef: workspace.repoRef, localSource, resolveGitAuth: input.resolveGitAuth });
     if (result.warning) throw new Error(result.warning);
     results.push({ workspaceId: workspace.id, cwd, repoUrl, repoRef: workspace.repoRef });
   }

@@ -144,6 +144,14 @@ folders. Three effects reach further:
   returns 403. Store the key as a secret and bind that instead.
 - `claude_managed` agents, in any company, ignore an instructions file outside
   the server's managed instructions folder.
+- Repository URLs in a self-serve company must be `https://` to a public host
+  (no `file://`, server paths, `ssh` or private addresses). For every company,
+  server-side clones and fetches refuse `file://`, bare server paths and
+  `ext::`, so use an `https://` (or `ssh://`) URL for your own projects too.
+- `GET /api/skills/available` and `GET /api/skills/:name` show the skills in
+  the container's `~/.claude/skills` only to instance admins; other users see
+  the bundled Paperclip skills.
+- Self-serve companies import skills from GitHub only.
 
 Keep `PAPERCLIP_SELF_SERVE_COMPANIES=true` for as long as any self-serve company
 exists, because turning it off lifts the floor for them. Your own

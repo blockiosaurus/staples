@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { untrustedRemoteGitConfigArgs } from "./git-hardening.js";
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import net from "node:net";
@@ -1005,6 +1006,7 @@ async function refreshRemoteTrackingBaseRefWithDiagnostic(
   }).catch(() => { diagnostic.authLookup = "failed"; return null; }) : null;
   try {
     await runGit([
+      ...untrustedRemoteGitConfigArgs(),
       ...(auth?.configArgs ?? []),
       "fetch",
       "--prune",
@@ -2760,7 +2762,7 @@ async function readAdvertisedDefaultBranch(repoRoot: string, resolveGitAuth?: Gi
     const remoteUrl = await runGit(["remote", "get-url", "origin"], repoRoot);
     const auth = resolveGitAuth ? await resolveGitAuth(remoteUrl) : null;
     const output = await new Promise<string>((resolve, reject) => {
-      execFile("git", [...(auth?.configArgs ?? []), "ls-remote", "--symref", "origin", "HEAD"], {
+      execFile("git", [...untrustedRemoteGitConfigArgs(), ...(auth?.configArgs ?? []), "ls-remote", "--symref", "origin", "HEAD"], {
         cwd: repoRoot, timeout: 10_000, maxBuffer: 64 * 1024,
         env: { ...process.env, ...auth?.env, GIT_TERMINAL_PROMPT: "0" },
       }, (error, stdout) => error ? reject(error) : resolve(stdout));

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { assertSelfServeCompanyHostAccess } from "../services/self-serve-policy.js";
+import { assertSelfServeCompanyHostAccess, assertSelfServeRepoUrl } from "../services/self-serve-policy.js";
 import { and, eq, sql } from "drizzle-orm";
 import { activityLog } from "@paperclipai/db";
 import { projectToolContext } from "../services/project-tool-context.js";
@@ -379,6 +379,11 @@ export function projectRoutes(db: Db) {
       workspace,
     }));
     await assertNoManagedSandboxWorkspacePath(workspace, companyId);
+    // Self-serve: every repository the server may clone is https:// to a public
+    // host (the workspace service checks again inside the transaction).
+    for (const repoUrl of [workspace?.repoUrl ?? null, ...(repositoryUrls ?? [])]) {
+      await assertSelfServeRepoUrl(db, companyId, { repoUrl, refs: [workspace?.repoRef, workspace?.defaultRef] });
+    }
     if (projectData.env !== undefined) {
       projectData.env = await secretsSvc.normalizeEnvBindingsForPersistence(
         companyId,
