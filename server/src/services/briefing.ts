@@ -584,7 +584,7 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     return {
       monthSpendCents: Math.round(Number(row?.total ?? 0)),
       companyBudgetCents: budget ? budget.amount : null,
-      hosted: hosted ? { capCents: hosted.amount, spentCents: hosted.observedAmount } : null,
+      hosted: hosted ? { capCents: hosted.amount, spentCents: Math.round(hosted.observedAmount) } : null,
     };
   }
 

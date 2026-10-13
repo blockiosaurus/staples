@@ -751,6 +751,18 @@ describeEmbeddedPostgres("briefing service", () => {
       expect(briefing.spend).toEqual({ monthSpendCents: 300, companyBudgetCents: null, hosted: null });
     });
 
+    it("asks for a company-scope read of this company before showing spend", async () => {
+      const { companyId } = await seedCompany("BSU");
+      const asked: Array<{ action: string; resource: unknown; actor: unknown }> = [];
+      const authorization = { decide: async (input: { action: string; resource: unknown; actor: unknown }) => { asked.push(input); return { allowed: true }; } };
+      const actor = boardActor(companyId);
+      const briefing = await briefingService(db, { authorization: authorization as never }).get({ companyId, userId: "board-user", actor });
+      expect(asked.filter((entry) => entry.action === "company_scope:read")).toEqual([
+        { action: "company_scope:read", resource: { type: "company", companyId }, actor },
+      ]);
+      expect(briefing.spend).not.toBeNull();
+    });
+
     it("is null when the person may not read the company's costs", async () => {
       const { companyId } = await seedCompany("BST");
       const authorization = { decide: async (input: { action: string }) => ({ allowed: input.action !== "company_scope:read" }) };

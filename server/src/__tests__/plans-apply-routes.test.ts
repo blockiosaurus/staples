@@ -55,6 +55,7 @@ import { defaultAgentTemplates } from "../services/plan-templates.js";
 import { conflict, notFound } from "../errors.js";
 import { agentInstructionsService } from "../services/agent-instructions.js";
 import { approvalService } from "../services/approvals.js";
+import { budgetService } from "../services/budgets.js";
 import { teamsCatalogService } from "../services/teams-catalog.js";
 import { toolAccessPolicyService } from "../services/tool-access-policy.js";
 import { agentService } from "../services/agents.js";
@@ -1465,7 +1466,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         await assistantOnHosted(s);
         // The card's line, computed when the plan is proposed.
         expect(await planBudgetFor(db, s.companyId, hires(3000))).toEqual({
-          hiresMonthlyCents: 9000, hostedCapCents: 5000, hostedNeededCents: 11000, hostedCapAfterCents: 11000, ceilingCents: 20000,
+          hiresMonthlyCents: 9000, budgetedHireCount: 3, hostedCapCents: 5000, hostedNeededCents: 11000, hostedCapAfterCents: 11000, ceilingCents: 20000,
         });
         const response = await apply(buildApp(sessionActor(s)).app, s.companyId, hires(3000));
         expect(response.status, JSON.stringify(response.body)).toBe(201);
@@ -1488,6 +1489,130 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         expect(local.status, JSON.stringify(local.body)).toBe(201);
         expect(local.body.hostedLimit).toBeUndefined();
         expect(await hostedCap(u.companyId)).toBeNull();
+      }, 120_000);
+
+      const hostedHires = (cents: number) => ({
+        agents: ["a", "b"].map((key) => ({ clientKey: key, name: `Agent ${key}`, role: "general", adapterType: "claude_managed", budgetMonthlyCents: cents })),
+        tasks: [{ clientKey: "t", title: "Start", assigneeClientKey: "a" }],
+      });
+      const companyHostedCap = async (companyId: string) => (await db.select().from(budgetPolicies).where(and(
+        eq(budgetPolicies.scopeType, "company"), eq(budgetPolicies.scopeId, companyId), eq(budgetPolicies.metric, "hosted_billed_cents"),
+      )))[0] ?? null;
+
+      it("never takes an agent's self-set budget as its hosted cap or as hosted need (and refuses an agent's budget change)", async () => {
+        hostedOn();
+        const { planBudgetFor } = await import("../services/assistant-tools.js");
+        const s = await seed();
+        await assistantOnHosted(s);
+        const applied = await apply(buildApp(sessionActor(s)).app, s.companyId, hostedHires(3000));
+        expect(applied.status, JSON.stringify(applied.body)).toBe(201);
+        const agentId = applied.body.agents.a.id as string;
+        // The plan's (person-confirmed) $30 is the hire's cap.
+        expect(await monthlyPolicy("agent", agentId)).toMatchObject({ amount: 3000, isActive: true, hardStopEnabled: true });
+        // The agent raises its own budget field.
+        const actor = { type: "agent", agentId, companyId: s.companyId, runId: null, source: "agent_key" } as unknown as Actor;
+        const api = Router();
+        api.use(agentRoutes(db));
+        const agentApp = express();
+        agentApp.use(express.json());
+        agentApp.use((req, _res, next) => { req.actor = actor; next(); });
+        agentApp.use("/api", api);
+        agentApp.use(errorHandler);
+        const patched = await request(agentApp).patch(`/api/agents/${agentId}`).send({ budgetMonthlyCents: 1_000_000 });
+        // Refused: a budget is a person's decision, and the cap is untouched.
+        expect(patched.status, JSON.stringify(patched.body)).toBe(403);
+        expect(await monthlyPolicy("agent", agentId)).toMatchObject({ amount: 3000, isActive: true });
+        // Other edits still work, and the field itself is never trusted even when it holds a large value.
+        expect((await request(agentApp).patch(`/api/agents/${agentId}`).send({ title: "Lead" })).status).toBe(200);
+        await db.update(agents).set({ budgetMonthlyCents: 1_000_000 }).where(eq(agents.id, agentId));
+        // Not counted as need: 2 x $30 plus the Assistant's $20, plus a new $30 hire.
+        expect(await planBudgetFor(db, s.companyId, { agents: [{ clientKey: "n", name: "New", role: "general", adapterType: "claude_managed", budgetMonthlyCents: 3000 }], tasks: [{ clientKey: "t", title: "Start" }] }))
+          .toMatchObject({ hostedNeededCents: 11000 });
+        // A person zeroes the cap: the next run's ensure restores the default, not the self-set value.
+        await budgetService(db).upsertPolicy(s.companyId, { scopeType: "agent", scopeId: agentId, amount: 0, windowKind: "calendar_month_utc" }, s.userId);
+        const [row] = await db.select().from(agents).where(eq(agents.id, agentId));
+        await db.update(agents).set({ budgetMonthlyCents: 1_000_000 }).where(eq(agents.id, agentId));
+        expect(await hostedInferenceAllowedFor(db, row!)).toBe(true);
+        expect(await monthlyPolicy("agent", agentId)).toMatchObject({ amount: 2000, isActive: true, hardStopEnabled: true });
+        // A deleted cap is recreated at the default too.
+        await db.delete(budgetPolicies).where(and(eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, agentId)));
+        await db.update(agents).set({ budgetMonthlyCents: 1_000_000 }).where(eq(agents.id, agentId));
+        expect(await hostedInferenceAllowedFor(db, row!)).toBe(true);
+        expect(await monthlyPolicy("agent", agentId)).toMatchObject({ amount: 2000, isActive: true });
+      }, 120_000);
+
+      it("an agent creating a hosted agent cannot give it a cap above the hosted default", async () => {
+        hostedOn();
+        const s = await seed();
+        await assistantOnHosted(s);
+        await db.insert(principalPermissionGrants).values({ companyId: s.companyId, principalType: "agent", principalId: s.staffId, permissionKey: "agents:create" });
+        await db.update(agents).set({ permissions: { canCreateAgents: true } }).where(eq(agents.id, s.staffId));
+        const actor = { type: "agent", agentId: s.staffId, companyId: s.companyId, runId: null, source: "agent_key" } as unknown as Actor;
+        const api = Router();
+        api.use(agentRoutes(db));
+        const agentApp = express();
+        agentApp.use(express.json());
+        agentApp.use((req, _res, next) => { req.actor = actor; next(); });
+        agentApp.use("/api", api);
+        agentApp.use(errorHandler);
+        const created = await request(agentApp).post(`/api/companies/${s.companyId}/agents`).send({
+          name: "Helper", role: "general", adapterType: "claude_managed", adapterConfig: { model: "claude-opus-5-5" }, budgetMonthlyCents: 1_000_000,
+        });
+        expect(created.status, JSON.stringify(created.body)).toBe(201);
+        expect(await monthlyPolicy("agent", created.body.id)).toMatchObject({ amount: 2000 });
+      }, 120_000);
+
+      it("clamps a planned hosted hire's cap to the ceiling", async () => {
+        hostedOn();
+        vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS", "4000");
+        const s = await seed();
+        await assistantOnHosted(s);
+        const applied = await apply(buildApp(sessionActor(s)).app, s.companyId, hostedHires(9000));
+        expect(applied.status, JSON.stringify(applied.body)).toBe(201);
+        expect(await monthlyPolicy("agent", applied.body.agents.a.id)).toMatchObject({ amount: 4000 });
+      }, 120_000);
+
+      it("keeps the plan applied and says so when the hosted cap cannot be raised", async () => {
+        hostedOn();
+        const s = await seed();
+        await assistantOnHosted(s);
+        // A database refusal of any hosted cap above $60 for this company.
+        await db.execute(sql.raw(`
+          CREATE OR REPLACE FUNCTION refuse_hosted_raise() RETURNS trigger AS $$
+          BEGIN
+            IF NEW.metric = 'hosted_billed_cents' AND NEW.amount > 6000 AND NEW.company_id = '${s.companyId}' THEN
+              RAISE EXCEPTION 'hosted cap write refused';
+            END IF;
+            RETURN NEW;
+          END $$ LANGUAGE plpgsql;
+          CREATE TRIGGER refuse_hosted_raise BEFORE INSERT OR UPDATE ON budget_policies FOR EACH ROW EXECUTE FUNCTION refuse_hosted_raise();
+        `));
+        try {
+          const applied = await apply(buildApp(sessionActor(s)).app, s.companyId, hostedHires(3000));
+          expect(applied.status, JSON.stringify(applied.body)).toBe(201);
+          expect(applied.body.hostedLimit).toEqual({ failed: true, fromCents: 5000 });
+          expect(Object.keys(applied.body.tasks)).toEqual(["t"]);
+          expect(await companyHostedCap(s.companyId)).toMatchObject({ amount: 5000 });
+        } finally {
+          await db.execute(sql.raw("DROP TRIGGER IF EXISTS refuse_hosted_raise ON budget_policies; DROP FUNCTION IF EXISTS refuse_hosted_raise();"));
+        }
+      }, 120_000);
+
+      it("counts hires awaiting approval only once a person approves them, then raises the cap", async () => {
+        hostedOn();
+        const s = await seed({ requireApproval: true });
+        await assistantOnHosted(s);
+        const applied = await apply(buildApp(sessionActor(s)).app, s.companyId, hostedHires(4000));
+        expect(applied.status, JSON.stringify(applied.body)).toBe(201);
+        expect(applied.body.agents.a.status).toBe("pending_approval");
+        // Only the Assistant counts so far: it fits the default $50.
+        expect(applied.body.hostedLimit).toBeUndefined();
+        expect(await companyHostedCap(s.companyId)).toMatchObject({ amount: 5000 });
+        await approvalService(db).approve(applied.body.agents.a.approvalId, s.userId);
+        // $20 + $40 = $60.
+        expect(await companyHostedCap(s.companyId)).toMatchObject({ amount: 6000 });
+        await approvalService(db).approve(applied.body.agents.b.approvalId, s.userId);
+        expect(await companyHostedCap(s.companyId)).toMatchObject({ amount: 10000 });
       }, 120_000);
 
       it("never lowers an existing company budget, and an explicit 0 leaves the company uncapped", async () => {

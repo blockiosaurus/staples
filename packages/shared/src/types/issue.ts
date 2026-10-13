@@ -1436,7 +1436,8 @@ export interface RequestConfirmationProposedActionPayload {
 
 /**
  * The plan card's budget line. `hiresMonthlyCents` sums the new agents'
- * monthly budgets (a hosted hire without one counts the hosted agent default).
+ * monthly budgets (a hosted hire without one counts the hosted agent default;
+ * a hosted hire's budget counts at most the ceiling).
  * The hosted fields are null unless the plan hires agents on the hosted key
  * and the company's hosted limit is capped: `hostedCapCents` is the limit now,
  * `hostedNeededCents` the monthly budgets of every agent on the hosted key
@@ -1445,6 +1446,8 @@ export interface RequestConfirmationProposedActionPayload {
  */
 export interface PlanBudgetSummary {
   hiresMonthlyCents: number;
+  /** How many of the new agents have a monthly budget counted in `hiresMonthlyCents`. */
+  budgetedHireCount: number;
   hostedCapCents: number | null;
   hostedNeededCents: number | null;
   hostedCapAfterCents: number | null;

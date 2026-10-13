@@ -462,7 +462,7 @@ describe("ProposedActionCard", () => {
         await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
         return host.querySelector('[data-testid="proposed-plan-budget"]')?.textContent ?? null;
       }
-      const local = { hiresMonthlyCents: 2500, hostedCapCents: null, hostedNeededCents: null, hostedCapAfterCents: null, ceilingCents: 20000 };
+      const local = { hiresMonthlyCents: 2500, budgetedHireCount: 1, hostedCapCents: null, hostedNeededCents: null, hostedCapAfterCents: null, ceilingCents: 20000 };
 
       it("totals the hires' budgets without a hosted limit for local hires", async () => {
         expect(await renderWithBudget(local)).toBe("Monthly budgets: $25 across 1 agent");
@@ -478,16 +478,39 @@ describe("ProposedActionCard", () => {
           .toBe("Monthly budgets: $90 across 1 agent · raises your hosted limit from $50 to $110");
       });
 
-      it("says when the raise stops at the most allowed", async () => {
+      it("says when the raise stops at the most a plan can set", async () => {
         expect(await renderWithBudget({ ...local, hiresMonthlyCents: 30000, hostedCapCents: 5000, hostedNeededCents: 32000, hostedCapAfterCents: 20000 }))
-          .toBe("Monthly budgets: $300 across 1 agent · raises your hosted limit from $50 to $200, the most allowed, so some agents may stop before their budgets run out");
+          .toBe("Monthly budgets: $300 across 1 agent · raises your hosted limit from $50 to $200, the most a plan can set, so some agents may stop before their budgets run out");
+        // A limit already above the ceiling is kept, and not called "the most allowed".
         expect(await renderWithBudget({ ...local, hiresMonthlyCents: 30000, hostedCapCents: 25000, hostedNeededCents: 32000, hostedCapAfterCents: 25000 }))
-          .toContain("· more than your $250 hosted limit, the most allowed");
+          .toBe("Monthly budgets: $300 across 1 agent · more than your $250 hosted limit (plans can raise it only up to $200), so some agents may stop before their budgets run out");
+      });
+
+      it("counts only hires with a budget", async () => {
+        expect(await renderWithBudget({ ...local, hiresMonthlyCents: 5000, budgetedHireCount: 2 })).toBe("Monthly budgets: $50 across 2 agents");
+        expect(await renderWithBudget({ ...local, hiresMonthlyCents: 0, budgetedHireCount: 0 })).toBeNull();
       });
 
       it("shows no budget line without the server's summary", async () => {
         expect(await renderWithBudget()).toBeNull();
       });
+    });
+
+    it("says when the hosted limit could not be raised, and the plan still counts as created", async () => {
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/claim-proposed-action")) return claimed();
+        if (url === PLAN_PATH && init?.method === "POST") {
+          return json(201, { agents: { writer: { id: "a1", status: "idle", approvalId: null } }, tasks: { first: {} }, pendingAssignments: [], brief: null, goal: null, project: null,
+            hostedLimit: { failed: true, fromCents: 5000 } });
+        }
+        return json(200, []);
+      });
+      const accept = vi.fn(async () => undefined);
+      const host = await render({ interaction: planProposal(), onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
+      await click(button(host, "Create plan"));
+      expect(accept).toHaveBeenCalledWith(expect.anything(), undefined, undefined, undefined, expect.objectContaining({
+        status: "executed", message: "Plan created: 1 agent, 1 task. Couldn't raise the hosted limit; it stays at $50.",
+      }));
     });
 
     it("reports a hosted limit raise in the apply result", async () => {
@@ -504,7 +527,7 @@ describe("ProposedActionCard", () => {
       await click(button(host, "Create plan"));
       expect(accept).toHaveBeenCalledWith(expect.anything(), undefined, undefined, undefined, expect.objectContaining({
         status: "executed",
-        message: "Plan created: 1 agent, 1 task. Hosted limit raised from $50 to $200. The agents' monthly budgets come to $320, more than the hosted limit allows, so some may stop before their budgets run out.",
+        message: "Plan created: 1 agent, 1 task. Hosted limit raised from $50 to $200, the most a plan can set. The agents' monthly budgets come to $320, so some may stop before their budgets run out.",
       }));
     });
 

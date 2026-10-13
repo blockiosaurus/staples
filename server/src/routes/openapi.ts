@@ -6139,7 +6139,7 @@ const briefingSchema = z.object({
   spend: z.object({
     monthSpendCents: z.number().int(),
     companyBudgetCents: z.number().int().nullable(),
-    hosted: z.object({ capCents: z.number().int(), spentCents: z.number() }).nullable(),
+    hosted: z.object({ capCents: z.number().int(), spentCents: z.number().int() }).nullable(),
   }).nullable(),
   generatedAt: z.string().datetime(),
 });

@@ -781,7 +781,7 @@ describeEmbeddedPostgres("built-in agents", () => {
     const local = { clientKey: "local", name: "Local", role: "general", adapterType: "claude_local", budgetMonthlyCents: 1500 };
     // 3 x $30 plus the Assistant's $20 needs $110 against the default $50.
     expect(await planBudgetSummary(db, companyId, { agents: [hosted("a", 3000), hosted("b", 3000), hosted("c", 3000)] })).toEqual({
-      hiresMonthlyCents: 9000, hostedCapCents: 5000, hostedNeededCents: 11000, hostedCapAfterCents: 11000, ceilingCents: 20000,
+      hiresMonthlyCents: 9000, budgetedHireCount: 3, hostedCapCents: 5000, hostedNeededCents: 11000, hostedCapAfterCents: 11000, ceilingCents: 20000,
     });
     // A hosted hire without a budget counts the hosted default; a local hire counts toward the total but not the hosted need.
     expect(await planBudgetSummary(db, companyId, { agents: [hosted("a"), local] })).toMatchObject({
@@ -803,22 +803,30 @@ describeEmbeddedPostgres("built-in agents", () => {
     const companyId = await seedCompany({ requireApproval: false });
     const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
     expect(await hostedInferenceAllowedFor(db, assistant)).toBe(true);
+    // A person sets each agent's budget (its billed_cents policy).
+    const personBudget = (agentId: string, amount: number) => budgetService(db).upsertPolicy(companyId,
+      { scopeType: "agent", scopeId: agentId, amount, windowKind: "calendar_month_utc" }, "board-user");
     const staffed = async (name: string, cents: number) => {
       const agent = await hire(companyId, "claude_managed", "claude-opus-5-5", name);
-      await db.update(agents).set({ budgetMonthlyCents: cents }).where(eq(agents.id, agent.id));
+      await personBudget(agent.id, cents);
       return agent;
     };
     // A local agent's budget never counts toward the hosted cap.
     const local = await hire(companyId, "claude_local", "claude-sonnet-4-5", "Local");
-    await db.update(agents).set({ budgetMonthlyCents: 50_000 }).where(eq(agents.id, local.id));
+    await personBudget(local.id, 50_000);
+    // An agent's own budget field (agent-writable) never counts either.
+    const selfSet = await hire(companyId, "claude_managed", "claude-opus-5-5", "Self");
+    await db.update(agents).set({ budgetMonthlyCents: 1_000_000 }).where(eq(agents.id, selfSet.id));
     for (const name of ["A", "B", "C"]) await staffed(name, 3000);
     const hostedCap = async () => (await db.select().from(budgetPolicies)
       .where(and(eq(budgetPolicies.scopeId, companyId), eq(budgetPolicies.metric, "hosted_billed_cents"))))[0];
-    expect(await raiseHostedCompanyCapForHires(db, companyId)).toEqual({ fromCents: 5000, toCents: 11000, neededCents: 11000, ceilingCents: 20000, limited: false });
-    expect(await hostedCap()).toMatchObject({ amount: 11000, isActive: true, hardStopEnabled: true });
+    // The Assistant's $20, 3 x $30 and the self-set agent at the $20 default.
+    expect(await raiseHostedCompanyCapForHires(db, companyId)).toEqual({ fromCents: 5000, toCents: 13000, neededCents: 13000, ceilingCents: 20000, limited: false });
+    expect(await hostedCap()).toMatchObject({ amount: 13000, isActive: true, hardStopEnabled: true });
     const upserts = await db.select().from(activityLog).where(and(eq(activityLog.companyId, companyId), eq(activityLog.action, "budget.policy_upserted")));
-    expect(upserts.some((row) => (row.details as Record<string, unknown>)?.amount === 11000)).toBe(true);
-    for (const row of upserts) expect(row).toMatchObject({ actorType: "system", actorId: "hosted_inference" });
+    const capUpserts = upserts.filter((row) => (row.details as Record<string, unknown>)?.metric === "hosted_billed_cents");
+    expect(capUpserts.some((row) => (row.details as Record<string, unknown>)?.amount === 13000)).toBe(true);
+    for (const row of capUpserts) expect(row).toMatchObject({ actorType: "system", actorId: "hosted_inference" });
     // Already fits: nothing to say, nothing written.
     expect(await raiseHostedCompanyCapForHires(db, companyId)).toBeNull();
     // A higher cap (set by a person) is never lowered.
@@ -828,7 +836,7 @@ describeEmbeddedPostgres("built-in agents", () => {
     // More than the ceiling: raised to the ceiling, and said so.
     await staffed("D", 9000);
     await staffed("E", 9000);
-    expect(await raiseHostedCompanyCapForHires(db, companyId)).toEqual({ fromCents: 15000, toCents: 20000, neededCents: 29000, ceilingCents: 20000, limited: true });
+    expect(await raiseHostedCompanyCapForHires(db, companyId)).toEqual({ fromCents: 15000, toCents: 20000, neededCents: 31000, ceilingCents: 20000, limited: true });
     expect(await hostedCap()).toMatchObject({ amount: 20000 });
     // An operator ceiling may be set; a cap above it stays.
     vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS", "10000");

@@ -94,9 +94,13 @@ export type ApplyPlanResult = {
   /**
    * Set when the plan hired agents on the hosted key and the company's hosted
    * limit was raised for them, or could not be raised far enough
-   * (`limited`: the monthly budgets come to more than the operator's ceiling).
+   * (`limited`: the monthly budgets come to more than the operator's ceiling),
+   * or the raise failed (`failed`: the limit stays at `fromCents`, null when
+   * it could not be read). The plan itself was applied either way.
    */
-  hostedLimit?: { fromCents: number; toCents: number; neededCents: number; ceilingCents: number; limited: boolean };
+  hostedLimit?:
+    | { fromCents: number; toCents: number; neededCents: number; ceilingCents: number; limited: boolean; failed?: false }
+    | { failed: true; fromCents: number | null };
 };
 
 export class PlanStructureError extends Error {}

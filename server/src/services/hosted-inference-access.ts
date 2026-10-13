@@ -65,9 +65,8 @@ async function ensureHardStopMonthlyPolicy(db: Db, companyId: string, scope: Bud
 /**
  * An agent on hosted inference spends the operator's key, so before that key
  * is used it must carry an ACTIVE hard-stop monthly budget, and so must its
- * company's hosted spend. Agent cap (`billed_cents`): the agent's own monthly
- * budget when it has one, else the Assistant's
- * `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS` (default $20) or, for any other
+ * company's hosted spend. Agent cap (`billed_cents`), when the agent has no
+ * positive one yet: the Assistant's `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS` (default $20) or, for any other
  * agent, `STAPLES_HOSTED_AGENT_BUDGET_CENTS` (default $20). Company cap
  * (`hosted_billed_cents`, counting only spend billed to the hosted key):
  * `STAPLES_HOSTED_COMPANY_BUDGET_CENTS` (default $50); an existing active
@@ -84,32 +83,29 @@ export async function ensureHostedAgentBudgets(
 ): Promise<void> {
   // An unsaved agent (an environment test before create) has no agent scope yet.
   if (agent.id) {
+    // Only the operator's defaults: an agent's own budgetMonthlyCents is
+    // agent-writable and never sets its cap (a plan sets a confirmed one at hire).
     const assistant = options.assistant ?? await isProvisionedAssistant(db, agent);
-    const fallback = assistant ? hostedAssistantBudgetCents(env) : hostedAgentBudgetCents(env);
-    // A new cap takes the agent's own monthly budget (e.g. the one its plan
-    // set) when it has one; an explicit 0 default still leaves it uncapped.
-    let cents = fallback;
-    if (fallback > 0) {
-      const [row] = await db.select({ budgetMonthlyCents: agents.budgetMonthlyCents }).from(agents)
-        .where(and(eq(agents.id, agent.id), eq(agents.companyId, agent.companyId)));
-      if (row && row.budgetMonthlyCents > 0) cents = row.budgetMonthlyCents;
-    }
-    await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "agent", scopeId: agent.id }, "billed_cents", cents);
+    await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "agent", scopeId: agent.id }, "billed_cents",
+      assistant ? hostedAssistantBudgetCents(env) : hostedAgentBudgetCents(env));
   }
   await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "company", scopeId: agent.companyId }, HOSTED_BILLED_CENTS_METRIC,
     hostedCompanyBudgetCents(env));
 }
 
+/** An agent-level amount, at most the operator's ceiling (a 0 ceiling clamps nothing). */
+export function clampToHostedCeiling(cents: number, env: NodeJS.ProcessEnv = process.env): number {
+  const ceiling = hostedCompanyBudgetCeilingCents(env);
+  return ceiling > 0 ? Math.min(cents, ceiling) : cents;
+}
+
 /**
- * An agent's monthly budget as counted toward the company's hosted cap: its
- * own positive budget, else the hosted default the server gives it (an
- * explicit 0 default, uncapped, counts as 0).
+ * A planned hosted hire's monthly budget as counted toward the company's
+ * hosted cap: the plan's (person-confirmed) budget, else the hosted agent
+ * default; at most the ceiling.
  */
-export function hostedAgentMonthlyCents(
-  budgetMonthlyCents: number | null | undefined, assistant: boolean, env: NodeJS.ProcessEnv = process.env,
-): number {
-  if (budgetMonthlyCents && budgetMonthlyCents > 0) return budgetMonthlyCents;
-  return assistant ? hostedAssistantBudgetCents(env) : hostedAgentBudgetCents(env);
+export function plannedHostedHireCents(budgetMonthlyCents: number | null | undefined, env: NodeJS.ProcessEnv = process.env): number {
+  return clampToHostedCeiling(budgetMonthlyCents && budgetMonthlyCents > 0 ? budgetMonthlyCents : hostedAgentBudgetCents(env), env);
 }
 
 /**
@@ -121,18 +117,49 @@ export function hostedCapAfterRaise(input: { currentCents: number; neededCents: 
   return Math.max(input.currentCents, Math.min(input.neededCents, input.ceilingCents));
 }
 
-/** The monthly budgets of every agent in the company that runs on the hosted key. */
+/**
+ * The monthly caps of every agent in the company that runs on the hosted key
+ * (hires awaiting approval excluded). Each counts its agent `billed_cents`
+ * policy amount (only a person or the server writes those), else the hosted
+ * default the server will give it; at most the ceiling. `agents.budgetMonthlyCents`
+ * is never read: an agent can write it about itself.
+ */
 export async function hostedAgentsMonthlyCents(db: Db, companyId: string, env: NodeJS.ProcessEnv = process.env): Promise<number> {
   if (!hostedInference(env).available) return 0;
-  const rows = await db.select({
-    id: agents.id, adapterType: agents.adapterType, adapterConfig: agents.adapterConfig, budgetMonthlyCents: agents.budgetMonthlyCents,
-  }).from(agents).where(and(
-    eq(agents.companyId, companyId), eq(agents.adapterType, HOSTED_INFERENCE_ADAPTER_TYPE), ne(agents.status, "terminated"),
-  ));
+  const rows = await db.select({ id: agents.id, adapterType: agents.adapterType, adapterConfig: agents.adapterConfig })
+    .from(agents).where(and(
+      eq(agents.companyId, companyId), eq(agents.adapterType, HOSTED_INFERENCE_ADAPTER_TYPE),
+      ne(agents.status, "terminated"), ne(agents.status, "pending_approval"),
+    ));
   const hostedRows = rows.filter((row) => usesHostedInferenceKey(row, env));
   if (!hostedRows.length) return 0;
+  const policies = await db.select({ scopeId: budgetPolicies.scopeId, amount: budgetPolicies.amount }).from(budgetPolicies).where(and(
+    eq(budgetPolicies.companyId, companyId), eq(budgetPolicies.scopeType, "agent"),
+    eq(budgetPolicies.metric, "billed_cents"), eq(budgetPolicies.windowKind, "calendar_month_utc"),
+  ));
+  const policyAmount = new Map(policies.map((row) => [row.scopeId, row.amount] as const));
   const assistantId = await resolveCompanyAssistantAgentId(db, companyId);
-  return hostedRows.reduce((sum, row) => sum + hostedAgentMonthlyCents(row.budgetMonthlyCents, row.id === assistantId, env), 0);
+  return hostedRows.reduce((sum, row) => {
+    // A disabled policy with an amount is re-activated at that amount by the ensure.
+    const amount = policyAmount.get(row.id) ?? 0;
+    const cents = amount > 0 ? amount : row.id === assistantId ? hostedAssistantBudgetCents(env) : hostedAgentBudgetCents(env);
+    return sum + clampToHostedCeiling(cents, env);
+  }, 0);
+}
+
+/**
+ * At hire, from a person-confirmed plan: a hosted hire's agent cap at the
+ * plan's budget (at most the ceiling), as a hard stop written by the system.
+ * Without a plan budget the ensure gives it the hosted default instead.
+ */
+export async function setPlannedHostedHireCap(
+  db: Db, agent: { id: string; companyId: string }, budgetMonthlyCents: number | undefined, env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  if (!budgetMonthlyCents || budgetMonthlyCents <= 0) return;
+  await budgetService(db).upsertPolicy(agent.companyId, {
+    scopeType: "agent", scopeId: agent.id, metric: "billed_cents", windowKind: "calendar_month_utc",
+    amount: clampToHostedCeiling(budgetMonthlyCents, env), hardStopEnabled: true, isActive: true,
+  }, null, { actor: HOSTED_INFERENCE_ACTOR });
 }
 
 async function hostedCompanyCapPolicy(db: Db, companyId: string) {
@@ -178,11 +205,12 @@ export async function planBudgetSummary(
   const options = await hostedHireOptions(db, companyId, env);
   const onHostedKey = (agent: ApplyPlan["agents"][number]) => planHireUsesHostedKey(agent, options);
   const hireCents = (agent: ApplyPlan["agents"][number]) => onHostedKey(agent)
-    ? hostedAgentMonthlyCents(agent.budgetMonthlyCents, false, env)
+    ? plannedHostedHireCents(agent.budgetMonthlyCents, env)
     : agent.budgetMonthlyCents ?? 0;
   const hiresMonthlyCents = plan.agents.reduce((sum, agent) => sum + hireCents(agent), 0);
+  const budgetedHireCount = plan.agents.filter((agent) => hireCents(agent) > 0).length;
   const ceilingCents = hostedCompanyBudgetCeilingCents(env);
-  const none = { hiresMonthlyCents, hostedCapCents: null, hostedNeededCents: null, hostedCapAfterCents: null, ceilingCents };
+  const none = { hiresMonthlyCents, budgetedHireCount, hostedCapCents: null, hostedNeededCents: null, hostedCapAfterCents: null, ceilingCents };
   const hostedHires = plan.agents.filter(onHostedKey);
   if (!hostedHires.length) return none;
   const currentCents = await currentHostedCompanyCapCents(db, companyId, env);
@@ -191,6 +219,7 @@ export async function planBudgetSummary(
     + hostedHires.reduce((sum, agent) => sum + hireCents(agent), 0);
   return {
     hiresMonthlyCents,
+    budgetedHireCount,
     hostedCapCents: currentCents,
     hostedNeededCents: neededCents,
     hostedCapAfterCents: hostedCapAfterRaise({ currentCents, neededCents, ceilingCents }),
@@ -210,7 +239,7 @@ export async function planBudgetSummary(
  */
 export async function raiseHostedCompanyCapForHires(
   db: Db, companyId: string, env: NodeJS.ProcessEnv = process.env,
-): Promise<NonNullable<ApplyPlanResult["hostedLimit"]> | null> {
+): Promise<Extract<NonNullable<ApplyPlanResult["hostedLimit"]>, { limited: boolean }> | null> {
   const ceilingCents = hostedCompanyBudgetCeilingCents(env);
   const attempt = async () => {
     const fromCents = await currentHostedCompanyCapCents(db, companyId, env);
@@ -359,4 +388,24 @@ export async function hostedAssistantProvisioningPending(
   if (agent.adapterType !== HOSTED_INFERENCE_ADAPTER_TYPE || !hostedInference(env).available) return false;
   if (readBuiltInAgentMarker(agent.metadata as Record<string, unknown> | null | undefined)?.key !== ASSISTANT_BUILT_IN_AGENT_KEY) return false;
   return (await resolveCompanyAssistantAgentId(db, agent.companyId)) === null;
+}
+
+/** A bug in our code (rethrown), as opposed to a database or transient failure (reported). */
+export function isProgrammingError(error: unknown): boolean {
+  return error instanceof TypeError || error instanceof ReferenceError || error instanceof SyntaxError || error instanceof RangeError;
+}
+
+/**
+ * A person approved a hire that runs on the hosted key: the plan that
+ * proposed it counted its budget, so raise the company's hosted cap now that
+ * it counts (same rules as at plan apply). Null when the hire is not on the
+ * hosted key or nothing changed.
+ */
+export async function raiseHostedCompanyCapForApprovedHire(
+  db: Db, agent: { id: string; companyId: string }, env: NodeJS.ProcessEnv = process.env,
+): Promise<Awaited<ReturnType<typeof raiseHostedCompanyCapForHires>>> {
+  const [row] = await db.select({ adapterType: agents.adapterType, adapterConfig: agents.adapterConfig })
+    .from(agents).where(and(eq(agents.id, agent.id), eq(agents.companyId, agent.companyId)));
+  if (!row || !usesHostedInferenceKey(row, env)) return null;
+  return raiseHostedCompanyCapForHires(db, agent.companyId, env);
 }

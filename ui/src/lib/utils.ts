@@ -42,6 +42,11 @@ export function formatCents(cents: number, currency = "USD"): string {
   return (cents / 100).toLocaleString("en-US", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/** Whole dollars when there are no cents: "$90", "$12.50", "$1,200". */
+export function formatDollars(cents: number): string {
+  return formatCents(cents).replace(/\.00$/, "");
+}
+
 export function formatNumber(n: number, options?: Intl.NumberFormatOptions): string {
   return n.toLocaleString("en-US", options);
 }

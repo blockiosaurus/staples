@@ -1,10 +1,5 @@
 import type { BriefingSpend } from "@paperclipai/shared";
-import { formatCents } from "@/lib/utils";
-
-/** "$12", "$12.50". */
-function dollars(cents: number) {
-  return formatCents(cents).replace(/\.00$/, "");
-}
+import { formatDollars as dollars } from "@/lib/utils";
 
 /**
  * Home's one spend line: "$12 of $90 this month" against the company budget,

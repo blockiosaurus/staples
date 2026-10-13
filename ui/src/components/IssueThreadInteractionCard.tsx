@@ -32,7 +32,7 @@ import {
 } from "../lib/issue-thread-interactions";
 import { roleLabels } from "./agent-config-primitives";
 import { getAdapterDisplay } from "../adapters/adapter-display-registry";
-import { cn, formatCents, formatDateTime, formatShortDate } from "../lib/utils";
+import { cn, formatCents, formatDateTime, formatDollars, formatShortDate } from "../lib/utils";
 import { InteractionPreparationNotice } from "./InteractionPreparationNotice";
 import { InteractionAudienceLine } from "./InteractionAudienceLine";
 import { MarkdownBody, type MarkdownExternalReferenceMap } from "./MarkdownBody";
@@ -2127,8 +2127,8 @@ function ProposedPlanPreview({ path, body, hireConnections, templateSummaries, b
               </li>
             ))}
           </ul>
-          {budget && budget.hiresMonthlyCents > 0 ? (
-            <p data-testid="proposed-plan-budget" className="mt-1 text-muted-foreground">{planBudgetLine(budget, plan.agents.length)}</p>
+          {budget && budget.budgetedHireCount > 0 ? (
+            <p data-testid="proposed-plan-budget" className="mt-1 text-muted-foreground">{planBudgetLine(budget)}</p>
           ) : null}
         </PlanPreviewSection>
       ) : null}
@@ -2158,13 +2158,8 @@ function planTemplateLine(summary: PlanTemplateSummary) {
   if (summary.readOnly) parts.push("read-only");
   else if (summary.asksBefore.length) parts.push(`asks before: ${summary.asksBefore.map(lower).join(", ")}`);
   parts.push(`${summary.routineCount} routine${summary.routineCount === 1 ? "" : "s"}`);
-  if (summary.budgetMonthlyCents !== null) parts.push(`${formatCents(summary.budgetMonthlyCents).replace(/\.00$/, "")}/mo`);
+  if (summary.budgetMonthlyCents !== null) parts.push(`${formatDollars(summary.budgetMonthlyCents)}/mo`);
   return parts.join(" · ");
-}
-
-/** Whole dollars when there are no cents: "$90", "$12.50". */
-function dollars(cents: number) {
-  return formatCents(cents).replace(/\.00$/, "");
 }
 
 /**
@@ -2172,20 +2167,20 @@ function dollars(cents: number) {
  * "· raises your hosted limit from $50 to $110". When the budgets need more
  * than the operator allows, the card says the limit stops there.
  */
-function planBudgetLine(budget: PlanBudgetSummary, agentCount: number) {
-  const base = `Monthly budgets: ${dollars(budget.hiresMonthlyCents)} across ${agentCount} agent${agentCount === 1 ? "" : "s"}`;
+function planBudgetLine(budget: PlanBudgetSummary) {
+  const count = budget.budgetedHireCount;
+  const base = `Monthly budgets: ${formatDollars(budget.hiresMonthlyCents)} across ${count} agent${count === 1 ? "" : "s"}`;
   const { hostedCapCents: from, hostedCapAfterCents: to, hostedNeededCents: needed } = budget;
   if (from === null || to === null || needed === null) return base;
   const short = needed > to;
+  const mayStop = "so some agents may stop before their budgets run out";
   if (to > from) {
-    const raise = `raises your hosted limit from ${dollars(from)} to ${dollars(to)}`;
-    return short
-      ? `${base} · ${raise}, the most allowed, so some agents may stop before their budgets run out`
-      : `${base} · ${raise}`;
+    const raise = `raises your hosted limit from ${formatDollars(from)} to ${formatDollars(to)}`;
+    return short ? `${base} · ${raise}, the most a plan can set, ${mayStop}` : `${base} · ${raise}`;
   }
   return short
-    ? `${base} · more than your ${dollars(from)} hosted limit, the most allowed, so some agents may stop before their budgets run out`
-    : `${base} · fits your ${dollars(from)} hosted limit`;
+    ? `${base} · more than your ${formatDollars(from)} hosted limit (plans can raise it only up to ${formatDollars(budget.ceilingCents)}), ${mayStop}`
+    : `${base} · fits your ${formatDollars(from)} hosted limit`;
 }
 
 /** "Uses your Claude connection"; a pool binding has no single provider. */

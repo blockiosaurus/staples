@@ -3,7 +3,7 @@ import { isHeldForTemplateSetup, TEMPLATE_SETUP_RESUME_MESSAGE } from "../lib/st
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
 import { assistantAdapterAvailability, assistantConfigureRoleAllowed, assistantSetupRequestSchema, assistantSetupStatus, canConfigureAssistant, CLAUDE_MANAGED_ADAPTER_TYPE, geminiCredentialsPresent, hasAnthropicKeyBinding, readAssistantLifecycle, resolveAssistantSetupEngine, type AssistantSetupRequest } from "../services/assistant-setup.js";
-import { hostedInference } from "../services/hosted-inference.js";
+import { hostedAgentBudgetCents, hostedInference, usesHostedInferenceKey } from "../services/hosted-inference.js";
 import { ensureHostedAssistantBudget, hostedInferenceAllowedFor } from "../services/hosted-inference-access.js";
 import { getConfiguredSecretProvider } from "../secrets/configured-provider.js";
 
@@ -4686,12 +4686,17 @@ export function agentRoutes(
     await builtInAgentService(db).ensureCompanyDefaultAgentGrants(companyId);
 
     if (agent.budgetMonthlyCents > 0) {
+      // An agent may set a lower cap on an agent it creates, but on the
+      // operator's hosted key never a higher one than the hosted default.
+      const amount = actor.actorType !== "user" && usesHostedInferenceKey(agent)
+        ? Math.min(agent.budgetMonthlyCents, hostedAgentBudgetCents() || agent.budgetMonthlyCents)
+        : agent.budgetMonthlyCents;
       await budgets.upsertPolicy(
         companyId,
         {
           scopeType: "agent",
           scopeId: agent.id,
-          amount: agent.budgetMonthlyCents,
+          amount,
           windowKind: "calendar_month_utc",
         },
         actor.actorType === "user" ? actor.actorId : null,
@@ -5202,6 +5207,11 @@ export function agentRoutes(
     // Setting idle resumes the agent: same template-setup hold as POST /resume.
     if (requestedStatus === "idle" && isHeldForTemplateSetup(existing)) {
       throw conflict(TEMPLATE_SETUP_RESUME_MESSAGE, { code: "agent_template_setup_pending" });
+    }
+    // A budget is a spending cap a person sets (as PATCH /agents/:id/budgets is
+    // board-only): an agent may not change its own or another agent's.
+    if (req.actor.type === "agent" && hasOwn(patchData, "budgetMonthlyCents") && patchData.budgetMonthlyCents !== existing.budgetMonthlyCents) {
+      throw forbidden("Only a person can change an agent's monthly budget");
     }
     const replaceAdapterConfig = patchData.replaceAdapterConfig === true;
     delete patchData.replaceAdapterConfig;

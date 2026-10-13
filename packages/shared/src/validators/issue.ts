@@ -1685,6 +1685,7 @@ export const requestConfirmationProposedActionPayloadSchema = z.object({
   })).max(8).optional(),
   planBudget: z.object({
     hiresMonthlyCents: z.number().int().min(0),
+    budgetedHireCount: z.number().int().min(0),
     hostedCapCents: z.number().int().min(0).nullable(),
     hostedNeededCents: z.number().int().min(0).nullable(),
     hostedCapAfterCents: z.number().int().min(0).nullable(),

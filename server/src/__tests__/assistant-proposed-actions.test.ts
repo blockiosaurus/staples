@@ -643,7 +643,7 @@ const support = await getEmbeddedPostgresTestSupport();
     }]);
     // The budget line rides on the proposal, not in the hashed body; a local hire says nothing about a hosted limit.
     expect((action as { planBudget?: unknown }).planBudget).toEqual({
-      hiresMonthlyCents: 3000, hostedCapCents: null, hostedNeededCents: null, hostedCapAfterCents: null, ceilingCents: 20000,
+      hiresMonthlyCents: 3000, budgetedHireCount: 1, hostedCapCents: null, hostedNeededCents: null, hostedCapAfterCents: null, ceilingCents: 20000,
     });
     expect(JSON.stringify(action.body)).not.toContain("planBudget");
     // No instructions in the proposal: they come from the template at apply.

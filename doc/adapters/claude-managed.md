@@ -102,8 +102,13 @@ records these policy writes in the activity log with a system actor
 (`hosted_inference`). Agents with their own key binding never use the server
 key and get no forced caps.
 
-An agent with its own monthly budget (for example one its plan set) gets
-that amount as its hard-stop cap instead of the agent default.
+An agent's cap amount comes only from a person or the operator: a hire from
+a confirmed plan gets the plan's monthly budget as its hard-stop cap (at most
+the ceiling below, written with the system actor), a person can change it on
+the agent's budget, and otherwise the agent default applies. The agent's own
+`budgetMonthlyCents` field is never read for a hosted cap. An agent may not
+change any agent's monthly budget (`PATCH /agents/:id` refuses it), and an
+agent creating a hosted agent cannot give it a cap above the agent default.
 
 **Plans raise the company cap to fit their hosted hires.** When an applied
 plan hires agents on the hosted key (Claude (hosted) with no key of its own,
@@ -117,7 +122,12 @@ card and the apply result (`hostedLimit`, with `limited: true`) say so.
 An explicit `STAPLES_HOSTED_COMPANY_BUDGET_CENTS=0` (uncapped) is never raised
 or changed, and the card then says nothing about the hosted limit; a ceiling
 of `0` means plans never raise the cap. Hires on a local adapter or on the
-company's own key never raise it. The raise is logged like the other hosted
+company's own key never raise it. Each agent counts its agent cap (above), at
+most the ceiling; hires still awaiting approval do not count until a person
+approves them, and approving a hosted hire raises the cap then by the same
+rules. If the raise fails (a database error), the plan is still applied and
+the result says so (`hostedLimit: { failed: true, fromCents }`): the limit stays
+where it was. The raise is logged like the other hosted
 policy writes (`budget.policy_upserted`, system actor `hosted_inference`).
 Before the person confirms, the plan card shows the hires' monthly budgets and
 whether they fit the hosted limit or raise it (server-computed `planBudget`

@@ -65,25 +65,29 @@ function shortMessage(value: string) {
   return trimmed.length > 500 ? `${trimmed.slice(0, 497)}...` : trimmed;
 }
 
-/**
- * Perform an Assistant-proposed call exactly as stored (method, path, body)
- * with the person's own session, through the app's api client. Never throws:
- * failures are reported as a `failed` result for the accept call.
- */
-/** "$110" from cents; cents kept only when there are some. */
-function wholeDollars(cents: number) {
-  const value = cents / 100;
-  return Number.isInteger(value) ? `$${value}` : `$${value.toFixed(2)}`;
-}
+type HostedLimitRecord = {
+  fromCents?: unknown; toCents?: unknown; neededCents?: unknown; ceilingCents?: unknown; limited?: unknown; failed?: unknown;
+};
 
 /** What a plan apply did to the company's hosted limit, if anything. */
-function hostedLimitSentence(limit: { fromCents?: unknown; toCents?: unknown; neededCents?: unknown; limited?: unknown } | undefined): string {
-  if (!limit || typeof limit.fromCents !== "number" || typeof limit.toCents !== "number") return "";
-  const raised = limit.toCents > limit.fromCents
-    ? ` Hosted limit raised from ${wholeDollars(limit.fromCents)} to ${wholeDollars(limit.toCents)}.`
-    : "";
-  if (limit.limited !== true || typeof limit.neededCents !== "number") return raised;
-  return `${raised} The agents' monthly budgets come to ${wholeDollars(limit.neededCents)}, more than the hosted limit allows, so some may stop before their budgets run out.`;
+function hostedLimitSentence(limit: HostedLimitRecord | undefined): string {
+  if (!limit) return "";
+  if (limit.failed === true) {
+    return typeof limit.fromCents === "number"
+      ? ` Couldn't raise the hosted limit; it stays at ${formatDollars(limit.fromCents)}.`
+      : " Couldn't raise the hosted limit; it stays as it was.";
+  }
+  if (typeof limit.fromCents !== "number" || typeof limit.toCents !== "number") return "";
+  const raised = limit.toCents > limit.fromCents;
+  if (limit.limited !== true || typeof limit.neededCents !== "number") {
+    return raised ? ` Hosted limit raised from ${formatDollars(limit.fromCents)} to ${formatDollars(limit.toCents)}.` : "";
+  }
+  const needed = formatDollars(limit.neededCents);
+  if (raised) {
+    return ` Hosted limit raised from ${formatDollars(limit.fromCents)} to ${formatDollars(limit.toCents)}, the most a plan can set. The agents' monthly budgets come to ${needed}, so some may stop before their budgets run out.`;
+  }
+  const ceiling = typeof limit.ceilingCents === "number" ? ` (plans can raise it only up to ${formatDollars(limit.ceilingCents)})` : "";
+  return ` The agents' monthly budgets come to ${needed}, more than the ${formatDollars(limit.fromCents)} hosted limit${ceiling}, so some may stop before their budgets run out.`;
 }
 
 /** One line for the Assistant about what a plan apply created. */
@@ -91,7 +95,7 @@ function planApplySummary(status: number, body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
   const record = body as {
     agents?: Record<string, unknown>; tasks?: Record<string, unknown>; pendingAssignments?: unknown[]; routines?: unknown[];
-    hostedLimit?: { fromCents?: unknown; toCents?: unknown; neededCents?: unknown; limited?: unknown };
+    hostedLimit?: HostedLimitRecord;
   };
   const count = (value: unknown) => (value && typeof value === "object" ? Object.keys(value).length : 0);
   const agents = count(record.agents);
@@ -112,6 +116,11 @@ function browserTimeZone(): string | null {
   }
 }
 
+/**
+ * Perform an Assistant-proposed call exactly as stored (method, path, body)
+ * with the person's own session, through the app's api client. Never throws:
+ * failures are reported as a `failed` result for the accept call.
+ */
 export async function executeProposedAction(
   action: Pick<RequestConfirmationProposedActionPayload, "method" | "path" | "body"> & { category?: string },
   options: { idempotencyKey?: string } = {},
@@ -154,6 +163,7 @@ export async function readProposedActionStaleValue(
   }
 }
 import { CommentSubmissionUnknownError } from "../lib/comment-submit-result";
+import { formatDollars } from "../lib/utils";
 
 function hasCommentReceipt(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;

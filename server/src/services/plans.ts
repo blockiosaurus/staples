@@ -21,7 +21,8 @@ import { STAPLES_TEMPLATED_PERMISSION_FLAG } from "../lib/agent-permissions.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
 import { HOSTED_HIRE_ADAPTER_TYPE, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import {
-  ensureHostedAgentBudgets, hostedHireAdapterConfig, hostedHireOptions, planHireUsesHostedKey, raiseHostedCompanyCapForHires, type HostedHireOptions,
+  currentHostedCompanyCapCents, ensureHostedAgentBudgets, hostedHireAdapterConfig, hostedHireOptions, isProgrammingError, planHireUsesHostedKey,
+  raiseHostedCompanyCapForHires, setPlannedHostedHireCap, type HostedHireOptions,
 } from "./hosted-inference-access.js";
 import { canonicalJson, currentBriefRevisionId, planExistingAssigneeViolation, planRuleViolation } from "./assistant-proposed-actions.js";
 import { writeCompanyBrief } from "./company-brief.js";
@@ -743,7 +744,13 @@ export async function applyPlan(db: Db, input: {
       }
       if (agent.adapterType === HOSTED_HIRE_ADAPTER_TYPE && hosted?.hostedInference && !hosted.companyKeyBinding) {
         // On the operator's key: its caps exist before its first run (and are
-        // ensured again at every run, which is the guarantee).
+        // ensured again at every run, which is the guarantee). The person
+        // confirmed the plan's budget, so that is its cap; otherwise the
+        // ensure gives it the hosted default.
+        await setPlannedHostedHireCap(db, { id: json.agent.id, companyId }, agent.budgetMonthlyCents).catch((error) => {
+          if (isProgrammingError(error)) throw error;
+          logger.warn({ err: error, companyId, agentId: json.agent?.id }, "Could not set a hosted hire's planned budget cap at hire");
+        });
         await ensureHostedAgentBudgets(db, { id: json.agent.id, companyId }, process.env, { assistant: false }).catch((error) => {
           logger.warn({ err: error, companyId, agentId: json.agent?.id }, "Could not set a hosted hire's budget caps at hire; they are set at its first run");
         });
@@ -761,13 +768,17 @@ export async function applyPlan(db: Db, input: {
     }
 
     // Agents on the hosted key: raise the company's hosted cap to fit their
-    // monthly budgets (raise only, up to the operator's ceiling). A failure
-    // leaves the cap as it was; the hires stay within their own budgets.
+    // monthly budgets (raise only, up to the operator's ceiling). A database
+    // failure leaves the cap as it was and is reported in the result; the plan
+    // still applies and the hires stay within their own caps.
     if (hosted && plan.agents.some((agent) => planHireUsesHostedKey(agent, hosted))) {
-      hostedLimit = (await raiseHostedCompanyCapForHires(db, companyId).catch((error) => {
+      try {
+        hostedLimit = (await raiseHostedCompanyCapForHires(db, companyId)) ?? undefined;
+      } catch (error) {
+        if (isProgrammingError(error)) throw error;
         logger.warn({ err: error, companyId }, "Could not raise the company's hosted cap for a plan's hires");
-        return null;
-      })) ?? undefined;
+        hostedLimit = { failed: true, fromCents: await currentHostedCompanyCapCents(db, companyId).catch(() => null) };
+      }
     }
 
     // The new agents exist now: check the person may assign them work
