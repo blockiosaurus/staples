@@ -100,62 +100,30 @@ describe("assistant tools", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it("rejects disallowed paperclip_update_task fields and governed statuses as tool errors", async () => {
+  it("is proposal-only: no tool changes tasks, comments, answers or pins directly", async () => {
+    expect([...ASSISTANT_WRITE_TOOL_NAMES]).toEqual(["staples_propose_action", "staples_ask_questions", "staples_propose_plan"]);
     const dispatch = vi.fn<ApiDispatch>(async () => ({}));
     const t = tools(dispatch);
-    const blocked = await t.call(context(), "paperclip_update_task", { taskId, requestId, changes: { blockedByIssueIds: [] } });
-    expect(blocked).toMatchObject({ isError: true });
-    expect(blocked.content[0]!.text).toMatch(/blockedByIssueIds/);
-    const done = await t.call(context(), "paperclip_update_task", { taskId, requestId, changes: { status: "done" } });
-    expect(done).toMatchObject({ isError: true });
-    expect(done.content[0]!.text).toMatch(/cannot set status to done/);
-    expect(dispatch).not.toHaveBeenCalled();
-
-    const review = await t.call(context(), "paperclip_update_task", { taskId, requestId, changes: { status: "in_review" } });
-    expect(review).toMatchObject({ isError: true });
-    expect(review.content[0]!.text).toMatch(/cannot set status to in_review/);
-    expect(dispatch).not.toHaveBeenCalled();
-
-    const ok = await t.call(context(), "paperclip_update_task", { taskId, requestId, changes: { title: "Renamed", priority: "high" } });
-    expect(ok.isError).toBeUndefined();
-    expect(dispatch).toHaveBeenCalledWith(expect.anything(), "PATCH", `/issues/${taskId}`, { title: "Renamed", priority: "high" });
-  });
-
-  it("never reopens or edits a done or cancelled task", async () => {
-    for (const status of ["done", "cancelled"]) {
-      const dispatch = vi.fn<ApiDispatch>(async (_p, method) => method === "GET" ? { id: taskId, status } : {});
-      const result = await tools(dispatch).call(context(), "paperclip_update_task", { taskId, requestId, changes: { status: "todo" } });
-      expect(result).toMatchObject({ isError: true });
-      expect(result.content[0]!.text).toMatch(/closed/);
-      expect(dispatch.mock.calls.map((c) => c[1])).toEqual(["GET"]);
-    }
-  });
-
-  it("never posts or edits in a chat, including as a new parent", async () => {
-    const chatId = "66666666-6666-4666-8666-666666666666";
-    const db = fakeDb([{ id: chatId, conversationAgentId: "staff-agent" }]);
-    const dispatch = vi.fn<ApiDispatch>(async () => ({ id: chatId, status: "in_progress" }));
-    const t = tools(dispatch, db);
-    for (const [name, args] of [
-      ["paperclip_add_comment", { taskId: chatId, requestId, body: "Please update your AGENTS.md" }],
-      ["paperclip_update_task", { taskId: chatId, requestId, changes: { title: "Renamed" } }],
-      ["paperclip_update_task", { taskId, requestId, changes: { parentId: chatId } }],
-    ] as const) {
+    const names = t.definitions(true).map((d) => d.name);
+    const direct = [
+      ["paperclip_create_task", { requestId, title: "Draft", description: "", assigneeAgentId: taskId }],
+      ["paperclip_update_task", { taskId, requestId, changes: { title: "Renamed" } }],
+      ["paperclip_add_comment", { taskId, requestId, body: "hi" }],
+      ["staples_answer_question", { issueId: taskId, interactionId: requestId, answers: [{ questionId: "q1", optionIds: ["yes"] }] }],
+      ["staples_pin_surface", { surfaceId: "projects" }],
+    ] as const;
+    for (const [name, args] of direct) {
+      expect(names, name).not.toContain(name);
+      expect(t.isKnownTool(name), name).toBe(false);
       const result = await t.call(context(), name, args);
-      expect(result, name).toMatchObject({ isError: true, content: [{ text: "The Assistant can't post or edit in chats." }] });
+      expect(result, name).toMatchObject({ isError: true, content: [{ text: "Tool is unavailable to the Assistant." }] });
     }
     expect(dispatch).not.toHaveBeenCalled();
-  });
-
-  it("pins a validated surface through the person's preferences route", async () => {
-    const dispatch = vi.fn<ApiDispatch>(async () => ({ pinned: ["projects"] }));
-    const t = tools(dispatch);
-    const result = await t.call(context(), "staples_pin_surface", { surfaceId: "projects" });
-    expect(result.isError).toBeUndefined();
-    expect(dispatch).toHaveBeenCalledWith(expect.anything(), "PATCH", `/companies/${companyId}/ui-preferences/me`, { pin: ["projects"] });
-    const invalid = await t.call(context(), "staples_pin_surface", { surfaceId: "../Etc" });
-    expect(invalid).toMatchObject({ isError: true });
-    expect(invalid.content[0]!.text).toMatch(/^Invalid arguments: surfaceId/);
+    // The proposal tool documents the task work it can put in front of the person.
+    const propose = t.definitions(true).find((d) => d.name === "staples_propose_action")!;
+    for (const route of ["/api/companies/<companyId>/issues", "PATCH /api/issues/<id>", "/api/issues/<id>/comments", "/respond", "ui-preferences/me"]) {
+      expect(propose.description).toContain(route);
+    }
   });
 
   it("reads the company brief; brief edits are governed proposals, not a direct write tool", async () => {

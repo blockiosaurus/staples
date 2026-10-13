@@ -278,14 +278,16 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(listed.status).toBe(200);
     const names = listed.body.result.tools.map((tool: { name: string }) => tool.name);
     expect(names).toEqual(expect.arrayContaining(["staples_get_briefing", "paperclip_search_tasks", "staples_save_weekly_update"]));
-    for (const write of ["paperclip_create_task", "paperclip_add_comment", "paperclip_update_task", "staples_propose_action", "staples_pin_surface"]) {
+    for (const write of ["staples_propose_action", "staples_propose_plan", "staples_ask_questions"]) {
       expect(names).not.toContain(write);
     }
 
-    const create = await f.call("paperclip_create_task", { requestId: randomUUID(), title: "Not allowed", description: "" });
-    expect(create.body.result).toMatchObject({ isError: true, content: [{ text: "A weekly update run can only read and save the weekly update." }] });
+    const proposed = await f.call("staples_propose_action", {
+      method: "POST", path: `/api/issues/${f.blockerId}/comments`, body: { body: "Not allowed" }, summary: "Comment",
+    });
+    expect(proposed.body.result).toMatchObject({ isError: true, content: [{ text: "A weekly update run can only read and save the weekly update." }] });
     const comment = await f.call("paperclip_add_comment", { taskId: f.blockerId, requestId: randomUUID(), body: "Not allowed" });
-    expect(comment.body.result).toMatchObject({ isError: true });
+    expect(comment.body.result).toMatchObject({ isError: true, content: [{ text: "Tool is unavailable to the Assistant." }] });
     // The target is never an input.
     const targeted = await f.call("staples_save_weekly_update", { body: "Hello", taskId: f.blockerId });
     expect(targeted.body.result).toMatchObject({ isError: true });
@@ -444,7 +446,7 @@ const support = await getEmbeddedPostgresTestSupport();
     const listed = await rpc("tools/list");
     expect(listed.status).toBe(200);
     const names = listed.body.result.tools.map((tool: { name: string }) => tool.name);
-    expect(names).toContain("paperclip_create_task");
+    expect(names).toContain("staples_propose_action");
     expect(names).not.toContain("staples_save_weekly_update");
     const saved = await rpc("tools/call", { name: "staples_save_weekly_update", arguments: { body: "## What shipped\n- Chat update" } });
     expect(saved.body.result).toMatchObject({ isError: true });

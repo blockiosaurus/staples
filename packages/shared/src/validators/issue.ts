@@ -1598,6 +1598,8 @@ export const PROPOSED_ACTION_CATEGORIES = [
   "other_governed",
   "brief",
   "plan",
+  "task",
+  "preference",
 ] as const;
 /** Serialized JSON body limit for a proposed action. */
 export const PROPOSED_ACTION_BODY_MAX_BYTES = 20 * 1024;
@@ -1616,7 +1618,8 @@ export const PROPOSED_BRIEF_BODY_MAX_BYTES = 96 * 1024;
  */
 export const PROPOSED_PLAN_BODY_MAX_BYTES = 128 * 1024;
 export function proposedActionBodyMaxBytes(category: string | null | undefined): number {
-  if (category === "brief") return PROPOSED_BRIEF_BODY_MAX_BYTES;
+  // Task proposals carry task descriptions and comments (up to 50,000 characters).
+  if (category === "brief" || category === "task") return PROPOSED_BRIEF_BODY_MAX_BYTES;
   if (category === "plan") return PROPOSED_PLAN_BODY_MAX_BYTES;
   return PROPOSED_ACTION_BODY_MAX_BYTES;
 }
