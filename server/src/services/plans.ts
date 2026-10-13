@@ -742,6 +742,16 @@ export async function applyPlan(db: Db, input: {
             `${reason}. Hired so far: ${describeHired(plan, hired)}. Nothing else from the plan was created; applying the same plan again reuses these agents.`, hired)
           : new HttpError(status, reason);
       }
+      hired[agent.clientKey] = {
+        id: json.agent.id,
+        status: typeof json.agent.status === "string" ? json.agent.status : "idle",
+        approvalId: typeof json.approval?.id === "string" ? json.approval.id : null,
+        ...(agent.templateRef ? { templateRef: agent.templateRef } : {}),
+      };
+      // Guard the new agent before anything else happens; until then it is held.
+      await holdTemplatedHire(agent.clientKey);
+      await recordHires();
+      // After the hire is recorded, so a failure here reports it as hired (partial apply).
       if (agent.adapterType === HOSTED_HIRE_ADAPTER_TYPE && hosted?.hostedInference && !hosted.companyKeyBinding) {
         // On the operator's key: its caps exist before its first run (and are
         // ensured again at every run, which is the guarantee). The person
@@ -755,15 +765,6 @@ export async function applyPlan(db: Db, input: {
           logger.warn({ err: error, companyId, agentId: json.agent?.id }, "Could not set a hosted hire's budget caps at hire; they are set at its first run");
         });
       }
-      hired[agent.clientKey] = {
-        id: json.agent.id,
-        status: typeof json.agent.status === "string" ? json.agent.status : "idle",
-        approvalId: typeof json.approval?.id === "string" ? json.approval.id : null,
-        ...(agent.templateRef ? { templateRef: agent.templateRef } : {}),
-      };
-      // Guard the new agent before anything else happens; until then it is held.
-      await holdTemplatedHire(agent.clientKey);
-      await recordHires();
       await setUpTemplatedAgent(agent.clientKey);
     }
 

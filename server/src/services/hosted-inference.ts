@@ -99,3 +99,22 @@ export function usesHostedInferenceKey(
   return agent.adapterType === HOSTED_INFERENCE_ADAPTER_TYPE && hostedInference(env).available
     && !hasAnthropicKeyBinding(agent.adapterConfig);
 }
+
+/** An agent-level amount, at most the operator's ceiling (a 0 ceiling clamps nothing). */
+export function clampToHostedCeiling(cents: number, env: NodeJS.ProcessEnv = process.env): number {
+  const ceiling = hostedCompanyBudgetCeilingCents(env);
+  return ceiling > 0 ? Math.min(cents, ceiling) : cents;
+}
+
+/**
+ * The monthly budget an agent may give an agent it creates or hires: on the
+ * operator's hosted key at most the hosted agent default (a lower one is
+ * kept; an uncapped 0 default clamps nothing); otherwise as asked.
+ */
+export function agentChosenHostedBudgetCents(
+  agent: { adapterType: string; adapterConfig?: unknown }, cents: number, env: NodeJS.ProcessEnv = process.env,
+): number {
+  if (!usesHostedInferenceKey(agent, env)) return cents;
+  const fallback = hostedAgentBudgetCents(env);
+  return fallback > 0 ? Math.min(cents, fallback) : cents;
+}

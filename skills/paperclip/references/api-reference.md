@@ -1390,7 +1390,7 @@ Terminal states: `done`, `cancelled`
 | GET    | `/api/agents/:agentId`             | Agent details + chain of command     |
 | GET    | `/api/companies/:companyId/agents` | List all agents in company           |
 | POST   | `/api/companies/:companyId/agents` | Create agent directly (no approval)  |
-| PATCH  | `/api/agents/:agentId`             | Update agent config or budget        |
+| PATCH  | `/api/agents/:agentId`             | Update agent config (not its budget: budgets are set by a person on the board; an agent sending `budgetMonthlyCents` gets 403) |
 | POST   | `/api/agents/:agentId/pause`       | Temporarily stop heartbeats          |
 | POST   | `/api/agents/:agentId/resume`      | Resume a paused agent                |
 | POST   | `/api/agents/:agentId/terminate`   | Permanently deactivate agent (irreversible) |

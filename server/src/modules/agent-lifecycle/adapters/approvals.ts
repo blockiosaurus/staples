@@ -5,6 +5,7 @@ import { unprocessable } from "../../../errors.js";
 import { approvalResolutionRecords, resolvableApprovalStatuses } from "../../../lib/approval-records.js";
 import { agentRecords } from "./records.js";
 import { createLifecycleStore } from "./postgres.js";
+import { clampToHostedCeiling, usesHostedInferenceKey } from "../../../services/hosted-inference.js";
 import type { LifecycleEffects } from "./effects.js";
 
 export type HireDecisionTarget = string | { approvalId: string };
@@ -82,7 +83,10 @@ export function hireApprovalService(db: Db, effects: LifecycleEffects) {
           agentId = created.id;
         }
         if (approval && agentId && typeof payload.budgetMonthlyCents === "number" && payload.budgetMonthlyCents > 0) {
-          await effects.setAgentBudget(tx, publications, companyId, agentId, payload.budgetMonthlyCents, userId);
+          // On the operator's hosted key the cap is at most the ceiling, as at plan apply.
+          const hired = await records.getById(agentId);
+          const amount = hired && usesHostedInferenceKey(hired) ? clampToHostedCeiling(payload.budgetMonthlyCents) : payload.budgetMonthlyCents;
+          await effects.setAgentBudget(tx, publications, companyId, agentId, amount, userId);
         }
       } else if (applied && agentId) {
         if (approval) await records.rejectPendingHire(agentId);

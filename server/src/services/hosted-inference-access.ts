@@ -8,6 +8,7 @@ import {
   HOSTED_INFERENCE_MODEL,
   hostedAgentBudgetCents,
   hostedAssistantBudgetCents,
+  clampToHostedCeiling,
   hostedCompanyBudgetCeilingCents,
   hostedCompanyBudgetCents,
   hostedInference,
@@ -91,12 +92,6 @@ export async function ensureHostedAgentBudgets(
   }
   await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "company", scopeId: agent.companyId }, HOSTED_BILLED_CENTS_METRIC,
     hostedCompanyBudgetCents(env));
-}
-
-/** An agent-level amount, at most the operator's ceiling (a 0 ceiling clamps nothing). */
-export function clampToHostedCeiling(cents: number, env: NodeJS.ProcessEnv = process.env): number {
-  const ceiling = hostedCompanyBudgetCeilingCents(env);
-  return ceiling > 0 ? Math.min(cents, ceiling) : cents;
 }
 
 /**

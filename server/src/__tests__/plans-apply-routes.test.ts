@@ -1562,6 +1562,82 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         expect(await monthlyPolicy("agent", created.body.id)).toMatchObject({ amount: 2000 });
       }, 120_000);
 
+      const agentAppFor = (agentId: string, companyId: string) => {
+        const actor = { type: "agent", agentId, companyId, runId: null, source: "agent_key" } as unknown as Actor;
+        const api = Router();
+        api.use(agentRoutes(db));
+        const agentApp = express();
+        agentApp.use(express.json());
+        agentApp.use((req, _res, next) => { req.actor = actor; next(); });
+        agentApp.use("/api", api);
+        agentApp.use(errorHandler);
+        return agentApp;
+      };
+
+      it("refuses the hire-then-same-value-PATCH route to a large hosted cap", async () => {
+        hostedOn();
+        const s = await seed();
+        await assistantOnHosted(s);
+        await db.insert(principalPermissionGrants).values({ companyId: s.companyId, principalType: "agent", principalId: s.staffId, permissionKey: "agents:create" });
+        await db.update(agents).set({ permissions: { canCreateAgents: true } }).where(eq(agents.id, s.staffId));
+        const creator = agentAppFor(s.staffId, s.companyId);
+        // 1. An agent hires on the hosted key with a $10,000 budget: clamped to the $20 default.
+        const hired = await request(creator).post(`/api/companies/${s.companyId}/agent-hires`).send({
+          name: "Spender", role: "general", adapterType: "claude_managed", adapterConfig: { model: "claude-opus-5-5" }, budgetMonthlyCents: 1_000_000,
+        });
+        expect(hired.status, JSON.stringify(hired.body)).toBe(201);
+        const hireId = hired.body.agent.id as string;
+        expect((await db.select().from(agents).where(eq(agents.id, hireId)))[0]!.budgetMonthlyCents).toBe(2000);
+        expect(await monthlyPolicy("agent", hireId)).toBeNull();
+        // 2. Re-sending a budget, even unchanged, is refused for agents (the hire itself and its creator).
+        for (const app of [agentAppFor(hireId, s.companyId), creator]) {
+          for (const budgetMonthlyCents of [2000, 1_000_000]) {
+            const patched = await request(app).patch(`/api/agents/${hireId}`).send({ budgetMonthlyCents });
+            expect(patched.status, JSON.stringify(patched.body)).toBe(403);
+          }
+        }
+        expect(await monthlyPolicy("agent", hireId)).toBeNull();
+        // Defense in depth: an unchanged budget written without a person writes no policy.
+        await agentService(db).update(hireId, { budgetMonthlyCents: 2000 });
+        expect(await monthlyPolicy("agent", hireId)).toBeNull();
+        // 3. The run's ensure sets the default cap.
+        const [row] = await db.select().from(agents).where(eq(agents.id, hireId));
+        expect(await hostedInferenceAllowedFor(db, row!)).toBe(true);
+        expect(await monthlyPolicy("agent", hireId)).toMatchObject({ amount: 2000, isActive: true });
+      }, 120_000);
+
+      it("an agent's config rollback never restores a budget", async () => {
+        const s = await seed();
+        const agentId = s.staffId;
+        // A person set a $30 budget.
+        await budgetService(db).upsertPolicy(s.companyId, { scopeType: "agent", scopeId: agentId, amount: 3000, windowKind: "calendar_month_utc" }, s.userId);
+        const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
+        const snapshot = {
+          name: agent!.name, role: agent!.role, title: "Rolled back", reportsTo: agent!.reportsTo, capabilities: agent!.capabilities,
+          adapterType: agent!.adapterType, adapterConfig: agent!.adapterConfig, runtimeConfig: agent!.runtimeConfig,
+          budgetMonthlyCents: 1_000_000, metadata: agent!.metadata,
+        };
+        const [revision] = await db.insert(agentConfigRevisions).values({
+          companyId: s.companyId, agentId, source: "patch", changedKeys: ["budgetMonthlyCents", "title"], beforeConfig: snapshot, afterConfig: snapshot,
+        }).returning();
+        const rolled = await request(agentAppFor(agentId, s.companyId)).post(`/api/agents/${agentId}/config-revisions/${revision!.id}/rollback`).send({});
+        expect(rolled.status, JSON.stringify(rolled.body)).toBe(200);
+        const [after] = await db.select().from(agents).where(eq(agents.id, agentId));
+        expect(after).toMatchObject({ title: "Rolled back", budgetMonthlyCents: 3000 });
+        expect(await monthlyPolicy("agent", agentId)).toMatchObject({ amount: 3000, isActive: true });
+      }, 120_000);
+
+      it("caps an approved hosted hire's budget at the ceiling", async () => {
+        hostedOn();
+        vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS", "5000");
+        const s = await seed({ requireApproval: true });
+        await assistantOnHosted(s);
+        const applied = await apply(buildApp(sessionActor(s)).app, s.companyId, hostedHires(9000));
+        expect(applied.status, JSON.stringify(applied.body)).toBe(201);
+        await approvalService(db).approve(applied.body.agents.a.approvalId, s.userId);
+        expect(await monthlyPolicy("agent", applied.body.agents.a.id)).toMatchObject({ amount: 5000, isActive: true });
+      }, 120_000);
+
       it("clamps a planned hosted hire's cap to the ceiling", async () => {
         hostedOn();
         vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS", "4000");

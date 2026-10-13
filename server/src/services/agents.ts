@@ -88,6 +88,7 @@ export function agentService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       id: string,
       revisionId: string,
       actor: { agentId?: string | null; userId?: string | null },
+      options: { keepBudget?: boolean } = {},
     ) => {
       const revision = await db
         .select()
@@ -100,6 +101,8 @@ export function agentService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       }
 
       const patch = configPatchFromSnapshot(revision.afterConfig);
+      // The budget keeps its current value (an agent's rollback may not restore one).
+      if (options.keepBudget) delete patch.budgetMonthlyCents;
       if (Object.prototype.hasOwnProperty.call(patch, "metadata")) {
         // The template record is server-owned: keep the current one whatever the snapshot held.
         const current = await getById(id);

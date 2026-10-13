@@ -3,7 +3,7 @@ import { isHeldForTemplateSetup, TEMPLATE_SETUP_RESUME_MESSAGE } from "../lib/st
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
 import { assistantAdapterAvailability, assistantConfigureRoleAllowed, assistantSetupRequestSchema, assistantSetupStatus, canConfigureAssistant, CLAUDE_MANAGED_ADAPTER_TYPE, geminiCredentialsPresent, hasAnthropicKeyBinding, readAssistantLifecycle, resolveAssistantSetupEngine, type AssistantSetupRequest } from "../services/assistant-setup.js";
-import { hostedAgentBudgetCents, hostedInference, usesHostedInferenceKey } from "../services/hosted-inference.js";
+import { agentChosenHostedBudgetCents, hostedInference } from "../services/hosted-inference.js";
 import { ensureHostedAssistantBudget, hostedInferenceAllowedFor } from "../services/hosted-inference-access.js";
 import { getConfiguredSecretProvider } from "../secrets/configured-provider.js";
 
@@ -4111,10 +4111,12 @@ export function agentRoutes(
     }
 
     const actor = getActorInfo(req);
+    // An agent's rollback never restores a budget: budgets are a person's to set.
+    const keepBudget = req.actor.type === "agent";
     const updated = await svc.rollbackConfigRevision(id, revisionId, {
       agentId: actor.agentId,
       userId: actor.actorType === "user" ? actor.actorId : null,
-    });
+    }, { keepBudget });
     if (!updated) {
       res.status(404).json({ error: "Revision not found" });
       return;
@@ -4306,6 +4308,11 @@ export function agentRoutes(
       ...hireInput,
       adapterConfig: normalizedAdapterConfig,
       runtimeConfig: normalizedRuntimeConfig,
+      // An agent may not give a hire on the operator's hosted key a budget
+      // above the hosted default (the same rule as POST /companies/:id/agents).
+      ...(req.actor.type === "agent" && typeof hireInput.budgetMonthlyCents === "number"
+        ? { budgetMonthlyCents: agentChosenHostedBudgetCents({ adapterType: hireInput.adapterType, adapterConfig: normalizedAdapterConfig }, hireInput.budgetMonthlyCents) }
+        : {}),
     };
     await assertAgentEnvironmentSelection(companyId, hireInput.adapterType, hireInput.defaultEnvironmentId);
     await assertAgentDefaultEnvironmentSelection(companyId, hireInput.defaultEnvironmentId, {
@@ -4688,9 +4695,7 @@ export function agentRoutes(
     if (agent.budgetMonthlyCents > 0) {
       // An agent may set a lower cap on an agent it creates, but on the
       // operator's hosted key never a higher one than the hosted default.
-      const amount = actor.actorType !== "user" && usesHostedInferenceKey(agent)
-        ? Math.min(agent.budgetMonthlyCents, hostedAgentBudgetCents() || agent.budgetMonthlyCents)
-        : agent.budgetMonthlyCents;
+      const amount = actor.actorType !== "user" ? agentChosenHostedBudgetCents(agent, agent.budgetMonthlyCents) : agent.budgetMonthlyCents;
       await budgets.upsertPolicy(
         companyId,
         {
@@ -5209,8 +5214,9 @@ export function agentRoutes(
       throw conflict(TEMPLATE_SETUP_RESUME_MESSAGE, { code: "agent_template_setup_pending" });
     }
     // A budget is a spending cap a person sets (as PATCH /agents/:id/budgets is
-    // board-only): an agent may not change its own or another agent's.
-    if (req.actor.type === "agent" && hasOwn(patchData, "budgetMonthlyCents") && patchData.budgetMonthlyCents !== existing.budgetMonthlyCents) {
+    // board-only): an agent may not send one for itself or another agent, even
+    // unchanged (writing it would also write the agent's budget policy).
+    if (req.actor.type === "agent" && hasOwn(patchData, "budgetMonthlyCents")) {
       throw forbidden("Only a person can change an agent's monthly budget");
     }
     const replaceAdapterConfig = patchData.replaceAdapterConfig === true;

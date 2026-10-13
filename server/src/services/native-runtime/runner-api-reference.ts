@@ -22,7 +22,7 @@ export const runnerApiReference: Record<string, { section: string; description?:
   },
   "PATCH /api/agents/{}": {
     "section": "Agents",
-    "description": "Update agent config or budget"
+    "description": "Update agent config (not its budget: budgets are set by a person on the board)"
   },
   "POST /api/agents/{}/pause": {
     "section": "Agents",
