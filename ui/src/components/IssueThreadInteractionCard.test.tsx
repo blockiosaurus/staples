@@ -1724,7 +1724,7 @@ describe("IssueThreadInteractionCard connection-intent card", () => {
     const labels = Array.from(host.querySelectorAll("button")).map((button) => button.textContent?.trim());
     expect(labels).toContain("Connect");
     expect(labels).toContain("Not now");
-    expect(host.textContent).toContain("Access is added only for this agent");
+    expect(host.textContent).toMatch(/Only .+ gets access\./);
   });
 
   it("shows another viewer only who it is waiting for", () => {
