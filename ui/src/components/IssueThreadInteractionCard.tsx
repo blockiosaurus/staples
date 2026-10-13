@@ -2150,16 +2150,19 @@ function ProposedPlanPreview({ path, body, hireConnections, templateSummaries, b
   );
 }
 
-/** "Email secretary · needs AgentMail or Gmail · asks before: sending email · 2 routines · $20/mo". */
+/**
+ * "Needs AgentMail or Gmail · asks before: sending email · 2 routines". The
+ * agent row already shows the name and monthly budget, so neither repeats here.
+ */
 function planTemplateLine(summary: PlanTemplateSummary) {
   const lower = (label: string) => label.charAt(0).toLowerCase() + label.slice(1);
-  const parts = [summary.name];
+  const parts: string[] = [];
   if (summary.needs.length) parts.push(`needs ${summary.needs.join(", ")}`);
   if (summary.readOnly) parts.push("read-only");
   else if (summary.asksBefore.length) parts.push(`asks before: ${summary.asksBefore.map(lower).join(", ")}`);
   parts.push(`${summary.routineCount} routine${summary.routineCount === 1 ? "" : "s"}`);
-  if (summary.budgetMonthlyCents !== null) parts.push(`${formatDollars(summary.budgetMonthlyCents)}/mo`);
-  return parts.join(" · ");
+  const line = parts.join(" · ");
+  return line.charAt(0).toUpperCase() + line.slice(1);
 }
 
 /**
@@ -2174,13 +2177,44 @@ function planBudgetLine(budget: PlanBudgetSummary) {
   if (from === null || to === null || needed === null) return base;
   const short = needed > to;
   const mayStop = "so some agents may stop before their budgets run out";
+  // `needed` sums every agent on the hosted key after apply; the new hosted
+  // hires are at most `hiresMonthlyCents`, so anything above that is agents
+  // the company already runs there (the Assistant, earlier hires).
+  const includesExisting = needed > budget.hiresMonthlyCents;
   if (to > from) {
     const raise = `raises your hosted limit from ${formatDollars(from)} to ${formatDollars(to)}`;
-    return short ? `${base} · ${raise}, the most a plan can set, ${mayStop}` : `${base} · ${raise}`;
+    if (short) return `${base} · ${raise}, the most a plan can set, ${mayStop}`;
+    return includesExisting ? `${base} · ${raise} to cover these and your existing agents` : `${base} · ${raise}`;
   }
   return short
     ? `${base} · more than your ${formatDollars(from)} hosted limit (plans can raise it only up to ${formatDollars(budget.ceilingCents)}), ${mayStop}`
     : `${base} · fits your ${formatDollars(from)} hosted limit`;
+}
+
+/** A bare "HTTP 201"-style message carries no meaning for the person reading the card. */
+const BARE_STATUS_MESSAGE = /^HTTP \d{3}$/;
+
+/** Plain words for a failed call's status code; no codes in the person-facing line. */
+function plainFailureReason(status: number | undefined) {
+  if (status === undefined) return null;
+  if (status === 401 || status === 403) return "you don't have permission to do this";
+  if (status === 404) return "what it changes no longer exists";
+  if (status === 409) return "it changed or was already done";
+  if (status === 429) return "too many requests right now, try again shortly";
+  if (status >= 500) return "something went wrong on our side, try again";
+  if (status >= 400) return "the request wasn't accepted";
+  return null;
+}
+
+/**
+ * "Done", "Done · Hired 2 agents…", or "Didn't go through · <plain reason>".
+ * Never shows the raw status code.
+ */
+export function proposedActionOutcomeLine(outcome: { status: string; httpStatus?: number; message?: string }) {
+  const message = outcome.message && !BARE_STATUS_MESSAGE.test(outcome.message.trim()) ? outcome.message : null;
+  if (outcome.status === "executed") return message ? `Done · ${message}` : "Done";
+  const reason = message ?? plainFailureReason(outcome.httpStatus);
+  return reason ? `Didn't go through · ${reason}` : "Didn't go through";
 }
 
 /** "Uses your Claude connection"; a pool binding has no single provider. */
@@ -2348,12 +2382,10 @@ function ProposedActionCard({
       </details>
       <p className="mt-3 text-sm text-foreground"><span className="text-muted-foreground">Assistant's summary: </span>{action.summary}</p>
       {outcome ? (
-        <p className={cn("mt-2 flex items-center gap-1.5 text-sm", failed ? "text-destructive" : "text-muted-foreground")} aria-live="polite">
+        <p data-testid="proposed-action-outcome" className={cn("mt-2 flex items-center gap-1.5 text-sm", failed ? "text-destructive" : "text-muted-foreground")} aria-live="polite">
           {failed ? <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />}
           <span className="break-words">
-            {outcome.status === "executed" ? "Done" : "Did not complete"}
-            {outcome.httpStatus ? ` · HTTP ${outcome.httpStatus}` : ""}
-            {outcome.message && outcome.message !== `HTTP ${outcome.httpStatus}` ? ` · ${outcome.message}` : ""}
+            {proposedActionOutcomeLine(outcome)}
           </span>
         </p>
       ) : null}

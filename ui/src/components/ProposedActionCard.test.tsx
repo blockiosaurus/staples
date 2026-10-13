@@ -173,6 +173,8 @@ describe("ProposedActionCard", () => {
       expect.objectContaining({ id: "interaction-proposed-action" }), undefined, undefined, undefined,
       { status: "executed", httpStatus: 200, message: "HTTP 200", hash: HASH },
     );
+    // The person sees "Done", never the status code.
+    expect(host.querySelector('[data-testid="proposed-action-outcome"]')?.textContent).toBe("Done");
   });
 
   it("does not execute when the server refuses the claim", async () => {
@@ -202,7 +204,17 @@ describe("ProposedActionCard", () => {
       expect.anything(), undefined, undefined, undefined,
       { status: "failed", httpStatus: 403, message: "Only owners can approve hires", hash: HASH },
     );
-    expect(host.textContent).toContain("Only owners can approve hires");
+    expect(host.querySelector('[data-testid="proposed-action-outcome"]')?.textContent)
+      .toBe("Didn't go through · Only owners can approve hires");
+  });
+
+  it("explains a failed call in plain words when the server gave no reason", async () => {
+    fetchMock.mockResolvedValueOnce(claimed()).mockResolvedValueOnce(new Response("", { status: 503 }));
+    const host = await render({ onAcceptInteraction: vi.fn(async () => undefined), onRejectInteraction: vi.fn() });
+    await click(button(host, "Confirm"));
+    const line = host.querySelector('[data-testid="proposed-action-outcome"]')?.textContent ?? "";
+    expect(line.startsWith("Didn't go through")).toBe(true);
+    expect(line).not.toMatch(/HTTP|503/);
   });
 
   it("requires a second Confirm when the target changed since the proposal", async () => {
@@ -257,8 +269,7 @@ describe("ProposedActionCard", () => {
       interaction: proposal({ status: "accepted", result: { version: 1, outcome: "accepted", proposedAction: { status: "failed", httpStatus: 409, message: "Already decided" } } }),
     });
     expect(executed.textContent).toContain("Failed");
-    expect(executed.textContent).toContain("409");
-    expect(executed.textContent).toContain("Already decided");
+    expect(executed.querySelector('[data-testid="proposed-action-outcome"]')?.textContent).toBe("Didn't go through · Already decided");
     expect(button(executed, "Confirm")).toBeUndefined();
   });
 
@@ -447,7 +458,7 @@ describe("ProposedActionCard", () => {
       const host = await render({ interaction: templated, onAcceptInteraction: accept, onRejectInteraction: vi.fn() });
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
       expect(host.querySelector('[data-testid="proposed-plan-agent-template"]')?.textContent)
-        .toBe("Email secretary · needs AgentMail or Gmail · asks before: sending email · 2 routines · $20/mo");
+        .toBe("Needs AgentMail or Gmail · asks before: sending email · 2 routines");
       await click(button(host, "Create plan"));
       expect(accept).toHaveBeenCalledWith(expect.anything(), undefined, undefined, undefined,
         expect.objectContaining({ status: "executed", message: "Plan created: 1 agent, 1 task, 2 routines." }));
@@ -474,8 +485,13 @@ describe("ProposedActionCard", () => {
       });
 
       it("says the plan raises the hosted limit", async () => {
-        expect(await renderWithBudget({ ...local, hiresMonthlyCents: 9000, hostedCapCents: 5000, hostedNeededCents: 11000, hostedCapAfterCents: 11000 }))
-          .toBe("Monthly budgets: $90 across 1 agent · raises your hosted limit from $50 to $110");
+        expect(await renderWithBudget({ ...local, hiresMonthlyCents: 9000, hostedCapCents: 5000, hostedNeededCents: 9000, hostedCapAfterCents: 9000 }))
+          .toBe("Monthly budgets: $90 across 1 agent · raises your hosted limit from $50 to $90");
+      });
+
+      it("says when the raise also covers agents already on the hosted key", async () => {
+        expect(await renderWithBudget({ ...local, hiresMonthlyCents: 4000, budgetedHireCount: 2, hostedCapCents: 5000, hostedNeededCents: 6000, hostedCapAfterCents: 6000 }))
+          .toBe("Monthly budgets: $40 across 2 agents · raises your hosted limit from $50 to $60 to cover these and your existing agents");
       });
 
       it("says when the raise stops at the most a plan can set", async () => {
