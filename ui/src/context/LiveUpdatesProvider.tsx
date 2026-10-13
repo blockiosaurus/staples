@@ -628,7 +628,9 @@ function readRunLiveStatusPatchFromPayload(
   }
 
   if (eventType === "heartbeat.run.event") {
-    const message = readString(payload.message);
+    // System-stream events are run plumbing ("Started … session sesn_…"):
+    // they stay in the run detail view, never in the chat's status line.
+    const message = readString(payload.stream) === "system" ? null : readString(payload.message);
     if (message) patch.message = message;
     patch.updatedAt = readString(payload.updatedAt) ?? eventCreatedAt;
     const currentToolName = readString(payload.currentToolName);

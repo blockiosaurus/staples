@@ -472,6 +472,22 @@ describe("LiveUpdatesProvider issue invalidation", () => {
     });
   });
 
+  it("keeps system-stream run event messages out of the chat status line", () => {
+    const patch = __liveUpdatesTestUtils.readRunLiveStatusPatchFromPayload(
+      {
+        runId: "run-1",
+        agentId: "agent-1",
+        issueId: "issue-1",
+        stream: "system",
+        message: "Started Managed Agents session sesn_123",
+      },
+      "2026-04-06T12:00:09.000Z",
+      "heartbeat.run.event",
+    );
+    expect(patch).not.toHaveProperty("message");
+    expect(patch).toMatchObject({ runId: "run-1", lastEventAt: "2026-04-06T12:00:09.000Z" });
+  });
+
   it("does not clear run tool context from null heartbeat event fields", () => {
     const patch = __liveUpdatesTestUtils.readRunLiveStatusPatchFromPayload(
       {
