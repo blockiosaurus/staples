@@ -216,7 +216,7 @@ export function HomePage() {
     refetchInterval: briefingRefetchInterval,
     refetchIntervalInBackground: true,
   });
-  const madeRecently = artifactsQuery.data?.artifacts ?? []; // the request already limits to 6, newest first;
+  const madeRecently = artifactsQuery.data?.artifacts ?? []; // the request already limits to 6, newest first
 
   // Rows accepted from Home disappear right away; a failure brings the row back with its error.
   const [removed, setRemoved] = useState<ReadonlySet<string>>(() => new Set());
