@@ -117,7 +117,11 @@ server and board routes write it:
 - a confirmed plan's hosted hire gets it at the plan's monthly budget, and an
   approved hosted hire at its approved budget, both at most the ceiling below;
 - a person can change it on the Costs page, where it shows as
-  "agent · hosted limit".
+  "agent · hosted limit";
+- a person's monthly budget for a hosted agent (`PATCH /agents/:id/budgets`,
+  or creating the agent on the board with a budget) also sets its hosted
+  limit, at most the ceiling below. A zero budget leaves the hosted limit as
+  it is.
 
 No agent path writes it: not `PATCH /agents/:id` (which also refuses any
 `budgetMonthlyCents` from an agent), not a config rollback (an agent's rollback
@@ -152,6 +156,22 @@ policy writes (`budget.policy_upserted`, system actor `hosted_inference`).
 Before the person confirms, the plan card shows the hires' monthly budgets and
 whether they fit the hosted limit or raise it (server-computed `planBudget`
 on the proposal).
+
+**A person's hosted limits stop at the ceiling too.** A board write to a
+`hosted_billed_cents` policy (company or agent scope: the Costs page, a
+policy upsert, a budget PATCH) and Home's "Raise limit" on a hosted incident
+(`raise_budget_and_resume`) are clamped to
+`STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS`, as for plans and approvals. A
+limit already above the ceiling (set before it, or by the operator) may be
+kept or lowered by a person, never raised further. A ceiling of `0` means no
+ceiling here, as it does for an agent's hosted limit
+(`clampToHostedCeiling`); note that the same `0` also means plans never raise
+the company cap. Home's raise form suggests twice the limit, at most the
+ceiling, and says "up to $X"; when the limit is already at the ceiling (or
+spend is past it), Home offers no raise and says the hosted limit is at its
+maximum, and a raise request is refused ("The hosted limit is already at its
+maximum"). The activity log records the applied amount, and the requested one
+when it was clamped.
 
 **The company cap counts hosted spend only.** Cost events of a run that used
 the hosted key are marked (`cost_events.hosted_inference`), and the
