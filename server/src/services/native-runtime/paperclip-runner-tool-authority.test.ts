@@ -974,7 +974,7 @@ describe("PaperclipRunnerToolAuthority", () => {
           },
         },
       },
-    })).rejects.toThrow(/Each question needs a recommended answer/);
+    })).rejects.toThrow(/Each question with options needs a recommended answer/);
     const rows = await db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.idempotencyKey, "unrecommended-question"));
     expect(rows).toHaveLength(0);
   });

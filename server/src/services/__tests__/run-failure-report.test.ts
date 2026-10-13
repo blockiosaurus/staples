@@ -679,14 +679,17 @@ describeEmbeddedPostgres("reportRunFailure", () => {
     expect(captured).not.toHaveProperty("secretValues");
   });
 
-  it("still redacts short values from unknown host settings", async () => {
+  // Staples (48eea3d65): inherited host values shorter than 8 characters are not
+  // treated as credentials, so they no longer mangle diagnostics. Declared and
+  // configured bindings stay redacted at any length (run-failure-diagnostics.test.ts).
+  it("does not redact short values from unknown host settings", async () => {
     await seedCompanyAndAgent();
     vi.stubEnv("FIXTURE_CUSTOM_VALUE", "1");
 
     await reportRunFailure(db, buildRun());
 
     expect(mockCaptureRunFailure.mock.calls[0][0].errorMessage)
-      .toBe(`the provider process exited with code ${REDACTED_EVENT_VALUE}`);
+      .toBe("the provider process exited with code 1");
   });
 
   it("captures nothing for succeeded, cancelled, and interrupted", async () => {

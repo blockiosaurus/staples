@@ -252,7 +252,11 @@ const support = await getEmbeddedPostgresTestSupport();
 
     const autopilot = await request(person).get(`/api/agents/${mailId}/autopilot`);
     expect(autopilot.status, JSON.stringify(autopilot.body)).toBe(200);
-    expect(autopilot.body.categories).toEqual([expect.objectContaining({ capability: "email", canToggle: false })]);
+    // Template 1.1.0 adds an optional calendar outward action (1c735aa41); neither is connected yet.
+    expect(autopilot.body.categories).toEqual([
+      expect.objectContaining({ capability: "email", canToggle: false }),
+      expect.objectContaining({ capability: "calendar", canToggle: false }),
+    ]);
 
     // Let run finalization settle before the server shuts down.
     await vi.waitFor(async () => {
