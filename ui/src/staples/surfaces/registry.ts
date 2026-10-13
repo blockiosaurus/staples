@@ -169,7 +169,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     group: "work",
     tier: "grows",
     revealWhen: (ctx) => ctx.signals !== null && ctx.signals.artifacts >= 1,
-    reason: "Artifacts appeared because your agents produced deliverables.",
+    reason: "What we've made appeared because your agents produced deliverables.",
   },
   {
     id: "nav.goals",

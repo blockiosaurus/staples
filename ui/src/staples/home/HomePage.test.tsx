@@ -268,13 +268,14 @@ describe("HomePage", () => {
   it("shows what we've made with previews and a link to all of it", async () => {
     mocks.getBriefing.mockResolvedValue(fixture());
     mocks.listArtifacts.mockResolvedValue({
-      artifacts: [artifact("a"), artifact("b", { mediaKind: "image", contentPath: "/img.png" })],
+      artifacts: [artifact("a"), artifact("b", { mediaKind: "image", contentPath: "/img.png" }), artifact("v", { mediaKind: "video", contentPath: "/clip.mp4" })],
       nextCursor: null,
     });
     await render();
     expect(mocks.listArtifacts).toHaveBeenCalledWith("company-1", { limit: 6 });
     const made = section("What we've made")!;
-    expect(made.querySelectorAll('[data-testid="artifact-card"]')).toHaveLength(2);
+    expect(made.querySelectorAll('[data-testid="artifact-card"]')).toHaveLength(3);
+    expect(made.querySelector("video")).not.toBeNull();
     expect(made.textContent).toContain("Preview of a");
     expect(made.querySelector("img")?.getAttribute("src")).toBe("/img.png");
     expect(made.querySelector("iframe, script")).toBeNull();

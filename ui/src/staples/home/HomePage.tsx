@@ -119,10 +119,13 @@ function acceptRecommendation(item: BriefingItem): Promise<unknown> {
   return issuesApi.acceptInteraction(item.issueId, item.id);
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
     <section aria-label={title} className="flex flex-col gap-1">
-      <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</h2>
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</h2>
+        {action}
+      </div>
       {children}
     </section>
   );
@@ -213,7 +216,7 @@ export function HomePage() {
     refetchInterval: briefingRefetchInterval,
     refetchIntervalInBackground: true,
   });
-  const madeRecently = (artifactsQuery.data?.artifacts ?? []).slice(0, MADE_RECENTLY_LIMIT);
+  const madeRecently = artifactsQuery.data?.artifacts ?? []; // the request already limits to 6, newest first;
 
   // Rows accepted from Home disappear right away; a failure brings the row back with its error.
   const [removed, setRemoved] = useState<ReadonlySet<string>>(() => new Set());
@@ -385,19 +388,20 @@ export function HomePage() {
       ) : null}
 
       {madeRecently.length > 0 ? (
-        <section aria-label="What we've made" className="flex flex-col gap-2">
-          <div className="flex items-baseline justify-between gap-2">
-            <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{"What we've made"}</h2>
+        <Section
+          title="What we've made"
+          action={
             <Link to="/artifacts" className="text-xs text-muted-foreground hover:text-foreground">
               See all
             </Link>
-          </div>
+          }
+        >
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {madeRecently.map((artifact) => (
               <ArtifactCard key={artifact.id} artifact={artifact} />
             ))}
           </div>
-        </section>
+        </Section>
       ) : null}
 
       <AskComposer />

@@ -1287,7 +1287,10 @@ function refreshBriefingFor(
   refreshBriefing?: (companyId: string) => void,
 ) {
   if (refreshBriefing) refreshBriefing(companyId);
-  else void queryClient.invalidateQueries({ queryKey: queryKeys.briefing(companyId) });
+  else {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.briefing(companyId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.artifacts.home(companyId) });
+  }
 }
 
 /**
@@ -1306,6 +1309,8 @@ function createBriefingRefreshThrottle(
       timers.set(companyId, setTimeout(() => {
         timers.delete(companyId);
         void queryClient.invalidateQueries({ queryKey: queryKeys.briefing(companyId) });
+        // Home's "What we've made" rides the same burst: one fetch each.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.artifacts.home(companyId) });
       }, windowMs));
     },
     dispose() {

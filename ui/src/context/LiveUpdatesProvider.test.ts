@@ -331,6 +331,9 @@ describe("LiveUpdatesProvider issue invalidation", () => {
       expect(briefingCalls()).toBe(0);
       vi.advanceTimersByTime(2_000);
       expect(briefingCalls()).toBe(1);
+      const homeArtifactCalls = () => invalidate.mock.calls
+        .filter(([filters]) => JSON.stringify(filters?.queryKey) === JSON.stringify(queryKeys.artifacts.home("company-1"))).length;
+      expect(homeArtifactCalls()).toBe(1);
       // A later event opens a new window.
       __liveUpdatesTestUtils.handleLiveEvent(
         client, "company-1", "/PAP/home", { ...events[1], companyId: "company-1" } as never, () => null, gate,
