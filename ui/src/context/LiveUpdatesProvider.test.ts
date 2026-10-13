@@ -306,6 +306,45 @@ describe("LiveUpdatesProvider issue invalidation", () => {
     client.clear();
   });
 
+  it("collapses a burst of briefing-relevant events into one briefing refresh", () => {
+    vi.useFakeTimers();
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const throttle = __liveUpdatesTestUtils.createBriefingRefreshThrottle(client, 2_000);
+    const gate = { cooldownHits: new Map(), suppressUntil: 0, observedRunOutcomes: new Set<string>() };
+    const events = [
+      { type: "heartbeat.run.queued", payload: { runId: "run-1", agentId: "agent-1", status: "queued" } },
+      { type: "heartbeat.run.status", payload: { runId: "run-1", agentId: "agent-1", status: "running" } },
+      { type: "agent.status", payload: { agentId: "agent-1", status: "running" } },
+      { type: "activity.logged", payload: { action: "plan.applied", entityType: "company", entityId: "company-1", actorType: "user", actorId: "user-1" } },
+      { type: "activity.logged", payload: { action: "issue.updated", entityType: "issue", entityId: "issue-1", actorType: "agent", actorId: "agent-1" } },
+    ];
+    const briefingCalls = () => invalidate.mock.calls
+      .filter(([filters]) => JSON.stringify(filters?.queryKey) === JSON.stringify(queryKeys.briefing("company-1"))).length;
+    try {
+      for (const event of events) {
+        __liveUpdatesTestUtils.handleLiveEvent(
+          client, "company-1", "/PAP/home", { ...event, companyId: "company-1" } as never, () => null, gate,
+          { userId: "user-1", agentId: null }, () => {}, throttle.request,
+        );
+      }
+      expect(briefingCalls()).toBe(0);
+      vi.advanceTimersByTime(2_000);
+      expect(briefingCalls()).toBe(1);
+      // A later event opens a new window.
+      __liveUpdatesTestUtils.handleLiveEvent(
+        client, "company-1", "/PAP/home", { ...events[1], companyId: "company-1" } as never, () => null, gate,
+        { userId: "user-1", agentId: null }, () => {}, throttle.request,
+      );
+      vi.advanceTimersByTime(2_000);
+      expect(briefingCalls()).toBe(2);
+    } finally {
+      throttle.dispose();
+      client.clear();
+      vi.useRealTimers();
+    }
+  });
+
   it("refreshes the selected run detail after lifecycle events", () => {
     const invalidations: unknown[] = [];
     const queryClient = {

@@ -8,7 +8,13 @@ import type { Briefing, BriefingItem } from "@paperclipai/shared";
 import { BreadcrumbProvider, useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { ApiError } from "@/api/client";
 import { queryKeys } from "@/lib/queryKeys";
-import { ASK_UNAVAILABLE_NOTICE, BRIEFING_REFETCH_INTERVAL_MS, HomePage } from "./HomePage";
+import {
+  ASK_UNAVAILABLE_NOTICE,
+  BRIEFING_HIDDEN_REFETCH_INTERVAL_MS,
+  BRIEFING_REFETCH_INTERVAL_MS,
+  briefingRefetchInterval,
+  HomePage,
+} from "./HomePage";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -168,7 +174,7 @@ describe("HomePage", () => {
     mocks.getBriefing.mockResolvedValue(fixture());
     await render();
 
-    expect(mocks.getBriefing).toHaveBeenCalledWith("company-1");
+    expect(mocks.getBriefing).toHaveBeenCalledWith("company-1", expect.any(AbortSignal));
     expect(container.querySelector("h1")?.textContent).toBe("Acme");
     expect(container.querySelector('[data-testid="briefing-summary"]')?.textContent).toBe(
       "3 things need you · 2 in progress",
@@ -237,13 +243,21 @@ describe("HomePage", () => {
     expect(rollup.querySelector('a[href="/PAP/agents/agent-7"]')).not.toBeNull();
   });
 
-  it("polls every 30 seconds", async () => {
+  it("polls every 30 seconds while visible and every 5 minutes while hidden", async () => {
     mocks.getBriefing.mockResolvedValue(fixture());
     await render();
     const query = queryClient.getQueryCache().find({ queryKey: queryKeys.briefing("company-1") });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((query?.observers[0]?.options as any)?.refetchInterval).toBe(BRIEFING_REFETCH_INTERVAL_MS);
+    expect((query?.observers[0]?.options as any)?.refetchInterval).toBe(briefingRefetchInterval);
     expect(BRIEFING_REFETCH_INTERVAL_MS).toBe(30_000);
+    expect(BRIEFING_HIDDEN_REFETCH_INTERVAL_MS).toBe(300_000);
+    expect(briefingRefetchInterval()).toBe(30_000);
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      expect(briefingRefetchInterval()).toBe(300_000);
+    } finally {
+      visibility.mockRestore();
+    }
   });
 
   it("shows the empty states and hides Done recently when nothing finished", async () => {
@@ -257,11 +271,12 @@ describe("HomePage", () => {
     expect(section("Done recently")).toBeNull();
   });
 
-  it("keeps refreshing while the document is hidden, so Home never sits on a stale empty state", async () => {
+  it("keeps refreshing slowly while the document is hidden, so Home never sits on a stale empty state", async () => {
     // Hidden documents (a background tab, an embedded browser pane) close the
-    // live-updates socket and pause plain intervals; Home must still poll.
+    // live-updates socket and pause plain intervals; Home still polls there,
+    // but only every five minutes.
     mocks.getBriefing.mockResolvedValue(fixture({ inProgress: [] }));
-    focusManager.setFocused(false);
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     // Only the poll interval is faked; React and the query client keep real timers.
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
@@ -270,14 +285,19 @@ describe("HomePage", () => {
       expect(container.querySelector('[data-testid="briefing-summary"]')?.textContent).toContain("Nothing in progress");
 
       mocks.getBriefing.mockResolvedValue(fixture());
+      // Not at the visible rate.
       await act(async () => { vi.advanceTimersByTime(BRIEFING_REFETCH_INTERVAL_MS); });
+      await settle();
+      expect(mocks.getBriefing).toHaveBeenCalledTimes(1);
+
+      await act(async () => { vi.advanceTimersByTime(BRIEFING_HIDDEN_REFETCH_INTERVAL_MS - BRIEFING_REFETCH_INTERVAL_MS); });
       await settle();
       expect(mocks.getBriefing).toHaveBeenCalledTimes(2);
       expect(container.querySelector('[data-testid="briefing-summary"]')?.textContent).toBe("3 things need you · 2 in progress");
       expect(section("In progress")?.querySelectorAll('[data-testid="briefing-compact-row"]')).toHaveLength(2);
     } finally {
       vi.useRealTimers();
-      focusManager.setFocused(undefined);
+      visibility.mockRestore();
     }
   });
 
@@ -439,6 +459,35 @@ describe("HomePage", () => {
       text: "Help me fix this: Riley couldn't finish its work. Riley took too long and was stopped.",
       context: { label: "Riley couldn't finish its work", href: "/PAP/agents/agent-1/runs/run-9" },
     });
+  });
+
+  it("tracks the fix spinner per row, so two fixes can run at once", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [FAILED_RUN, PAUSED_RUN] }));
+    let finishRetry: (value: unknown) => void = () => {};
+    mocks.retryFailedRun.mockReturnValue(new Promise((resolve) => { finishRetry = resolve; }));
+    mocks.resume.mockReturnValue(new Promise(() => {}));
+    await render();
+    await click(buttonIn(row("run-9"), "Try again"));
+    await click(buttonIn(row("run-10"), "Resume"));
+    expect((buttonIn(row("run-9"), "Try again") as HTMLButtonElement).disabled).toBe(true);
+    expect((buttonIn(row("run-10"), "Resume") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => finishRetry({ runId: "run-13", issueId: null }));
+    await settle();
+    expect(row("run-9")).toBeNull();
+    expect((buttonIn(row("run-10"), "Resume") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("explains known raise failures in plain words", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [HOSTED_LIMIT] }));
+    mocks.resolveIncident.mockRejectedValue(new ApiError(
+      "Resolve unpriced usage or explicitly allow it in the budget policy before resuming", 422, null,
+    ));
+    await render();
+    await click(buttonIn(row("incident-1"), "Raise limit"));
+    await click(buttonIn(row("incident-1")!.querySelector("form"), "Raise limit"));
+    const alert = [...row("incident-1")!.querySelectorAll('[role="alert"]')].map((node) => node.textContent).join(" ");
+    expect(alert).toContain("Couldn't raise limit: Some recent usage has no price yet. Check it on the Costs page, then try again.");
+    expect(alert).not.toContain("unpriced");
   });
 
   it("links settings fixes and leaves unknown failures to the Assistant", async () => {

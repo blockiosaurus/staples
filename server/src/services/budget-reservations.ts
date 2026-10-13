@@ -28,7 +28,7 @@ export async function reserveRunBudget(db: Db, companyId: string, runId: string,
         // accounting is excluded. Current overruns, other unfinished runs and
         // scope pauses still apply before any more paid work starts.
         const block = await budgetServiceInTransaction(tx, publications).getInvocationBlock(companyId, run.agentId, { projectId });
-        if (block) throw conflict(block.reason);
+        if (block) throw conflict(block.reason, block.code ? { code: block.code } : undefined);
         const [agent] = await tx.select({ status: agents.status }).from(agents)
           .where(and(eq(agents.companyId, companyId), eq(agents.id, run.agentId)));
         if (agent?.status === "paused") throw conflict("Agent is paused and cannot start new work");
@@ -37,7 +37,7 @@ export async function reserveRunBudget(db: Db, companyId: string, runId: string,
       throw conflict("Provider dispatch has already reserved this run");
     }
     const block = await budgetServiceInTransaction(tx, publications).getInvocationBlock(companyId, run.agentId, { projectId });
-    if (block) throw conflict(block.reason);
+    if (block) throw conflict(block.reason, block.code ? { code: block.code } : undefined);
     const policies = await tx.select().from(budgetPolicies).where(and(
       eq(budgetPolicies.companyId, companyId), eq(budgetPolicies.isActive, true), eq(budgetPolicies.hardStopEnabled, true),
       eq(budgetPolicies.metric, "billed_cents"), sql`${budgetPolicies.amount} > 0`,

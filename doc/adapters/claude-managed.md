@@ -107,7 +107,10 @@ cap is an agent-scope `hosted_billed_cents` policy: it counts only that
 agent's spend on the hosted key, and, like the company cap, it only refuses
 the agent's hosted runs ("This agent reached its monthly hosted inference
 limit ..."); it never pauses the agent or touches local work, and it caps the
-hosted session (`max_list_cost`) next to the agent's other limits. Only the
+hosted session (`max_list_cost`) next to the agent's other limits. A refused
+run carries the error code `hosted_limit_reached` (a spending budget's hard
+stop carries `budget_reached`), and Home offers "Raise limit" on the open
+hosted incident. Only the
 server and board routes write it:
 
 - the ensure creates it at the default above when it is missing;

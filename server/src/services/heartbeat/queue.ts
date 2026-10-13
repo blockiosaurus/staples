@@ -995,7 +995,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
       },
     );
     if (budgetBlock) {
-      await cancelRunInternal(run.id, budgetBlock.reason);
+      await cancelRunInternal(run.id, budgetBlock.reason, budgetBlock.code ? { errorCode: budgetBlock.code } : {});
       return null;
     }
 

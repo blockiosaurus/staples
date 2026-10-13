@@ -35,6 +35,7 @@ import type { createHeartbeatRunControl, HeartbeatRunControlDependencies } from 
 import type { issueService } from "../issues.js";
 import type { recoveryService } from "../recovery/index.js";
 import type { BudgetServiceHooks } from "../budgets.js";
+import { BUDGET_REACHED_ERROR_CODE, HOSTED_LIMIT_REACHED_ERROR_CODE } from "../budgets.js";
 import type { providerTraceStore } from "../provider-trace-store.js";
 import type { createAgentIdentityRedactor } from "../agent-identity-redaction.js";
 import type { CurrentUserRedactionOptions } from "../../log-redaction.js";
@@ -1235,6 +1236,13 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
     });
   }
 
+  /** A budget admission refusal (hosted limit or spending hard stop) keeps its own code. */
+  function budgetRefusalCode(error: unknown): string | null {
+    if (!(error instanceof HttpError) || error.status !== 409) return null;
+    const code = (error.details as { code?: unknown } | undefined)?.code;
+    return code === HOSTED_LIMIT_REACHED_ERROR_CODE || code === BUDGET_REACHED_ERROR_CODE ? code : null;
+  }
+
   async function failRunSetup(input: FailHeartbeatRunSetupInput) {
     const { run, runId, outerErr, identityRedactor, readFailureReportSecrets } = input;
     // Setup code before adapter.execute threw (e.g. ensureRuntimeState, resolveWorkspaceForRun).
@@ -1284,6 +1292,7 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
         : null) ??
       recordedResponsibleUserDenialCode ??
       nonRetryablePreflightCode ??
+      budgetRefusalCode(outerErr) ??
       "setup_failed";
     logger.error(
       { err: identityRedactor.redact({ message: outerErr instanceof Error ? outerErr.message : String(outerErr), stack: outerErr instanceof Error ? outerErr.stack : undefined }), runId },

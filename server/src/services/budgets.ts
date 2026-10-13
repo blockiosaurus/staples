@@ -190,6 +190,10 @@ type SpendPolicy = Pick<PolicyRow, "companyId" | "scopeType" | "scopeId" | "wind
  * use the hosted key, and caps their sessions (see remainingHardStopCentsForRun).
  */
 export const HOSTED_BILLED_CENTS_METRIC = "hosted_billed_cents" as const;
+/** Run error code when a hosted-inference limit refuses a hosted run. */
+export const HOSTED_LIMIT_REACHED_ERROR_CODE = "hosted_limit_reached" as const;
+/** Run error code when a spending budget's hard stop refuses a run. */
+export const BUDGET_REACHED_ERROR_CODE = "budget_reached" as const;
 const isHostedMetric = (policy: Pick<PolicyRow, "metric">) => policy.metric === HOSTED_BILLED_CENTS_METRIC;
 const isSpendMetric = (policy: Pick<PolicyRow, "metric">) => policy.metric === "billed_cents" || isHostedMetric(policy);
 type ObservedSpend = { windowStart: Date; windowEnd: Date; total: number; totalExact: string; unpricedEventCount: number; pendingRunCount: number; recoveringRunCount: number };
@@ -620,7 +624,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
         if (observedBlocks(policy, observed)) {
           await createIncidentIfNeeded(policy, "hard", observed);
           if (options.hostedInference) {
-            return { scopeType, scopeId, scopeName: scope.name,
+            return { scopeType, scopeId, scopeName: scope.name, code: HOSTED_LIMIT_REACHED_ERROR_CODE,
               reason: scopeType === "agent"
                 ? "This agent reached its monthly hosted inference limit (Claude hosted on the Staples server's key)."
                 : "This company reached its monthly spending cap for hosted inference (Claude hosted on the Staples server's key)." };
@@ -638,12 +642,12 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
         await pauseAndCancelScopeForBudget(policy);
         const title = scopeType === "company" ? "Company" : scopeType === "agent" ? "Agent" : "Project";
         if (observed.pendingRunCount > 0) {
-          return { scopeType, scopeId, scopeName: scope.name, reason: `${title} cannot start work while completed runs await accounting.` };
+          return { scopeType, scopeId, scopeName: scope.name, code: BUDGET_REACHED_ERROR_CODE, reason: `${title} cannot start work while completed runs await accounting.` };
         }
         if (policy.unpricedUsagePolicy !== "allow" && observed.unpricedEventCount > 0) {
-          return { scopeType, scopeId, scopeName: scope.name, reason: `${title} cannot start work because recorded usage has no reliable price.` };
+          return { scopeType, scopeId, scopeName: scope.name, code: BUDGET_REACHED_ERROR_CODE, reason: `${title} cannot start work because recorded usage has no reliable price.` };
         }
-        return { scopeType, scopeId, scopeName: scope.name, reason: scopeType === "project"
+        return { scopeType, scopeId, scopeName: scope.name, code: BUDGET_REACHED_ERROR_CODE, reason: scopeType === "project"
           ? "Project cannot start work because its budget hard-stop is still exceeded."
           : `${title} is paused because its budget hard-stop was reached.` };
       }

@@ -881,7 +881,7 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect(await companyStatus()).toBe("active");
     expect(await budgetService(db).getInvocationBlock(companyId, local.id)).toBeNull();
     expect(await budgetService(db).getInvocationBlock(companyId, staff.id))
-      .toMatchObject({ scopeType: "company", reason: expect.stringContaining("hosted inference") });
+      .toMatchObject({ scopeType: "company", code: "hosted_limit_reached", reason: expect.stringContaining("hosted inference") });
     expect((await db.select().from(agents).where(eq(agents.id, local.id)))[0]!.status).not.toBe("paused");
   });
 

@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, lte, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, lte, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -31,8 +31,8 @@ import {
 } from "@paperclipai/shared";
 import { autopilotCategoriesFromMetadata } from "./agent-autopilot.js";
 import {
+  blockedReason,
   budgetIncidentCopy,
-  clipReason,
   COSTS_HREF,
   failureCause,
   failureReason,
@@ -44,7 +44,7 @@ import { attentionService } from "./attention.js";
 import { HOSTED_BILLED_CENTS_METRIC, budgetService } from "./budgets.js";
 import { getUtcMonthStart } from "./dashboard.js";
 import { authorizationService, issueReadSqlCondition, type AuthorizationActor } from "./authorization.js";
-import { issueService } from "./issues.js";
+import { issueService, nonPluginOperationIssueCondition } from "./issues.js";
 import { executionIssueCondition } from "./issue-visibility.js";
 import { listLiveRuns } from "./live-runs.js";
 import { appChoiceLabel, appDisplayName, connectionAppSlug } from "./plan-templates.js";
@@ -128,6 +128,8 @@ export function clipText(value: string, max: number): string {
 
 const TITLE_MAX = 120;
 const WAITING_LABEL_MAX = 80;
+/** Up next and Waiting each show at most this many tasks; the header counts all of them. */
+const BRIEFING_QUEUED_LIST_LIMIT = BRIEFING_IN_PROGRESS_LIMIT;
 
 interface NeedsYouContext {
   companyId: string;
@@ -269,7 +271,7 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     companyName: string,
     readCondition: Awaited<ReturnType<typeof issueReadSqlCondition>>,
     nowIso: string,
-  ): Promise<{ items: BriefingItem[]; issueIds: Set<string> }> {
+  ): Promise<{ items: BriefingItem[]; shownIssueIds: Set<string> }> {
     const feed = await attention.list(input.companyId, {
       userId: input.userId,
       actor: input.actor,
@@ -321,18 +323,23 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
       .filter((facts): facts is BudgetIncidentFacts => facts !== null);
 
     const context: NeedsYouContext = { companyId: input.companyId, prefix, companyName, nowIso, interactionById, issueById, agentById, incidents };
-    const items = kept
-      .map((item) => toNeedsYouItem(item, context))
-      .filter((item): item is BriefingItem => item !== null)
-      .sort((a, b) => toTime(b.createdAt) - toTime(a.createdAt));
-    // Every task a Needs you row covers, so In progress never lists it twice.
-    const issueIds = new Set<string>();
-    for (const item of kept) {
-      if (item.subject.kind === "issue") issueIds.add(item.subject.id);
-      if (item.relatedIssue?.id) issueIds.add(item.relatedIssue.id);
-    }
-    for (const item of items) if (item.issueId) issueIds.add(item.issueId);
-    return { items, issueIds };
+    const rows = kept
+      .map((source) => {
+        const item = toNeedsYouItem(source, context);
+        if (!item) return null;
+        // The tasks this row speaks for: its subject, its related task and its issue.
+        const covers = [
+          source.subject.kind === "issue" ? source.subject.id : null,
+          source.relatedIssue?.id ?? null,
+          item.issueId ?? null,
+        ].filter((id): id is string => !!id);
+        return { item, covers };
+      })
+      .filter((row): row is { item: BriefingItem; covers: string[] } => row !== null)
+      .sort((a, b) => toTime(b.item.createdAt) - toTime(a.item.createdAt));
+    // Only rows actually shown under Needs you keep a task out of In progress.
+    const shownIssueIds = new Set(rows.slice(0, BRIEFING_NEEDS_YOU_LIMIT).flatMap((row) => row.covers));
+    return { items: rows.map((row) => row.item), shownIssueIds };
   }
 
   function budgetFacts(item: AttentionItem): BudgetIncidentFacts | null {
@@ -427,23 +434,26 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
       const agentId = nonEmptyString(metadata.agentId);
       const agent = agentId ? context.agentById.get(agentId) : undefined;
       const errorCode = nonEmptyString(metadata.errorCode);
-      const cause = agent?.status === "paused" && agent.pauseReason === "budget"
-        ? "budget_reached"
-        : failureCause({
-          errorCode,
-          error: nonEmptyString(metadata.error) ?? nonEmptyString(metadata.retryExhaustedReason),
-          runStatus: item.subject.status,
-          agentPaused: agent?.status === "paused",
-        });
+      const cause = failureCause({
+        errorCode,
+        error: nonEmptyString(metadata.error) ?? nonEmptyString(metadata.retryExhaustedReason),
+        runStatus: item.subject.status,
+        agentPaused: agent?.status === "paused",
+        agentPauseReason: agent?.pauseReason ?? null,
+      });
       const agentName = nonEmptyString(metadata.agentName) ?? item.originAgentName;
-      title = agentName ? `${agentName} couldn't finish its work` : title;
+      title = agentName ? `${agentName} couldn't finish its work` : "An agent couldn't finish its work";
       reason = failureReason(cause, agentName, "run");
       action = failureAction(cause, "run", agentId, item.subject.id, errorCode, context.companyId, context.incidents);
     } else if (item.sourceKind === "agent_error_alert") {
       const agentId = item.subject.id;
       const agent = context.agentById.get(agentId);
       const errorReason = nonEmptyString(metadata.errorReason);
-      const cause = failureCause({ error: errorReason, agentPaused: agent?.status === "paused" });
+      const cause = failureCause({
+        error: errorReason,
+        agentPaused: agent?.status === "paused",
+        agentPauseReason: agent?.pauseReason ?? null,
+      });
       reason = failureReason(cause, item.subject.title, "agent");
       action = failureAction(cause, "agent", agentId, null, null, context.companyId, context.incidents);
     } else if (item.sourceKind === "budget_alert") {
@@ -455,7 +465,8 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         action = raiseBudgetAction(facts);
       }
     } else if (item.sourceKind === "blocker_attention") {
-      reason = item.whyNow ? clipReason(item.whyNow) : null;
+      const detail = readRecord(item.detail);
+      reason = blockedReason(typeof detail.blockedTaskCount === "number" ? detail.blockedTaskCount : null);
     }
 
     const issueIdentifier = item.relatedIssue?.identifier ?? item.subject.identifier ?? null;
@@ -478,18 +489,17 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     input: BriefingGetInput,
     readCondition: Awaited<ReturnType<typeof issueReadSqlCondition>>,
     nowIso: string,
-  ): Promise<BriefingItem[]> {
-    const listStatus = (status: string) => issueSvc.list(input.companyId, {
-      status,
-      readCondition,
-      sortField: "updated",
-      sortDir: "desc",
-    });
-    const [liveRuns, activeIssues, todoIssues, blockedIssues, agentRows] = await Promise.all([
+    /** Tasks the shown Needs you rows already cover; blocked ones are not listed again. */
+    coveredIssueIds: Promise<Set<string>>,
+  ): Promise<{ items: BriefingItem[]; total: number }> {
+    const [liveRuns, activeIssues, agentRows] = await Promise.all([
       listLiveRuns(db, input.companyId),
-      listStatus("in_progress"),
-      listStatus("todo"),
-      listStatus("blocked"),
+      issueSvc.list(input.companyId, {
+        status: "in_progress",
+        readCondition,
+        sortField: "updated",
+        sortDir: "desc",
+      }),
       db.select({ id: agents.id, name: agents.name }).from(agents).where(eq(agents.companyId, input.companyId)),
     ]);
     const agentNameById = new Map(agentRows.map((row) => [row.id, row.name]));
@@ -561,8 +571,12 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
 
     const assignedName = (issue: { assigneeAgentId: string | null }) =>
       issue.assigneeAgentId ? agentNameById.get(issue.assigneeAgentId) ?? null : null;
-    const upNextItems: BriefingItem[] = todoIssues
-      .filter((issue) => !representedIssueIds.has(issue.id) && (issue.assigneeAgentId || issue.assigneeUserId))
+    const covered = await coveredIssueIds;
+    const [todo, blocked] = await Promise.all([
+      queuedIssues(input.companyId, "todo", readCondition, [...representedIssueIds], true),
+      queuedIssues(input.companyId, "blocked", readCondition, [...new Set([...representedIssueIds, ...covered])], false),
+    ]);
+    const upNextItems: BriefingItem[] = todo.rows
       .map((issue) => ({
         kind: "queued_task" as const,
         id: issue.id,
@@ -574,7 +588,7 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         createdAt: toIso(issue.updatedAt, nowIso),
       }));
 
-    const waiting = blockedIssues.filter((issue) => !representedIssueIds.has(issue.id));
+    const waiting = blocked.rows;
     const blockerTitleById = await openBlockerTitles(input.companyId, waiting.map((issue) => issue.id), readCondition);
     const waitingItems: BriefingItem[] = waiting.map((issue) => {
       const blocker = blockerTitleById.get(issue.id);
@@ -590,7 +604,49 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
       };
     });
 
-    return [...liveItems, ...taskItems, ...upNextItems, ...waitingItems];
+    return {
+      items: [...liveItems, ...taskItems, ...upNextItems, ...waitingItems],
+      total: liveItems.length + taskItems.length + todo.total + blocked.total,
+    };
+  }
+
+  /**
+   * Newest to-do (assigned) or blocked tasks the person can read, capped, with
+   * the uncapped total. Same visibility as the work queues: no conversations,
+   * hidden, harness or plugin-operation issues.
+   */
+  async function queuedIssues(
+    companyId: string,
+    status: "todo" | "blocked",
+    readCondition: Awaited<ReturnType<typeof issueReadSqlCondition>>,
+    excludeIds: string[],
+    assignedOnly: boolean,
+  ) {
+    const where = and(
+      eq(issues.companyId, companyId),
+      eq(issues.status, status),
+      executionIssueCondition(),
+      nonPluginOperationIssueCondition(),
+      readCondition,
+      assignedOnly ? or(isNotNull(issues.assigneeAgentId), isNotNull(issues.assigneeUserId)) : undefined,
+      excludeIds.length > 0 ? notInArray(issues.id, excludeIds) : undefined,
+    );
+    const [rows, [countRow]] = await Promise.all([
+      db
+        .select({
+          id: issues.id,
+          identifier: issues.identifier,
+          title: issues.title,
+          assigneeAgentId: issues.assigneeAgentId,
+          updatedAt: issues.updatedAt,
+        })
+        .from(issues)
+        .where(where)
+        .orderBy(desc(issues.updatedAt), desc(issues.id))
+        .limit(BRIEFING_QUEUED_LIST_LIMIT),
+      db.select({ count: sql<number>`count(*)::int` }).from(issues).where(where),
+    ]);
+    return { rows, total: Number(countRow?.count ?? 0) };
   }
 
   /** The title of one unfinished blocker the person can read, per blocked task. */
@@ -799,23 +855,22 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         companyFacts(input.companyId),
         issueReadSqlCondition(db, input.actor),
       ]);
-      const [needsResult, movingAll, doneTasks, rollups, monthSpend] = await Promise.all([
-        needsYou(input, company.prefix, company.name, readCondition, nowIso),
-        inProgress(input, readCondition, nowIso),
+      const needsPromise = needsYou(input, company.prefix, company.name, readCondition, nowIso);
+      const [needsResult, moving, doneTasks, rollups, monthSpend] = await Promise.all([
+        needsPromise,
+        inProgress(input, readCondition, nowIso, needsPromise.then((result) => result.shownIssueIds)),
         doneRecently(input, readCondition, now, nowIso),
         agentActionRollups(input, now, nowIso),
         spend(input, now),
       ]);
       const needs = needsResult.items;
-      // A blocked task already under Needs you is not listed again as waiting.
-      const moving = movingAll.filter((item) => item.kind !== "waiting_task" || !needsResult.issueIds.has(item.id));
       // Newest first across finished tasks and agent roll-ups.
       const done = [...doneTasks, ...rollups].sort((a, b) => toTime(b.createdAt) - toTime(a.createdAt));
       return {
         needsYou: needs.slice(0, BRIEFING_NEEDS_YOU_LIMIT),
-        inProgress: moving.slice(0, BRIEFING_IN_PROGRESS_LIMIT),
+        inProgress: moving.items.slice(0, BRIEFING_IN_PROGRESS_LIMIT),
         doneRecently: done.slice(0, BRIEFING_DONE_RECENTLY_LIMIT),
-        counts: { needsYou: needs.length, inProgress: moving.length, doneRecently: done.length },
+        counts: { needsYou: needs.length, inProgress: moving.total, doneRecently: done.length },
         spend: monthSpend,
         generatedAt: nowIso,
       };

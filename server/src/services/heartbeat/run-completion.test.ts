@@ -6,6 +6,7 @@ import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } fro
 import * as usageReceipts from "../usage-receipts.js";
 import { createAgentIdentityRedactor } from "../agent-identity-redaction.js";
 import { UnresolvedWorkspaceBaseRefError } from "../workspace-runtime.js";
+import { conflict } from "../../errors.js";
 import { createHeartbeatLifecycle, type HeartbeatLifecycleDependencies } from "./run-lifecycle.js";
 import { createHeartbeatRunPreparation, ConfigurationIncompleteFailure } from "./run-preparation.js";
 import { createHeartbeatRunState, getAdapterSessionCodec } from "./run-state.js";
@@ -263,6 +264,21 @@ describe.skipIf(!support.supported)("heartbeat run completion boundary", () => {
     expect(f.deps.finalizeIssueCommentPolicy).not.toHaveBeenCalled();
     expect(f.deps.releaseIssueExecutionAndPromote).toHaveBeenCalledOnce();
     expect(f.deps.finalizeAgentStatus).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["hosted_limit_reached", "This agent reached its monthly hosted inference limit (Claude hosted on the Staples server's key)."],
+    ["budget_reached", "Agent is paused because its budget hard-stop was reached."],
+  ])("keeps the %s code when budget admission refuses the run", async (code, message) => {
+    const f = await fixture();
+    await f.completion.failRunSetup(f.setup(conflict(message, { code })));
+    expect(await read(f.run.id)).toMatchObject({ status: "failed", errorCode: code });
+  });
+
+  it("does not take a code from an unrelated conflict", async () => {
+    const f = await fixture();
+    await f.completion.failRunSetup(f.setup(conflict("Provider dispatch has already reserved this run", { code: "something_else" })));
+    expect(await read(f.run.id)).toMatchObject({ status: "failed", errorCode: "setup_failed" });
   });
 
   it("retains the default branch needed to repair an unresolved workspace base ref", async () => {

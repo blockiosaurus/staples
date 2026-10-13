@@ -1,4 +1,5 @@
 import { BRIEFING_REASON_MAX, type BriefingAction, type BriefingBudgetTarget } from "@paperclipai/shared";
+import { BUDGET_REACHED_ERROR_CODE, HOSTED_LIMIT_REACHED_ERROR_CODE } from "./budgets.js";
 
 /**
  * Plain reasons and one-click fixes for Home's "Needs you" rows. Built only
@@ -36,23 +37,45 @@ const TIMEOUT_CODES = new Set([
   "execution_finalization_deadline_exceeded",
 ]);
 
-/** Classify a failure from its error code, its message and the run status. */
+const OUT_OF_CREDIT_CODE = "claude_managed_out_of_credit";
+/** Exact phrases of the out-of-credit failure (Phase 8 adapter copy, Anthropic API). */
+const OUT_OF_CREDIT_PHRASES = ["the anthropic account is out of credit", "credit balance is too low"];
+/** Exact phrases of the server's hosted-limit refusal, for runs recorded before it carried a code. */
+const HOSTED_LIMIT_PHRASES = [
+  "reached its monthly hosted inference limit",
+  "reached its monthly spending cap for hosted inference",
+];
+/** Exact phrases of the server's spending-budget enforcement (budgets.ts, budget-reservations.ts, run control). */
+const BUDGET_PHRASES = [
+  "budget hard-stop",
+  "budget is reserved by unfinished runs",
+  "cancelled due to budget pause",
+];
+
+/**
+ * Classify a failure from structured signals: the error code, the agent's
+ * state and pause reason, and the run status. Message text counts only when
+ * it is one of the server's own exact enforcement phrases, so unrelated
+ * errors that merely mention "budget" or "credit" stay unknown.
+ */
 export function failureCause(input: {
   errorCode?: string | null;
   error?: string | null;
   runStatus?: string | null;
   agentPaused?: boolean;
+  agentPauseReason?: string | null;
 }): FailureCause {
   const code = (input.errorCode ?? "").trim();
   const text = (input.error ?? "").toLowerCase();
-  if (code === "claude_managed_out_of_credit" || /out of credit|credit balance is too low/.test(text)) return "out_of_credit";
-  if (/hosted inference limit|spending cap for hosted inference/.test(text)) return "hosted_limit";
-  if (code === "budget_reached" || /budget|spending cap/.test(text)) return "budget_reached";
-  if (input.agentPaused || code === "agent_not_invokable" || /agent is paused/.test(text)) return "agent_paused";
-  if (NOT_CONNECTED_CODES.has(code) || /not connected|reconnect|authori[sz]ation (expired|required|revoked)|api key (is )?missing/.test(text)) {
-    return "not_connected";
+  const says = (phrases: readonly string[]) => phrases.some((phrase) => text.includes(phrase));
+  if (code === OUT_OF_CREDIT_CODE || says(OUT_OF_CREDIT_PHRASES)) return "out_of_credit";
+  if (code === HOSTED_LIMIT_REACHED_ERROR_CODE || says(HOSTED_LIMIT_PHRASES)) return "hosted_limit";
+  if (code === BUDGET_REACHED_ERROR_CODE || (input.agentPaused && input.agentPauseReason === "budget") || says(BUDGET_PHRASES)) {
+    return "budget_reached";
   }
-  if (input.runStatus === "timed_out" || TIMEOUT_CODES.has(code) || /timed out|time(d)? ?out/.test(text)) return "timed_out";
+  if (input.agentPaused || code === "agent_not_invokable") return "agent_paused";
+  if (NOT_CONNECTED_CODES.has(code)) return "not_connected";
+  if (input.runStatus === "timed_out" || TIMEOUT_CODES.has(code)) return "timed_out";
   return "unknown";
 }
 
@@ -159,3 +182,11 @@ export function budgetIncidentCopy(facts: BudgetIncidentFacts, companyName: stri
 }
 
 export const COSTS_HREF = "/activity/costs";
+
+/** A blocked task's reason, from server-built facts only (never agent-written text). */
+export function blockedReason(blockedTaskCount: number | null): string {
+  if (blockedTaskCount !== null && blockedTaskCount > 0) {
+    return `Holds up ${blockedTaskCount === 1 ? "1 task" : `${blockedTaskCount} tasks`} until you step in.`;
+  }
+  return "This task is waiting on you to unblock it.";
+}

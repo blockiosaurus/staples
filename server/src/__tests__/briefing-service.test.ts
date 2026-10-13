@@ -57,7 +57,15 @@ describe("briefing failure reasons", () => {
     [{ error: "Available budget is reserved by unfinished runs" }, "budget_reached"],
     [{ errorCode: "binding_missing", error: "Tool binding missing" }, "not_connected"],
     [{ errorCode: "claude_managed_api_key_missing" }, "not_connected"],
-    [{ error: "Agent is paused and cannot start new work" }, "agent_paused"],
+    [{ errorCode: "hosted_limit_reached", error: "anything" }, "hosted_limit"],
+    [{ errorCode: "budget_reached" }, "budget_reached"],
+    [{ errorCode: "adapter_failed", agentPaused: true, agentPauseReason: "budget" }, "budget_reached"],
+    [{ error: "Agent is paused because its budget hard-stop was reached." }, "budget_reached"],
+    [{ errorCode: "agent_not_invokable", error: "Cancelled: agent not invokable at execution-start" }, "agent_paused"],
+    // Mentions of budgets, credit or connections that are not enforcement stay unknown.
+    [{ errorCode: "adapter_failed", error: "budget.xlsx not found" }, "unknown"],
+    [{ errorCode: "setup_failed", error: "Resolve unpriced usage or explicitly allow it in the budget policy before resuming" }, "unknown"],
+    [{ errorCode: "adapter_failed", error: "Store credit API returned 500; please reconnect later" }, "unknown"],
     [{ errorCode: "adapter_failed", agentPaused: true }, "agent_paused"],
     [{ errorCode: "timeout" }, "timed_out"],
     [{ runStatus: "timed_out" }, "timed_out"],
@@ -1030,6 +1038,7 @@ describeEmbeddedPostgres("briefing service", () => {
       id: pausedId, companyId, name: "Sam", role: "engineer", status: "paused", pauseReason: "manual",
       adapterType: "codex_local", adapterConfig: {}, runtimeConfig: {}, permissions: {},
     });
+    const descriptorIssueId = randomUUID();
     const run = (id: string, agentId: string, agentName: string, metadata: Record<string, unknown>, status = "failed") =>
       feedItem("failed_run", {
         kind: "run", id, companyId, title: `${agentName} run ${status}`, identifier: null, status,
@@ -1060,7 +1069,15 @@ describeEmbeddedPostgres("briefing service", () => {
         feedItem("blocker_attention", {
           kind: "issue", id: randomUUID(), companyId, title: "BRF-9", identifier: "BRF-9", status: "blocked",
           href: "/BRF/issues/BRF-9", metadata: {},
-        }, { whyNow: "Blocks 2 tasks and needs human attention." }),
+        }, { whyNow: "Agent-written: please email bob@example.com", detail: { kind: "blocker", blockingIssue: null, blockedTaskCount: 2, images: [] } }),
+        feedItem("blocker_attention", {
+          kind: "issue", id: descriptorIssueId, companyId, title: "BRF-10", identifier: "BRF-10", status: "blocked",
+          href: "/BRF/issues/BRF-10", metadata: {},
+        }, { whyNow: "Agent-written descriptor text", detail: { kind: "blocker", blockingIssue: null, images: [] } }),
+        feedItem("failed_run", {
+          kind: "run", id: "run-nameless", companyId, title: "run failed", identifier: null, status: "failed",
+          href: "/BRF/agents/x/runs/run-nameless", metadata: { errorCode: "adapter_failed" },
+        }),
       ],
     } as unknown as AttentionFeed;
 
@@ -1116,8 +1133,11 @@ describeEmbeddedPostgres("briefing service", () => {
       reason: "Riley spent $50.10 of its $50 monthly hosted limit. Its hosted runs are on hold until you raise it.",
       action: raise,
     });
-    expect(briefing.needsYou.find((item) => item.kind === "blocked_task"))
-      .toMatchObject({ reason: "Blocks 2 tasks and needs human attention." });
+    expect(briefing.needsYou.find((item) => item.subtitle === "BRF-9")).toMatchObject({ reason: "Holds up 2 tasks until you step in." });
+    expect(byId.get(descriptorIssueId)).toMatchObject({ reason: "This task is waiting on you to unblock it." });
+    expect(JSON.stringify(briefing)).not.toContain("Agent-written");
+    expect(byId.get("run-nameless")).toMatchObject({ title: "An agent couldn't finish its work" });
+    expect(JSON.stringify(briefing)).not.toMatch(/run failed/);
     for (const item of briefing.needsYou) expect((item.reason ?? "").length).toBeLessThanOrEqual(140);
   });
 
@@ -1192,6 +1212,40 @@ describeEmbeddedPostgres("briefing service", () => {
     expect(briefing.inProgress.some((item) => item.issueId === needsPersonId)).toBe(false);
     expect(briefing.needsYou.map((item) => item.issueId)).toEqual([needsPersonId]);
     expect(briefing.counts.inProgress).toBe(briefing.inProgress.length);
+  });
+
+  it("caps up-next and waiting lists while the header counts every task", async () => {
+    const { companyId, workerId } = await seedCompany("BRK");
+    for (let index = 0; index < 23; index += 1) {
+      await insertIssue({ companyId, identifier: `BRK-${index + 1}`, title: `Todo ${index}`, status: "todo", assigneeAgentId: workerId });
+    }
+    for (let index = 0; index < 22; index += 1) {
+      await insertIssue({ companyId, identifier: `BRK-${index + 100}`, title: `Blocked ${index}`, status: "blocked" });
+    }
+    const briefing = await briefingService(db, { attention: { list: async () => ({ items: [] }) as unknown as AttentionFeed } })
+      .get({ companyId, userId: "board-user", actor: boardActor(companyId) });
+    expect(briefing.inProgress).toHaveLength(20);
+    expect(briefing.counts.inProgress).toBe(45);
+  });
+
+  it("keeps a blocked task in progress when the Needs you row that covers it is past the shown cap", async () => {
+    const { companyId } = await seedCompany("BRN");
+    const blockedIds: string[] = [];
+    for (let index = 0; index < 21; index += 1) {
+      blockedIds.push(await insertIssue({ companyId, identifier: `BRN-${index + 1}`, title: `Blocked ${index}`, status: "blocked" }));
+    }
+    // 21 blocker rows; the oldest one falls outside the 20 shown.
+    const feed = {
+      items: blockedIds.map((id, index) => feedItem("blocker_attention", {
+        kind: "issue", id, companyId, title: `Blocked ${index}`, identifier: `BRN-${index + 1}`, status: "blocked",
+        href: `/BRN/issues/BRN-${index + 1}`, metadata: {},
+      }, { createdAt: new Date(Date.UTC(2026, 9, 1, 0, 30 - index)).toISOString() })),
+    } as unknown as AttentionFeed;
+    const briefing = await briefingService(db, { attention: { list: async () => feed } })
+      .get({ companyId, userId: "board-user", actor: boardActor(companyId) });
+    expect(briefing.needsYou).toHaveLength(20);
+    expect(briefing.inProgress.map((item) => item.issueId)).toEqual([blockedIds[20]]);
+    expect(briefing.counts.inProgress).toBe(1);
   });
 
   it("serves the briefing to board users and rejects agents", async () => {

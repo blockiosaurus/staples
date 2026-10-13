@@ -19,6 +19,19 @@ import { BriefingCompactRow, BriefingRow, canAcceptInline } from "./BriefingRow"
 import { spendLineText } from "./spendLine";
 
 export const BRIEFING_REFETCH_INTERVAL_MS = 30_000;
+/**
+ * While the document is hidden, Home still polls, but slowly. Real tabs catch
+ * up the moment they become visible (live updates reconcile every active
+ * query); this only keeps a page that stays hidden, like an embedded browser
+ * pane, from showing its first load forever.
+ */
+export const BRIEFING_HIDDEN_REFETCH_INTERVAL_MS = 300_000;
+
+export function briefingRefetchInterval(): number {
+  return typeof document !== "undefined" && document.visibilityState === "hidden"
+    ? BRIEFING_HIDDEN_REFETCH_INTERVAL_MS
+    : BRIEFING_REFETCH_INTERVAL_MS;
+}
 
 /** Kinds whose row is about something that went wrong rather than a decision. */
 const FIX_KINDS = new Set<BriefingItem["kind"]>(["failed_run", "agent_error", "budget_incident"]);
@@ -42,8 +55,17 @@ function acceptErrorMessage(error: unknown): string {
   return `Couldn't accept the recommendation: ${reason} Open it to answer there.`;
 }
 
+/** Plain copy for the fix failures the server explains; its own text is the fallback. */
+const KNOWN_FIX_FAILURES: Array<[RegExp, string]> = [
+  [/resolve unpriced usage/i, "Some recent usage has no price yet. Check it on the Costs page, then try again."],
+  [/completed runs must finish accounting/i, "Recent runs are still being added up. Try again in a minute."],
+  [/new budget must exceed current observed spend/i, "The new limit has to be more than what's already been spent."],
+  [/budget incident not found/i, "This limit was already handled. Refresh to see the latest."],
+];
+
 function fixErrorMessage(item: BriefingItem, error: unknown): string {
-  const reason = error instanceof Error && error.message ? error.message : "Something went wrong.";
+  const raw = error instanceof Error && error.message ? error.message : "";
+  const reason = KNOWN_FIX_FAILURES.find(([pattern]) => pattern.test(raw))?.[1] ?? (raw || "Something went wrong.");
   const verb = item.action?.label ?? "fix this";
   return `Couldn't ${verb.toLowerCase()}: ${reason} Ask the Assistant for help.`;
 }
@@ -167,13 +189,14 @@ export function HomePage() {
 
   const briefingQuery = useQuery({
     queryKey: queryKeys.briefing(companyId),
-    queryFn: () => briefingApi.get(companyId),
+    queryFn: ({ signal }) => briefingApi.get(companyId, signal),
     enabled: Boolean(selectedCompanyId),
-    refetchInterval: BRIEFING_REFETCH_INTERVAL_MS,
     // Live updates pause while the document is hidden (a background tab, or
     // an embedded browser pane the person isn't looking at), and so does a
-    // plain interval. Keep polling there, or Home keeps showing whatever it
-    // first loaded, e.g. "Nothing in progress" while agents are running.
+    // plain interval. Poll there too, but only at the slow hidden rate, or a
+    // page that stays hidden keeps whatever it first loaded, e.g. "Nothing in
+    // progress" while agents are running.
+    refetchInterval: briefingRefetchInterval,
     refetchIntervalInBackground: true,
   });
 
@@ -204,12 +227,23 @@ export function HomePage() {
     },
   });
 
+  // Per row: fixes on different rows can run at once.
+  const [fixing, setFixing] = useState<ReadonlySet<string>>(() => new Set());
   const fix = useMutation({
     mutationFn: ({ item, amountCents }: { item: BriefingItem; amountCents?: number }) =>
       runFix(companyId, item, amountCents),
     onMutate: ({ item }) => {
       const key = briefingItemKey(item);
+      setFixing((current) => new Set(current).add(key));
       setErrors(({ [key]: _cleared, ...rest }) => rest);
+    },
+    onSettled: (_result, _error, { item }) => {
+      const key = briefingItemKey(item);
+      setFixing((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
     },
     onError: (error, { item }) => {
       setErrors((current) => ({ ...current, [briefingItemKey(item)]: fixErrorMessage(item, error) }));
@@ -305,7 +339,7 @@ export function HomePage() {
                 error={errors[briefingItemKey(item)] ?? null}
                 onAccept={(target) => accept.mutate(target)}
                 onAsk={askAbout}
-                fixing={fix.isPending && fix.variables !== undefined && briefingItemKey(fix.variables.item) === briefingItemKey(item)}
+                fixing={fixing.has(briefingItemKey(item))}
                 onFix={(target, amountCents) => fix.mutate({ item: target, amountCents })}
               />
             ))}

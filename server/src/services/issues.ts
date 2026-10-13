@@ -3059,7 +3059,7 @@ const LEGACY_PLUGIN_OPERATION_ORIGIN_KINDS = [
   "plugin:paperclipai.content-machine:source-sync",
 ] as const;
 
-function nonPluginOperationIssueCondition() {
+export function nonPluginOperationIssueCondition() {
   return sql<boolean>`NOT (
     ${issues.originKind} LIKE 'plugin:%:operation'
     OR ${issues.originKind} LIKE 'plugin:%:operation:%'
