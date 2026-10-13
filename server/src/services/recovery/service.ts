@@ -4472,11 +4472,12 @@ export function recoveryService(
       let latestRun = await getLatestIssueRun(issue.companyId, issue.id);
       // The Assistant's weekly update task is never re-woken: once its run has
       // ended and nothing will retry it, it is closed ("No update this week",
-      // or done if an update was saved) instead. A pending retry keeps it open.
+      // or done if an update was saved) instead. A pending retry keeps it open,
+      // and that retry owns it: generic recovery never starts a second chain.
       if (issue.originKind === "routine_execution" && latestRun && isTerminalIssueRun(latestRun)) {
         const { settleWeeklyUpdateTask } = await import("../assistant-weekly-update.js");
         const settled = await settleWeeklyUpdateTask(db, issue.id, { reason: "stranded_after_run", endedRunId: latestRun.id });
-        if (settled === "closed_saved" || settled === "closed_no_update") {
+        if (settled !== "not_weekly") {
           result.skipped += 1;
           continue;
         }

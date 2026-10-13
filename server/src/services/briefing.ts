@@ -1,7 +1,8 @@
-import { and, desc, eq, gte, inArray, isNotNull, lte, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNotNull, lte, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
+  budgetPolicies,
   companies,
   costEvents,
   issueRelations,
@@ -43,7 +44,7 @@ import {
   type FailureCause,
 } from "./briefing-reasons.js";
 import { attentionService } from "./attention.js";
-import { HOSTED_BILLED_CENTS_METRIC, budgetService } from "./budgets.js";
+import { HOSTED_BILLED_CENTS_METRIC, computeObservedSpend } from "./budgets.js";
 import { getUtcMonthStart } from "./dashboard.js";
 import { authorizationService, issueReadSqlCondition, type AuthorizationActor } from "./authorization.js";
 import { issueService, nonPluginOperationIssueCondition } from "./issues.js";
@@ -844,21 +845,25 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     if (!decision.allowed) return null;
     const companyId = input.companyId;
     const end = new Date(now);
-    const [[row], overview] = await Promise.all([
+    // Only the two company-scope monthly policies are read (not the whole
+    // budget overview, which adds up spend for every agent's policy too).
+    const [[row], policies] = await Promise.all([
       db.select({ total: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::double precision` })
         .from(costEvents)
         .where(and(eq(costEvents.companyId, companyId), gte(costEvents.occurredAt, getUtcMonthStart(end)), lte(costEvents.occurredAt, end))),
-      budgetService(db).overview(companyId),
+      db.select().from(budgetPolicies).where(and(
+        eq(budgetPolicies.companyId, companyId), eq(budgetPolicies.scopeType, "company"), eq(budgetPolicies.scopeId, companyId),
+        eq(budgetPolicies.windowKind, "calendar_month_utc"), eq(budgetPolicies.isActive, true), gt(budgetPolicies.amount, 0),
+        inArray(budgetPolicies.metric, ["billed_cents", HOSTED_BILLED_CENTS_METRIC]),
+      )),
     ]);
-    const companyPolicy = (metric: string) => overview.policies.find((policy) =>
-      policy.scopeType === "company" && policy.scopeId === companyId && policy.metric === metric
-      && policy.windowKind === "calendar_month_utc" && policy.isActive && policy.amount > 0);
-    const budget = companyPolicy("billed_cents");
-    const hosted = companyPolicy(HOSTED_BILLED_CENTS_METRIC);
+    const budget = policies.find((policy) => policy.metric === "billed_cents");
+    const hosted = policies.find((policy) => policy.metric === HOSTED_BILLED_CENTS_METRIC);
+    const hostedObserved = hosted ? await computeObservedSpend(db, hosted) : null;
     return {
       monthSpendCents: Math.round(Number(row?.total ?? 0)),
       companyBudgetCents: budget ? budget.amount : null,
-      hosted: hosted ? { capCents: hosted.amount, spentCents: Math.round(hosted.observedAmount) } : null,
+      hosted: hosted && hostedObserved ? { capCents: hosted.amount, spentCents: Math.round(hostedObserved.total) } : null,
     };
   }
 
