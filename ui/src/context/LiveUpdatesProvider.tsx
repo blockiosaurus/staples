@@ -1308,9 +1308,11 @@ function createBriefingRefreshThrottle(
       if (timers.has(companyId)) return;
       timers.set(companyId, setTimeout(() => {
         timers.delete(companyId);
-        void queryClient.invalidateQueries({ queryKey: queryKeys.briefing(companyId) });
+        // cancelRefetch: false keeps an in-flight read alive instead of
+        // aborting it; the refresh dedupes onto that fetch.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.briefing(companyId) }, { cancelRefetch: false });
         // Home's "What we've made" rides the same burst: one fetch each.
-        void queryClient.invalidateQueries({ queryKey: queryKeys.artifacts.home(companyId) });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.artifacts.home(companyId) }, { cancelRefetch: false });
       }, windowMs));
     },
     dispose() {

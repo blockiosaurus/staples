@@ -334,6 +334,11 @@ describe("LiveUpdatesProvider issue invalidation", () => {
       const homeArtifactCalls = () => invalidate.mock.calls
         .filter(([filters]) => JSON.stringify(filters?.queryKey) === JSON.stringify(queryKeys.artifacts.home("company-1"))).length;
       expect(homeArtifactCalls()).toBe(1);
+      // An in-flight briefing/artifacts read must not be aborted by the refresh.
+      for (const key of [queryKeys.briefing("company-1"), queryKeys.artifacts.home("company-1")]) {
+        const call = invalidate.mock.calls.find(([filters]) => JSON.stringify(filters?.queryKey) === JSON.stringify(key));
+        expect(call?.[1]).toEqual({ cancelRefetch: false });
+      }
       // A later event opens a new window.
       __liveUpdatesTestUtils.handleLiveEvent(
         client, "company-1", "/PAP/home", { ...events[1], companyId: "company-1" } as never, () => null, gate,
