@@ -2791,7 +2791,7 @@ export function OAuthConnectStateScreen({
   return (
     <div className="max-w-5xl">
       <StepHeader
-        subtitle="Secure MCP sign-in"
+        subtitle="Secure sign-in"
         step="key"
         activeIndex={steps.activeIndex}
         labels={steps.labels}
@@ -4462,20 +4462,20 @@ export function connectionDefaultSummarySentence(input: {
   const identity = input.authKind === "none"
     ? "No sign-in needed"
     : input.grantKind === "user"
-      ? "Connects as you"
+      ? "Signs in with your own account"
       : input.grantKind === "agent"
-        ? "Connects as a dedicated agent account"
-        : "Connects for everyone in your organization";
+        ? "Uses a separate account made for the agent"
+        : "Uses one account shared by your whole organization";
   const reach = input.preserveAgentAccess
     ? "agent access stays as it is"
     : input.lockedAgentId
-      ? "available to the agent that asked for it"
+      ? "only the agent that asked can use it"
       : input.installChoice === "all"
-        ? "available to all agents"
+        ? "all your agents can use it"
         : input.installCount === 0
-          ? "no agents selected yet"
-          : `available to ${input.installCount} selected ${input.installCount === 1 ? "agent" : "agents"}`;
-  return `${identity}, ${reach}.`;
+          ? "no agents chosen yet"
+          : `${input.installCount} chosen ${input.installCount === 1 ? "agent" : "agents"} can use it`;
+  return `${identity}; ${reach}.`;
 }
 
 /**

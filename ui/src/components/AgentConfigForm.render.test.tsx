@@ -3834,7 +3834,7 @@ describe("AgentConfigForm managed-sandbox-only host surfaces", () => {
 
     await act(async () => {
       for (const button of result.container.querySelectorAll("button")) {
-        if (["Advanced", "Advanced Run Policy"].includes(button.textContent?.trim() ?? "")) button.click();
+        if (["Advanced", "More run settings"].includes(button.textContent?.trim() ?? "")) button.click();
       }
     });
     await flushReact();
@@ -3861,7 +3861,7 @@ describe("AgentConfigForm managed-sandbox-only host surfaces", () => {
 
     await act(async () => {
       for (const button of result.container.querySelectorAll("button")) {
-        if (["Advanced", "Advanced Run Policy"].includes(button.textContent?.trim() ?? "")) button.click();
+        if (["Advanced", "More run settings"].includes(button.textContent?.trim() ?? "")) button.click();
       }
     });
     await flushReact();
@@ -3887,7 +3887,7 @@ describe("AgentConfigForm managed-sandbox-only host surfaces", () => {
 
     await act(async () => {
       for (const button of result.container.querySelectorAll("button")) {
-        if (["Advanced", "Advanced Run Policy"].includes(button.textContent?.trim() ?? "")) button.click();
+        if (["Advanced", "More run settings"].includes(button.textContent?.trim() ?? "")) button.click();
       }
     });
     await flushReact();
@@ -3908,7 +3908,7 @@ describe("AgentConfigForm managed-sandbox-only host surfaces", () => {
 
     await act(async () => {
       for (const button of result.container.querySelectorAll("button")) {
-        if (["Advanced", "Advanced Run Policy"].includes(button.textContent?.trim() ?? "")) button.click();
+        if (["Advanced", "More run settings"].includes(button.textContent?.trim() ?? "")) button.click();
       }
     });
     await flushReact();
@@ -3930,7 +3930,7 @@ describe("AgentConfigForm managed-sandbox-only host surfaces", () => {
 
     await act(async () => {
       for (const button of result.container.querySelectorAll("button")) {
-        if (["Advanced", "Advanced Run Policy"].includes(button.textContent?.trim() ?? "")) button.click();
+        if (["Advanced", "More run settings"].includes(button.textContent?.trim() ?? "")) button.click();
       }
     });
     await flushReact();

@@ -435,7 +435,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
     // PAP-659 C0: the gateway connectors reach the endpoint field immediately.
     // The task-scoped reach is stated rather than confirmed on its own step.
     const connectLabel = `Connect ${provider[0].toUpperCase()}${provider.slice(1)}`;
-    expect(container.textContent).toContain("available to the agent that asked for it");
+    expect(container.textContent).toContain("only the agent that asked can use it");
     expect(radioContaining("Any agent")).toBeUndefined();
     if (provider === "composio") {
       expect(container.textContent).not.toContain("MCP server URL");
@@ -742,8 +742,8 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
   });
 
   it.each([
-    ["shared", "Connects for everyone in your organization", "Any human in the organization", false],
-    ["per_user", "Connects as you", "Just me", true],
+    ["shared", "Uses one account shared by your whole organization", "Any human in the organization", false],
+    ["per_user", "Signs in with your own account", "Just me", true],
   ])("retains the %s identity across an OAuth return without a step to walk back through", async (credentialPolicy, statedDefault, identityLabel, asCurrentUser) => {
     const draft = { id: "conn-oauth-draft", status: "draft", authKind: "oauth", credentialPolicy, config: { sourceTemplateKey: "composio", connectionMethodKey: "mcp", url: "https://connect.composio.dev/mcp" } };
     mockSearch.value = `source=composio&resume=${draft.id}&oauth=denied`;
@@ -956,7 +956,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
 
     // PAP-659 C0: the default is printed, not asked. Nothing about identity or
     // reach blocks the primary action.
-    expect(container.textContent).toContain("Connects as you, available to all agents.");
+    expect(container.textContent).toContain("Signs in with your own account; all your agents can use it.");
     expect(container.textContent).not.toContain("Connect GitHub as");
     expect(container.querySelector('[role="radio"]')).toBeNull();
 
@@ -1022,7 +1022,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
 
     // PAP-659 C0: narrowing reach never blocks Connect. An empty selection is
     // reported in the stated default instead of disabling the primary action.
-    expect(container.textContent).toContain("available to all agents.");
+    expect(container.textContent).toContain("all your agents can use it.");
 
     await act(async () => {
       Array.from(document.body.querySelectorAll('[role="radio"]'))
@@ -1031,7 +1031,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
     });
     await flushReact();
 
-    expect(container.textContent).toContain("no agents selected yet.");
+    expect(container.textContent).toContain("no agents chosen yet.");
   });
 
   it("reflects a changed access selection in the stated default", async () => {
@@ -1048,7 +1048,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
 
     // The sentence above the primary action is the only place this is said, so
     // it has to track the controls rather than print a fixed default.
-    expect(container.textContent).toContain("no agents selected yet");
+    expect(container.textContent).toContain("no agents chosen yet");
 
     const radios = Array.from(document.body.querySelectorAll('[role="radio"]'));
     expect(radios.find((r) => r.textContent?.includes("Only agents I choose"))
@@ -1396,7 +1396,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
     // Access stage to deep-link into; a legacy stage=access URL lands here.
     expect(document.body.textContent).not.toContain("Step 1 of 2");
     expect(document.body.textContent).not.toContain("Pick app   ·");
-    expect(document.body.textContent).toContain("Connects for everyone in your organization");
+    expect(document.body.textContent).toContain("Uses one account shared by your whole organization");
     await openAccessAdvanced();
     expect(document.body.textContent).toContain("Which humans can use this credential?");
     expect(document.body.textContent).toContain("Just me");
@@ -1615,7 +1615,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
 
     await render();
 
-    expect(container.textContent).toContain("Connects as you");
+    expect(container.textContent).toContain("Signs in with your own account");
     await openAccessAdvanced();
     expect(radioContaining("My GitHub account")?.getAttribute("aria-checked")).toBe("true");
     expect(radioContaining("Any agent")?.getAttribute("aria-checked")).toBe("true");
@@ -1790,7 +1790,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
     await flushReact();
     await flushReact();
 
-    expect(container.textContent).toContain("Connects as a dedicated agent account");
+    expect(container.textContent).toContain("Uses a separate account made for the agent");
     expect(window.sessionStorage.getItem(
       "paperclip.connector-enrollment-access:github",
     )).toBeNull();
@@ -2021,7 +2021,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
 
     // PAP-659: a deep-linked app lands on its one connect screen. Identity and
     // reach are stated there and changed in the same Advanced disclosure.
-    expect(container.textContent).toContain("Connects for everyone in your organization");
+    expect(container.textContent).toContain("Uses one account shared by your whole organization");
     await openAccessAdvanced();
     expect(container.textContent).toContain("Connect GitHub as");
 
@@ -2149,7 +2149,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
     await render();
     // PAP-659: identity is stated, not asked, and the method chooser moved
     // into the same Advanced disclosure.
-    expect(container.textContent).toContain("Connects for everyone in your organization");
+    expect(container.textContent).toContain("Uses one account shared by your whole organization");
     await openAccessAdvanced();
 
     expect(container.textContent).toContain("How do you want to connect?");
@@ -2329,7 +2329,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
         requestedAgentId="agent-1"
       />
     ));
-    expect(container.textContent).toContain("available to the agent that asked for it");
+    expect(container.textContent).toContain("only the agent that asked can use it");
     const continueButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.trim().startsWith("Continue"),
     );
@@ -2486,7 +2486,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
 
     expect(connectAppMock).not.toHaveBeenCalled();
     expect(navigateTopLevelMock).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("Connects for everyone in your organization");
+    expect(container.textContent).toContain("Uses one account shared by your whole organization");
     await openAccessAdvanced();
     expect(container.textContent).toContain("Which humans can use this credential?");
     expect(container.textContent).not.toContain("Choose access before sign-in");
@@ -3042,7 +3042,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
 
     await render();
     expect(container.textContent).toContain(
-      credentialPolicy === "per_user" ? "Connects as you" : "Connects for everyone in your organization",
+      credentialPolicy === "per_user" ? "Signs in with your own account" : "Uses one account shared by your whole organization",
     );
     expect(container.textContent).toContain("agent access stays as it is");
     await passAccessStep();
@@ -3095,7 +3095,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
     });
 
     await render();
-    expect(container.textContent).toContain("Connects for everyone in your organization");
+    expect(container.textContent).toContain("Uses one account shared by your whole organization");
     await passAccessStep();
     await submitCuratedOAuthSetup();
 
@@ -3648,7 +3648,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
     expect(container.textContent).not.toContain("Step 1 of 2");
     expect(container.textContent).not.toContain("Step 2 of 2");
     expect(container.textContent).toContain("Connect Zapier");
-    expect(container.textContent).toContain("Connects for everyone in your organization, available to all agents.");
+    expect(container.textContent).toContain("Uses one account shared by your whole organization; all your agents can use it.");
     expect(container.querySelector('[data-remote-mcp-provider="zapier"]')).toBeTruthy();
     expect(container.textContent).not.toContain("Pick the app you want your agents to use.");
     expect(container.textContent).toContain("MCP server URL");
@@ -3663,7 +3663,7 @@ describe("AppsConnect — Connect with a link (M4 frame)", () => {
       radioContaining("Just me")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flushReact();
-    expect(container.textContent).toContain("Connects as you, available to all agents.");
+    expect(container.textContent).toContain("Signs in with your own account; all your agents can use it.");
 
     const linkInput = container.querySelector<HTMLInputElement>(
       'input[placeholder="Paste the full URL from Zapier"]',

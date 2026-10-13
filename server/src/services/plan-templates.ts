@@ -664,13 +664,9 @@ export function templateTaskSpecs(agentClientKey: string, agentName: string, ren
       return {
         clientKey: `${agentClientKey}~connect-${app.capability}`,
         title: `Connect ${choice}`.slice(0, 200),
-        description: [
-          `${agentName} needs ${choice} connected before it can start: ${app.why}`,
-          "",
-          `Call \`connection_request\` for one of these services: ${app.anyOf.map((slug) => `\`${slug}\` (${appDisplayName(slug)})`).join(", ")}. A card appears for the person to choose and connect it; you are woken when it is done. Never ask for passwords, API keys or other credentials in comments.`,
-          "",
-          "When the service is connected, mark this task done so your other starter tasks can begin.",
-        ].join("\n"),
+        // Person-facing only. The agent recognises a connect task by its
+        // "Connect " title (see the paperclip skill, "Connect tasks").
+        description: `${agentName} needs ${app.anyOf.length > 1 ? `one of ${choice}` : choice}. ${app.why} It will ask you to connect ${app.anyOf.length > 1 ? "one" : "it"} here.`,
         blockedByClientKeys: [],
       };
     });

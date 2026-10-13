@@ -464,7 +464,7 @@ export function ConnectionIntentInteractionBody({
                 : interaction.payload.purpose === "ai"
                 ? "This task can’t run until the agent has a valid AI connection. Connect here and the task will resume automatically."
                 : isEmail ? "Connect AgentMail to create an email address for this agent."
-                : "Connect your identity or reuse an eligible connection. Access is added only for this agent."}
+                : `Sign in to ${interaction.payload.serviceName} so ${interaction.payload.requestingAgentName} can use it. Only ${interaction.payload.requestingAgentName} gets access.`}
             </p>
           </div>
         </div>

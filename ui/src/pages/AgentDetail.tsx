@@ -317,6 +317,18 @@ const LEGACY_AGENT_DETAIL_TABS = [
 
 export const DISCARD_AGENT_CONFIG_CHANGES_MESSAGE = "Discard unsaved agent configuration changes?";
 
+function plainRunStatus(status: string): string {
+  switch (status) {
+    case "succeeded": return "Finished";
+    case "failed": return "Hit a problem";
+    case "running": return "Working";
+    case "queued": return "Waiting to start";
+    case "cancelled": return "Stopped";
+    case "timed_out": return "Ran out of time";
+    default: return status.replace(/_/g, " ");
+  }
+}
+
 export function confirmAgentConfigNavigation(
   dirty: boolean,
   confirm: (message: string) => boolean = (message) =>
@@ -1779,7 +1791,7 @@ export function AgentOverview({
       <div className="grid gap-4 md:grid-cols-2">
         <section className="rounded-lg border border-border p-4" aria-labelledby="agent-identity-heading">
           <div className="mb-4 flex items-center justify-between gap-3">
-            <h3 id="agent-identity-heading" className="text-sm font-medium">Identity</h3>
+            <h3 id="agent-identity-heading" className="text-sm font-medium">About</h3>
             <StatusBadge status={agent.status} />
           </div>
           <div className="space-y-3">
@@ -1803,7 +1815,7 @@ export function AgentOverview({
                 ) : (
                   <div className="text-sm">
                     <div>Not created yet</div>
-                    <div className="text-xs text-muted-foreground">Created automatically on the next managed run</div>
+                    <div className="text-xs text-muted-foreground">Created automatically the next time it runs</div>
                   </div>
                 )}
             </SummaryRow>
@@ -1812,15 +1824,15 @@ export function AgentOverview({
 
         <section className="rounded-lg border border-border p-4" aria-labelledby="agent-runtime-heading">
           <div className="mb-4 flex items-center justify-between gap-3">
-            <h3 id="agent-runtime-heading" className="text-sm font-medium">Harness / Runtime</h3>
+            <h3 id="agent-runtime-heading" className="text-sm font-medium">Runs on</h3>
             <Link className="text-xs text-muted-foreground hover:text-foreground" to={agentDetailHref(agentRouteId, "runtime")}>Configure</Link>
           </div>
           <div className="space-y-3">
-            <SummaryRow label="Adapter"><span className="text-sm">{getAdapterDisplay(agent.adapterType === "paperclip_runner" && agent.adapterConfig.provider === "openai_dot" ? "openai_dot" : agent.adapterType).label}</span></SummaryRow>
+            <SummaryRow label="Runs on"><span className="text-sm">{getAdapterDisplay(agent.adapterType === "paperclip_runner" && agent.adapterConfig.provider === "openai_dot" ? "openai_dot" : agent.adapterType).label}</span></SummaryRow>
             <SummaryRow label="Model"><span className="max-w-64 truncate text-sm font-mono">{configuredModel}</span></SummaryRow>
-            <SummaryRow label="Session"><span className="max-w-64 truncate text-sm font-mono">{runtimeState?.sessionDisplayId ?? runtimeState?.sessionId ?? "No session"}</span></SummaryRow>
+            <SummaryRow label="Conversation"><span className="max-w-64 truncate text-sm font-mono">{runtimeState?.sessionDisplayId ?? runtimeState?.sessionId ?? "Not started"}</span></SummaryRow>
             <SummaryRow label="Last run">
-              <span className="text-sm">{lastRun ? `${lastRun.status} · ${relativeTime(lastRun.createdAt)}` : "No runs"}</span>
+              <span className="text-sm">{lastRun ? `${plainRunStatus(lastRun.status)} · ${relativeTime(lastRun.createdAt)}` : "No runs"}</span>
             </SummaryRow>
           </div>
         </section>
@@ -2135,7 +2147,7 @@ export function ConfigurationTab({
         environmentVariablesPlacement="configuration"
         compactTestFeedback
         sectionOrder={["identity", "adapter", "configuration", "environment", "environment-variables", "run-policy"]}
-        sectionTitles={{ adapter: "Adapter", configuration: "Configuration", identity: "Agent identity" }}
+        sectionTitles={{ adapter: "Runs on", configuration: "Configuration", identity: "Agent identity" }}
         canConfigureProviderTrace={canConfigureProviderTrace}
       /> : null}
 

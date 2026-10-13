@@ -752,6 +752,17 @@ to edit settings manually. Yield while waiting. Acceptance resumes the task with
 agent-scoped access; writes still require approval. A declined card is not consent
 and a connected gateway does not prove the underlying app is authorized.
 
+**Connect tasks.** A task whose title starts with "Connect " (for example
+"Connect GitHub" or "Connect beehiiv, Resend or Klaviyo") is a connect task
+created for a templated agent. Its description is written for the person and
+does not tell you what to do. Do this first: use `connections_search` to find
+the service identifiers for the service(s) named in the title, then call
+`connection_request` for one of them (the card lets the person choose). Yield
+while waiting; you are woken when it is done. When the service is connected,
+mark the connect task done so your other starter tasks can begin. Older connect
+tasks may spell out the same steps in their description; the steps are the same.
+Never ask for passwords, API keys or other credentials in comments.
+
 ## Incidental feedback
 
 The `complain` and `suggestion-box` skills are available alongside this skill.

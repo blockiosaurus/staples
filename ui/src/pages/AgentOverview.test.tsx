@@ -65,9 +65,9 @@ describe("AgentOverview", () => {
       </QueryClientProvider>,
     );
 
-    expect(markup).toContain("Identity");
+    expect(markup).toContain("About");
     expect(markup).toContain("Capabilities");
-    expect(markup).toContain("Harness / Runtime");
+    expect(markup).toContain("Runs on");
     expect(markup).toContain("Design Guide");
     expect(markup).toContain("Simplify agent information architecture");
     expect(markup).toContain("PAP-42");

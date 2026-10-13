@@ -1500,7 +1500,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             </Field>
             {isLocal && !props.hidePromptTemplate && (
               <>
-                <Field label="Prompt Template" hint={help.promptTemplate}>
+                <Field label="Instructions for each run" hint={help.promptTemplate}>
                   <MarkdownEditor
                     value={eff(
                       "adapterConfig",
@@ -1518,7 +1518,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   />
                 </Field>
                 <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
-                  Prompt template is replayed on every heartbeat. Keep it compact and dynamic to avoid recurring token cost and cache churn.
+                  Prompt template is replayed every time the agent runs. Keep it compact and dynamic to avoid recurring token cost and cache churn.
                 </div>
               </>
             )}
@@ -1593,7 +1593,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       <div data-config-section="adapter" className={cn(!cards && (isCreate ? "border-t border-border" : "border-b border-border"))}>
         <div className={cn(cards ? "flex items-center justify-between mb-3" : "px-4 py-2 flex items-center justify-between gap-2")}>
           {cards
-            ? <h3 className="text-sm font-medium">{props.sectionTitles?.["adapter"] ?? "Adapter"}</h3>
+            ? <h3 className="text-sm font-medium">{props.sectionTitles?.["adapter"] ?? "Runs on"}</h3>
             : <span className="text-xs font-medium text-muted-foreground">Adapter</span>
           }
           {showInlineAdapterTestEnvironmentButton && (
@@ -1611,7 +1611,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
         </div>
         <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
           {showAdapterTypeField && (
-            <Field label="Adapter type" hint={help.adapterType}>
+            <Field label="Runs on" hint={help.adapterType}>
               <AdapterTypeDropdown
                 value={isDotRunner ? "openai_dot" : adapterType}
                 disabledTypes={adapterPickerDisabledTypes}
@@ -1969,23 +1969,23 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       {isCreate && showCreateRunPolicySection ? (
         <div data-config-section="run-policy" className={cn(!cards && "border-b border-border")}>
           {cards
-            ? <h3 className="text-sm font-medium flex items-center gap-2 mb-3"><Heart className="h-3 w-3" /> Run Policy</h3>
-            : <div className="px-4 py-2 text-xs font-medium text-muted-foreground flex items-center gap-2"><Heart className="h-3 w-3" /> Run Policy</div>
+            ? <h3 className="text-sm font-medium flex items-center gap-2 mb-3"><Heart className="h-3 w-3" /> When it runs</h3>
+            : <div className="px-4 py-2 text-xs font-medium text-muted-foreground flex items-center gap-2"><Heart className="h-3 w-3" /> When it runs</div>
           }
           <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
             <ToggleWithNumber
-              label="Heartbeat on interval"
+              label="Check in automatically"
               hint={help.heartbeatInterval}
               checked={val!.heartbeatEnabled}
               onCheckedChange={(v) => set!({ heartbeatEnabled: v })}
               number={val!.intervalSec}
               onNumberChange={(v) => set!({ intervalSec: v })}
               numberLabel="sec"
-              numberPrefix="Run heartbeat every"
+              numberPrefix="Check in every"
               numberHint={help.intervalSec}
               showNumber={val!.heartbeatEnabled}
             />
-            <CollapsibleSection title="Advanced Run Policy" open={runPolicyAdvancedOpen} onToggle={() => setRunPolicyAdvancedOpen(!runPolicyAdvancedOpen)}>
+            <CollapsibleSection title="More run settings" open={runPolicyAdvancedOpen} onToggle={() => setRunPolicyAdvancedOpen(!runPolicyAdvancedOpen)}>
               <div className="space-y-3">{renderAdapterFields("runPolicy")}</div>
             </CollapsibleSection>
           </div>
@@ -1993,26 +1993,26 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       ) : !isCreate ? (
         <div data-config-section="run-policy" className={cn(!cards && "border-b border-border")}>
           {cards
-            ? <h3 className="text-sm font-medium flex items-center gap-2 mb-3"><Heart className="h-3 w-3" /> Run Policy</h3>
-            : <div className="px-4 py-2 text-xs font-medium text-muted-foreground flex items-center gap-2"><Heart className="h-3 w-3" /> Run Policy</div>
+            ? <h3 className="text-sm font-medium flex items-center gap-2 mb-3"><Heart className="h-3 w-3" /> When it runs</h3>
+            : <div className="px-4 py-2 text-xs font-medium text-muted-foreground flex items-center gap-2"><Heart className="h-3 w-3" /> When it runs</div>
           }
           <div className={cn(cards ? "border border-border rounded-lg overflow-hidden" : "")}>
             <div className={cn(cards ? "p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
               <ToggleWithNumber
-                label="Heartbeat on interval"
+                label="Check in automatically"
                 hint={help.heartbeatInterval}
                 checked={eff("heartbeat", "enabled", heartbeat.enabled === true)}
                 onCheckedChange={(v) => mark("heartbeat", "enabled", v)}
                 number={eff("heartbeat", "intervalSec", Number(heartbeat.intervalSec ?? 300))}
                 onNumberChange={(v) => mark("heartbeat", "intervalSec", v)}
                 numberLabel="sec"
-                numberPrefix="Run heartbeat every"
+                numberPrefix="Check in every"
                 numberHint={help.intervalSec}
                 showNumber={eff("heartbeat", "enabled", heartbeat.enabled === true)}
               />
             </div>
             <CollapsibleSection
-              title="Advanced Run Policy"
+              title="More run settings"
               bordered={cards}
               open={runPolicyAdvancedOpen}
               onToggle={() => setRunPolicyAdvancedOpen(!runPolicyAdvancedOpen)}
