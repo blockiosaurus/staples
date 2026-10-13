@@ -7,12 +7,15 @@ import {
   agentApiKeys,
   agents,
   boardApiKeys,
+  builtInManagedResources,
   heartbeatRuns,
 } from "@paperclipai/db";
+import { ASSISTANT_BUILT_IN_AGENT_KEY } from "@paperclipai/shared";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import { assertCompanyAccess } from "../routes/authz.js";
+import { BUILT_IN_AGENT_METADATA_KEY } from "../lib/built-in-agent-metadata.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -31,7 +34,9 @@ function createSelectChain(rowsForTable: (table: unknown) => unknown[]) {
 }
 
 function createDbState(input: {
-  agent: { id: string; companyId: string; status?: string };
+  agent: { id: string; companyId: string; status?: string; metadata?: Record<string, unknown> | null };
+  /** The company's Assistant provisioning record binds this agent id. */
+  assistantBindingAgentId?: string;
   agentKey?: { id: string; agentId: string; companyId: string; keyHash: string; responsibleUserId?: string | null };
   run?: { id: string; companyId: string; agentId: string; responsibleUserId?: string | null;
     status?: string; contextSnapshot?: Record<string, unknown>; resultJson?: Record<string, unknown> };
@@ -41,6 +46,7 @@ function createDbState(input: {
     id: input.agent.id,
     companyId: input.agent.companyId,
     status: input.agent.status ?? "active",
+    metadata: input.agent.metadata ?? null,
   };
   const keyRow = input.agentKey
     ? {
@@ -72,6 +78,9 @@ function createDbState(input: {
         if (table === agentApiKeys) return keyRow ? [keyRow] : [];
         if (table === agents) return [agentRow];
         if (table === heartbeatRuns) return runRow ? [runRow] : [];
+        if (table === builtInManagedResources) {
+          return input.assistantBindingAgentId ? [{ agentId: input.assistantBindingAgentId }] : [];
+        }
         return [];
       }),
     update: () => ({
@@ -124,9 +133,16 @@ function createApp(db: any, deploymentMode: "authenticated" | "local_trusted" = 
     assertCompanyAccess(req, req.params.companyId);
     res.json({ id: req.params.issueId, writable: true });
   });
+  app.get("/api/issues/:issueId", (req, res) => res.json({ id: req.params.issueId, readable: true }));
+  app.post("/api/issues/:issueId/comments", (req, res) => res.status(201).json({ commented: true }));
+  app.patch("/api/issues/:issueId", (req, res) => res.json({ updated: true }));
+  app.post("/api/mcp/assistant-tools", (req, res) => res.json({ reachedAssistantTools: true }));
+  app.post("/api/mcp/paperclip-tools", (req, res) => res.json({ reachedPaperclipTools: true }));
   app.use(errorHandler);
   return app;
 }
+
+const ASSISTANT_METADATA = { [BUILT_IN_AGENT_METADATA_KEY]: { key: ASSISTANT_BUILT_IN_AGENT_KEY, featureKeys: [] } };
 
 function craftAgentJwtWithoutResponsibleClaim(input: {
   secret: string;
@@ -204,6 +220,73 @@ describe("agent auth middleware", () => {
     const read = await request(client).get(endpoint).set("Authorization", `Bearer ${token}`);
     expect(read.status).toBe(200);
     expect(read.body.readable).toBe(true);
+  });
+
+  describe("provisioned Assistant run token", () => {
+    function assistantClient(input: { provisioned: boolean; marked?: boolean }) {
+      const agentId = randomUUID();
+      const companyId = randomUUID();
+      const runId = randomUUID();
+      const { db } = createDbState({
+        agent: { id: agentId, companyId, metadata: input.marked === false ? null : ASSISTANT_METADATA },
+        assistantBindingAgentId: input.provisioned ? agentId : undefined,
+        run: { id: runId, companyId, agentId },
+      });
+      const token = createLocalAgentJwt(agentId, companyId, "claude_local", runId, null);
+      return { client: createApp(db), auth: `Bearer ${token}` };
+    }
+
+    it("cannot comment on or update a task", async () => {
+      const { client, auth } = assistantClient({ provisioned: true });
+      const issueId = randomUUID();
+      const comment = await request(client).post(`/api/issues/${issueId}/comments`).set("Authorization", auth).send({ body: "hi" });
+      expect(comment.status).toBe(403);
+      expect(comment.body).toEqual({
+        error: "The Assistant cannot make changes directly. Propose the change for a person to confirm.",
+        code: "assistant_read_only",
+      });
+      const patch = await request(client).patch(`/api/issues/${issueId}`).set("Authorization", auth).send({ status: "done" });
+      expect(patch.status).toBe(403);
+      expect(patch.body.code).toBe("assistant_read_only");
+      // Case and trailing-slash variants route to the same handlers.
+      const variant = await request(client).post(`/API/Issues/${issueId}/comments/`).set("Authorization", auth).send({ body: "hi" });
+      expect(variant.status).toBe(403);
+    });
+
+    it("still reads and reaches its MCP tool servers", async () => {
+      const { client, auth } = assistantClient({ provisioned: true });
+      const read = await request(client).get(`/api/issues/${randomUUID()}`).set("Authorization", auth);
+      expect(read.status).toBe(200);
+      expect(read.body.readable).toBe(true);
+      const tools = await request(client).post("/api/mcp/assistant-tools").set("Authorization", auth)
+        .send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "staples_save_weekly_update" } });
+      expect(tools.status).toBe(200);
+      expect(tools.body.reachedAssistantTools).toBe(true);
+      const paperclip = await request(client).post("/api/mcp/paperclip-tools/").set("Authorization", auth)
+        .send({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+      expect(paperclip.status).toBe(200);
+      expect(paperclip.body.reachedPaperclipTools).toBe(true);
+    });
+
+    it("does not allow other methods on the allowlisted paths", async () => {
+      const { client, auth } = assistantClient({ provisioned: true });
+      const res = await request(client).delete("/api/mcp/assistant-tools").set("Authorization", auth);
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("assistant_read_only");
+    });
+
+    it.each([
+      { name: "an ordinary agent", provisioned: false, marked: false },
+      { name: "an agent that only carries the Assistant marker", provisioned: false, marked: true },
+    ])("leaves writes from $name unchanged", async ({ provisioned, marked }) => {
+      const { client, auth } = assistantClient({ provisioned, marked });
+      const issueId = randomUUID();
+      const comment = await request(client).post(`/api/issues/${issueId}/comments`).set("Authorization", auth).send({ body: "hi" });
+      expect(comment.status).toBe(201);
+      const patch = await request(client).patch(`/api/issues/${issueId}`).set("Authorization", auth).send({ status: "done" });
+      expect(patch.status).toBe(200);
+      expect(patch.body.updated).toBe(true);
+    });
   });
 
   it("keeps header-less local requests as the implicit board actor with their run id", async () => {
