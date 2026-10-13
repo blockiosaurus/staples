@@ -1,4 +1,7 @@
 import { and, eq, ne, sql } from "drizzle-orm";
+import { isSelfServeCompany, SELF_SERVE_HOST_EXECUTION_ERROR_CODE } from "./self-serve-policy.js";
+import { hostedInference } from "./hosted-inference.js";
+import { forbidden } from "../errors.js";
 import type { Db } from "@paperclipai/db";
 import { agents, companyOnboardingSeeds, goals, issues, projects } from "@paperclipai/db";
 import type { ApplyOnboardingSeed } from "@paperclipai/shared";
@@ -194,13 +197,22 @@ export function onboardingSeedService(db: Db) {
       if (agentId) {
         await agentSvc.update(agentId, { name: agentName, title: agentRole });
       } else {
-        const adapterType = seededAgentAdapterType();
+        // A self-serve company's seeded lead runs on Claude (hosted); a local
+        // CLI would execute on the shared host (the lifecycle refuses it).
+        const selfServe = await isSelfServeCompany(dbx, companyId);
+        const hosted = hostedInference();
+        if (selfServe && !hosted.available) {
+          throw forbidden("This company's first agent needs Claude (hosted), which isn't set up on this instance.", {
+            code: SELF_SERVE_HOST_EXECUTION_ERROR_CODE,
+          });
+        }
+        const adapterType = selfServe ? hosted.adapterType : seededAgentAdapterType();
         const created = await createAgentLifecycle(dbx).requestHire(companyId, {
           name: agentName,
           role: SEEDED_AGENT_ROLE,
           title: agentRole,
           adapterType,
-          adapterConfig: seededAgentAdapterConfig(adapterType),
+          adapterConfig: selfServe ? { model: hosted.model } : seededAgentAdapterConfig(adapterType),
           runtimeConfig: {},
           permissions: {},
           status: "idle",

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { assertSelfServeHostAccess, isSelfServeRestricted, SELF_SERVE_HOST_EXECUTION_ERROR_CODE } from "../services/self-serve-policy.js";
+import { assertSelfServeCompanyHostAccess } from "../services/self-serve-policy.js";
 import { and, eq, sql } from "drizzle-orm";
 import { activityLog } from "@paperclipai/db";
 import { projectToolContext } from "../services/project-tool-context.js";
@@ -43,7 +43,7 @@ import {
   stopRuntimeServicesForProjectWorkspace,
 } from "../services/workspace-runtime.js";
 import {
-  assertNoAgentHostWorkspaceCommandMutation,
+  assertNoHostWorkspaceCommandMutation,
   collectProjectExecutionWorkspaceCommandPaths,
   collectProjectWorkspaceCommandPaths,
 } from "./workspace-command-authz.js";
@@ -98,18 +98,14 @@ export function projectRoutes(db: Db) {
    * that just turned the policy on needs to do. The settings read only happens
    * when the payload actually carries a path.
    */
-  async function assertNoManagedSandboxWorkspacePath(workspacePatch: unknown, req: Request) {
+  async function assertNoManagedSandboxWorkspacePath(workspacePatch: unknown, companyId: string) {
     if (typeof workspacePatch !== "object" || workspacePatch === null || Array.isArray(workspacePatch)) return;
     const patch = workspacePatch as Record<string, unknown>;
     if (!Object.prototype.hasOwnProperty.call(patch, "cwd")) return;
     if (patch.cwd === null || patch.cwd === undefined) return;
     // Self-serve: a host path is host filesystem access (skills import reads
-    // from project workspace folders), so non-admins cannot set one.
-    if (isSelfServeRestricted(req)) {
-      throw forbidden("Choosing a folder on the server needs an instance admin on this instance.", {
-        code: SELF_SERVE_HOST_EXECUTION_ERROR_CODE,
-      });
-    }
+    // from project workspace folders), so a self-serve company cannot set one.
+    await assertSelfServeCompanyHostAccess(db, companyId, "Choosing a folder on the server");
     if ((await instanceSettings.getExperimental()).enableManagedSandboxOnly !== true) return;
     throw unprocessable(
       "This instance runs agents only in the platform-managed environment; local folders are not configurable.",
@@ -367,14 +363,16 @@ export function projectRoutes(db: Db) {
       companyId,
       readProjectPolicyEnvironmentId(projectData.executionWorkspacePolicy),
     );
-    assertNoAgentHostWorkspaceCommandMutation(
+    await assertNoHostWorkspaceCommandMutation(
+      db,
+      companyId,
       req,
       [
         ...collectProjectExecutionWorkspaceCommandPaths(projectData.executionWorkspacePolicy),
         ...collectProjectWorkspaceCommandPaths(workspace, "workspace"),
       ],
     );
-    await assertNoManagedSandboxWorkspacePath(workspace, req);
+    await assertNoManagedSandboxWorkspacePath(workspace, companyId);
     if (projectData.env !== undefined) {
       projectData.env = await secretsSvc.normalizeEnvBindingsForPersistence(
         companyId,
@@ -454,7 +452,9 @@ export function projectRoutes(db: Db) {
       if (!(await assertCanManageProjectPrivacy(req, res, existing))) return;
     }
     if (body.visibility === "private") await addActorAsPrivateProjectPrincipal(req, existing);
-    assertNoAgentHostWorkspaceCommandMutation(
+    await assertNoHostWorkspaceCommandMutation(
+      db,
+      existing.companyId,
       req,
       collectProjectExecutionWorkspaceCommandPaths(body.executionWorkspacePolicy),
     );
@@ -609,11 +609,13 @@ export function projectRoutes(db: Db) {
     const existing = await getAccessibleResource(req, res, svc.getById(id), "Project not found");
     if (!existing) return;
     if (!(await assertProjectReadAllowed(req, res, existing))) return;
-    assertNoAgentHostWorkspaceCommandMutation(
+    await assertNoHostWorkspaceCommandMutation(
+      db,
+      existing.companyId,
       req,
       collectProjectWorkspaceCommandPaths(req.body),
     );
-    await assertNoManagedSandboxWorkspacePath(req.body, req);
+    await assertNoManagedSandboxWorkspacePath(req.body, existing.companyId);
     const workspace = await svc.createWorkspace(id, req.body);
     if (!workspace) {
       res.status(422).json({ error: "Invalid project workspace payload" });
@@ -649,11 +651,13 @@ export function projectRoutes(db: Db) {
       const existing = await getAccessibleResource(req, res, svc.getById(id), "Project not found");
       if (!existing) return;
       if (!(await assertProjectReadAllowed(req, res, existing))) return;
-      assertNoAgentHostWorkspaceCommandMutation(
+      await assertNoHostWorkspaceCommandMutation(
+        db,
+        existing.companyId,
         req,
         collectProjectWorkspaceCommandPaths(req.body),
       );
-      await assertNoManagedSandboxWorkspacePath(req.body, req);
+      await assertNoManagedSandboxWorkspacePath(req.body, existing.companyId);
       const workspaceExists = (await svc.listWorkspaces(id)).some((workspace) => workspace.id === workspaceId);
       if (!workspaceExists) {
         res.status(404).json({ error: "Project workspace not found" });
@@ -692,12 +696,12 @@ export function projectRoutes(db: Db) {
       res.status(404).json({ error: "Workspace command action not found" });
       return;
     }
-    // Workspace services and jobs run as shell commands on the host.
-    assertSelfServeHostAccess(req, "Running workspace commands");
 
     const project = await getAccessibleResource(req, res, svc.getById(id), "Project not found");
     if (!project) return;
     if (!(await assertProjectReadAllowed(req, res, project))) return;
+    // Workspace services and jobs run as shell commands on the host.
+    await assertSelfServeCompanyHostAccess(db, project.companyId, "Running workspace commands");
 
     const workspace = project.workspaces.find((entry) => entry.id === workspaceId) ?? null;
     if (!workspace) {

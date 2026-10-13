@@ -127,7 +127,13 @@ async function createApp(actor?: Record<string, unknown>) {
     next();
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  app.use("/api", projectRoutes({ transaction: async (effect: (tx: unknown) => unknown) => effect({}) } as any));
+  app.use("/api", projectRoutes({
+    transaction: async (effect: (tx: unknown) => unknown) => effect({}),
+    // isSelfServeCompany lookups: the test company is self-serve.
+    select: () => ({ from: () => ({ where: () => ({
+      then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve([{ selfServe: true }]).then(resolve),
+    }) }) }),
+  } as any));
   app.use(errorHandler);
   return app;
 }
@@ -317,7 +323,7 @@ describe("project workspace host-path floor", () => {
   });
 });
 
-describe("project workspace self-serve floor", () => {
+describe("project workspace self-serve floor (company created self-serve)", () => {
   const selfServeUser = {
     type: "board",
     userId: "self-serve-user",

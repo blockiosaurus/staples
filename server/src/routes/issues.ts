@@ -250,7 +250,7 @@ import {
   isDelegatedBoardSource,
 } from "./authz.js";
 import {
-  assertNoAgentHostWorkspaceCommandMutation,
+  assertNoHostWorkspaceCommandMutation,
   collectIssueWorkspaceCommandPaths,
 } from "./workspace-command-authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
@@ -12186,7 +12186,9 @@ export function issueRoutes(
         });
         return;
       }
-      assertNoAgentHostWorkspaceCommandMutation(
+      await assertNoHostWorkspaceCommandMutation(
+        db,
+        companyId,
         req,
         collectIssueWorkspaceCommandPaths(req.body),
       );
@@ -12708,7 +12710,9 @@ export function issueRoutes(
         ))
       )
         return;
-      assertNoAgentHostWorkspaceCommandMutation(
+      await assertNoHostWorkspaceCommandMutation(
+        db,
+        parent.companyId,
         req,
         collectIssueWorkspaceCommandPaths(req.body),
       );
@@ -12982,7 +12986,9 @@ export function issueRoutes(
             : {}),
         };
         requestedChildren.push(childBody);
-        assertNoAgentHostWorkspaceCommandMutation(
+        await assertNoHostWorkspaceCommandMutation(
+          db,
+          sourceIssue.companyId,
           req,
           collectIssueWorkspaceCommandPaths(childBody),
         );
@@ -13598,7 +13604,9 @@ export function issueRoutes(
         ["status", "assigneeAgentId", "assigneeUserId", "blockedByIssueIds", "parentId", "projectId"].some(key => req.body[key] !== undefined);
       if (mcpParticipationChange) await assertMcpTaskParticipation(db, existing);
 
-      assertNoAgentHostWorkspaceCommandMutation(
+      await assertNoHostWorkspaceCommandMutation(
+        db,
+        existing.companyId,
         req,
         collectIssueWorkspaceCommandPaths(req.body),
       );

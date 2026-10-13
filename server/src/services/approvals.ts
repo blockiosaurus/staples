@@ -1,4 +1,5 @@
 import { approvalResolutionRecords, resolvableApprovalStatuses as resolvableStatuses } from "../lib/approval-records.js";
+import { assertSelfServeCompanyAgent } from "./self-serve-policy.js";
 import { budgetService } from "./budgets.js";
 import { notifyHireApproved } from "./hire-hook.js";
 import { logger } from "../middleware/logger.js";
@@ -13,6 +14,18 @@ import { createAgentLifecycle } from "./agent-lifecycle.js";
 import { instanceSettingsService } from "./instance-settings.js";
 
 export function approvalRecords(db: Db) {
+  /**
+   * A direct hire approval (no pending agent yet) creates its agent from the
+   * payload on approve, so a self-serve company refuses a disallowed adapter
+   * when the approval is filed, not only when it is approved.
+   */
+  async function assertSelfServeHirePayload(companyId: string, type: string, payload: unknown) {
+    if (type !== "hire_agent" || typeof payload !== "object" || payload === null) return;
+    const record = payload as Record<string, unknown>;
+    if (typeof record.agentId === "string") return;
+    await assertSelfServeCompanyAgent(db, companyId, String(record.adapterType ?? "process"), record.adapterConfig);
+  }
+
   const instanceSettings = instanceSettingsService(db);
   const { getExistingApproval, resolveApproval } = approvalResolutionRecords(db);
 
@@ -54,12 +67,14 @@ export function approvalRecords(db: Db) {
       return rows[0] ?? null;
     },
 
-    create: (companyId: string, data: Omit<typeof approvals.$inferInsert, "companyId">) =>
-      db
+    create: async (companyId: string, data: Omit<typeof approvals.$inferInsert, "companyId">) => {
+      await assertSelfServeHirePayload(companyId, data.type, data.payload);
+      return db
         .insert(approvals)
         .values({ ...data, companyId })
         .returning()
-        .then((rows) => rows[0]),
+        .then((rows) => rows[0]);
+    },
 
     // Cancel an open (pending/revision_requested) approval without a board
     // decision — e.g. when its paired agent is terminated during duplicate
@@ -106,6 +121,7 @@ export function approvalRecords(db: Db) {
       if (existing.status !== "revision_requested") {
         throw unprocessable("Only revision requested approvals can be resubmitted");
       }
+      await assertSelfServeHirePayload(existing.companyId, existing.type, payload ?? existing.payload);
 
       const now = new Date();
       return db
@@ -165,6 +181,7 @@ export function approvalRecords(db: Db) {
 }
 
 export function approvalService(db: Db) {
+
   const { getExistingApproval, resolveApproval, ...records } = approvalRecords(db);
   async function reconcileApprovedBuiltInAgent(companyId: string, payload: Record<string, unknown>, database: Db) {
     const sourceBuiltInAgentKey = typeof payload.sourceBuiltInAgentKey === "string" ? payload.sourceBuiltInAgentKey : null;

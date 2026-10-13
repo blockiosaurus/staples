@@ -8,6 +8,9 @@ const otherCompanyId = "22222222-2222-4222-8222-222222222222";
 
 const mockCompanyService = vi.hoisted(() => ({
   create: vi.fn(),
+  createRecord: vi.fn(),
+  completeCreate: vi.fn(),
+  remove: vi.fn(),
   list: vi.fn(),
   getById: vi.fn(),
   update: vi.fn(),
@@ -16,7 +19,7 @@ const mockCompanyService = vi.hoisted(() => ({
 const mockAccessService = vi.hoisted(() => ({
   ensureMembership: vi.fn(),
   ensureRoleDefaultGrants: vi.fn(),
-  countOwnedCompanies: vi.fn(),
+  countSelfServeCompaniesCreatedBy: vi.fn(),
   withSelfServeCompanyLock: vi.fn(),
 }));
 
@@ -50,6 +53,18 @@ type RouteOptions = {
   selfServeCompanyLimit?: number;
 };
 
+// Answers isSelfServeCompany lookups: every company reads as self-serve.
+let companyIsSelfServe = true;
+const dbStub = {
+  select: () => ({
+    from: () => ({
+      where: () => ({
+        then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve([{ selfServe: companyIsSelfServe }]).then(resolve),
+      }),
+    }),
+  }),
+};
+
 async function createApp(actor: Record<string, unknown>, options: RouteOptions) {
   const [{ companyRoutes }, { errorHandler }] = await Promise.all([
     import("../routes/companies.js"),
@@ -61,7 +76,7 @@ async function createApp(actor: Record<string, unknown>, options: RouteOptions) 
     (req as any).actor = actor;
     next();
   });
-  app.use("/api/companies", companyRoutes({} as any, undefined, options));
+  app.use("/api/companies", companyRoutes(dbStub as any, undefined, options));
   app.use(errorHandler);
   return app;
 }
@@ -83,8 +98,9 @@ const adminSession = {
 };
 
 let ownedCount = 0;
+const lockTx = { tx: true };
 mockAccessService.withSelfServeCompanyLock.mockImplementation(
-  async (_userId: string, fn: (count: () => Promise<number>) => Promise<unknown>) => fn(async () => ownedCount),
+  async (_userId: string, fn: (tx: unknown, count: () => Promise<number>) => Promise<unknown>) => fn(lockTx, async () => ownedCount),
 );
 
 const selfServeOn: RouteOptions = {
@@ -99,6 +115,8 @@ describe("POST /api/companies self-serve creation", () => {
     delete process.env.PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN;
     delete process.env.PAPERCLIP_MANAGED_CONFIG;
     mockCompanyService.create.mockResolvedValue(createdCompany);
+    mockCompanyService.createRecord.mockResolvedValue({ id: createdCompany.id });
+    mockCompanyService.completeCreate.mockResolvedValue(createdCompany);
     ownedCount = 0;
     vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "sk-ant-test-self-serve");
     vi.stubEnv("STAPLES_HOSTED_INFERENCE", "");
@@ -136,10 +154,14 @@ describe("POST /api/companies self-serve creation", () => {
 
     expect(res.status).toBe(201);
     expect(res.body).toEqual(createdCompany);
-    expect(mockCompanyService.create).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockCompanyService.createRecord).toHaveBeenCalledWith(expect.objectContaining({
       name: "Trial Co",
       defaultResponsibleUserId: "user-member",
-    }));
+      selfServe: true,
+      selfServeCreatedByUserId: "user-member",
+    }), lockTx);
+    expect(mockCompanyService.completeCreate).toHaveBeenCalledWith("company-new");
+    expect(mockCompanyService.create).not.toHaveBeenCalled();
     expect(mockAccessService.ensureMembership).toHaveBeenCalledWith(
       "company-new",
       "user",
@@ -200,29 +222,47 @@ describe("POST /api/companies self-serve creation", () => {
     expect(mockCompanyService.create).not.toHaveBeenCalled();
   });
 
-  it("creates inside the per-user lock so concurrent requests count each other", async () => {
+  it("writes the row and owner membership inside the lock, and provisions after it", async () => {
     const order: string[] = [];
     mockAccessService.withSelfServeCompanyLock.mockImplementationOnce(
-      async (_userId: string, fn: (count: () => Promise<number>) => Promise<unknown>) => {
+      async (_userId: string, fn: (tx: unknown, count: () => Promise<number>) => Promise<unknown>) => {
         order.push("lock");
-        const result = await fn(async () => 0);
+        const result = await fn(lockTx, async () => 0);
         order.push("unlock");
         return result;
       },
     );
-    mockCompanyService.create.mockImplementationOnce(async () => {
-      order.push("create");
-      return createdCompany;
+    mockCompanyService.createRecord.mockImplementationOnce(async (_data: unknown, executor: unknown) => {
+      order.push(executor === lockTx ? "insert-on-tx" : "insert-elsewhere");
+      return { id: createdCompany.id };
     });
     mockAccessService.ensureMembership.mockImplementationOnce(async () => {
       order.push("membership");
+    });
+    mockCompanyService.completeCreate.mockImplementationOnce(async () => {
+      order.push("provision");
+      return createdCompany;
     });
     const app = await createApp(memberSession, selfServeOn);
 
     const res = await request(app).post("/api/companies").send({ name: "Trial Co" });
 
     expect(res.status).toBe(201);
-    expect(order).toEqual(["lock", "create", "membership", "unlock"]);
+    expect(order).toEqual(["lock", "insert-on-tx", "membership", "unlock", "provision"]);
+  });
+
+  it("returns 409 when another create by the same user holds the lock", async () => {
+    const { conflict } = await import("../errors.js");
+    mockAccessService.withSelfServeCompanyLock.mockRejectedValueOnce(
+      conflict("Another company is being created for you. Try again in a moment.", { code: "self_serve_company_create_in_progress" }),
+    );
+    const app = await createApp(memberSession, selfServeOn);
+
+    const res = await request(app).post("/api/companies").send({ name: "Trial Co" });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "self_serve_company_create_in_progress" });
+    expect(mockCompanyService.createRecord).not.toHaveBeenCalled();
   });
 
   it("rejects agents", async () => {
@@ -244,7 +284,7 @@ describe("POST /api/companies self-serve creation", () => {
     expect(res.body).toMatchObject({ code: "self_serve_company_limit" });
     expect(res.body.error).toMatch(/created 3 companies/);
     expect(mockAccessService.withSelfServeCompanyLock).toHaveBeenCalledWith("user-member", expect.any(Function));
-    expect(mockCompanyService.create).not.toHaveBeenCalled();
+    expect(mockCompanyService.createRecord).not.toHaveBeenCalled();
   });
 
   it("honours a custom limit", async () => {
@@ -316,33 +356,39 @@ describe("self-serve users stay inside their own companies", () => {
   });
 });
 
-describe("self-serve unarchive and import floors", () => {
+describe("self-serve unarchive, delete and import floors", () => {
   const ownerSession = {
     ...memberSession,
     companyIds: [ownCompanyId],
     memberships: [{ companyId: ownCompanyId, membershipRole: "owner", status: "active" }],
   };
+  const archivedSelfServe = {
+    id: ownCompanyId, name: "Mine", status: "archived", feedbackDataSharingEnabled: false,
+    selfServe: true, selfServeCreatedByUserId: "user-member",
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    companyIsSelfServe = true;
     configureSelfServePolicy({ selfServeCompanies: true, deploymentMode: "authenticated", adapterTypes: ["claude_managed"] });
-    mockCompanyService.getById.mockResolvedValue({ id: ownCompanyId, name: "Mine", status: "archived", feedbackDataSharingEnabled: false });
-    mockCompanyService.update.mockResolvedValue({ id: ownCompanyId, name: "Mine", status: "active" });
+    mockCompanyService.getById.mockResolvedValue(archivedSelfServe);
+    mockCompanyService.update.mockResolvedValue({ ...archivedSelfServe, status: "active" });
+    mockCompanyService.remove.mockResolvedValue({ id: ownCompanyId });
   });
 
   afterEach(() => {
     resetSelfServePolicy();
   });
 
-  it("refuses to unarchive past the limit, so archiving cannot bypass it", async () => {
-    mockAccessService.countOwnedCompanies.mockResolvedValue(3);
+  it("refuses to unarchive past the creator's limit, so archiving cannot bypass it", async () => {
+    mockAccessService.countSelfServeCompaniesCreatedBy.mockResolvedValue(3);
     const app = await createApp(ownerSession, selfServeOn);
 
     const res = await request(app).patch(`/api/companies/${ownCompanyId}`).send({ status: "active" });
 
     expect(res.status).toBe(403);
     expect(res.body).toMatchObject({ code: "self_serve_company_limit" });
-    expect(mockAccessService.countOwnedCompanies).toHaveBeenCalledWith("user-member", {
+    expect(mockAccessService.countSelfServeCompaniesCreatedBy).toHaveBeenCalledWith("user-member", {
       includeArchived: false,
       excludeCompanyId: ownCompanyId,
     });
@@ -355,10 +401,28 @@ describe("self-serve unarchive and import floors", () => {
     const res = await request(app).patch(`/api/companies/${ownCompanyId}`).send({ status: "active" });
 
     expect(res.status).not.toBe(403);
-    expect(mockAccessService.countOwnedCompanies).not.toHaveBeenCalled();
+    expect(mockAccessService.countSelfServeCompaniesCreatedBy).not.toHaveBeenCalled();
   });
 
-  it("refuses company package imports for non-admins", async () => {
+  it("refuses deleting a self-serve company for a non-admin", async () => {
+    const app = await createApp(ownerSession, selfServeOn);
+
+    const res = await request(app).delete(`/api/companies/${ownCompanyId}`);
+
+    expect(res.status).toBe(403);
+    expect(mockCompanyService.remove).not.toHaveBeenCalled();
+  });
+
+  it("lets an instance admin delete a self-serve company", async () => {
+    const app = await createApp({ ...ownerSession, isInstanceAdmin: true }, selfServeOn);
+
+    const res = await request(app).delete(`/api/companies/${ownCompanyId}`);
+
+    expect(res.status).toBe(200);
+    expect(mockCompanyService.remove).toHaveBeenCalledWith(ownCompanyId);
+  });
+
+  it("refuses company package imports into a self-serve company", async () => {
     const app = await createApp(ownerSession, selfServeOn);
 
     const res = await request(app)

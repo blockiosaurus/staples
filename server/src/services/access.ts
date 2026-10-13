@@ -430,26 +430,24 @@ export function accessService(db: Db) {
   }
 
   /**
-   * Companies a user owns, for the self-serve limit
-   * (PAPERCLIP_SELF_SERVE_COMPANY_LIMIT). Creation counts archived companies
-   * too (`includeArchived`), so archiving never frees a slot; unarchiving
-   * counts the companies that are not archived.
+   * Self-serve companies a user created, for PAPERCLIP_SELF_SERVE_COMPANY_LIMIT.
+   * Counted by creator, not ownership, so handing a company to someone else
+   * frees nothing. Creation counts archived companies too (`includeArchived`),
+   * so archiving never frees a slot; unarchiving counts the active ones.
+   * Deleting a self-serve company is admin-only, so a user cannot shrink it.
    */
-  async function countOwnedCompanies(
+  async function countSelfServeCompaniesCreatedBy(
     userId: string,
     options: { includeArchived: boolean; excludeCompanyId?: string },
     executor: Db = db,
   ) {
     const rows = await executor
       .select({ value: sql<number>`count(*)` })
-      .from(companyMemberships)
-      .innerJoin(companies, eq(companies.id, companyMemberships.companyId))
+      .from(companies)
       .where(
         and(
-          eq(companyMemberships.principalType, "user"),
-          eq(companyMemberships.principalId, userId),
-          eq(companyMemberships.membershipRole, "owner"),
-          eq(companyMemberships.status, "active"),
+          eq(companies.selfServe, true),
+          eq(companies.selfServeCreatedByUserId, userId),
           options.includeArchived ? undefined : ne(companies.status, "archived"),
           options.excludeCompanyId ? ne(companies.id, options.excludeCompanyId) : undefined,
         ),
@@ -458,15 +456,28 @@ export function accessService(db: Db) {
   }
 
   /**
-   * Serialize a user's self-serve company creation. The transaction only holds
-   * a per-user advisory lock (and runs the count); `fn` writes through the
-   * normal pool, so its rows are committed before the lock is released and a
-   * concurrent request counts them.
+   * Run a user's self-serve company creation in one short transaction that
+   * holds a per-user advisory lock. The count and the company + owner
+   * membership inserts all run on `tx`, so no second pool connection is
+   * needed while the lock is held. A concurrent create by the same user does
+   * not wait for the lock: it gets a 409 and can retry.
    */
-  async function withSelfServeCompanyLock<T>(userId: string, fn: (count: () => Promise<number>) => Promise<T>) {
+  async function withSelfServeCompanyLock<T>(
+    userId: string,
+    fn: (tx: Db, countCreated: () => Promise<number>) => Promise<T>,
+  ) {
     return db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`self-serve-company:${userId}`}, 0))`);
-      return fn(() => countOwnedCompanies(userId, { includeArchived: true }, tx as unknown as Db));
+      const txDb = tx as unknown as Db;
+      await tx.execute(sql`set local lock_timeout = '5s'`);
+      const [lock] = await tx.execute(
+        sql`select pg_try_advisory_xact_lock(hashtextextended(${`self-serve-company:${userId}`}, 0)) as locked`,
+      ) as unknown as Array<{ locked: boolean }>;
+      if (!lock?.locked) {
+        throw conflict("Another company is being created for you. Try again in a moment.", {
+          code: "self_serve_company_create_in_progress",
+        });
+      }
+      return fn(txDb, () => countSelfServeCompaniesCreatedBy(userId, { includeArchived: true }, txDb));
     });
   }
 
@@ -1178,7 +1189,7 @@ export function accessService(db: Db) {
     ensureMembership,
     listMembers,
     listActiveUserMemberships,
-    countOwnedCompanies,
+    countSelfServeCompaniesCreatedBy,
     withSelfServeCompanyLock,
     copyActiveUserMemberships,
     ensureRoleDefaultGrants,

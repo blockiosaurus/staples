@@ -1,5 +1,5 @@
 import type { InteractionResolverGovernance } from "@paperclipai/shared";
-import { numeric, pgTable, uuid, text, integer, timestamp, boolean, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+import { numeric, pgTable, uuid, text, integer, timestamp, boolean, jsonb, uniqueIndex, index } from "drizzle-orm/pg-core";
 
 export const companies = pgTable(
   "companies",
@@ -29,10 +29,19 @@ export const companies = pgTable(
     feedbackDataSharingConsentAt: timestamp("feedback_data_sharing_consent_at", { withTimezone: true }),
     feedbackDataSharingConsentByUserId: text("feedback_data_sharing_consent_by_user_id"),
     feedbackDataSharingTermsVersion: text("feedback_data_sharing_terms_version"),
+    /**
+     * Created by a non-admin under PAPERCLIP_SELF_SERVE_COMPANIES. While that
+     * flag is on, the self-serve floor (remote adapters only, no host
+     * execution) applies to this company whatever the actor.
+     */
+    selfServe: boolean("self_serve").notNull().default(false),
+    /** The user who created this self-serve company; counts toward their limit. */
+    selfServeCreatedByUserId: text("self_serve_created_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     issuePrefixUniqueIdx: uniqueIndex("companies_issue_prefix_idx").on(table.issuePrefix),
+    selfServeCreatorIdx: index("companies_self_serve_creator_idx").on(table.selfServeCreatedByUserId),
   }),
 );

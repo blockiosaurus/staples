@@ -1,4 +1,5 @@
 import { executeHeartbeatRuntime, NativeSessionResumeScheduledError, NativeWorkspaceFinalizeScheduledError } from "./heartbeat/runtime-execution.js";
+import { isSelfServeCompany, selfServeAgentViolation, SELF_SERVE_RUN_REFUSED_ERROR_CODE } from "./self-serve-policy.js";
 import { selectHeartbeatRuntime } from "./heartbeat/runtime-selection.js";
 import { createHeartbeatRunCompletion } from "./heartbeat/run-completion.js";
 export {
@@ -2184,6 +2185,32 @@ export function heartbeatService(
         return;
       }
 
+      // Self-serve runtime backstop: whatever path created or edited this
+      // agent, a self-serve company never runs a host-executed adapter or an
+      // endpoint override. Fail before any workspace or adapter work.
+      const refuseSelfServeRun = async (violation: string) => {
+        logger.warn({ runId, agentId: agent?.id, companyId: agent?.companyId, violation }, "self-serve floor refused a run");
+        await setRunStatus(runId, "failed", {
+          error: violation,
+          errorCode: SELF_SERVE_RUN_REFUSED_ERROR_CODE,
+          finishedAt: new Date(),
+        });
+        await setWakeupStatus(run.wakeupRequestId, "failed", {
+          finishedAt: new Date(),
+          error: violation,
+        });
+        const failedRun = await getRun(runId);
+        if (failedRun) await releaseIssueExecutionAndPromote(failedRun);
+      };
+      const selfServeCompany = await isSelfServeCompany(db, agent.companyId);
+      if (selfServeCompany) {
+        const violation = selfServeAgentViolation(agent.adapterType, agent.adapterConfig);
+        if (violation) {
+          await refuseSelfServeRun(violation);
+          return;
+        }
+      }
+
       // The claimed adapter identity is immutable recovery evidence. Do not
       // execute a newly selected adapter under a previous adapter's claim.
       const selectedAdapter = claimedAdapterType(run);
@@ -2414,6 +2441,16 @@ export function heartbeatService(
               issueContext.assigneeAdapterOverrides,
             )
           : null;
+      if (selfServeCompany && issueAssigneeOverrides?.adapterConfig) {
+        const violation = selfServeAgentViolation(agent.adapterType, {
+          ...parseObject(agent.adapterConfig),
+          ...issueAssigneeOverrides.adapterConfig,
+        });
+        if (violation) {
+          await refuseSelfServeRun(violation);
+          return;
+        }
+      }
       const experimentalInstanceSettings =
         await instanceSettings.getExperimental();
       const isolatedWorkspacesEnabled =

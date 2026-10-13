@@ -1,5 +1,5 @@
 import { isCrossSiteOAuthCallbackNavigation, oauthCallbackInterstitialHtml } from "../lib/oauth-browser-return.js";
-import { assertSelfServeHostAccess } from "../services/self-serve-policy.js";
+import { assertSelfServeCompanyHostAccess } from "../services/self-serve-policy.js";
 import { aiConnectionRouterPluginKey } from "@paperclipai/shared";
 import { aiConnectionRouterService } from "../services/ai-connection-router.js";
 import { composioAppSetupSchema, composioAppsRefreshSchema, composioAppsSyncSchema, composioAppAccountSchema } from "@paperclipai/shared";
@@ -2742,7 +2742,7 @@ function connectorEnrollmentPrincipal(req: Request): string {
     const companyId = req.params.companyId as string;
     await assertToolsAdmin(req, companyId);
     // A stdio template is a command the server spawns on the host.
-    assertSelfServeHostAccess(req, "Adding a local command (stdio) tool");
+    await assertSelfServeCompanyHostAccess(db, companyId, "Adding a local command (stdio) tool");
     const template = await svc.createStdioCommandTemplate(companyId, req.body, getActorInfo(req));
     await logActivity(db, {
       companyId,

@@ -32,6 +32,10 @@ export interface Company {
   feedbackDataSharingConsentAt: Date | null;
   feedbackDataSharingConsentByUserId: string | null;
   feedbackDataSharingTermsVersion: string | null;
+  /** Created self-serve (PAPERCLIP_SELF_SERVE_COMPANIES); the host-execution floor applies. */
+  selfServe?: boolean;
+  /** The user who created it self-serve; counts toward their limit. */
+  selfServeCreatedByUserId?: string | null;
   logoAssetId: string | null;
   logoUrl: string | null;
   createdAt: Date;

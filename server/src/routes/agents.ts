@@ -12,7 +12,7 @@ import { agentIdentityService } from "../services/agent-identity.js";
 import { aiConnectionRouterService, poolMemberRuntimeConfig } from "../services/ai-connection-router.js";
 import { connectionIntentService } from "../services/connection-intents.js";
 import { isCloudManagedInstance } from "../services/cloud-instance.js";
-import { assertSelfServeAdapterAllowed, isSelfServeRestricted } from "../services/self-serve-policy.js";
+import { assertSelfServeCompanyAgent } from "../services/self-serve-policy.js";
 import { dotRunnerBroker } from "../services/dot-runner-broker.js";
 import { publicMcpConfig } from "../services/public-mcp/oauth.js";
 import { connectionIntentDeliveryService } from "../services/connection-intent-delivery.js";
@@ -2633,16 +2633,14 @@ export function agentRoutes(
     adapterConfig: Record<string, unknown>,
     allowPlainCredentials = false,
   ) {
-    // Agent keys never set these. On a self-serve instance neither do
-    // non-admin people (who are also refused *_local adapters outright).
-    if ((req.actor.type !== "agent" && !isSelfServeRestricted(req)) || !adapterType.endsWith("_local")) return;
+    if (req.actor.type !== "agent" || !adapterType.endsWith("_local")) return;
     const changedKeys = LOCAL_ADAPTER_HOST_COMMAND_KEYS.filter((key) =>
       adapterConfig[key] !== undefined &&
       (key !== "env" || !containsOnlyLocalAdapterCredentialRefs(adapterType, adapterConfig.env, allowPlainCredentials)),
     );
     if (changedKeys.length === 0) return;
     throw forbidden(
-      `${req.actor.type === "agent" ? "Agent keys" : "Non-admins on this instance"} cannot configure host-executed local adapter settings (${changedKeys.join(", ")}).`,
+      `Agent keys cannot configure host-executed local adapter settings (${changedKeys.join(", ")}).`,
     );
   }
 
@@ -3100,7 +3098,7 @@ export function agentRoutes(
       const type = assertKnownAdapterType(req.params.type as string);
       await assertCanCreateAgentsForCompany(req, companyId);
       // The test runs the adapter (and any command in its config) on the host.
-      assertSelfServeAdapterAllowed(req, type);
+      await assertSelfServeCompanyAgent(db, companyId, type, req.body?.adapterConfig);
 
       const adapter = requireServerAdapter(type);
 
@@ -4095,7 +4093,7 @@ export function agentRoutes(
     }
     assertNoAgentAdapterConfigMutation(req, rollbackAdapterConfig);
     assertNoAgentLocalAdapterHostCommandMutation(req, rollbackAdapterType, rollbackAdapterConfig);
-    assertSelfServeAdapterAllowed(req, rollbackAdapterType);
+    await assertSelfServeCompanyAgent(db, existing.companyId, rollbackAdapterType, rollbackAdapterConfig);
     assertNoAgentProcessAdapterMutation(
       req,
       rollbackAdapterType,
@@ -4267,7 +4265,7 @@ export function agentRoutes(
     assertNoAgentAdapterConfigMutation(req, rawHireAdapterConfig);
     assertNoAgentLocalAdapterHostCommandMutation(req, hireInput.adapterType, rawHireAdapterConfig, await callerUsesAiConnectionPool(req, companyId));
     assertNoAgentProcessAdapterMutation(req, hireInput.adapterType, Object.keys(rawHireAdapterConfig).length > 0);
-    assertSelfServeAdapterAllowed(req, hireInput.adapterType);
+    await assertSelfServeCompanyAgent(db, companyId, hireInput.adapterType, rawHireAdapterConfig);
     const hiredAgentId = randomUUID();
     const authInheritance = await applyHiringAgentAuthInheritance(
       req,
@@ -4588,7 +4586,7 @@ export function agentRoutes(
     assertNoAgentAdapterConfigMutation(req, rawCreateAdapterConfig);
     assertNoAgentLocalAdapterHostCommandMutation(req, createInput.adapterType, rawCreateAdapterConfig, await callerUsesAiConnectionPool(req, companyId));
     assertNoAgentProcessAdapterMutation(req, createInput.adapterType, Object.keys(rawCreateAdapterConfig).length > 0);
-    assertSelfServeAdapterAllowed(req, createInput.adapterType);
+    await assertSelfServeCompanyAgent(db, companyId, createInput.adapterType, rawCreateAdapterConfig);
     const agentId = randomUUID();
     const requestedAdapterConfig = applyCodexLocalKeyIsolation(
       companyId,
@@ -5289,7 +5287,12 @@ export function agentRoutes(
       hasOwn(patchData, "adapterType") ||
       hasOwn(patchData, "adapterConfig");
     assertNoAgentProcessAdapterMutation(req, requestedAdapterType, touchesAdapterConfiguration);
-    if (touchesAdapterConfiguration) assertSelfServeAdapterAllowed(req, requestedAdapterType);
+    if (touchesAdapterConfiguration) {
+      await assertSelfServeCompanyAgent(db, existing.companyId, requestedAdapterType, {
+        ...(typeof patchData.adapterType === "string" && patchData.adapterType !== existing.adapterType ? {} : asRecord(existing.adapterConfig) ?? {}),
+        ...(asRecord(patchData.adapterConfig) ?? {}),
+      });
+    }
     if (touchesAdapterConfiguration) {
       assertExternalInstructionsAdmin(req, existing);
       const existingAdapterConfig = asRecord(existing.adapterConfig) ?? {};
@@ -6372,7 +6375,7 @@ export function agentRoutes(
     if (!agent) return;
     await assertBoardCanManageAgentsForCompany(req, agent.companyId);
     // The login runs the agent's configured CLI on the host.
-    assertSelfServeAdapterAllowed(req, agent.adapterType);
+    await assertSelfServeCompanyAgent(db, agent.companyId, agent.adapterType, agent.adapterConfig);
     if (agent.adapterType !== "claude_local") {
       res.status(400).json({ error: "Login is only supported for claude_local agents" });
       return;

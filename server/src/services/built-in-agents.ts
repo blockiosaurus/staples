@@ -1,4 +1,5 @@
 import { createAgentLifecycle, createAgentLifecycleEffects, scheduleAgentLifecycle } from "./agent-lifecycle.js";
+import { isSelfServeCompany, selfServeAgentViolation, SELF_SERVE_HOST_EXECUTION_ERROR_CODE } from "./self-serve-policy.js";
 import { HOSTED_INFERENCE_ADAPTER_TYPE, hostedAssistantBudgetCents, hostedInference } from "./hosted-inference.js";
 import { ensureHostedAssistantBudget } from "./hosted-inference-access.js";
 import { hasAnthropicKeyBinding } from "./assistant-setup.js";
@@ -15,7 +16,7 @@ import type { Db } from "@paperclipai/db";
 import { activityLog, agents, builtInManagedResources, companies, heartbeatRuns, issueThreadInteractions, issues, routines, routineTriggers } from "@paperclipai/db";
 import { ASSISTANT_BUILT_IN_AGENT_KEY, ASSISTANT_WEEKLY_UPDATE_ROUTINE_KEY, isAssistantAgent, syncRoutineVariablesWithTemplate } from "@paperclipai/shared";
 import type { Agent, Approval, CompanySkill, PermissionKey, Routine, RoutineTrigger, RoutineVariable } from "@paperclipai/shared";
-import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
+import { conflict, forbidden, HttpError, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { logger } from "../middleware/logger.js";
 import type { ActivityPublication } from "../types/activity-publication.js";
@@ -778,6 +779,13 @@ export function requireBuiltInAgentDefinition(key: string) {
   return definition;
 }
 
+function canRunHostedInSelfServe(definition: BuiltInAgentDefinition) {
+  const hosted = hostedInference();
+  return hosted.available
+    && Boolean(definition.allowedAdapterTypes?.includes(hosted.adapterType))
+    && selfServeAgentViolation(hosted.adapterType, { model: hosted.model }) === null;
+}
+
 function defaultAdapterType(definition: BuiltInAgentDefinition) {
   return definition.defaultAdapterType ?? definition.allowedAdapterTypes?.[0] ?? "process";
 }
@@ -1030,6 +1038,27 @@ export function builtInAgentService(db: Db) {
     options: { preferHosted?: boolean } = {},
   ) {
     if (input.adapterType || input.adapterConfig) return input;
+    // Self-serve company: built-ins run on Claude (hosted) or not at all. A
+    // local CLI default would execute on the shared server host.
+    if (await isSelfServeCompany(db, companyId)) {
+      const hosted = hostedInference();
+      if (
+        !hosted.available
+        || !definition.allowedAdapterTypes?.includes(hosted.adapterType)
+        || selfServeAgentViolation(hosted.adapterType, { model: hosted.model }) !== null
+      ) {
+        throw forbidden(`Built-in agent ${definition.key} can't run on Claude (hosted), so it isn't available in this company.`, {
+          code: SELF_SERVE_HOST_EXECUTION_ERROR_CODE,
+        });
+      }
+      return {
+        ...input,
+        adapterType: hosted.adapterType,
+        adapterConfig: { model: hosted.model },
+        ...(definition.key === ASSISTANT_BUILT_IN_AGENT_KEY ? { budgetMonthlyCents: hostedAssistantBudgetCents() } : {}),
+        hostedInference: true,
+      };
+    }
     // A new Assistant runs on Claude (hosted) when the server holds an
     // Anthropic key: no key or env goes into its config (the adapter reads the
     // server's key itself). Takes precedence over sibling inheritance.
@@ -2461,6 +2490,8 @@ export function builtInAgentService(db: Db) {
     // Best-effort: a failed or slow model lookup must skip the write, never block the hire.
     // Never moves an existing Assistant onto (or off) Claude (hosted).
     if (assistant.adapterType === HOSTED_INFERENCE_ADAPTER_TYPE) return null;
+    // Self-serve company: never move the Assistant onto a sibling's adapter.
+    if (await isSelfServeCompany(db, companyId)) return null;
     const lookup = { degraded: false };
     let inherited: Awaited<ReturnType<typeof defaultProvisionInput>>;
     try {
@@ -2504,6 +2535,7 @@ export function builtInAgentService(db: Db) {
 
   async function autoProvisionBundledAgents(companyId: string) {
     const company = await ensureCompany(companyId);
+    const selfServe = await isSelfServeCompany(db, companyId);
     let autoEnsured = 0;
     let pendingApprovals = 0;
     // A fresh company starts with only its own lead agent — the Reflection
@@ -2520,6 +2552,9 @@ export function builtInAgentService(db: Db) {
       const shouldProvision = existing !== null
         || (AUTO_PROVISION_ON_COMPANY_CREATE_KEYS.has(definition.key) && company.status === "active");
       if (!shouldProvision) continue;
+      // Self-serve company: skip a built-in that can't run hosted rather than
+      // provision it on a local CLI.
+      if (existing === null && selfServe && !canRunHostedInSelfServe(definition)) continue;
       if (company.requireBoardApprovalForNewAgents && !definition.bypassHireApproval) {
         const result = await provision(companyId, definition.key);
         if (result.approval) pendingApprovals += 1;

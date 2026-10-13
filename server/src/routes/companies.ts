@@ -71,7 +71,7 @@ import {
 } from "../services/index.js";
 import { isCloudManagedInstance } from "../services/cloud-instance.js";
 import { hostedInference } from "../services/hosted-inference.js";
-import { assertSelfServeHostAccess, isSelfServeRestricted } from "../services/self-serve-policy.js";
+import { assertSelfServeCompanyHostAccess, getSelfServePolicy, SELF_SERVE_HOST_EXECUTION_ERROR_CODE } from "../services/self-serve-policy.js";
 import { getHiddenSettings } from "../services/settings-visibility.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo, hasCompanyAccess } from "./authz.js";
@@ -362,7 +362,7 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
     offset: z.string().optional(),
   }).passthrough();
 
-  function assertImportTargetAccess(
+  async function assertImportTargetAccess(
     req: Request,
     target: { mode: "new_company" } | { mode: "existing_company"; companyId: string },
   ) {
@@ -371,6 +371,7 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
       return;
     }
     assertCompanyAccess(req, target.companyId);
+    await assertSelfServeCompanyHostAccess(db, target.companyId, "Importing a company package");
   }
 
   async function assertSameCompanyCeoAgentOrBoard(req: Request, companyId: string, capability: string) {
@@ -585,9 +586,14 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
       });
     }
     // An import package carries agents with any adapter and config, including
-    // host-executed ones. Self-serve instances keep imports admin-only.
-    assertSelfServeHostAccess(_req, "Importing a company package");
-    next();
+    // host-executed ones, and project workspace commands. Self-serve companies
+    // cannot import.
+    const companyId = typeof _req.params.companyId === "string" ? _req.params.companyId : null;
+    if (!companyId) {
+      next();
+      return;
+    }
+    assertSelfServeCompanyHostAccess(db, companyId, "Importing a company package").then(() => next(), next);
   };
   // COMPANY_IMPORT_TRANSFERS_ROUTE_PATH nests under the import path, so these
   // two prefixes cover every import route registered below.
@@ -597,7 +603,7 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
   router.post("/import/preview", async (req, res) => {
     assertBoard(req);
     const body = companyPortabilityPreviewSchema.parse(await resolveImportPayload(req, res));
-    assertImportTargetAccess(req, body.target);
+    await assertImportTargetAccess(req, body.target);
     const preview = await portability.previewImport(body);
     res.json(preview);
   });
@@ -641,7 +647,7 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
     const operation = async () => {
       try {
         const importBody = companyPortabilityImportSchema.parse(rawImportBody);
-        assertImportTargetAccess(req, importBody.target);
+        await assertImportTargetAccess(req, importBody.target);
         const activity = importedCompanyActivityContext(actor, importBody.include ?? null);
         const result = await portability.importBundle(importBody, boardUserId, {
           pauseAutomations: importBody.pauseAutomations === true,
@@ -1050,7 +1056,7 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
     const resolved = await resolveImportTransferBody(req, res);
     if (!resolved) return;
     const body = companyPortabilityPreviewSchema.parse(resolved.rawBody);
-    assertImportTargetAccess(req, body.target);
+    await assertImportTargetAccess(req, body.target);
     const preview = await portability.previewImport(body);
     res.json(preview);
   });
@@ -1272,15 +1278,39 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
         );
       }
       const limit = options?.selfServeCompanyLimit ?? DEFAULT_SELF_SERVE_COMPANY_LIMIT;
-      company = await access.withSelfServeCompanyLock(req.actor.userId!, async (countOwned) => {
-        const owned = await countOwned();
-        if (owned >= limit) {
+      const userId = req.actor.userId!;
+      // The row, owner membership and grants are written on the lock's own
+      // transaction, so a concurrent create by this user counts this one.
+      const record = await access.withSelfServeCompanyLock(userId, async (tx, countCreated) => {
+        const created = await countCreated();
+        if (created >= limit) {
           throw forbidden(
-            `You have already created ${owned} ${owned === 1 ? "company" : "companies"}, which is the limit on this instance. Archived companies count too. Ask an admin for more.`,
+            `You have already created ${created} ${created === 1 ? "company" : "companies"}, which is the limit on this instance. Archived companies count too. Ask an admin for more.`,
             { code: SELF_SERVE_COMPANY_LIMIT_ERROR_CODE },
           );
         }
-        return createOwnedCompany(true);
+        const row = await svc.createRecord({
+          ...req.body,
+          defaultResponsibleUserId: req.body.defaultResponsibleUserId ?? userId,
+          selfServe: true,
+          selfServeCreatedByUserId: userId,
+        }, tx);
+        const txAccess = accessService(tx);
+        await txAccess.ensureMembership(row.id, "user", userId, "owner", "active");
+        await txAccess.ensureRoleDefaultGrants(row.id, userId, "owner", userId);
+        return row;
+      });
+      // Built-in provisioning (the Assistant, on Claude (hosted)) runs after
+      // commit, outside the lock.
+      company = await svc.completeCreate(record.id);
+      await logActivity(db, {
+        companyId: company.id,
+        actorType: "user",
+        actorId: userId,
+        action: "company.created",
+        entityType: "company",
+        entityId: company.id,
+        details: { name: company.name, selfServe: true },
       });
     }
     if (company.budgetMonthlyCents > 0) {
@@ -1335,17 +1365,25 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
       body.status === "archived" && existingCompany.status !== "archived";
     const transitionsArchivedToActive =
       body.status === "active" && existingCompany.status === "archived";
-    // Unarchiving by a non-admin on a self-serve instance must fit the same
-    // per-user limit as creating, or archive/unarchive would get around it.
-    if (transitionsArchivedToActive && req.actor.type === "board" && isSelfServeRestricted(req)) {
+    // Unarchiving a self-serve company must fit its creator's limit again, or
+    // archive/unarchive would get around it. Instance admins are not limited.
+    const actorIsInstanceAdmin = req.actor.type === "board"
+      && (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin === true);
+    if (
+      transitionsArchivedToActive
+      && !actorIsInstanceAdmin
+      && getSelfServePolicy().enabled
+      && existingCompany.selfServe === true
+      && existingCompany.selfServeCreatedByUserId
+    ) {
       const limit = options?.selfServeCompanyLimit ?? DEFAULT_SELF_SERVE_COMPANY_LIMIT;
-      const owned = await access.countOwnedCompanies(req.actor.userId ?? "", {
+      const active = await access.countSelfServeCompaniesCreatedBy(existingCompany.selfServeCreatedByUserId, {
         includeArchived: false,
         excludeCompanyId: companyId,
       });
-      if (owned >= limit) {
+      if (active >= limit) {
         throw forbidden(
-          `You already have ${owned} active ${owned === 1 ? "company" : "companies"}, which is the limit on this instance. Archive one first, or ask an admin.`,
+          `This would make ${active + 1} active companies created by the same person, over the limit of ${limit} on this instance. Archive another first, or ask an admin.`,
           { code: SELF_SERVE_COMPANY_LIMIT_ERROR_CODE },
         );
       }
@@ -1431,6 +1469,16 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     assertBoard(req);
+    // Deleting a self-serve company would erase its spend history and free a
+    // slot under the creator's limit, so only an instance admin may do it.
+    if (getSelfServePolicy().enabled && !(req.actor.source === "local_implicit" || req.actor.isInstanceAdmin === true)) {
+      const target = await svc.getById(companyId);
+      if (target?.selfServe === true) {
+        throw forbidden("Only an instance admin can delete this company on this instance.", {
+          code: SELF_SERVE_HOST_EXECUTION_ERROR_CODE,
+        });
+      }
+    }
     const company = await svc.remove(companyId);
     if (!company) {
       res.status(404).json({ error: "Company not found" });

@@ -1,4 +1,5 @@
 import type { LifecycleEffects } from "./effects.js";
+import { assertSelfServeCompanyAgent } from "../../../services/self-serve-policy.js";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { agents, agentApiKeys, type Db } from "@paperclipai/db";
@@ -15,6 +16,9 @@ export function agentRecords(db: Db, effects: LifecycleEffects) {
       return effects.transaction(db, companyId, async (txDb, publications) => {
         const tx = txDb;
         const prepared = await effects.prepareHire(txDb, companyId, data, options);
+        // Self-serve floor: every agent creation path (routes, approvals,
+        // imports, built-ins, seeds) converges here.
+        await assertSelfServeCompanyAgent(txDb, companyId, prepared.adapterType, prepared.adapterConfig);
         const created = await tx
           .insert(agents)
           .values({
@@ -98,6 +102,7 @@ export function agentRecords(db: Db, effects: LifecycleEffects) {
           .returning()
           .then((rows) => rows[0] ?? null);
         if (!updated) return null;
+        await assertSelfServeCompanyAgent(txDb, updated.companyId, updated.adapterType, updated.adapterConfig);
         await effects.completeHireApproval(txDb, updated, existing);
         await effects.recordCreation(txDb, existing.companyId, updated.id);
         const agent = await agentRecordQueries(txDb).getById(updated.id);

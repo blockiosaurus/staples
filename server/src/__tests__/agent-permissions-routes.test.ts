@@ -222,7 +222,7 @@ function registerModuleMocks() {
   }));
 }
 
-function createDbStub(options: { requireBoardApprovalForNewAgents?: boolean } = {}) {
+function createDbStub(options: { requireBoardApprovalForNewAgents?: boolean; selfServe?: boolean } = {}) {
   return {
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
@@ -232,6 +232,7 @@ function createDbStub(options: { requireBoardApprovalForNewAgents?: boolean } = 
               id: companyId,
               name: "Paperclip",
               requireBoardApprovalForNewAgents: options.requireBoardApprovalForNewAgents ?? false,
+              selfServe: options.selfServe ?? false,
             }])),
           ),
         }),
@@ -276,7 +277,7 @@ describe("agent permission routes", () => {
     return { errorHandler, agentRoutes };
   });
 
-  function createApp(actor: Record<string, unknown>, dbOptions: { requireBoardApprovalForNewAgents?: boolean } = {}) {
+  function createApp(actor: Record<string, unknown>, dbOptions: { requireBoardApprovalForNewAgents?: boolean; selfServe?: boolean } = {}) {
     const { errorHandler, agentRoutes } = routeModules.value;
     const app = express();
     app.use(express.json());
@@ -896,7 +897,7 @@ describe("agent permission routes", () => {
 
     it.each(["process", "claude_local", "codex_local"])("refuses a self-serve user creating a %s agent", async (adapterType) => {
       await withSelfServe(true);
-      const app = await createApp(selfServeUser);
+      const app = await createApp(selfServeUser, { selfServe: true });
 
       const res = await requestApp(app, (baseUrl) => request(baseUrl)
         .post(`/api/companies/${companyId}/agents`)
@@ -909,7 +910,7 @@ describe("agent permission routes", () => {
 
     it("refuses a self-serve user hiring a local agent", async () => {
       await withSelfServe(true);
-      const app = await createApp(selfServeUser);
+      const app = await createApp(selfServeUser, { selfServe: true });
 
       const res = await requestApp(app, (baseUrl) => request(baseUrl)
         .post(`/api/companies/${companyId}/agent-hires`)
@@ -923,7 +924,7 @@ describe("agent permission routes", () => {
     it("refuses switching an agent onto a local adapter", async () => {
       await withSelfServe(true);
       mockAgentService.getById.mockResolvedValue({ ...baseAgent, adapterType: "claude_managed" });
-      const app = await createApp(selfServeUser);
+      const app = await createApp(selfServeUser, { selfServe: true });
 
       const res = await requestApp(app, (baseUrl) => request(baseUrl)
         .patch(`/api/agents/${agentId}`)
@@ -941,7 +942,7 @@ describe("agent permission routes", () => {
     ])("refuses setting host command key %s", async (_label, adapterConfig) => {
       await withSelfServe(true);
       mockAgentService.getById.mockResolvedValue({ ...baseAgent, adapterType: "claude_local" });
-      const app = await createApp(selfServeUser);
+      const app = await createApp(selfServeUser, { selfServe: true });
 
       const res = await requestApp(app, (baseUrl) => request(baseUrl)
         .patch(`/api/agents/${agentId}`)
@@ -954,7 +955,7 @@ describe("agent permission routes", () => {
     it("refuses host-executed workspace commands", async () => {
       await withSelfServe(true);
       mockAgentService.getById.mockResolvedValue({ ...baseAgent, adapterType: "claude_managed" });
-      const app = await createApp(selfServeUser);
+      const app = await createApp(selfServeUser, { selfServe: true });
 
       const res = await requestApp(app, (baseUrl) => request(baseUrl)
         .patch(`/api/agents/${agentId}`)
@@ -973,7 +974,7 @@ describe("agent permission routes", () => {
         agentId,
         afterConfig: { adapterType: "process", adapterConfig: {}, runtimeConfig: {} },
       });
-      const app = await createApp(selfServeUser);
+      const app = await createApp(selfServeUser, { selfServe: true });
 
       const res = await requestApp(app, (baseUrl) => request(baseUrl)
         .post(`/api/agents/${agentId}/config-revisions/33333333-3333-4333-8333-333333333333/rollback`));
@@ -985,7 +986,7 @@ describe("agent permission routes", () => {
 
     it("refuses a host-side adapter environment test", async () => {
       await withSelfServe(true);
-      const app = await createApp(selfServeUser);
+      const app = await createApp(selfServeUser, { selfServe: true });
 
       const res = await requestApp(app, (baseUrl) => request(baseUrl)
         .post(`/api/companies/${companyId}/adapters/process/test-environment`)
@@ -999,7 +1000,7 @@ describe("agent permission routes", () => {
       await withSelfServe(true);
       mockAccessService.hasPermission.mockResolvedValue(true);
       mockAgentService.getById.mockResolvedValue({ ...baseAgent, adapterType: "claude_managed", permissions: { canCreateAgents: true } });
-      const app = await createApp({ type: "agent", agentId, companyId, source: "agent_key", runId: "run-1" });
+      const app = await createApp({ type: "agent", agentId, companyId, source: "agent_key", runId: "run-1" }, { selfServe: true });
 
       const res = await requestApp(app, (baseUrl) => request(baseUrl)
         .post(`/api/companies/${companyId}/agent-hires`)
@@ -1009,9 +1010,21 @@ describe("agent permission routes", () => {
       expect(mockAgentService.create).not.toHaveBeenCalled();
     });
 
-    it("leaves instance admins unaffected", async () => {
+    it("applies to instance admins too inside a self-serve company", async () => {
       await withSelfServe(true);
-      const app = await createApp(instanceAdmin);
+      const app = await createApp(instanceAdmin, { selfServe: true });
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/companies/${companyId}/agents`)
+        .send({ name: "Builder", role: "engineer", adapterType: "process", adapterConfig: {} }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(mockAgentService.create).not.toHaveBeenCalled();
+    });
+
+    it("leaves admin-created companies unaffected", async () => {
+      await withSelfServe(true);
+      const app = await createApp(selfServeUser, { selfServe: false });
 
       const res = await requestApp(app, (baseUrl) => request(baseUrl)
         .post(`/api/companies/${companyId}/agents`)
@@ -1021,9 +1034,22 @@ describe("agent permission routes", () => {
       expect(mockAgentService.create).toHaveBeenCalled();
     });
 
+    it("refuses a claude_managed apiBaseUrl override", async () => {
+      await withSelfServe(true);
+      const app = await createApp(selfServeUser, { selfServe: true });
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/companies/${companyId}/agents`)
+        .send({ name: "Remote", role: "engineer", adapterType: "claude_managed", adapterConfig: { apiBaseUrl: "http://metadata.internal/v1" } }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.code).toBe(FLOOR_CODE);
+      expect(mockAgentService.create).not.toHaveBeenCalled();
+    });
+
     it("changes nothing when self-serve is off", async () => {
       await withSelfServe(false);
-      const app = await createApp(selfServeUser);
+      const app = await createApp(selfServeUser, { selfServe: true });
 
       const res = await requestApp(app, (baseUrl) => request(baseUrl)
         .post(`/api/companies/${companyId}/agents`)

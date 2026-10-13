@@ -67,8 +67,8 @@ Generate each secret yourself (never commit them):
 | `PAPERCLIP_PUBLIC_URL` | `https://<your-service>.up.railway.app` | The public origin, no trailing slash. Also the base for connector OAuth callbacks and sign-in origin checks. Generate the domain first (**Settings** > **Networking** > **Generate Domain**), then set this. |
 | `STAPLES_HOSTED_ANTHROPIC_API_KEY` | your Anthropic API key | Turns on hosted inference. Use a dedicated key with its own provider-side spend limit. |
 | `PAPERCLIP_SELF_SERVE_COMPANIES` | `true` | Lets each signed-in trial user create their own company. Default `false`. Only for trusted, invited users (see below). |
-| `PAPERCLIP_SELF_SERVE_COMPANY_LIMIT` | `1` | Companies each non-admin may own (archived ones count). Default `3`; use `1` for a trial. |
-| `PAPERCLIP_SELF_SERVE_ADAPTERS` | `claude_managed` | Agent adapters non-admins may use. The default is fine. `process` and `*_local` adapters are never allowed for non-admins, because they run inside this container. |
+| `PAPERCLIP_SELF_SERVE_COMPANY_LIMIT` | `1` | Self-serve companies each user may create. Archived companies count, and only an admin can delete one. Default `3`; use `1` for a trial. |
+| `PAPERCLIP_SELF_SERVE_ADAPTERS` | `claude_managed` | Agent adapters allowed in self-serve companies. The default is fine. `process` and `*_local` adapters are never allowed there, because they run inside this container. |
 
 Optionally, Railway can generate a secret for you with a template variable such
 as `${{ secret(64, "abcdef0123456789") }}` in the raw editor.
@@ -128,10 +128,12 @@ people, and once they have accounts, set `PAPERCLIP_AUTH_DISABLE_SIGN_UP=true`
 and redeploy to stop new sign-ups. (Sign-up is open by default.) Existing users
 still sign in.
 
-Every company shares this one container and database. Non-admins can't run
-code on the host (see "Host-execution floor" in
-[DEPLOYMENT-MODES.md](DEPLOYMENT-MODES.md)), but treat trial users as trusted
-colleagues, not hostile tenants.
+Every company shares this one container and database. Companies created
+self-serve are held to a host-execution floor: remote adapters only, no
+endpoint overrides, no workspace commands, and a runtime backstop (see
+"Host-execution floor" in [DEPLOYMENT-MODES.md](DEPLOYMENT-MODES.md)). Your own
+admin-created company is not restricted, so be careful whom you invite into it.
+Even so, treat trial users as trusted colleagues, not hostile tenants.
 
 ## 8. Share the URL
 

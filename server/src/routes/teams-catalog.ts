@@ -1,5 +1,5 @@
 import { Router, type Request } from "express";
-import { assertSelfServeAdapterAllowed, getSelfServePolicy, isSelfServeRestricted } from "../services/self-serve-policy.js";
+import { assertSelfServeCompanyAgent, getSelfServePolicy, isSelfServeCompany } from "../services/self-serve-policy.js";
 import type { Db } from "@paperclipai/db";
 import {
   AGENT_TEMPLATE_TEAMS_CATALOG_REJECTION,
@@ -131,13 +131,13 @@ export function teamsCatalogRoutes(db: Db) {
       // Self-serve floor: every installed agent must use an allowed remote
       // adapter, including catalog agents that would default to a local CLI.
       let defaultAdapterType: string | undefined;
-      if (isSelfServeRestricted(req)) {
-        const overrides = (req.body.adapterOverrides ?? {}) as Record<string, { adapterType?: string }>;
+      if (await isSelfServeCompany(db, companyId)) {
+        const overrides = (req.body.adapterOverrides ?? {}) as Record<string, { adapterType?: string; adapterConfig?: unknown }>;
         for (const override of Object.values(overrides)) {
-          assertSelfServeAdapterAllowed(req, override.adapterType);
+          await assertSelfServeCompanyAgent(db, companyId, override.adapterType, override.adapterConfig);
         }
         defaultAdapterType = getSelfServePolicy().adapterTypes[0];
-        assertSelfServeAdapterAllowed(req, defaultAdapterType);
+        await assertSelfServeCompanyAgent(db, companyId, defaultAdapterType, {});
       }
       const result = await svc.installCatalogTeam(companyId, catalogRef, {
         ...req.body,

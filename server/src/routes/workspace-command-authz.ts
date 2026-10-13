@@ -1,6 +1,7 @@
 import type { Request } from "express";
 import { forbidden } from "../errors.js";
-import { isSelfServeRestricted, SELF_SERVE_HOST_EXECUTION_ERROR_CODE } from "../services/self-serve-policy.js";
+import type { Db } from "@paperclipai/db";
+import { assertSelfServeCompanyHostAccess } from "../services/self-serve-policy.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -69,19 +70,25 @@ function collectExecutionWorkspaceConfigCommandPaths(raw: unknown, prefix: strin
 }
 
 export function assertNoAgentHostWorkspaceCommandMutation(req: Request, paths: string[]) {
+  if (req.actor.type !== "agent" || paths.length === 0) return;
+  throw forbidden(
+    `Agent keys cannot modify host-executed workspace commands (${paths.join(", ")}).`,
+  );
+}
+
+/**
+ * Agent keys never set host-executed workspace commands, and nobody sets them
+ * in a self-serve company (PAPERCLIP_SELF_SERVE_COMPANIES) while self-serve is on.
+ */
+export async function assertNoHostWorkspaceCommandMutation(
+  db: Pick<Db, "select">,
+  companyId: string,
+  req: Request,
+  paths: string[],
+) {
+  assertNoAgentHostWorkspaceCommandMutation(req, paths);
   if (paths.length === 0) return;
-  if (req.actor.type === "agent") {
-    throw forbidden(
-      `Agent keys cannot modify host-executed workspace commands (${paths.join(", ")}).`,
-    );
-  }
-  // Self-serve instances: a non-admin company owner is not a trusted operator.
-  if (isSelfServeRestricted(req)) {
-    throw forbidden(
-      `Non-admins on this instance cannot modify host-executed workspace commands (${paths.join(", ")}).`,
-      { code: SELF_SERVE_HOST_EXECUTION_ERROR_CODE },
-    );
-  }
+  await assertSelfServeCompanyHostAccess(db, companyId, `Host-executed workspace commands (${paths.join(", ")})`);
 }
 
 export function collectAgentAdapterWorkspaceCommandPaths(

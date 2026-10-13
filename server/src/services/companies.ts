@@ -126,6 +126,8 @@ export function companyService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
     feedbackDataSharingConsentAt: companies.feedbackDataSharingConsentAt,
     feedbackDataSharingConsentByUserId: companies.feedbackDataSharingConsentByUserId,
     feedbackDataSharingTermsVersion: companies.feedbackDataSharingTermsVersion,
+    selfServe: companies.selfServe,
+    selfServeCreatedByUserId: companies.selfServeCreatedByUserId,
     logoAssetId: companyLogos.assetId,
     createdAt: companies.createdAt,
     updatedAt: companies.updatedAt,
@@ -246,7 +248,7 @@ export function companyService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
     return { fromPrefix: locked.issuePrefix, toPrefix: candidate };
   }
 
-  async function createCompanyWithUniquePrefix(data: typeof companies.$inferInsert) {
+  async function createCompanyWithUniquePrefix(data: typeof companies.$inferInsert, executor: Db = db) {
     const base = deriveIssuePrefixBase(data.name);
     let suffix = 1;
     while (suffix <= MAX_ISSUE_PREFIX_ATTEMPTS) {
@@ -256,10 +258,15 @@ export function companyService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         continue;
       }
       try {
-        const rows = await db
+        // Inside a caller's transaction a unique violation would abort it, so
+        // each attempt runs in its own savepoint there.
+        const insert = (target: Db) => target
           .insert(companies)
           .values({ ...data, issuePrefix: candidate })
           .returning();
+        const rows = executor === db
+          ? await insert(db)
+          : await executor.transaction(async (savepoint) => insert(savepoint as unknown as Db));
         return rows[0];
       } catch (error) {
         if (!isIssuePrefixConflict(error)) throw error;
@@ -286,6 +293,28 @@ export function companyService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .where(eq(companies.id, id))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
+      const [hydrated] = await hydrateCompanySpend([row], db);
+      return enrichCompany(hydrated);
+    },
+
+    /**
+     * Insert only the company row, on `executor` (a caller's transaction).
+     * Finish with `completeCreate`, after that transaction commits.
+     */
+    createRecord: async (data: typeof companies.$inferInsert, executor: Db) =>
+      createCompanyWithUniquePrefix(data, executor),
+
+    completeCreate: async (companyId: string) => {
+      await environmentsSvc.ensureLocalEnvironment(companyId);
+      try {
+        await builtInAgents.autoProvisionBundledAgents(companyId);
+      } catch (err) {
+        logger.warn({ err, companyId }, "built-in agent provisioning failed after company create; will retry later");
+      }
+      const row = await getCompanyQuery(db)
+        .where(eq(companies.id, companyId))
+        .then((rows) => rows[0] ?? null);
+      if (!row) throw notFound("Company not found after creation");
       const [hydrated] = await hydrateCompanySpend([row], db);
       return enrichCompany(hydrated);
     },

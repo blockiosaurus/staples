@@ -218,55 +218,83 @@ have signed up.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `PAPERCLIP_SELF_SERVE_COMPANIES` | `false` | When `true` and the mode is `authenticated`, any user with a browser session can create a company. Ignored in `local_trusted`. Requires hosted inference (`STAPLES_HOSTED_ANTHROPIC_API_KEY`); without it self-serve creation returns `409 self_serve_hosted_inference_required`. |
-| `PAPERCLIP_SELF_SERVE_COMPANY_LIMIT` | `3` | How many companies a non-admin may own. Archived companies count, so archiving never frees a slot, and unarchiving must also fit under the limit. At the limit, `POST /api/companies` (or an unarchive) returns `403 self_serve_company_limit`. Instance admins are not limited. **Use `1` for trials.** |
-| `PAPERCLIP_SELF_SERVE_ADAPTERS` | `claude_managed` | Comma-separated agent adapters that non-admins may use while self-serve is on. `process` and every `*_local` adapter are always dropped from this list, because they run on the server host. |
+| `PAPERCLIP_SELF_SERVE_COMPANY_LIMIT` | `3` | How many self-serve companies one user may create. The count is by creator, and archived companies count, so archiving never frees a slot. Unarchiving must also fit under the limit. A non-admin can't delete a self-serve company, so deleting can't free a slot either. At the limit, `POST /api/companies` (or an unarchive) returns `403 self_serve_company_limit`. Instance admins are not limited. **Use `1` for trials.** |
+| `PAPERCLIP_SELF_SERVE_ADAPTERS` | `claude_managed` | Comma-separated agent adapters allowed in self-serve companies. `process` and every `*_local` adapter are always dropped from this list, because they run on the server host. |
 
 #### What the creator gets
 
-- The creator becomes the company `owner` with the same membership, default
-  grants and built-in agents (the Staples Assistant runs on Claude (hosted)) an
-  admin creator gets.
-- Creation is activity-logged as `company.created` with the user as actor and
+- A company marked `self_serve` (database column `companies.self_serve`, with
+  the creator in `self_serve_created_by_user_id`).
+- `owner` membership and the same default grants an admin creator gets.
+- The Staples Assistant, on Claude (hosted).
+- An activity-log entry: `company.created` with the user as actor and
   `details.selfServe: true`.
-- Creation is serialized per user with a Postgres advisory lock, so parallel
-  requests cannot overshoot the limit.
 - Only browser sessions qualify. Board API keys, agents and Cloud tenants do not.
+
+Creation runs in one short transaction that holds a per-user
+`pg_try_advisory_xact_lock`. The count, the company row and the owner
+membership are all written on that transaction. A concurrent create by the same
+user gets `409 self_serve_company_create_in_progress` and can retry. The lock
+never waits for a second pool connection, so concurrent creates can't stall the
+pool. Built-in provisioning runs after commit.
 
 #### Host-execution floor
 
-With self-serve on, a company owner is not a trusted operator. Every actor that
-is not an instance admin (non-admin people and all agents, in every company) is
-held to this floor:
+While `PAPERCLIP_SELF_SERVE_COMPANIES` is on, every company marked `self_serve`
+is held to the floor below, whatever the actor (its owner, an instance admin or
+its agents). Admin-created companies keep normal behaviour.
 
-- Agents may only use the adapters in `PAPERCLIP_SELF_SERVE_ADAPTERS`. This
-  covers create, hire (including plan hires and approvals, which go through the
-  hire route), update and adapter switch, config rollback, agent join-request
-  approval, and team-catalog installs (catalog agents default to the first
-  allowed adapter). `*_local` host-command keys (`command`, `args`, `cwd`, `env`,
-  ...) are refused.
-- Adapter environment tests and `claude-login` (both run a CLI on the host) are
-  refused.
-- Host-executed workspace commands (provision, teardown, cleanup, runtime
-  services and jobs) cannot be set on projects, issues, execution workspaces or
-  agents, and the workspace runtime-command routes cannot be run.
-- Project workspace `cwd` (a server folder) and plugin local folders cannot be
-  set.
-- Local command (stdio) MCP templates cannot be added.
-- Company package imports (`/companies/import`, `/companies/:id/imports/*`)
-  are refused.
-- `POST /api/health/dev-server/restart` is refused.
+**Agents may only use the adapters in `PAPERCLIP_SELF_SERVE_ADAPTERS`.**
 
-Already admin-only and unchanged: environments, plugin install, enable and
-config, adapter install, and external instruction paths.
+- Their config may not override an endpoint (`apiBaseUrl` other than the
+  default, `baseUrl`, `url`, `endpoint`, env keys ending in `BASE_URL` /
+  `_ENDPOINT` / `_HOST` / ...). This prevents server-side requests to internal
+  addresses.
+- Their config may not set host command keys (`command`, `args`, `cwd`, ...) or
+  `workspaceStrategy` commands.
+
+This is enforced where every path converges:
+
+- **Agent record creation.** Every create, hire, plan hire, join approval,
+  import, catalog install, onboarding seed and built-in goes through it.
+- **Agent configuration updates.** This covers update, adapter switch, config
+  rollback and Assistant setup.
+- **Pending-hire activation.**
+- **Approval filing.** A `hire_agent` approval with a disallowed adapter is
+  rejected when it is created or resubmitted, not only when it is approved.
+- **The heartbeat runtime backstop.** A run for an agent whose adapter or
+  effective config (including issue adapter overrides) breaks the floor fails
+  with `self_serve_adapter_not_allowed` before any workspace or adapter work.
+  This catches anything written to the database some other way.
+
+**Built-in agents in a self-serve company run on Claude (hosted).** A built-in
+that can't run hosted is skipped, never provisioned on a local CLI. The
+onboarding seed's first agent is `claude_managed`.
+
+**These surfaces are also refused in a self-serve company:**
+
+- adapter environment tests and `claude-login` (both run a CLI on the host);
+- host-executed workspace commands on projects, issues and execution
+  workspaces, and the workspace runtime-command routes;
+- project workspace `cwd` (a server folder) and plugin local folders;
+- adding a local command (stdio) MCP template;
+- company package imports.
+
+**Refused for anyone who is not an instance admin:**
+`POST /api/health/dev-server/restart`, an instance-level action with no company.
+
+**Already admin-only and unchanged:** environments; plugin install, enable and
+config; adapter install; external instruction paths.
 
 #### Company boundaries
 
 A self-serve user sees and changes only the companies they belong to. They
 can't grant themselves access to another company, create invites for it or
-approve its join requests; joining needs an invite from that company. These
-boundaries keep tenants apart in the API, but every company still runs in one
-server process with one database. Treat self-serve users as trusted colleagues,
-not hostile tenants.
+approve its join requests. Joining needs an invite from that company.
+
+These boundaries keep tenants apart in the API, but every company still runs in
+one server process with one database. Treat self-serve users as trusted
+colleagues, not hostile tenants.
 
 #### Hosted spend exposure
 
