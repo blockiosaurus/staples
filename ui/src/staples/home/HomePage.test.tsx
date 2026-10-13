@@ -28,7 +28,9 @@ const mocks = vi.hoisted(() => ({
   resume: vi.fn(),
   clearError: vi.fn(),
   resolveIncident: vi.fn(),
+  listArtifacts: vi.fn(),
 }));
+vi.mock("@/api/artifacts", () => ({ artifactsApi: { list: mocks.listArtifacts } }));
 
 vi.mock("@/api/agents", () => ({
   agentsApi: { retryFailedRun: mocks.retryFailedRun, resume: mocks.resume, clearError: mocks.clearError },
@@ -241,6 +243,52 @@ describe("HomePage", () => {
     expect(rollup.textContent).toContain("Last 24 hours");
     expect(rollup.textContent).toContain("Agent actions");
     expect(rollup.querySelector('a[href="/PAP/agents/agent-7"]')).not.toBeNull();
+  });
+
+  function artifact(id: string, overrides: Record<string, unknown> = {}) {
+    return {
+      id,
+      source: "document",
+      mediaKind: "text",
+      title: `Plan ${id}`,
+      previewText: `Preview of ${id}`,
+      contentType: "text/markdown",
+      contentPath: null,
+      openPath: null,
+      downloadPath: null,
+      issue: { id: "i", identifier: "PAP-1", title: "Task" },
+      project: null,
+      createdByAgent: null,
+      updatedAt: NOW,
+      href: `/issues/PAP-1#document-${id}`,
+      ...overrides,
+    };
+  }
+
+  it("shows what we've made with previews and a link to all of it", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture());
+    mocks.listArtifacts.mockResolvedValue({
+      artifacts: [artifact("a"), artifact("b", { mediaKind: "image", contentPath: "/img.png" })],
+      nextCursor: null,
+    });
+    await render();
+    expect(mocks.listArtifacts).toHaveBeenCalledWith("company-1", { limit: 6 });
+    const made = section("What we've made")!;
+    expect(made.querySelectorAll('[data-testid="artifact-card"]')).toHaveLength(2);
+    expect(made.textContent).toContain("Preview of a");
+    expect(made.querySelector("img")?.getAttribute("src")).toBe("/img.png");
+    expect(made.querySelector("iframe, script")).toBeNull();
+    expect(made.querySelector('a[href="/PAP/artifacts"]')?.textContent).toBe("See all");
+    expect(made.querySelector('a[href="/PAP/issues/PAP-1#document-a"]')).not.toBeNull();
+    // After Done recently.
+    expect(section("Done recently")!.compareDocumentPosition(made) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("hides what we've made when there are no artifacts", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture());
+    mocks.listArtifacts.mockResolvedValue({ artifacts: [], nextCursor: null });
+    await render();
+    expect(section("What we've made")).toBeNull();
   });
 
   it("polls every 30 seconds while visible and every 5 minutes while hidden", async () => {

@@ -2,11 +2,13 @@ import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BriefingItem } from "@paperclipai/shared";
 import { RotateCw, Send } from "lucide-react";
+import { ArtifactCard } from "@/components/artifacts/ArtifactCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useCompany } from "@/context/CompanyContext";
 import { agentsApi } from "@/api/agents";
+import { artifactsApi } from "@/api/artifacts";
 import { briefingApi } from "@/api/briefing";
 import { budgetsApi } from "@/api/budgets";
 import { issuesApi } from "@/api/issues";
@@ -26,6 +28,8 @@ export const BRIEFING_REFETCH_INTERVAL_MS = 30_000;
  * pane, from showing its first load forever.
  */
 export const BRIEFING_HIDDEN_REFETCH_INTERVAL_MS = 300_000;
+
+const MADE_RECENTLY_LIMIT = 6;
 
 export function briefingRefetchInterval(): number {
   return typeof document !== "undefined" && document.visibilityState === "hidden"
@@ -200,6 +204,17 @@ export function HomePage() {
     refetchIntervalInBackground: true,
   });
 
+  // Latest outputs. Same slow cadence as the briefing; the section only shows
+  // once something exists, whatever the signals say.
+  const artifactsQuery = useQuery({
+    queryKey: queryKeys.artifacts.home(companyId),
+    queryFn: () => artifactsApi.list(companyId, { limit: MADE_RECENTLY_LIMIT }),
+    enabled: Boolean(selectedCompanyId),
+    refetchInterval: briefingRefetchInterval,
+    refetchIntervalInBackground: true,
+  });
+  const madeRecently = (artifactsQuery.data?.artifacts ?? []).slice(0, MADE_RECENTLY_LIMIT);
+
   // Rows accepted from Home disappear right away; a failure brings the row back with its error.
   const [removed, setRemoved] = useState<ReadonlySet<string>>(() => new Set());
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
@@ -367,6 +382,22 @@ export function HomePage() {
             ))}
           </ul>
         </Section>
+      ) : null}
+
+      {madeRecently.length > 0 ? (
+        <section aria-label="What we've made" className="flex flex-col gap-2">
+          <div className="flex items-baseline justify-between gap-2">
+            <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{"What we've made"}</h2>
+            <Link to="/artifacts" className="text-xs text-muted-foreground hover:text-foreground">
+              See all
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {madeRecently.map((artifact) => (
+              <ArtifactCard key={artifact.id} artifact={artifact} />
+            ))}
+          </div>
+        </section>
       ) : null}
 
       <AskComposer />

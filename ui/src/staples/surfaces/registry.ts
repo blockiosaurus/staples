@@ -162,7 +162,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
   },
   {
     id: "nav.artifacts",
-    label: "Artifacts",
+    label: "What we've made",
     to: "/artifacts",
     matchRoots: ["artifacts"],
     icon: Package,

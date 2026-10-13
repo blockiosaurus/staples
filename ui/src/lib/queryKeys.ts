@@ -583,6 +583,8 @@ export const queryKeys = {
       ] as const,
     byAgent: (companyId: string, agentId: string) =>
       ["artifacts", companyId, "by-agent", agentId] as const,
+    /** Latest few for Home; separate from `list`, which the Artifacts page fills with pages. */
+    home: (companyId: string) => ["artifacts", companyId, "home"] as const,
   },
   budgets: {
     overview: (companyId: string) =>

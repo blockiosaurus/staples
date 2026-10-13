@@ -250,7 +250,7 @@ describe("Sidebar", () => {
         const labels = (section: Element | undefined) => [...(section?.querySelectorAll("a") ?? [])]
           .map((anchor) => anchor.textContent?.trim());
 
-        expect(labels(workSection)).toEqual(["Chat", "Tasks", "Projects", "Routines", "Artifacts", "Goals"]);
+        expect(labels(workSection)).toEqual(["Chat", "Tasks", "Projects", "Routines", "What we've made", "Goals"]);
         expect(labels(orgSection)).toEqual(["Agents", "Skills", "Connectors", "Company brief", "Costs", "Audit"]);
         expect(orgSection?.querySelector('a[href="/activity/costs"]')?.textContent).toContain("Costs");
         expect(orgSection?.querySelector('a[href="/activity"]')?.textContent).toContain("Audit");
