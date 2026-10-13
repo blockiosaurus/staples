@@ -1155,7 +1155,20 @@ export interface IssueCommentMetadata {
     reason: string;
     assigneeAgentId: string | null;
   };
+  /** Display-only page context sent with an Assistant chat message. Untrusted; never an authorization input. */
+  pageContext?: AssistantPageContext;
+  /** System-notice rows; empty on chat messages that carry only pageContext. */
   sections: IssueCommentMetadataSection[];
+}
+
+export interface AssistantPageContext {
+  route: string;
+  title?: string;
+  entity?: {
+    type: "issue" | "agent" | "project" | "goal" | "routine" | "approval" | "skill" | "artifact" | "other";
+    id: string;
+    label?: string;
+  };
 }
 
 export interface IssueCommentPresentation {
@@ -1227,6 +1240,8 @@ export interface AskUserQuestionsQuestionOption {
    * free-text affordance.
    */
   freeText?: boolean;
+  /** The asker's recommended answer; the form pre-selects it. */
+  recommended?: boolean;
 }
 
 export interface AskUserQuestionsQuestion {
@@ -1354,6 +1369,8 @@ export interface RequestConfirmationToolActionPayload {
   actionRequestId: string;
   invocationId: string;
   toolName: string;
+  /** The provider's own tool name when it differs from `toolName` (display matching only). */
+  upstreamToolName?: string | null;
   toolDisplayName: string;
   connectionId: string | null;
   applicationId: string | null;
@@ -1364,6 +1381,112 @@ export interface RequestConfirmationToolActionPayload {
   argumentsSummaryJson: string;
   argumentsHash: string;
   expiresAt: string;
+}
+
+export type ProposedActionMethod = "POST" | "PATCH" | "PUT" | "DELETE";
+export type ProposedActionCategory =
+  | "approval"
+  | "agent_lifecycle"
+  | "budget"
+  | "secret"
+  | "connection"
+  | "outbound"
+  | "delete"
+  | "other_governed"
+  | "brief"
+  | "plan";
+
+/**
+ * Server-owned: an exact governed API call the Assistant proposes. The person's
+ * browser executes it with their own session only after they click Confirm.
+ * `hash` is sha256 (hex) of the canonical JSON of `{ method, path, body }`.
+ */
+export interface RequestConfirmationProposedActionPayload {
+  version: 1;
+  method: ProposedActionMethod;
+  /** Includes the leading `/api/`. */
+  path: string;
+  body: unknown | null;
+  summary: string;
+  category: ProposedActionCategory;
+  hash: string;
+  staleCheck?: { path: string; field: "updatedAt"; expected: string };
+  /** Server-owned display data read from the database; not hashed. */
+  context?: ProposedActionContext;
+  /**
+   * Plan proposals only. Server-computed display data, not hashed and never
+   * read by apply: the planned agents that will inherit the Assistant's model
+   * connection. `provider` is the AI provider key, or null for a connection pool.
+   */
+  planHireConnections?: Array<{ clientKey: string; provider: string | null }>;
+  /**
+   * Plan proposals only. Server-computed display data, not hashed and never
+   * read by apply: one line per templated hire. `needs` holds one entry per
+   * required (non-optional) capability, e.g. "AgentMail or Gmail";
+   * `asksBefore` the outward-action labels.
+   */
+  planTemplateSummaries?: PlanTemplateSummary[];
+  /**
+   * Plan proposals with new agents only. Server-computed display data, not
+   * hashed and never read by apply: the hires' monthly budgets against the
+   * company's hosted-inference limit.
+   */
+  planBudget?: PlanBudgetSummary;
+}
+
+/**
+ * The plan card's budget line. `hiresMonthlyCents` sums the new agents'
+ * monthly budgets (a hosted hire without one counts the hosted agent default;
+ * a hosted hire's budget counts at most the ceiling).
+ * The hosted fields are null unless the plan hires agents on the hosted key
+ * and the company's hosted limit is capped: `hostedCapCents` is the limit now,
+ * `hostedNeededCents` the monthly budgets of every agent on the hosted key
+ * once the plan is applied, and `hostedCapAfterCents` the limit after apply
+ * (raised to the need, never lowered, at most `ceilingCents`).
+ */
+export interface PlanBudgetSummary {
+  hiresMonthlyCents: number;
+  /** How many of the new agents have a monthly budget counted in `hiresMonthlyCents`. */
+  budgetedHireCount: number;
+  hostedCapCents: number | null;
+  hostedNeededCents: number | null;
+  hostedCapAfterCents: number | null;
+  ceilingCents: number;
+}
+
+export interface PlanTemplateSummary {
+  clientKey: string;
+  ref: string;
+  /** The template's name, e.g. "Email secretary". */
+  name: string;
+  needs: string[];
+  asksBefore: string[];
+  routineCount: number;
+  budgetMonthlyCents: number | null;
+  /** The template never changes anything in connected services. */
+  readOnly?: boolean;
+}
+
+/** What the server read from the approval a proposal decides on, shown as "From the approval". */
+export interface ProposedActionContext {
+  source: "approval";
+  approvalType: string;
+  /** Requesting agent's or person's name, when known. */
+  requestedBy: string | null;
+  /** hire_agent only. */
+  agentName?: string | null;
+  agentRole?: string | null;
+  adapterType?: string | null;
+  /** Command-like keys found anywhere in the hire's adapterConfig. */
+  adapterConfigCommandFields?: string[];
+  /** The approval's updatedAt when proposed; claims are refused once it changes. */
+  approvalUpdatedAt?: string;
+}
+
+export interface RequestConfirmationProposedActionResult {
+  status: "executed" | "failed" | "stale";
+  httpStatus?: number;
+  message?: string;
 }
 
 export interface RequestConfirmationSecretProposalPayload {
@@ -1474,6 +1597,7 @@ export interface RequestConfirmationPayload {
   toolAction?: RequestConfirmationToolActionPayload;
   secretProposal?: RequestConfirmationSecretProposalPayload;
   connectionAuthorization?: RequestConfirmationConnectionAuthorizationPayload;
+  proposedAction?: RequestConfirmationProposedActionPayload;
 }
 
 export interface RequestCheckboxConfirmationOption {
@@ -1552,6 +1676,7 @@ export interface RequestConfirmationResult {
   } | null;
   toolAction?: RequestConfirmationToolActionResult;
   secretProposal?: RequestConfirmationSecretProposalResult;
+  proposedAction?: RequestConfirmationProposedActionResult;
 }
 
 export interface RequestCheckboxConfirmationResult extends RequestConfirmationResult {

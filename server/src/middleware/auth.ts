@@ -16,6 +16,7 @@ import {
   MAX_ISSUE_PREFIX_ATTEMPTS,
   deriveIssuePrefixBase,
   isIssuePrefixConflict,
+  isReservedIssuePrefix,
   issuePrefixSuffixForAttempt,
   pickAvailableIssuePrefix,
   rekeyCompanyIssueIdentifiers,
@@ -886,6 +887,8 @@ async function insertCloudTenantCompany(
 ): Promise<void> {
   const base = deriveIssuePrefixBase(input.companyName);
   for (let attempt = 1; attempt <= MAX_ISSUE_PREFIX_ATTEMPTS; attempt += 1) {
+    const candidate = `${base}${issuePrefixSuffixForAttempt(attempt)}`;
+    if (isReservedIssuePrefix(candidate)) continue;
     try {
       await db
         .insert(companies)
@@ -894,7 +897,7 @@ async function insertCloudTenantCompany(
           name: input.companyName,
           description: null,
           status: "active",
-          issuePrefix: `${base}${issuePrefixSuffixForAttempt(attempt)}`,
+          issuePrefix: candidate,
           updatedAt: input.now,
         })
         .onConflictDoNothing({

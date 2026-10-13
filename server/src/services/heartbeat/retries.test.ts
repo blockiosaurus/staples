@@ -284,3 +284,15 @@ describePostgres("heartbeat retry module database wiring", () => {
     expect(await retries.retryScheduledRetryNow({ issueId: selected.issue.id, now })).toMatchObject({ outcome: "already_promoted" });
   });
 });
+
+describe("claude_managed out-of-credit failures", () => {
+  it("are never put on the transient retry schedule", () => {
+    expect(extracted.readTransientRecoveryContractFromRun({
+      errorCode: "claude_managed_out_of_credit", resultJson: { errorFamily: "configuration" },
+    } as Pick<Run, "errorCode" | "resultJson">)).toBeNull();
+    // The same failure classified as before (transient) would have been retried.
+    expect(extracted.readTransientRecoveryContractFromRun({
+      errorCode: null, resultJson: { errorFamily: "transient_upstream" },
+    } as Pick<Run, "errorCode" | "resultJson">)).toMatchObject({ errorFamily: "transient_upstream" });
+  });
+});

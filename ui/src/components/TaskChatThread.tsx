@@ -20,6 +20,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type ReactNode,
 } from "react";
 import {
   IssueAssigneePausedNotice,
@@ -106,8 +107,8 @@ import {
 } from "@/components/task-chat/RunnerGoalWidget";
 import { TaskChatQueuedMessages } from "@/components/task-chat/TaskChatQueuedMessages";
 import { TaskChatWindowScroll } from "@/components/task-chat/useWindowAutoFollow";
+import { useEmbeddedSurface } from "@/context/EmbeddedSurfaceContext";
 import { useSidebar } from "@/context/SidebarContext";
-import { useStreamlinedUiEnabled } from "@/hooks/useStreamlinedUiEnabled";
 import { useDismissedTaskQuestions } from "@/hooks/useDismissedTaskQuestions";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -131,7 +132,6 @@ import { heartbeatsApi, type RuntimeRequestResolution } from "@/api/heartbeats";
 import { issuesApi } from "@/api/issues";
 import { queryKeys } from "@/lib/queryKeys";
 import { useQueryClient } from "@tanstack/react-query";
-import { TaskChatPresentationProvider } from "@/components/task-chat/presentation-mode";
 
 const EMPTY_BROWSERS: TaskBrowser[] = [];
 
@@ -422,6 +422,20 @@ export type TaskChatThreadProps = ComponentProps<typeof IssueChatThread> & {
   initialHistoryError?: boolean;
   onRetryInitialHistory?: () => void;
   onOpenSkill?: (skillId: string, name: string) => void;
+  /**
+   * Rendered instead of `emptyMessage` while the thread has no items (e.g. an
+   * agent's opening bubble). `composer.fill` replaces the composer draft.
+   */
+  emptyState?: (composer: { fill: (text: string) => void }) => ReactNode;
+  /** Rendered in the composer dock instead of the composer (e.g. setup the agent needs first). */
+  composerReplacement?: ReactNode;
+  /**
+   * A draft handed in from outside (e.g. "Ask Assistant"): each new nonce
+   * replaces the composer draft and focuses it; `send` submits it through the
+   * normal Send path. Taken over by the thread, then `onDraftRequestConsumed`.
+   */
+  externalDraftRequest?: { text: string; nonce: number; send?: boolean } | null;
+  onDraftRequestConsumed?: (nonce: number) => void;
 };
 
 type PendingComposerInput =
@@ -487,7 +501,6 @@ function durableInputLabel(
  * folded row. flag-OFF remains byte-for-byte IssueChatThread.
  */
 export function TaskChatThread(props: TaskChatThreadProps) {
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const {
     initialHistoryPending = false,
     initialHistoryError = false,
@@ -516,6 +529,10 @@ export function TaskChatThread(props: TaskChatThreadProps) {
     composerPause,
     composerDisabledReason,
     emptyMessage = "No messages yet.",
+    emptyState,
+    composerReplacement,
+    externalDraftRequest,
+    onDraftRequestConsumed,
     companyId,
     linkedRuns,
     liveRuns,
@@ -601,6 +618,30 @@ export function TaskChatThread(props: TaskChatThreadProps) {
   const queryClient = useQueryClient();
   const createdProjectItems = useProjectCreatedItems(props.creationActivity ?? [], companyId);
   const createdSkillItems = useMemo(() => skillCreatedItems(props.creationActivity ?? []), [props.creationActivity]);
+  const [draftRequest, setDraftRequest] = useState<{ text: string; nonce: number; send?: boolean } | null>(null);
+  const fillComposer = useCallback((text: string) => {
+    setDraftRequest((current) => ({ text, nonce: (current?.nonce ?? 0) + 1 }));
+  }, []);
+  // An outside request becomes a composer request; the thread owns it from
+  // here, so the sender can stop offering it.
+  const consumedExternalNonce = useRef(0);
+  const onDraftRequestConsumedRef = useRef(onDraftRequestConsumed);
+  onDraftRequestConsumedRef.current = onDraftRequestConsumed;
+  useEffect(() => {
+    if (!externalDraftRequest || externalDraftRequest.nonce === consumedExternalNonce.current) return;
+    consumedExternalNonce.current = externalDraftRequest.nonce;
+    const { text, send, nonce } = externalDraftRequest;
+    // Without a rendered composer nothing can be sent now; keep it as a draft
+    // rather than auto-sending whenever a composer later appears.
+    const canSend = send === true && showComposer && !composerReplacement;
+    setDraftRequest((current) => ({ text, send: canSend, nonce: (current?.nonce ?? 0) + 1 }));
+    onDraftRequestConsumedRef.current?.(nonce);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalDraftRequest]);
+  // Once applied, a send request must not fire again if the composer remounts.
+  const markDraftRequestApplied = useCallback((nonce: number) => {
+    setDraftRequest((current) => (current && current.nonce === nonce && current.send ? { ...current, send: false } : current));
+  }, []);
   const [pendingComposerAssignee, setPendingComposerAssignee] = useState<
     string | null
   >(null);
@@ -2304,8 +2345,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
     ? `${tailPlanItem.id}:${tailPlanItem.document.body.length}`
     : "";
   const threadContentKey = `${taskChatContentKey(items)}:${tailContentKey}:${tailPlanContentKey}:${blockerContentKey}`;
-  const repeatBlockersAtBottom =
-    !streamlinedUiEnabled || shouldRepeatTaskChatBlockers(items);
+  const repeatBlockersAtBottom = shouldRepeatTaskChatBlockers(items);
   const bottomBlockerLinks = repeatBlockersAtBottom ? (
     liveWorkLinks ? (
       <TaskChatLiveWorkLinks liveWork={liveWorkLinks} placement="bottom" />
@@ -2842,7 +2882,11 @@ export function TaskChatThread(props: TaskChatThreadProps) {
   // in document flow instead (the same scroll={false} path the previews use)
   // and track auto-follow against window scroll. Both paths include takeover
   // state so opening or closing composer input preserves bottom pinning.
-  const { isMobile } = useSidebar();
+  // The mobile document-flow thread drives window scroll; an embedded surface
+  // (the Assistant dock/sheet) always scrolls its own element instead.
+  const { isMobile: viewportMobile } = useSidebar();
+  const embeddedSurface = useEmbeddedSurface();
+  const isMobile = viewportMobile && !embeddedSurface;
   const initialCommentWindow = useRef<{
     oldestAt: number;
     ids: Set<string>;
@@ -2929,10 +2973,19 @@ export function TaskChatThread(props: TaskChatThreadProps) {
   // Mount and measure the real thread while concealed, then reveal in one
   // commit. A frame also lets ancestor navigation scroll restoration finish.
   // Readiness is latched per issue: refetches never hide existing conversation.
+  // Hidden documents (background tabs, hidden embedded panes) never fire
+  // animation frames and paint nothing, so reveal there on a task instead of
+  // leaving ready history concealed until the stalled-history timeout.
   useEffect(() => {
     if (historyRevealed || historyPending) return;
-    const frame = requestAnimationFrame(() => setRevealedIssue(issueId));
-    return () => cancelAnimationFrame(frame);
+    const reveal = () => setRevealedIssue(issueId);
+    const frame = requestAnimationFrame(reveal);
+    const hiddenTimer =
+      document.visibilityState === "visible" ? null : window.setTimeout(reveal, 0);
+    return () => {
+      cancelAnimationFrame(frame);
+      if (hiddenTimer !== null) window.clearTimeout(hiddenTimer);
+    };
   }, [historyPending, historyRevealed, issueId]);
   useEffect(() => {
     if (!historyRevealed || !issueId) return;
@@ -2952,9 +3005,6 @@ export function TaskChatThread(props: TaskChatThreadProps) {
           contentKey={isMobile ? autoFollowContentKey : 0}
           enabled={isMobile && historyRevealed}
         />
-        <TaskChatPresentationProvider
-          mode={streamlinedUiEnabled ? "streamlined" : "production"}
-        >
           <div
             className={cn(
               "flex flex-col",
@@ -3018,21 +3068,25 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                         className={cn(
                           "mx-auto flex w-full max-w-(--tc-shell-max-w) flex-col gap-6 px-4",
                           isMobile ? "pt-4" : "pt-3",
-                          streamlinedUiEnabled && "md:px-0",
+                          "md:px-0",
                         )}
                         data-testid="task-chat-thread-header"
                       >
                         {threadHeaderWithBlockers}
                       </div>
                     ) : null}
-                    <div className="px-3 py-10 text-center text-sm text-muted-foreground">
-                      {emptyMessage}
-                    </div>
+                    {emptyState ? (
+                      emptyState({ fill: fillComposer })
+                    ) : (
+                      <div className="px-3 py-10 text-center text-sm text-muted-foreground">
+                        {emptyMessage}
+                      </div>
+                    )}
                     {bottomBlockerLinks ? (
                       <div
                         className={cn(
                           "mx-auto w-full max-w-(--tc-shell-max-w) px-4 pb-4",
-                          streamlinedUiEnabled && "md:px-0",
+                          "md:px-0",
                         )}
                       >
                         {bottomBlockerLinks}
@@ -3148,7 +3202,8 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                 )}
               </div>
             </div>
-            {assignedAgentForNotice?.status === "paused" ? (
+            {/* A composer replacement (e.g. the Assistant's setup card) already explains why the agent can't answer. */}
+            {assignedAgentForNotice?.status === "paused" && !composerReplacement ? (
               <div className="mx-auto w-full max-w-(--tc-shell-max-w) px-4 pt-2">
                 <IssueAssigneePausedNotice
                   agent={assignedAgentForNotice}
@@ -3158,12 +3213,13 @@ export function TaskChatThread(props: TaskChatThreadProps) {
               </div>
             ) : null}
             {showComposer ? (
-              <TaskChatComposerDock mobile={isMobile} streamlined={streamlinedUiEnabled} concealed={!historyRevealed}>
+              <TaskChatComposerDock mobile={isMobile} concealed={!historyRevealed}>
                 {composerAccessory}
                 {tailTurnStatus ? (
                   <TaskChatTurnStatusIsland model={tailTurnStatus} />
                 ) : null}
                 <RunnerGoalWidget control={runnerGoal} />
+                {composerReplacement ? composerReplacement : (
                 <div
                   className="relative isolate flex flex-col"
                   data-testid="task-chat-composer-stack"
@@ -3258,14 +3314,16 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                             }
                           : null
                       }
+                      draftRequest={draftRequest}
+                      onDraftRequestApplied={markDraftRequestApplied}
                     />
                   </div>
                 </div>
+                )}
                 {footer}
               </TaskChatComposerDock>
             ) : null}
           </div>
-        </TaskChatPresentationProvider>
       </TaskChatScrollReady.Provider>
     </TaskChatExpansionState.Provider>
   );

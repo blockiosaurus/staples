@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { readThreadScrollAnchor, threadScrollAnchorDelta, type ThreadScrollAnchor } from "./scroll-anchor";
 import { cn } from "@/lib/utils";
-import { useStreamlinedTaskChatPresentation } from "./presentation-mode";
 import { ArrowDown } from "lucide-react";
 import { parseCssTimeMs } from "./motion-tokens";
 import { useTaskChatScrollNavigation } from "./scroll-navigation";
@@ -45,7 +44,6 @@ interface TaskMessageScrollerProps {
  * while pinned stays instant, so no reflow/jump happens during streaming.
  */
 export function TaskMessageScroller({ children, contentKey, className }: TaskMessageScrollerProps) {
-  const streamlined = useStreamlinedTaskChatPresentation();
   const navigation = useTaskChatScrollNavigation();
   const initialPositionApplied = useRef(false);
   const appliedNavigation = useRef({ key: navigation.key, hash: navigation.hash });
@@ -271,9 +269,7 @@ export function TaskMessageScroller({ children, contentKey, className }: TaskMes
         // placing the scrollbar against the properties-panel boundary.
         className={cn(
           "task-chat-scroll-viewport scrollbar-while-scrolling absolute inset-y-0 left-0 overflow-y-auto",
-          streamlined
-            ? "-right-4 overflow-x-hidden pr-4 md:-right-6 md:pr-6"
-            : "right-0",
+          "-right-4 overflow-x-hidden pr-4 md:-right-6 md:pr-6",
           className,
         )}
         data-testid="task-chat-scroller"
@@ -292,7 +288,7 @@ export function TaskMessageScroller({ children, contentKey, className }: TaskMes
           // (fill: both keeps it after the animation) — no -translate-x-1/2 here.
           className={cn(
             "absolute left-1/2 flex size-8 items-center justify-center rounded-full border border-border bg-background shadow-sm hover:bg-muted",
-            streamlined ? "bottom-7" : "bottom-3",
+            "bottom-7",
             pillPhase === "out" ? "tc-scroll-pill-out" : "tc-scroll-pill-in",
           )}
         >

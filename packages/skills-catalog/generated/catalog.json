@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@paperclipai/skills-catalog",
   "packageVersion": "0.3.1",
-  "generatedAt": "2026-10-06T01:21:47.421Z",
+  "generatedAt": "2026-10-11T11:43:23.061Z",
   "skills": [
     {
       "id": "paperclipai:bundled:docs:doc-maintenance",
@@ -269,11 +269,11 @@
         {
           "path": "references/individual-status-capsules.md",
           "kind": "reference",
-          "sizeBytes": 5031,
-          "sha256": "be1f2eccf96b4d2deefe45b3bc1dd0a3597278472c2ffedadc43c57161e9103d"
+          "sizeBytes": 5174,
+          "sha256": "f2680bccc829d040668c41f0cb002510833299be947e89ff1501bfb1d5f707f2"
         }
       ],
-      "contentHash": "sha256:a2b26cf6895affeeb70c85567a061094450a59bd3c4fdcf28ee65858599ac12c"
+      "contentHash": "sha256:5d50d7a8d3e03297f01691d70ce4bc65f701459b2493320776c90fdf9ad8e33b"
     },
     {
       "id": "paperclipai:bundled:product:wireframe",

@@ -130,6 +130,45 @@ describe("useLiveRunTranscripts", () => {
     }
   });
 
+  it("hydrates settled run history once while the tab is hidden", async () => {
+    // A task opened in a hidden document (background tab, hidden embedded
+    // browser pane) must still finish its one-shot history read: the task
+    // thread conceals itself until every settled run is hydrated, so pausing
+    // this read left the thread as skeletons until the reveal timeout.
+    vi.useFakeTimers();
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    logMock.mockResolvedValue({ runId: "run-1", store: "memory", logRef: "log-1", content: "", nextOffset: 42 });
+    const runs = [{ id: "run-1", status: "succeeded", adapterType: "codex_local" }];
+    let latest: ReturnType<typeof useLiveRunTranscripts> | null = null;
+    function Harness() {
+      latest = useLiveRunTranscripts({ companyId: "company-1", runs, enableRealtimeUpdates: false });
+      return null;
+    }
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<Harness />));
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      expect(logMock).toHaveBeenCalledTimes(1);
+      expect(latest!.isInitialHydrating).toBe(false);
+      expect(latest!.hydratedRunIds.has("run-1")).toBe(true);
+      // Settled history is never re-read while hidden.
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      expect(logMock).toHaveBeenCalledTimes(1);
+      // Becoming visible still reconciles from the retained offset.
+      await act(async () => {
+        visibility.mockReturnValue("visible");
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      expect(logMock).toHaveBeenLastCalledWith("run-1", 42, 256_000, expect.anything());
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   it("waits for a connecting socket to open before closing it during cleanup", async () => {
     function Harness() {
       useLiveRunTranscripts({

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   FEATURE_TIERS,
+  RETIRED_FEATURE_KEYS,
   INSTANCE_FEATURE_CATALOG,
   INSTANCE_FEATURE_KEYS,
   buildFeatureCatalogArtifact,
@@ -26,8 +27,35 @@ function schemaBooleanFlagKeys(): string[] {
       return current instanceof z.ZodBoolean;
     })
     .map(([key]) => key)
+    .filter((key) => !(RETIRED_FEATURE_KEYS as readonly string[]).includes(key))
     .sort();
 }
+
+describe("RETIRED_FEATURE_KEYS", () => {
+  it("includes the goals sidebar link, now driven by the surface registry", () => {
+    expect(RETIRED_FEATURE_KEYS).toContain("enableGoalsSidebarLink");
+    expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableGoalsSidebarLink");
+  });
+
+  it("are all boolean keys of the experimental settings schema", () => {
+    for (const key of RETIRED_FEATURE_KEYS) {
+      const shape = instanceExperimentalSettingsSchema.shape as Record<string, z.ZodTypeAny>;
+      expect(Object.keys(shape), key).toContain(key);
+      let current = shape[key]!;
+      while (
+        current instanceof z.ZodDefault ||
+        current instanceof z.ZodOptional ||
+        current instanceof z.ZodNullable
+      ) {
+        current = (
+          current instanceof z.ZodDefault ? current._def.innerType : current.unwrap()
+        ) as z.ZodTypeAny;
+      }
+      expect(current instanceof z.ZodBoolean, key).toBe(true);
+      expect(instanceExperimentalSettingsSchema.safeParse({ [key]: true }).success, key).toBe(true);
+    }
+  });
+});
 
 describe("INSTANCE_FEATURE_CATALOG", () => {
   it("covers exactly the boolean flag keys of the experimental settings schema", () => {

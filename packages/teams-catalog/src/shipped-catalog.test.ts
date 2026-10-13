@@ -17,6 +17,19 @@ const EXPECTED_OPTIONAL_KEYS = [
   "paperclipai/optional/content/content-machine",
 ];
 
+/** Staples agent templates (catalog/optional/staples/<slug>), listed apart from teams. */
+const EXPECTED_STAPLES_TEMPLATE_KEYS: string[] = [
+  "paperclipai/optional/staples/bookkeeper",
+  "paperclipai/optional/staples/coding-agent",
+  "paperclipai/optional/staples/content-creator",
+  "paperclipai/optional/staples/email-secretary",
+  "paperclipai/optional/staples/newsletter",
+  "paperclipai/optional/staples/researcher",
+  "paperclipai/optional/staples/social-media-manager",
+  "paperclipai/optional/staples/support-triage",
+  "paperclipai/optional/staples/website-builder",
+];
+
 const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("shipped teams catalog", () => {
@@ -26,12 +39,26 @@ describe("shipped teams catalog", () => {
       .map((team) => team.key)
       .sort();
     const optionalKeys = catalogTeams
-      .filter((team) => team.kind === "optional")
+      .filter((team) => team.kind === "optional" && team.category !== "staples")
       .map((team) => team.key)
       .sort();
 
     expect(bundledKeys).toEqual(EXPECTED_BUNDLED_KEYS);
     expect(optionalKeys).toEqual(EXPECTED_OPTIONAL_KEYS);
+  });
+
+  it("ships exactly the expected Staples agent templates, each with a sidecar", () => {
+    const templates = catalogTeams.filter((team) => team.category === "staples");
+    expect(templates.map((team) => team.key).sort()).toEqual(EXPECTED_STAPLES_TEMPLATE_KEYS);
+    for (const team of templates) {
+      expect(team.kind, team.key).toBe("optional");
+      expect(team.staplesTemplate, team.key).toBeDefined();
+    }
+    // Templates whose dependencies are not proven end to end ship hidden.
+    const previews = templates.filter((team) => team.staplesTemplate?.preview === true).map((team) => team.key);
+    expect(previews).toEqual(["paperclipai/optional/staples/social-media-manager"]);
+    const strays = catalogTeams.filter((team) => team.category !== "staples" && team.staplesTemplate !== undefined);
+    expect(strays.map((team) => team.key)).toEqual([]);
   });
 
   it("keeps every shipped team free of executable scripts and external sources in Phase B", () => {
@@ -77,7 +104,9 @@ describe("shipped teams catalog", () => {
   it("exposes a stable manifest header for downstream consumers", () => {
     expect(catalogManifest.schemaVersion).toBe(1);
     expect(catalogManifest.packageName).toBe("@paperclipai/teams-catalog");
-    expect(catalogTeams.length).toBe(EXPECTED_BUNDLED_KEYS.length + EXPECTED_OPTIONAL_KEYS.length);
+    expect(catalogTeams.length).toBe(
+      EXPECTED_BUNDLED_KEYS.length + EXPECTED_OPTIONAL_KEYS.length + EXPECTED_STAPLES_TEMPLATE_KEYS.length,
+    );
   });
 
   it("resolves shipped teams by id, key, and unique slug", () => {
@@ -100,6 +129,19 @@ describe("shipped teams catalog", () => {
       "product-engineering/senior-coder": { role: "engineer", reportsTo: "cto", skills: ["github-pr-workflow", "doc-maintenance"] },
       "product-design/ux-designer": { role: "designer", reportsTo: null, skills: ["wireframe", "design-critique", "task-planning"] },
       "content-machine/content-lead": { role: "content-strategist", reportsTo: null, skills: ["content-calendar"] },
+      "researcher/researcher": { role: "researcher", reportsTo: null, skills: ["market-brief", "research-sources"] },
+      "content-creator/content-creator": { role: "general", reportsTo: null, skills: ["content-calendar-planning", "post-writing"] },
+      "email-secretary/email-secretary": { role: "general", reportsTo: null, skills: ["inbox-triage", "inbox-digest"] },
+      "newsletter/newsletter-editor": { role: "general", reportsTo: null, skills: ["newsletter-issue", "newsletter-sending"] },
+      "support-triage/support-triage": { role: "general", reportsTo: null, skills: ["support-reply", "support-faq"] },
+      "social-media-manager/social-media-manager": { role: "general", reportsTo: null, skills: ["social-post-plan", "social-engagement"] },
+      "website-builder/website-builder": { role: "engineer", reportsTo: null, skills: ["landing-page-build", "site-health-check"] },
+      "bookkeeper/bookkeeper": { role: "general", reportsTo: null, skills: ["revenue-spend-summary", "month-close-notes"] },
+      "coding-agent/coding-agent": {
+        role: "engineer",
+        reportsTo: null,
+        skills: ["github-pr-workflow", "issue-triage", "qa-acceptance", "github-issue-sorting", "repo-health-check"],
+      },
     };
     const observed: Record<string, unknown> = {};
     for (const team of catalogTeams) {

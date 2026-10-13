@@ -9,7 +9,6 @@ import {
   type WorkTimelineResult,
 } from "@paperclipai/shared";
 import { MemoryRouter } from "@/lib/router";
-import { ONBOARDING_STORAGE_KEY } from "@/components/OnboardingWizard";
 import { STORYBOOK_COMPANY_ID } from "../fixtures/onboardingDraft";
 import {
   STORYBOOK_SANDBOX_ENVIRONMENT_ID,
@@ -885,28 +884,6 @@ const preview: Preview = {
         },
       },
     },
-  },
-
-  /**
-   * Every story starts without an onboarding draft.
-   *
-   * `localStorage` is per-origin and the preview frame keeps one for the whole
-   * session, so a story that seeds a draft would otherwise hand it to whatever a
-   * reviewer opens next: the wizard restores that saved step ahead of the step
-   * the new story asked for, and the reviewer lands on a screen they never
-   * clicked on.
-   *
-   * Cleared here rather than on the seeding story's unmount, deliberately.
-   * Switching stories navigates the preview iframe, so the page is torn down
-   * rather than React-unmounted and an unmount cleanup never runs — which is
-   * exactly how the first attempt at this leaked anyway.
-   */
-  beforeEach: () => {
-    try {
-      window.localStorage.removeItem(ONBOARDING_STORAGE_KEY);
-    } catch {
-      // Storage access throws in some privacy modes; nothing to clean up there.
-    }
   },
 };
 

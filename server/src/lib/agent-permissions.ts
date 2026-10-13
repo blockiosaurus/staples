@@ -1,4 +1,5 @@
 import { LOW_TRUST_REVIEW_PRESET, type PermissionKey } from "@paperclipai/shared";
+import { rawStaplesTemplateMarker } from "./staples-template-metadata.js";
 
 /** Direct grants for newly activated standard agents. Existing agents are not backfilled. */
 export const NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS = [
@@ -17,6 +18,47 @@ export const NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS = [
   "tasks:assign_scope",
   "tasks:manage_active_checkouts",
 ] as const satisfies readonly PermissionKey[];
+
+/**
+ * Permissions-record flag set on hires made from a Staples agent template
+ * (plans/apply). It only narrows the agent's default grants, so a caller
+ * setting it on an ordinary hire gains nothing.
+ */
+export const STAPLES_TEMPLATED_PERMISSION_FLAG = "staplesTemplated";
+
+/**
+ * Default grants a templated agent does not receive: they would let it edit
+ * other agents' configuration (Autopilot, lifecycle, adapter) or the
+ * company's tool connections, profiles and runtimes, i.e. weaken the guards
+ * its template installed. A templated agent still uses its tools (`tools:use`)
+ * and asks for apps through `connection_request` (runtime claims, no grant).
+ */
+export const TEMPLATED_AGENT_WITHHELD_GRANT_KEYS: readonly PermissionKey[] = [
+  "agents:configure",
+  "tools:manage_connections",
+  "tools:manage_profiles",
+  "tools:manage_runtime",
+];
+
+/** An agent installed from a Staples template: its template record, or the hire-time flag. */
+export function isStaplesTemplatedAgent(agent: { permissions?: unknown; metadata?: unknown }): boolean {
+  return rawStaplesTemplateMarker(agent.metadata) !== undefined
+    || asRecord(agent.permissions)?.[STAPLES_TEMPLATED_PERMISSION_FLAG] === true;
+}
+
+/**
+ * The standard grant keys for a new agent, minus task assignment when its
+ * permissions say `canAssignTasks: false` (read-only template agents), and
+ * minus the configuration grants above for a templated agent.
+ */
+export function newStandardAgentGrantKeys(permissions: unknown): PermissionKey[] {
+  const record = asRecord(permissions);
+  const noAssign = record?.canAssignTasks === false;
+  const templated = record?.[STAPLES_TEMPLATED_PERMISSION_FLAG] === true;
+  return NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS.filter((key) =>
+    !(noAssign && (key === "tasks:assign" || key === "tasks:assign_scope"))
+    && !(templated && TEMPLATED_AGENT_WITHHELD_GRANT_KEYS.includes(key)));
+}
 
 export function newStandardAgentGrantScope(
   permissionKey: PermissionKey,

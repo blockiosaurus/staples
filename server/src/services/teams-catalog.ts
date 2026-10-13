@@ -20,7 +20,12 @@ import type {
   CompanyPortabilityPreviewResult,
   CompanyPortabilitySource,
 } from "@paperclipai/shared";
-import { normalizeAgentUrlKey } from "@paperclipai/shared";
+import {
+  AGENT_TEMPLATE_TEAMS_CATALOG_REJECTION,
+  isAgentTemplateCatalogEntry,
+  AGENT_TEMPLATE_CATALOG_CATEGORY,
+  normalizeAgentUrlKey,
+} from "@paperclipai/shared";
 import { parseFrontmatterMarkdown } from "@paperclipai/shared/frontmatter";
 import { conflict, forbidden, HttpError, notFound, unprocessable } from "../errors.js";
 import { agentService } from "./agents.js";
@@ -35,6 +40,11 @@ export interface CatalogTeamListQuery {
   kind?: CatalogTeamKind;
   category?: string;
   q?: string;
+  /**
+   * Staples agent templates live in the catalog but are hidden from team
+   * listings; only the agent-templates service sets this.
+   */
+  includeAgentTemplates?: boolean;
 }
 
 export interface CatalogTeamSourcePolicy {
@@ -215,6 +225,7 @@ function searchText(team: CatalogTeam) {
 export async function listCatalogTeams(query: CatalogTeamListQuery = {}): Promise<CatalogTeam[]> {
   const normalizedQuery = query.q?.trim().toLowerCase() ?? "";
   return (await getCatalogTeams())
+    .filter((team) => query.includeAgentTemplates === true || !isAgentTemplateCatalogEntry(team))
     .filter((team) => !query.kind || team.kind === query.kind)
     .filter((team) => !query.category || team.category === query.category)
     .filter((team) => !normalizedQuery || searchText(team).includes(normalizedQuery))
@@ -270,7 +281,9 @@ export async function resolveCatalogTeamReference(reference: string): Promise<{ 
   const exact = teams.find((team) => team.id === trimmed || team.key === trimmed);
   if (exact) return { team: exact, ambiguous: false };
 
-  const slugMatches = teams.filter((team) => team.slug === trimmed);
+  // Bare slugs name teams only; an agent template resolves by id or key
+  // (its agent-templates ref is `staples/<slug>`, handled by that service).
+  const slugMatches = teams.filter((team) => team.slug === trimmed && !isAgentTemplateCatalogEntry(team));
   if (slugMatches.length === 1) return { team: slugMatches[0]!, ambiguous: false };
   if (slugMatches.length > 1) return { team: null, ambiguous: true };
   return { team: null, ambiguous: false };
@@ -772,6 +785,7 @@ export function teamsCatalogService(db: Db) {
     options: CatalogTeamImportOptions = {},
   ): Promise<CatalogTeamPreparedSource> {
     const team = await getCatalogTeamOrThrow(catalogRef);
+    if (isAgentTemplateCatalogEntry(team)) throw unprocessable(AGENT_TEMPLATE_TEAMS_CATALOG_REJECTION);
     const warnings: string[] = [];
     const errors: string[] = [];
 
@@ -986,6 +1000,13 @@ export function teamsCatalogService(db: Db) {
         agent.metadata as Record<string, unknown> | null,
       );
       if (!provenance) continue;
+      // Agent templates are hires, not installed teams (they install through plans).
+      const provenanceTeam = currentById.get(provenance.catalogId);
+      if (
+        (provenanceTeam && isAgentTemplateCatalogEntry(provenanceTeam))
+        || provenance.catalogId.startsWith(`paperclipai:optional:${AGENT_TEMPLATE_CATALOG_CATEGORY}:`)
+        || provenance.catalogKey?.startsWith(`paperclipai/optional/${AGENT_TEMPLATE_CATALOG_CATEGORY}/`)
+      ) continue;
       let entry = byCatalogId.get(provenance.catalogId);
       if (!entry) {
         entry = {

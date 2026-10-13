@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../context/ToastContext";
 import type { BuiltInAgentState } from "../api/builtInAgents";
 import { Agents } from "./Agents";
-import { Agents as ProductionAgents } from "./Agents.production";
 import type { AgentOrgChainHealth } from "@paperclipai/shared";
 
 const mockRouterState = vi.hoisted(() => ({
@@ -358,10 +357,7 @@ describe("Agents", () => {
     vi.clearAllMocks();
   });
 
-  it.each([
-    ["streamlined", Agents],
-    ["production", ProductionAgents],
-  ] as const)("omits the action bar from %s agent list rows", async (_mode, AgentList) => {
+  it("omits the action bar from streamlined agent list rows", async () => {
     mockAgentsApi.list.mockResolvedValue([
       makeAgent({ name: "Alpha", status: "active" }),
       makeAgent({ id: "agent-paused", name: "Paused agent", status: "paused" }),
@@ -371,7 +367,7 @@ describe("Agents", () => {
       root!.render(
         <QueryClientProvider client={queryClient}>
           <ToastProvider>
-            <AgentList />
+            <Agents />
           </ToastProvider>
         </QueryClientProvider>,
       );
@@ -390,6 +386,57 @@ describe("Agents", () => {
       const buttons = Array.from(row?.querySelectorAll("button") ?? []).map((button) => button.textContent);
       expect(buttons).not.toEqual(expect.arrayContaining([expect.stringMatching(/Assign Task|Run Heartbeat|Run with provider trace|Pause|Resume/)]));
     }
+  });
+
+  it("New Agent opens the Hire an agent marketplace", async () => {
+    mockAgentsApi.list.mockResolvedValue([makeAgent({ name: "Alpha", status: "active" })]);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <Agents />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+    const button = Array.from(container.querySelectorAll("button")).find((element) => element.textContent?.includes("New Agent"));
+    expect(button).toBeTruthy();
+    await act(async () => { button!.click(); });
+    expect(mockRouterState.navigate).toHaveBeenCalledWith("/agents/new");
+    expect(mockOpenNewAgent).not.toHaveBeenCalled();
+  });
+
+  it("omits the built-in Assistant from the agents list", async () => {
+    mockAgentsApi.list.mockResolvedValue([
+      makeAgent({ name: "Alpha", status: "active" }),
+      makeAgent({
+        id: "assistant-1",
+        name: "Assistant",
+        status: "idle",
+        metadata: { paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } },
+      }),
+    ]);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <Agents />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+    const listToggle = container.querySelector<HTMLButtonElement>('button[aria-label="List view"]');
+    await act(async () => { listToggle?.click(); });
+    await flushReact();
+
+    expect(findAgentRow(container, "Alpha")).not.toBeNull();
+    expect(findAgentRow(container, "Assistant")).toBeNull();
   });
 
   it("shows the configured model beside the adapter on the all agents page", async () => {
@@ -1005,16 +1052,13 @@ describe("Agents", () => {
     expect(container.querySelector(".min-w-\\(--sz-7rem\\)")).toBeNull();
   });
 
-  it.each([
-    ["streamlined", Agents],
-    ["production", ProductionAgents],
-  ] as const)("omits star and leave/join actions from %s agent index list and org views", async (_mode, AgentList) => {
+  it("omits star and leave/join actions from streamlined agent index list and org views", async () => {
     root = createRoot(container);
     await act(async () => {
       root!.render(
         <QueryClientProvider client={queryClient}>
           <ToastProvider>
-            <AgentList />
+            <Agents />
           </ToastProvider>
         </QueryClientProvider>,
       );

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Agent } from "@paperclipai/shared";
+import type { Agent, PlanBudgetSummary, PlanTemplateSummary } from "@paperclipai/shared";
 import { AlertTriangle, ArrowUpRight, Bot, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDashed, Clock, ExternalLink, FileText, GitBranch, ImagePlus, KeyRound, Loader2, MessageSquareQuote, MinusCircle, ShieldAlert, ThumbsUp, TriangleAlert, Wrench, X, XCircle } from "lucide-react";
 import { Link } from "@/lib/router";
 import { formatAssigneeUserLabel } from "../lib/assignees";
@@ -30,7 +30,9 @@ import {
   type SuggestedTaskDraft,
   type SuggestedTaskTreeNode,
 } from "../lib/issue-thread-interactions";
-import { cn, formatDateTime, formatShortDate } from "../lib/utils";
+import { roleLabels } from "./agent-config-primitives";
+import { getAdapterDisplay } from "../adapters/adapter-display-registry";
+import { cn, formatCents, formatDateTime, formatDollars, formatShortDate } from "../lib/utils";
 import { InteractionPreparationNotice } from "./InteractionPreparationNotice";
 import { InteractionAudienceLine } from "./InteractionAudienceLine";
 import { MarkdownBody, type MarkdownExternalReferenceMap } from "./MarkdownBody";
@@ -47,6 +49,22 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { AppLogo } from "@/pages/apps/AppLogo";
 import { ConnectionIntentInteractionBody } from "@/features/connections/ConnectionIntentInteractionBody";
 import { QuestionForm } from "./task-chat/QuestionForm";
+import { AcceptRecommendationsButton } from "./task-chat/AcceptRecommendationsButton";
+import {
+  executeProposedAction,
+  issuesApi,
+  readProposedActionStaleValue,
+  type ProposedActionAcceptResult,
+} from "../api/issues";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { companyBriefApi } from "../api/companyBrief";
+import { agentsApi } from "../api/agents";
+import { companiesApi } from "../api/companies";
+import { AI_CONNECTION_CAPABILITIES, applyPlanSchema, planTaskCreationOrder, type AiProvider, type ApplyPlan } from "@paperclipai/shared";
+import { queryKeys } from "../lib/queryKeys";
+import { agentTemplateRecord, outwardCategoryForTool } from "../staples/autopilot/templateRecord";
+import { agentDetailHref } from "../pages/agent-detail-navigation";
+import { buildLineDiff } from "../lib/line-diff";
 
 const OTHER_ANSWER_ID = "__paperclip_other__";
 
@@ -105,6 +123,8 @@ interface IssueThreadInteractionCardProps {
     selectedClientKeys?: string[],
     selectedOptionIds?: string[],
     rememberAction?: boolean,
+    /** Set only when confirming an Assistant proposed action the browser just executed. */
+    proposedActionResult?: ProposedActionAcceptResult,
   ) => Promise<void> | void;
   onRejectInteraction?: (
     interaction:
@@ -982,6 +1002,7 @@ function QuestionOptionButton({
   id,
   label,
   description,
+  recommended,
   selected,
   selectionMode,
   onClick,
@@ -989,6 +1010,7 @@ function QuestionOptionButton({
   id: string;
   label: string;
   description?: string | null;
+  recommended?: boolean;
   selected: boolean;
   selectionMode: "single" | "multi";
   onClick: () => void;
@@ -1014,6 +1036,11 @@ function QuestionOptionButton({
         )}
       >
         {label}
+        {recommended ? (
+          <span className="ml-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-(length:--text-micro) font-medium text-muted-foreground">
+            Recommended
+          </span>
+        ) : null}
       </div>
       {description ? (
         <div
@@ -1029,6 +1056,14 @@ function QuestionOptionButton({
       ) : null}
     </button>
   );
+}
+
+/** Recommended option ids for a legacy question (single choice keeps one). */
+function legacyRecommendedOptionIds(question: AskUserQuestionsInteraction["payload"]["questions"][number]): string[] {
+  const ids = question.options
+    .filter((option) => option.recommended === true && option.freeText !== true)
+    .map((option) => option.id);
+  return question.selectionMode === "single" ? ids.slice(0, 1) : ids;
 }
 
 function AskUserQuestionsCard({
@@ -1047,14 +1082,22 @@ function AskUserQuestionsCard({
   ) => Promise<void> | void;
   externalReferences?: MarkdownExternalReferenceMap;
 }) {
-  const [draftAnswers, setDraftAnswers] = useState<Record<string, string[]>>(() =>
-    Object.fromEntries(
-      (interaction.result?.answers ?? []).map((answer) => [
-        answer.questionId,
-        [...answer.optionIds],
-      ]),
-    ),
-  );
+  // Saved answers win; otherwise the asker's recommendations start selected.
+  const initialDraftAnswers = (): Record<string, string[]> =>
+    interaction.result?.answers
+      ? Object.fromEntries(
+          interaction.result.answers.map((answer) => [
+            answer.questionId,
+            [...answer.optionIds],
+          ]),
+        )
+      : Object.fromEntries(
+          interaction.payload.questions.flatMap((question) => {
+            const recommended = legacyRecommendedOptionIds(question);
+            return recommended.length > 0 ? [[question.id, recommended]] : [];
+          }),
+        );
+  const [draftAnswers, setDraftAnswers] = useState<Record<string, string[]>>(initialDraftAnswers);
   const [draftOtherAnswers, setDraftOtherAnswers] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       (interaction.result?.answers ?? [])
@@ -1075,14 +1118,7 @@ function AskUserQuestionsCard({
   const resolutionErrorMessage = useResolutionErrorMessage();
 
   useEffect(() => {
-    setDraftAnswers(
-      Object.fromEntries(
-        (interaction.result?.answers ?? []).map((answer) => [
-          answer.questionId,
-          [...answer.optionIds],
-        ]),
-      ),
-    );
+    setDraftAnswers(initialDraftAnswers());
     setDraftOtherAnswers(
       Object.fromEntries(
         (interaction.result?.answers ?? [])
@@ -1107,6 +1143,20 @@ function AskUserQuestionsCard({
       || (
         otherActiveQuestions[question.id] === true
         && (draftOtherAnswers[question.id]?.trim().length ?? 0) > 0
+      ),
+  );
+
+  const hasRecommendation = questions.some(
+    (question) => legacyRecommendedOptionIds(question).length > 0,
+  );
+  const missingRecommendation = questions.some(
+    (question) =>
+      question.required &&
+      legacyRecommendedOptionIds(question).length === 0 &&
+      (draftAnswers[question.id] ?? []).length === 0 &&
+      !(
+        otherActiveQuestions[question.id] === true &&
+        (draftOtherAnswers[question.id]?.trim().length ?? 0) > 0
       ),
   );
 
@@ -1163,6 +1213,36 @@ function AskUserQuestionsCard({
           };
         }),
       );
+    } catch (error) {
+      setActionError(resolutionErrorMessage(error));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  /** Fill unanswered questions with their recommendation; keep every given answer. */
+  async function handleAcceptRecommendations() {
+    if (!onSubmitInteractionAnswers || missingRecommendation) return;
+    const accepted = questions.map((question) => {
+      const optionIds = draftAnswers[question.id] ?? [];
+      const otherText = otherActiveQuestions[question.id] === true
+        ? draftOtherAnswers[question.id]?.trim() ?? ""
+        : "";
+      const recommended = legacyRecommendedOptionIds(question);
+      if (optionIds.length === 0 && !otherText && recommended.length > 0) {
+        return { questionId: question.id, optionIds: recommended };
+      }
+      return {
+        questionId: question.id,
+        optionIds,
+        ...(otherText ? { otherText } : {}),
+      };
+    });
+    setDraftAnswers(Object.fromEntries(accepted.map((answer) => [answer.questionId, answer.optionIds])));
+    setWorking(true);
+    setActionError(null);
+    try {
+      await onSubmitInteractionAnswers(interaction, accepted);
     } catch (error) {
       setActionError(resolutionErrorMessage(error));
     } finally {
@@ -1288,6 +1368,7 @@ function AskUserQuestionsCard({
                           id={`${interaction.id}-${question.id}-${option.id}`}
                           label={option.label}
                           description={option.description}
+                          recommended={option.recommended === true && !isFreeText}
                           selected={optionSelected}
                           selectionMode={question.selectionMode}
                           onClick={() =>
@@ -1376,8 +1457,16 @@ function AskUserQuestionsCard({
                   )}
                   </Button>
                 ) : null}
+              {hasRecommendation ? (
+                <AcceptRecommendationsButton
+                  disabled={!onSubmitInteractionAnswers || working || cancelling}
+                  missingRecommendation={missingRecommendation}
+                  onClick={() => void handleAcceptRecommendations()}
+                />
+              ) : null}
               <Button
                 size="sm"
+                variant={hasRecommendation ? "outline" : "default"}
                 disabled={!onSubmitInteractionAnswers || !canSubmit || working || cancelling}
                 onClick={() => void handleSubmit()}
               >
@@ -1727,6 +1816,50 @@ function ToolActionResolution({
   );
 }
 
+/**
+ * The requesting agent, loaded only for a pending routine (write) action:
+ * names the "Always allow" option and, for an agent hired from a template,
+ * points at its Autopilot for the tool's outward category.
+ */
+function useToolActionAgent(interaction: RequestConfirmationInteraction, enabled: boolean) {
+  const agentId = interaction.createdByAgentId ?? null;
+  const agent = useQuery({
+    queryKey: [...queryKeys.agents.detail(agentId ?? ""), interaction.companyId],
+    queryFn: () => agentsApi.get(agentId!, interaction.companyId),
+    enabled: enabled && Boolean(agentId),
+    staleTime: 60 * 1000,
+  });
+  return agent.data ?? null;
+}
+
+/** The per-tool trust rule the remember option creates, named accurately. */
+export function rememberActionLabel(agentName: string | null | undefined): string {
+  const name = agentName?.trim();
+  return `Always allow this action for ${name || "this agent"}`;
+}
+
+/**
+ * The templated agent's outward category for this tool (by tool or upstream
+ * name, as the server matches), when exactly one matches.
+ */
+export function toolActionAutopilotCategory(
+  agentMetadata: unknown,
+  toolNames: Array<string | null | undefined>,
+): { label: string } | null {
+  const record = agentTemplateRecord(agentMetadata);
+  const found = new Map<string, { label: string }>();
+  for (const name of toolNames) {
+    if (!name) continue;
+    const category = outwardCategoryForTool(record, name);
+    if (category) found.set(category.capability, category);
+  }
+  return found.size === 1 ? [...found.values()][0]! : null;
+}
+
+function lowerFirst(text: string) {
+  return `${text.charAt(0).toLowerCase()}${text.slice(1)}`;
+}
+
 function RequestToolActionCard({
   interaction,
   state,
@@ -1746,6 +1879,11 @@ function RequestToolActionCard({
   const resolutionErrorMessage = useResolutionErrorMessage();
   const isPending = state === "pending";
   const variant = payload.risk === "destructive" ? "destructive" : "cta";
+  const agent = useToolActionAgent(interaction, isPending && payload.risk === "write");
+  const rememberLabel = rememberActionLabel(agent?.name);
+  const autopilotCategory = agent
+    ? toolActionAutopilotCategory(agent.metadata, [payload.toolName, payload.upstreamToolName])
+    : null;
 
   useEffect(() => {
     if (!isPending) setWorking(null);
@@ -1793,12 +1931,480 @@ function RequestToolActionCard({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onSelect={() => void decide("always")} title={payload.rememberActionScope} aria-description={payload.rememberActionScope}>
-                    Always allow
+                    {rememberLabel}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : null}
           </div>
+        </div>
+      ) : null}
+      {isPending && agent && autopilotCategory ? (
+        <div className="mt-2 flex justify-end">
+          <Link
+            to={agentDetailHref(agent.urlKey || agent.id, "autopilot")}
+            className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+          >
+            Or turn on Autopilot for {lowerFirst(autopilotCategory.label)}
+          </Link>
+        </div>
+      ) : null}
+      <InteractionActionError message={actionError} />
+    </div>
+  );
+}
+
+
+const PROPOSED_ACTION_CATEGORY_LABELS: Record<string, string> = {
+  approval: "Approval",
+  agent_lifecycle: "Agent lifecycle",
+  budget: "Budget",
+  secret: "Secret",
+  connection: "Connection",
+  outbound: "Outbound",
+  delete: "Delete",
+  other_governed: "Governed action",
+  brief: "Company brief",
+  plan: "Plan",
+};
+
+const BRIEF_PROPOSAL_PATH = /^\/api\/companies\/([0-9a-fA-F-]{36})\/brief$/;
+
+/**
+ * A proposed company brief: the new text rendered, plus the line changes
+ * against the brief as it is now (read with the person's own session).
+ */
+function ProposedBriefPreview({ path, body }: { path: string; body: unknown }) {
+  const companyId = BRIEF_PROPOSAL_PATH.exec(path)?.[1] ?? null;
+  const next = body && typeof body === "object" && typeof (body as { body?: unknown }).body === "string"
+    ? (body as { body: string }).body
+    : null;
+  const current = useQuery({
+    queryKey: queryKeys.companyBrief(companyId ?? ""),
+    queryFn: async () => (await companyBriefApi.get(companyId!)) ?? null,
+    enabled: Boolean(companyId),
+  });
+  if (next === null) return null;
+  const isNew = current.isSuccess && current.data === null;
+  // Diffing is quadratic; very long briefs show the new text only.
+  const diffable = (text: string) => text.split("\n").length <= 1500;
+  const changes = current.data && diffable(current.data.body) && diffable(next) ? buildLineDiff(current.data.body, next) : null;
+  const changed = changes?.filter((line) => line.kind !== "context") ?? [];
+  return (
+    <div className="mt-3 space-y-3">
+      <div data-testid="proposed-brief-preview" className="rounded-md border border-border p-3">
+        <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">
+          {isNew ? "New brief" : "Proposed brief"}
+        </p>
+        <div className="mt-2 max-h-80 overflow-auto text-sm">
+          <MarkdownBody>{next}</MarkdownBody>
+        </div>
+      </div>
+      {current.data && changes ? (
+        <div data-testid="proposed-brief-changes" className="rounded-md border border-border p-3">
+          <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">
+            Changes from revision {current.data.revisionNumber}
+          </p>
+          {changed.length ? (
+            <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-xs">
+              {changed.map((line, index) => (
+                <div key={index} className={line.kind === "added" ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}>
+                  {line.kind === "added" ? "+ " : "- "}{line.text}
+                </div>
+              ))}
+            </pre>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">No changes to the current brief.</p>
+          )}
+        </div>
+      ) : current.data ? (
+        <p className="text-xs text-muted-foreground">
+          The brief is too long to compare here. <Link to="/company/brief">Open the current brief</Link>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+const PLAN_PROPOSAL_PATH = /^\/api\/companies\/([0-9a-fA-F-]{36})\/plans\/apply$/;
+
+function PlanPreviewSection({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">{label}</p>
+      <div className="mt-1 text-sm text-foreground">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * A proposed starter plan, readable at a glance: the brief (collapsed), goal,
+ * project, new agents, and the tasks in the order they will be created, with
+ * what each waits on and who it is assigned to. The exact request follows.
+ */
+function ProposedPlanPreview({ path, body, hireConnections, templateSummaries, budget }: {
+  path: string; body: unknown; hireConnections?: Array<{ clientKey: string; provider: string | null }>; templateSummaries?: PlanTemplateSummary[];
+  budget?: PlanBudgetSummary;
+}) {
+  const companyId = PLAN_PROPOSAL_PATH.exec(path)?.[1] ?? null;
+  const parsed = applyPlanSchema.safeParse(body);
+  const plan: ApplyPlan | null = parsed.success ? parsed.data : null;
+  const needsAgents = Boolean(plan?.tasks.some((task) => task.assigneeAgentId));
+  const agents = useQuery({
+    queryKey: queryKeys.agents.list(companyId ?? ""),
+    queryFn: () => agentsApi.list(companyId!),
+    enabled: Boolean(companyId) && needsAgents,
+  });
+  // New hires wait for approval when the company requires it; so do their tasks.
+  const company = useQuery({
+    queryKey: queryKeys.companies.detail(companyId ?? ""),
+    queryFn: () => companiesApi.get(companyId!),
+    enabled: Boolean(companyId) && Boolean(plan?.agents.length),
+  });
+  const hiresNeedApproval = Boolean(company.data?.requireBoardApprovalForNewAgents);
+  if (!plan) return null;
+  let ordered = plan.tasks;
+  try { ordered = planTaskCreationOrder(plan.tasks); } catch { /* the server refuses it; show as written */ }
+  const titleByKey = new Map(plan.tasks.map((task) => [task.clientKey, task.title] as const));
+  const newAgentByKey = new Map(plan.agents.map((agent) => [agent.clientKey, agent] as const));
+  const connectionByKey = new Map((hireConnections ?? []).map((entry) => [entry.clientKey, entry.provider] as const));
+  const templateByKey = new Map((templateSummaries ?? []).map((entry) => [entry.clientKey, entry] as const));
+  const existingName = (id: string) => agents.data?.find((agent) => agent.id === id)?.name ?? "Existing agent";
+  const assignee = (task: ApplyPlan["tasks"][number]) => task.assigneeClientKey
+    ? `${newAgentByKey.get(task.assigneeClientKey)?.name ?? task.assigneeClientKey} (${hiresNeedApproval ? "new, after hire approval" : "new"})`
+    : task.assigneeAgentId ? existingName(task.assigneeAgentId) : "Unassigned";
+  return (
+    <div data-testid="proposed-plan-preview" className="mt-3 space-y-3 rounded-md border border-border p-3">
+      {plan.brief ? (
+        <details data-testid="proposed-plan-brief" className="text-sm">
+          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">
+            {plan.brief.baseRevisionId ? "Brief (replaces the current brief)" : "Brief"}
+          </summary>
+          <div className="mt-2 max-h-80 overflow-auto">
+            <MarkdownBody>{plan.brief.body}</MarkdownBody>
+          </div>
+        </details>
+      ) : null}
+      {plan.goal ? (
+        <PlanPreviewSection label="Goal">
+          <p className="font-medium">{plan.goal.title}</p>
+          {plan.goal.description ? <p className="text-muted-foreground">{plan.goal.description}</p> : null}
+        </PlanPreviewSection>
+      ) : null}
+      {plan.project ? (
+        <PlanPreviewSection label="Project">
+          <p className="font-medium">{plan.project.name}</p>
+          {plan.project.description ? <p className="text-muted-foreground">{plan.project.description}</p> : null}
+        </PlanPreviewSection>
+      ) : null}
+      {plan.agents.length ? (
+        <PlanPreviewSection label={hiresNeedApproval ? "New agents (hiring needs approval)" : "New agents"}>
+          <ul data-testid="proposed-plan-agents" className="list-disc space-y-0.5 pl-5">
+            {plan.agents.map((agent) => (
+              <li key={agent.clientKey}>
+                {(() => {
+                  const template = templateByKey.get(agent.clientKey);
+                  const roleLabel = agent.role ? (roleLabels[agent.role] ?? null) : null;
+                  const engine = agent.adapterType ? getAdapterDisplay(agent.adapterType).label : null;
+                  const title = agent.title ?? null;
+                  return (
+                    <>
+                      <span className="font-medium">{agent.name ?? template?.name ?? agent.clientKey}</span>
+                      {title ? <span className="text-muted-foreground"> · {title}</span> : null}
+                      {roleLabel ? <span className="text-muted-foreground"> · {roleLabel}</span> : null}
+                      {engine ? <span className="text-muted-foreground"> · {engine}</span> : null}
+                      {agent.budgetMonthlyCents !== undefined ? <span className="text-muted-foreground"> · budget {formatCents(agent.budgetMonthlyCents)}/month</span> : null}
+                      {agent.reportsToClientKey ? <span className="text-muted-foreground"> · reports to {newAgentByKey.get(agent.reportsToClientKey)?.name ?? agent.reportsToClientKey}</span> : null}
+                      {connectionByKey.has(agent.clientKey) ? (
+                        <span data-testid="proposed-plan-agent-connection" className="text-muted-foreground"> · {inheritedConnectionLabel(connectionByKey.get(agent.clientKey) ?? null)}</span>
+                      ) : null}
+                      {template ? (
+                        <p data-testid="proposed-plan-agent-template" className="text-muted-foreground">{planTemplateLine(template)}</p>
+                      ) : null}
+                    </>
+                  );
+                })()}
+              </li>
+            ))}
+          </ul>
+          {budget && budget.budgetedHireCount > 0 ? (
+            <p data-testid="proposed-plan-budget" className="mt-1 text-muted-foreground">{planBudgetLine(budget)}</p>
+          ) : null}
+        </PlanPreviewSection>
+      ) : null}
+      <PlanPreviewSection label={`Tasks (${plan.tasks.length})`}>
+        <ol data-testid="proposed-plan-tasks" className="list-decimal space-y-1 pl-5">
+          {ordered.map((task) => (
+            <li key={task.clientKey}>
+              <span className="font-medium">{task.title}</span>
+              <span className="text-muted-foreground">
+                {" · "}{assignee(task)}
+                {task.parentClientKey ? ` · under: ${titleByKey.get(task.parentClientKey) ?? task.parentClientKey}` : ""}
+                {task.blockedByClientKeys.length ? ` · after: ${task.blockedByClientKeys.map((key) => titleByKey.get(key) ?? key).join(", ")}` : ""}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </PlanPreviewSection>
+    </div>
+  );
+}
+
+/**
+ * "Needs AgentMail or Gmail · asks before: sending email · 2 routines". The
+ * agent row already shows the name and monthly budget, so neither repeats here.
+ */
+function planTemplateLine(summary: PlanTemplateSummary) {
+  const lower = (label: string) => label.charAt(0).toLowerCase() + label.slice(1);
+  const parts: string[] = [];
+  if (summary.needs.length) parts.push(`needs ${summary.needs.join(", ")}`);
+  if (summary.readOnly) parts.push("read-only");
+  else if (summary.asksBefore.length) parts.push(`asks before: ${summary.asksBefore.map(lower).join(", ")}`);
+  parts.push(`${summary.routineCount} routine${summary.routineCount === 1 ? "" : "s"}`);
+  const line = parts.join(" · ");
+  return line.charAt(0).toUpperCase() + line.slice(1);
+}
+
+/**
+ * "Monthly budgets: $90 across 3 agents · fits your $200 hosted limit", or
+ * "· raises your hosted limit from $50 to $110". When the budgets need more
+ * than the operator allows, the card says the limit stops there.
+ */
+function planBudgetLine(budget: PlanBudgetSummary) {
+  const count = budget.budgetedHireCount;
+  const base = `Monthly budgets: ${formatDollars(budget.hiresMonthlyCents)} across ${count} agent${count === 1 ? "" : "s"}`;
+  const { hostedCapCents: from, hostedCapAfterCents: to, hostedNeededCents: needed } = budget;
+  if (from === null || to === null || needed === null) return base;
+  const short = needed > to;
+  const mayStop = "so some agents may stop before their budgets run out";
+  // `needed` sums every agent on the hosted key after apply; the new hosted
+  // hires are at most `hiresMonthlyCents`, so anything above that is agents
+  // the company already runs there (the Assistant, earlier hires).
+  const includesExisting = needed > budget.hiresMonthlyCents;
+  if (to > from) {
+    const raise = `raises your hosted limit from ${formatDollars(from)} to ${formatDollars(to)}`;
+    if (short) return `${base} · ${raise}, the most a plan can set, ${mayStop}`;
+    return includesExisting ? `${base} · ${raise} to cover these and your existing agents` : `${base} · ${raise}`;
+  }
+  return short
+    ? `${base} · more than your ${formatDollars(from)} hosted limit (plans can raise it only up to ${formatDollars(budget.ceilingCents)}), ${mayStop}`
+    : `${base} · fits your ${formatDollars(from)} hosted limit`;
+}
+
+/** A bare "HTTP 201"-style message carries no meaning for the person reading the card. */
+const BARE_STATUS_MESSAGE = /^HTTP \d{3}$/;
+
+/** Plain words for a failed call's status code; no codes in the person-facing line. */
+function plainFailureReason(status: number | undefined) {
+  if (status === undefined) return null;
+  if (status === 401 || status === 403) return "you don't have permission to do this";
+  if (status === 404) return "what it changes no longer exists";
+  if (status === 409) return "it changed or was already done";
+  if (status === 429) return "too many requests right now, try again shortly";
+  if (status >= 500) return "something went wrong on our side, try again";
+  if (status >= 400) return "the request wasn't accepted";
+  return null;
+}
+
+/**
+ * "Done", "Done · Hired 2 agents…", or "Didn't go through · <plain reason>".
+ * Never shows the raw status code.
+ */
+export function proposedActionOutcomeLine(outcome: { status: string; httpStatus?: number; message?: string }) {
+  const message = outcome.message && !BARE_STATUS_MESSAGE.test(outcome.message.trim()) ? outcome.message : null;
+  if (outcome.status === "executed") return message ? `Done · ${message}` : "Done";
+  const reason = message ?? plainFailureReason(outcome.httpStatus);
+  return reason ? `Didn't go through · ${reason}` : "Didn't go through";
+}
+
+/** "Uses your Claude connection"; a pool binding has no single provider. */
+function inheritedConnectionLabel(provider: string | null) {
+  const name = provider ? AI_CONNECTION_CAPABILITIES[provider as AiProvider]?.name : null;
+  return name ? `Uses your ${name} connection` : "Uses your connection";
+}
+
+/**
+ * An Assistant-proposed governed API call (`payload.proposedAction`). Nothing
+ * runs until the person clicks Confirm: their browser then performs exactly
+ * the stored call with their own session and reports the outcome (with the
+ * proposal hash) through accept. Cancel rejects without calling anything.
+ */
+function humanizeApprovalType(type: string) {
+  const words = type.replace(/[_-]+/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : type;
+}
+
+/** Server-built facts read from the approval being decided; never written by the Assistant. */
+function ProposedActionContextBlock({ context }: { context: NonNullable<NonNullable<RequestConfirmationInteraction["payload"]["proposedAction"]>["context"]> }) {
+  const commandFields = context.adapterConfigCommandFields ?? [];
+  const rows: Array<[string, ReactNode]> = [
+    ["Approval", humanizeApprovalType(context.approvalType)],
+    ["Requested by", context.requestedBy ?? "Unknown"],
+  ];
+  if (context.approvalType === "hire_agent") {
+    rows.push(["Agent", context.agentName ?? "Unnamed"]);
+    if (context.agentRole) rows.push(["Role", context.agentRole]);
+    rows.push(["Adapter", <span className="font-mono">{context.adapterType ?? "Not set"}</span>]);
+    rows.push(["Command settings", commandFields.length
+      ? <span className="text-amber-700 dark:text-amber-300">Adapter config sets <span className="font-mono">{commandFields.join(", ")}</span></span>
+      : "None in adapter config"]);
+  }
+  return (
+    <div data-testid="proposed-action-context" className="mt-3 rounded-md border border-border bg-muted/30 p-3">
+      <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">From the approval</p>
+      <dl className="mt-2 grid grid-cols-(--gtc-16) gap-x-3 gap-y-1 text-sm">
+        {rows.map(([label, value]) => (
+          <div key={label} className="contents">
+            <dt className="text-muted-foreground">{label}</dt>
+            <dd className="min-w-0 break-words text-foreground">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function ProposedActionCard({
+  interaction,
+  currentUserId,
+  addresseeLabel,
+  onAcceptInteraction,
+  onRejectInteraction,
+}: {
+  interaction: RequestConfirmationInteraction;
+  currentUserId?: string | null;
+  addresseeLabel?: string | null;
+  onAcceptInteraction?: IssueThreadInteractionCardProps["onAcceptInteraction"];
+  onRejectInteraction?: (interaction: RequestConfirmationInteraction, reason?: string) => Promise<void> | void;
+}) {
+  const action = interaction.payload.proposedAction!;
+  const queryClient = useQueryClient();
+  const [working, setWorking] = useState<"confirm" | "cancel" | null>(null);
+  const [staleWarning, setStaleWarning] = useState(false);
+  const [claimHeld, setClaimHeld] = useState(false);
+  const [localResult, setLocalResult] = useState<Omit<ProposedActionAcceptResult, "hash"> | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const resolutionErrorMessage = useResolutionErrorMessage();
+  const isPending = interaction.status === "pending";
+  // Only the addressed person may run it (the server enforces this too).
+  const isAddressee = Boolean(currentUserId) && currentUserId === interaction.addresseeUserId;
+  const recorded = interaction.result?.proposedAction ?? null;
+  const outcome = recorded ?? (isPending ? localResult : null);
+  const destructive = action.method === "DELETE" || action.category === "delete";
+  const prettyBody = action.body === null || action.body === undefined ? null : JSON.stringify(action.body, null, 2);
+
+  async function confirm() {
+    setWorking("confirm");
+    setActionError(null);
+    try {
+      // The server re-validates the stored call and reserves it for this
+      // person before anything else; a refused claim means nothing executes.
+      // A claim already held (after a stale warning) is reused, not re-taken.
+      if (!claimHeld) {
+        try {
+          await issuesApi.claimProposedAction(interaction.issueId, interaction.id, action.hash);
+          setClaimHeld(true);
+        } catch (error) {
+          setActionError(resolutionErrorMessage(error));
+          return;
+        }
+      }
+      // Then verify the target is unchanged; a mismatch (or an unreadable
+      // target) requires an explicit second Confirm before anything runs.
+      if (action.staleCheck && !staleWarning) {
+        const current = await readProposedActionStaleValue(action.staleCheck);
+        if (current !== action.staleCheck.expected) {
+          setStaleWarning(true);
+          return;
+        }
+      }
+      // A plan carries this card's id as its idempotency key, so running it
+      // again (another tab, or after a stale claim) never creates it twice.
+      const result = await executeProposedAction(action, action.category === "plan" ? { idempotencyKey: interaction.id } : {});
+      setLocalResult(result);
+      if (action.category === "plan") {
+        // A plan apply may hire agents with desired skills: refresh every agent's skill snapshot.
+        void queryClient.invalidateQueries({ queryKey: ["agents", "skills"] });
+      }
+      try {
+        await onAcceptInteraction?.(interaction, undefined, undefined, undefined, { ...result, hash: action.hash });
+      } catch (error) {
+        setActionError(`The call ${result.status === "executed" ? "ran" : "was attempted"}, but recording the outcome failed: ${resolutionErrorMessage(error)}`);
+      }
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  async function cancel() {
+    setWorking("cancel");
+    setActionError(null);
+    try {
+      await onRejectInteraction?.(interaction);
+    } catch (error) {
+      setActionError(resolutionErrorMessage(error));
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  const statusLabel = !isPending
+    ? interaction.status === "accepted"
+      ? recorded?.status === "executed" ? "Executed" : recorded?.status === "stale" ? "Not run · changed" : "Failed"
+      : interaction.status === "rejected" ? "Cancelled" : interaction.status === "expired" ? "Expired" : "Closed"
+    : outcome ? (outcome.status === "executed" ? "Executed" : "Failed") : "Needs your confirmation";
+  const failed = outcome?.status === "failed" || (interaction.status === "accepted" && recorded?.status !== "executed");
+
+  return (
+    <div id={`interaction-${interaction.id}`} data-testid="proposed-action-card" className={cn("rounded-lg border p-5 shadow-none", isPending ? (destructive ? "border-2 border-red-500/70" : "border-2 border-violet-500/70") : "border-border")}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-1 rounded-sm border border-border bg-muted/60 px-2 py-0.5 text-(length:--text-micro) font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">
+          <ShieldAlert className="h-3.5 w-3.5" />
+          {PROPOSED_ACTION_CATEGORY_LABELS[action.category] ?? "Governed action"}
+        </span>
+        <span data-testid="interaction-status-badge" className={cn("text-xs", failed ? "text-destructive" : "text-muted-foreground")}>{statusLabel}</span>
+      </div>
+      {action.context ? <ProposedActionContextBlock context={action.context} /> : null}
+      {action.category === "brief" ? <ProposedBriefPreview path={action.path} body={action.body} /> : null}
+      {action.category === "plan" ? <ProposedPlanPreview path={action.path} body={action.body} hireConnections={action.planHireConnections} templateSummaries={action.planTemplateSummaries} budget={action.planBudget} /> : null}
+      <details data-testid="proposed-action-request" className="mt-3 text-sm">
+        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">Technical details</summary>
+        <div className="mt-2 space-y-2">
+          <p className="break-all font-mono text-sm text-foreground">
+            <span className="font-semibold">{action.method}</span> {action.path}
+          </p>
+          {prettyBody ? (
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-mono text-xs text-foreground">{prettyBody}</pre>
+          ) : (
+            <p className="text-xs text-muted-foreground">No request body.</p>
+          )}
+        </div>
+      </details>
+      <p className="mt-3 text-sm text-foreground"><span className="text-muted-foreground">Assistant's summary: </span>{action.summary}</p>
+      {outcome ? (
+        <p data-testid="proposed-action-outcome" className={cn("mt-2 flex items-center gap-1.5 text-sm", failed ? "text-destructive" : "text-muted-foreground")} aria-live="polite">
+          {failed ? <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />}
+          <span className="break-words">
+            {proposedActionOutcomeLine(outcome)}
+          </span>
+        </p>
+      ) : null}
+      {isPending && staleWarning ? (
+        <p className="mt-2 flex items-center gap-1.5 text-sm text-amber-700 dark:text-amber-300" role="status">
+          <TriangleAlert className="h-3.5 w-3.5 shrink-0" />Changed since the Assistant proposed this. Review it, then confirm again to run it anyway.
+        </p>
+      ) : null}
+      {isPending && !localResult && !isAddressee ? (
+        <p className="mt-3 text-sm text-muted-foreground">Waiting for {addresseeLabel || "the addressed person"} to confirm</p>
+      ) : null}
+      {isPending && !localResult && isAddressee ? (
+        <div className="mt-3 flex justify-end gap-2">
+          <Button size="sm" variant="ghost" disabled={!onRejectInteraction || working !== null} onClick={() => void cancel()}>
+            {working === "cancel" ? "Cancelling…" : (interaction.payload.rejectLabel || "Cancel")}
+          </Button>
+          <Button size="sm" variant={destructive ? "destructive" : "cta"} disabled={!onAcceptInteraction || working !== null} onClick={() => void confirm()}>
+            {working === "confirm" ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Running…</> : staleWarning ? "Confirm anyway" : (interaction.payload.acceptLabel || (action.category === "brief" ? "Update brief" : action.category === "plan" ? "Create plan" : "Confirm"))}
+          </Button>
         </div>
       ) : null}
       <InteractionActionError message={actionError} />
@@ -3733,6 +4339,19 @@ export function IssueThreadInteractionCard({
           addresseeLabel={addresseeLabel ?? "the addressed person"}
         />
       </div>
+    );
+  }
+  if (interaction.kind === "request_confirmation" && interaction.payload.proposedAction) {
+    return (
+      <InteractionAudienceContext.Provider value={audience}>
+        <ProposedActionCard
+          interaction={interaction}
+          currentUserId={currentUserId}
+          addresseeLabel={addresseeLabel}
+          onAcceptInteraction={onAcceptInteraction}
+          onRejectInteraction={onRejectInteraction}
+        />
+      </InteractionAudienceContext.Provider>
     );
   }
   if (isToolAction && interaction.kind === "request_confirmation" && toolActionState) {

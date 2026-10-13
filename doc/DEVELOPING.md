@@ -776,11 +776,25 @@ Every local install keeps runtime state directly under the selected instance roo
   runtime-services/                             # managed local-service registry
   runtime-service-logs/                         # append-only managed-service stdout/stderr
   secrets/master.key                             # local_encrypted master key
+  secrets/agent-jwt-secret                       # generated run-token secret (see below)
   workspaces/<agent-id>/                         # default agent workspaces
   projects/                                      # project execution workspaces
   companies/<company-id>/agents/<agent-id>/codex-home/
                                                    # per-agent codex_local home
 ```
+
+Agent run tokens (the run-scoped JWTs that give agents their Staples tools)
+are signed with `PAPERCLIP_AGENT_JWT_SECRET`, falling back to
+`BETTER_AUTH_SECRET`. When neither is set (blank counts as unset) on a
+`local_trusted` instance, the server reads
+`secrets/agent-jwt-secret` under the instance root, or on first start generates
+32 random bytes (hex) into it (directory `0700`, file `0600`), and uses it for
+`PAPERCLIP_AGENT_JWT_SECRET`. It logs "Generated a local agent run-token secret
+at <path>" once and never logs the value. A configured secret always wins;
+worktree and fork instances that set it deliberately are unaffected. In
+authenticated modes nothing is generated (the secret is also better-auth's
+fallback login secret, and better-auth still refuses to start without one); a
+missing secret logs a warning telling the operator to set it.
 
 `PAPERCLIP_HOME` and `PAPERCLIP_INSTANCE_ID` override the home root and instance id respectively. `paperclipai onboard` echoes the resolved values in its banner (`Local home: <home> | instance: <id> | config: <path>`) so you can confirm where state will land before continuing.
 

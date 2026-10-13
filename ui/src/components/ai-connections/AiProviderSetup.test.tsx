@@ -61,7 +61,7 @@ it.each(providerSources)("opens %s directly with shared access folded under Adva
   try {
     await act(async () => root.render(<QueryClientProvider client={client}><TooltipProvider><AiProviderSetup companyId="company" initialProvider={preset.provider} initialProtocol={preset.protocol} providerLabel={preset.label} onCancel={onCancel} onComplete={() => {}} /></TooltipProvider></QueryClientProvider>));
     expect(container.textContent).not.toContain("Connect a model provider");
-    expect(container.textContent).toContain("Connects for everyone in your organization, available to all agents.");
+    expect(container.textContent).toContain("Uses one account shared by your whole organization; all your agents can use it.");
     expect(container.querySelector('[role="radio"]')).toBeNull();
     const change = Array.from(container.querySelectorAll('button')).find(b => b.textContent === "Change")!;
     expect(change.getAttribute("aria-expanded")).toBe("false");
@@ -70,7 +70,7 @@ it.each(providerSources)("opens %s directly with shared access folded under Adva
     expect(radio("Any human in the organization").getAttribute("aria-checked")).toBe("true");
     expect(radio("Any agent").getAttribute("aria-checked")).toBe("true");
     await act(async () => radio("Just me").click());
-    expect(container.textContent).toContain("Connects as you, available to all agents.");
+    expect(container.textContent).toContain("Signs in with your own account; all your agents can use it.");
     await act(async () => Array.from(container.querySelectorAll('button')).find(b => b.textContent === "Back")!.click());
     expect(onCancel).toHaveBeenCalledOnce();
   } finally {

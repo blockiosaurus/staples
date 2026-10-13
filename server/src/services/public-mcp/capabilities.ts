@@ -16,31 +16,61 @@ import { McpApiError, McpCapabilityError, type ApiDispatch, type Capability, com
 import { fileTransferCapabilities, type PublicMcpTransfers } from "./file-transfers.js";
 import { expandedMcpCapabilities } from "./expanded-capabilities.js";
 
+/**
+ * One in-process request through the API router as `actor`: the route's own
+ * authorization, validation, audit and scheduling apply. Returns the raw
+ * status and parsed JSON body (null when empty or not JSON).
+ *
+ * `trustedOrigin` is only for a caller that is itself handling a board
+ * session request which already passed boardMutationGuard: it is that
+ * request's verified origin (trustedBoardMutationOrigin), replayed as Origin
+ * and Host so the inner request passes the same CSRF guard. Never pass a
+ * value taken from user input.
+ */
+export async function injectApiRequest(
+  api: Router,
+  actor: McpPrincipal["actor"],
+  method: string,
+  path: string,
+  body?: unknown,
+  options: { trustedOrigin?: string | null } = {},
+): Promise<{ statusCode: number; json: unknown }> {
+  const headers: Record<string, string> = options.trustedOrigin
+    ? { origin: options.trustedOrigin, host: new URL(options.trustedOrigin).host }
+    : {};
+  const app = express();
+  // light-my-request adapts the parent prototypes of app.request/response.
+  // Clone Express's shared parents so injection cannot alter real HTTP traffic.
+  for (const target of [app.request, app.response]) {
+    const parent = Object.getPrototypeOf(target);
+    Object.setPrototypeOf(target, Object.create(Object.getPrototypeOf(parent), Object.getOwnPropertyDescriptors(parent)));
+  }
+  app.use(express.json({ limit: DEFAULT_JSON_BODY_LIMIT }));
+  app.use((req, _res, next) => { req.actor = actor; next(); });
+  app.use("/api", api);
+  app.use(errorHandler);
+  const response = await inject(app, {
+    method: method as "GET", url: "/api" + path, Request: IncomingMessage,
+    headers: { ...headers, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    ...(body === undefined ? {} : { payload: JSON.stringify(body) }),
+  });
+  let json: unknown = null;
+  if (response.statusCode !== 204 && response.payload) {
+    try { json = response.json<unknown>(); } catch { json = null; }
+  }
+  return { statusCode: response.statusCode, json };
+}
+
 /** Internal HTTP dispatch reuses domain authorization, validation, audit and scheduling.
  * Neither an arbitrary path nor an actor is accepted from the MCP client.
  * Each invocation has its own Express request and verified actor.
  */
 export function createMcpApiDispatch(api: Router): ApiDispatch {
   return async (principal, method, path, body) => {
-    const app = express();
-    // light-my-request adapts the parent prototypes of app.request/response.
-    // Clone Express's shared parents so injection cannot alter real HTTP traffic.
-    for (const target of [app.request, app.response]) {
-      const parent = Object.getPrototypeOf(target);
-      Object.setPrototypeOf(target, Object.create(Object.getPrototypeOf(parent), Object.getOwnPropertyDescriptors(parent)));
-    }
-    app.use(express.json({ limit: DEFAULT_JSON_BODY_LIMIT }));
-    app.use((req, _res, next) => { req.actor = principal.actor; next(); });
-    app.use("/api", api);
-    app.use(errorHandler);
-    const response = await inject(app, {
-      method, url: "/api" + path, Request: IncomingMessage,
-      ...(body === undefined ? {} : { payload: JSON.stringify(body), headers: { "content-type": "application/json" } }),
-    });
+    const response = await injectApiRequest(api, principal.actor, method, path, body);
     if (response.statusCode >= 400) {
       // Keep upstream error details out of the public tool boundary.
-      let payload: Record<string, unknown> = {};
-      try { payload = object(response.json()); } catch { /* Non-JSON upstream errors remain private. */ }
+      const payload = object(response.json);
       const details = object(payload.details);
       const safe: Record<string, unknown> = {};
       for (const key of ["code", "currentRevisionId", "latestRevisionId", "currentVersionId"]) {
@@ -49,7 +79,7 @@ export function createMcpApiDispatch(api: Router): ApiDispatch {
       }
       throw new McpApiError(response.statusCode, safe);
     }
-    return response.statusCode === 204 || !response.payload ? null : response.json<unknown>();
+    return response.statusCode === 204 ? null : response.json;
   };
 }
 

@@ -86,7 +86,7 @@ function ComposerAddStory({ initialMode, goalAvailable, mobile, mobileContext, f
           {sent.map((body, index) => <div key={index} className="ml-8 rounded-lg bg-secondary px-3 py-2">{body}</div>)}
         </div>
         <div className="min-h-4 flex-1" />
-        <TaskChatComposerDock mobile streamlined={!fullBleedMobileContext}>{composer}</TaskChatComposerDock>
+        <TaskChatComposerDock mobile>{composer}</TaskChatComposerDock>
       </div>
     </main>
     <MobileBottomNav visible />

@@ -22,6 +22,11 @@ export const companyArtifactsQuerySchema = z.object({
     (value) => value === "true" ? true : value === "false" ? false : value,
     z.boolean(),
   ).optional().default(false),
+  /** Leave out the Assistant's weekly updates (Home shows them in their own card). */
+  excludeWeeklyUpdates: z.preprocess(
+    (value) => value === "true" ? true : value === "false" ? false : value,
+    z.boolean(),
+  ).optional().default(false),
   limit: z.coerce
     .number()
     .int()

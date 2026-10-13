@@ -30,6 +30,7 @@ import { HttpError, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { withAccountingTransaction } from "./accounting-transaction.js";
 import { logActivity, type LogActivityInput, type ActivityPublication } from "./activity-log.js";
+import { clampPersonHostedLimit, usesHostedInferenceKey } from "./hosted-inference.js";
 
 type ScopeRecord = {
   companyId: string;
@@ -49,6 +50,11 @@ export type BudgetEnforcementScope = {
   createdBefore?: Date;
   /** Revalidated at the durable cancellation write, under the admission lock. */
   enforcement?: { policyId: string; version: number };
+};
+
+export type BudgetPolicyUpsertOptions = {
+  /** Activity-log actor for a server-created policy (default: the board user). */
+  actor?: { actorType: "system"; actorId: string };
 };
 
 export type BudgetServiceHooks = {
@@ -150,6 +156,13 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
   };
 }
 
+/** Whether a run of this agent would be billed to the operator's hosted-inference key. */
+async function agentUsesHostedInference(db: Db, companyId: string, agentId: string): Promise<boolean> {
+  const [row] = await db.select({ adapterType: agents.adapterType, adapterConfig: agents.adapterConfig })
+    .from(agents).where(and(eq(agents.id, agentId), eq(agents.companyId, companyId)));
+  return row ? usesHostedInferenceKey(row) : false;
+}
+
 // Keep a large dashboard from filling the database pool with queued reads.
 async function mapBudgetReads<T, R>(rows: T[], read: (row: T) => Promise<R>): Promise<R[]> {
   const result: R[] = [];
@@ -169,6 +182,20 @@ export function budgetPoliciesForRun(companyId: string, agentId: string | null, 
 }
 
 type SpendPolicy = Pick<PolicyRow, "companyId" | "scopeType" | "scopeId" | "windowKind" | "metric">;
+
+/**
+ * Company- or agent-scope policy counting only spend billed to the operator's
+ * hosted inference key (cost events marked `hostedInference`). It never pauses
+ * the company or the agent, or cancels local work: it only refuses admission to runs that would
+ * use the hosted key, and caps their sessions (see remainingHardStopCentsForRun).
+ */
+export const HOSTED_BILLED_CENTS_METRIC = "hosted_billed_cents" as const;
+/** Run error code when a hosted-inference limit refuses a hosted run. */
+export const HOSTED_LIMIT_REACHED_ERROR_CODE = "hosted_limit_reached" as const;
+/** Run error code when a spending budget's hard stop refuses a run. */
+export const BUDGET_REACHED_ERROR_CODE = "budget_reached" as const;
+const isHostedMetric = (policy: Pick<PolicyRow, "metric">) => policy.metric === HOSTED_BILLED_CENTS_METRIC;
+const isSpendMetric = (policy: Pick<PolicyRow, "metric">) => policy.metric === "billed_cents" || isHostedMetric(policy);
 type ObservedSpend = { windowStart: Date; windowEnd: Date; total: number; totalExact: string; unpricedEventCount: number; pendingRunCount: number; recoveringRunCount: number };
 
 /** One ledger scan and one pending-run scan for the affected policies. The
@@ -178,7 +205,7 @@ type ObservedSpend = { windowStart: Date; windowEnd: Date; total: number; totalE
 async function computeObservedSpends(db: Db, policies: SpendPolicy[]): Promise<ObservedSpend[]> {
   const now = new Date();
   const windows = policies.map(policy => resolveWindow(policy.windowKind as BudgetWindowKind, now));
-  const billable = policies.map((policy, index) => ({ policy, index })).filter(({ policy }) => policy.metric === "billed_cents");
+  const billable = policies.map((policy, index) => ({ policy, index })).filter(({ policy }) => isSpendMetric(policy));
   const ledgerColumns: Record<string, SQL> = {};
   const pendingColumns: Record<string, SQL> = {};
   const ledgerPredicates: SQL[] = [], pendingPredicates: SQL[] = [];
@@ -189,12 +216,14 @@ async function computeObservedSpends(db: Db, policies: SpendPolicy[]): Promise<O
       policy.scopeType === "agent" ? eq(costEvents.agentId, policy.scopeId) : undefined,
       policy.scopeType === "project" ? eq(costEvents.projectId, policy.scopeId) : undefined,
       policy.windowKind === "calendar_month_utc" ? and(gte(costEvents.occurredAt, start), lt(costEvents.occurredAt, end)) : undefined,
+      isHostedMetric(policy) ? eq(costEvents.hostedInference, true) : undefined,
     )!;
     const pending = and(
       eq(heartbeatRuns.companyId, policy.companyId), eq(heartbeatRuns.costAccountingPending, true),
       inArray(heartbeatRuns.status, ["succeeded", "failed", "timed_out", "cancelled", "interrupted"]),
       policy.scopeType === "agent" ? eq(heartbeatRuns.agentId, policy.scopeId) : undefined,
       policy.scopeType === "project" ? sql`${heartbeatRuns.usageJson}->'ledgerScope'->>'projectId' = ${policy.scopeId}` : undefined,
+      isHostedMetric(policy) ? sql`(${heartbeatRuns.contextSnapshot}->>'hostedInference') = 'true'` : undefined,
       policy.windowKind === "calendar_month_utc" ? sql`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.createdAt}) >= ${start.toISOString()}::timestamptz
         and coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.createdAt}) < ${end.toISOString()}::timestamptz` : undefined,
     )!;
@@ -215,6 +244,27 @@ async function computeObservedSpends(db: Db, policies: SpendPolicy[]): Promise<O
     unpricedEventCount: Number(ledger[`unpriced${index}`] ?? 0), pendingRunCount: Number(pending[`pending${index}`] ?? 0),
     recoveringRunCount: Number(pending[`recovering${index}`] ?? 0),
   }));
+}
+
+/**
+ * The smallest remaining amount, in cents, across the active hard-stop policies
+ * that apply to a run: its agent's, its project's and its company's
+ * `billed_cents` policies, plus the company's and the agent's hosted-inference
+ * limits when the run uses the operator's hosted key. Null when no such policy exists. Adapters
+ * that can cap a provider session (claude_managed's `max_list_cost`) use it.
+ */
+export async function remainingHardStopCentsForRun(db: Db, input: {
+  companyId: string; agentId: string | null; projectId: string | null; hostedInference: boolean;
+}): Promise<number | null> {
+  const candidates = await db.select().from(budgetPolicies).where(and(
+    eq(budgetPolicies.companyId, input.companyId), eq(budgetPolicies.isActive, true), eq(budgetPolicies.hardStopEnabled, true),
+    sql`${budgetPolicies.amount} > 0`, budgetPoliciesForRun(input.companyId, input.agentId, input.projectId),
+  ));
+  const policies = candidates.filter((policy) => policy.metric === "billed_cents"
+    || (isHostedMetric(policy) && policy.scopeType !== "project" && input.hostedInference));
+  if (!policies.length) return null;
+  const observed = await computeObservedSpends(db, policies);
+  return Math.max(0, Math.min(...policies.map((policy, index) => policy.amount - observed[index].total)));
 }
 
 export async function computeObservedSpend(db: Db, policy: SpendPolicy) {
@@ -308,6 +358,9 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
   }
 
   async function pauseAndCancelScopeForBudget(policy: PolicyRow) {
+    // A hosted-inference cap must never pause the company or cancel local
+    // agents' work: it only refuses admission to hosted-key runs.
+    if (isHostedMetric(policy)) return;
     await pauseScopeForBudget(policy);
     await db.update(budgetPolicies).set({
       enforcementVersion: sql`${budgetPolicies.enforcementVersion} + 1`,
@@ -320,6 +373,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
       eq(budgetPolicies.scopeId, policy.scopeId), eq(budgetPolicies.isActive, true), eq(budgetPolicies.hardStopEnabled, true),
     ));
     for (const candidate of policies) {
+      if (isHostedMetric(candidate)) continue; // never holds a scope pause
       if (await policyBlocks(db, candidate)) return;
     }
     const now = new Date();
@@ -556,7 +610,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
     });
   }
 
-  async function reconcileScope(companyId: string, scopeType: BudgetScopeType, scopeId: string) {
+  async function reconcileScope(companyId: string, scopeType: BudgetScopeType, scopeId: string, options: { hostedInference?: boolean } = {}) {
     const scope = await resolveScopeRecord(db, scopeType, scopeId);
     if (scope.companyId !== companyId) throw notFound("Budget scope not found");
     const policies = await db.select().from(budgetPolicies).where(and(
@@ -565,17 +619,35 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
     let recoveringPolicy: PolicyRow | undefined;
     for (const policy of policies) {
       const observed = await computeObservedSpend(db, policy);
+      if (isHostedMetric(policy)) {
+        // Applies only to a run that would use the operator's hosted key.
+        if (observedBlocks(policy, observed)) {
+          await createIncidentIfNeeded(policy, "hard", observed);
+          if (options.hostedInference) {
+            return { scopeType, scopeId, scopeName: scope.name, code: HOSTED_LIMIT_REACHED_ERROR_CODE,
+              reason: scopeType === "agent"
+                ? "This agent reached its monthly hosted inference limit (Claude hosted on the Staples server's key)."
+                : "This company reached its monthly spending cap for hosted inference (Claude hosted on the Staples server's key)." };
+          }
+          continue;
+        }
+        await resolveOpenIncidentsForPolicy(policy.id, "approved", "budget_service", "hard");
+        if (!policy.isActive || !policy.notifyEnabled || compareCents(observed.totalExact, Math.ceil(policy.amount * policy.warnPercent / 100)) < 0) {
+          await resolveOpenIncidentsForPolicy(policy.id, "approved", "budget_service", "soft");
+        }
+        continue;
+      }
       if (observedBlocks(policy, observed)) {
         await createIncidentIfNeeded(policy, "hard", observed);
         await pauseAndCancelScopeForBudget(policy);
         const title = scopeType === "company" ? "Company" : scopeType === "agent" ? "Agent" : "Project";
         if (observed.pendingRunCount > 0) {
-          return { scopeType, scopeId, scopeName: scope.name, reason: `${title} cannot start work while completed runs await accounting.` };
+          return { scopeType, scopeId, scopeName: scope.name, code: BUDGET_REACHED_ERROR_CODE, reason: `${title} cannot start work while completed runs await accounting.` };
         }
         if (policy.unpricedUsagePolicy !== "allow" && observed.unpricedEventCount > 0) {
-          return { scopeType, scopeId, scopeName: scope.name, reason: `${title} cannot start work because recorded usage has no reliable price.` };
+          return { scopeType, scopeId, scopeName: scope.name, code: BUDGET_REACHED_ERROR_CODE, reason: `${title} cannot start work because recorded usage has no reliable price.` };
         }
-        return { scopeType, scopeId, scopeName: scope.name, reason: scopeType === "project"
+        return { scopeType, scopeId, scopeName: scope.name, code: BUDGET_REACHED_ERROR_CODE, reason: scopeType === "project"
           ? "Project cannot start work because its budget hard-stop is still exceeded."
           : `${title} is paused because its budget hard-stop was reached.` };
       }
@@ -594,10 +666,11 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
     if (scopeType !== "agent" && scope.paused && scope.pauseReason !== "budget") {
       return { scopeType, scopeId, scopeName: scope.name, reason: `${scopeType === "company" ? "Company" : "Project"} is paused and cannot start new work.` };
     }
-    if (scope.paused && scope.pauseReason === "budget" && !policies.length) {
+    if (scope.paused && scope.pauseReason === "budget" && !policies.some((policy) => !isHostedMetric(policy))) {
       return { scopeType, scopeId, scopeName: scope.name, reason: "Budget pause requires a policy or an explicit operator resume." };
     }
-    if (scope.pauseReason === "budget" && policies[0]) await resumeScopeFromBudget(policies[0]);
+    const spendPolicy = policies.find((policy) => !isHostedMetric(policy));
+    if (scope.pauseReason === "budget" && spendPolicy) await resumeScopeFromBudget(spendPolicy);
     if (recoveringPolicy) return { scopeType, scopeId, scopeName: scope.name,
       reason: "New work must wait while a native run recovers its unfinished accounting." };
     return null;
@@ -620,6 +693,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
       companyId: string,
       input: BudgetPolicyUpsertInput,
       actorUserId: string | null,
+      options: BudgetPolicyUpsertOptions = {},
     ): Promise<BudgetPolicySummary> => {
       const scope = await resolveScopeRecord(db, input.scopeType, input.scopeId);
       if (scope.companyId !== companyId) {
@@ -628,6 +702,9 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
 
       if (input.reservationCents !== undefined && compareCents(input.reservationCents, 0) < 0) throw unprocessable("Reservation cannot be negative");
       const metric = input.metric ?? "billed_cents";
+      if (metric === HOSTED_BILLED_CENTS_METRIC && input.scopeType === "project") {
+        throw unprocessable("A hosted-inference budget applies to a company or an agent only");
+      }
       const windowKind = input.windowKind ?? (input.scopeType === "project" ? "lifetime" : "calendar_month_utc");
       const existing = await db
         .select()
@@ -644,7 +721,12 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
         .then((rows) => rows[0] ?? null);
 
       if (!existing && input.amount === undefined) throw unprocessable("Amount is required for a new budget policy");
-      const amount = Math.max(0, Math.floor(input.amount ?? existing!.amount));
+      const requestedAmount = Math.max(0, Math.floor(input.amount ?? existing!.amount));
+      // A person's hosted limit stops at the operator's ceiling (server-written
+      // hosted policies are clamped by their own callers).
+      const amount = metric === HOSTED_BILLED_CENTS_METRIC && !options.actor
+        ? clampPersonHostedLimit(requestedAmount, existing?.amount ?? 0)
+        : requestedAmount;
       // A saved zero disables enforcement. Raising it is an explicit limit
       // setting; editing a disabled positive policy must preserve that choice.
       const nextIsActive = amount > 0 && (input.isActive ?? (existing?.amount === 0 ? true : existing?.isActive) ?? true);
@@ -687,7 +769,8 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
           .returning()
           .then((rows) => rows[0]);
 
-      if (input.scopeType === "company" && windowKind === "calendar_month_utc") {
+      // The hosted-inference cap is not the person-set company budget.
+      if (input.scopeType === "company" && windowKind === "calendar_month_utc" && metric === "billed_cents") {
         await db
           .update(companies)
           .set({
@@ -697,7 +780,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
           .where(eq(companies.id, input.scopeId));
       }
 
-      if (input.scopeType === "agent" && windowKind === "calendar_month_utc") {
+      if (input.scopeType === "agent" && windowKind === "calendar_month_utc" && metric === "billed_cents") {
         await db
           .update(agents)
           .set({
@@ -735,8 +818,8 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
 
       await recordActivity({
         companyId,
-        actorType: "user",
-        actorId: actorUserId ?? "board",
+        actorType: options.actor?.actorType ?? "user",
+        actorId: options.actor?.actorId ?? actorUserId ?? "board",
         action: "budget.policy_upserted",
         entityType: "budget_policy",
         entityId: row.id,
@@ -745,6 +828,8 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
           scopeId: row.scopeId,
           amount: row.amount,
           windowKind: row.windowKind,
+          metric: row.metric,
+          ...(amount !== requestedAmount ? { requestedAmount, clampedToHostedCeiling: true } : {}),
         },
       });
 
@@ -782,7 +867,9 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
           ),
         );
 
-      const policies = candidatePolicies.filter(policy => policy.metric === "billed_cents" && policy.amount > 0);
+      // A hosted-inference cap only sees events billed to the hosted key.
+      const policies = candidatePolicies.filter(policy => policy.amount > 0
+        && (policy.metric === "billed_cents" || (isHostedMetric(policy) && event.hostedInference)));
       const observations = await computeObservedSpends(db, policies);
       for (const [index, policy] of policies.entries()) {
         const observed = observations[index];
@@ -839,6 +926,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
       agentId: string | null,
       context?: { issueId?: string | null; projectId?: string | null },
     ) => {
+      const hostedInference = agentId ? await agentUsesHostedInference(db, companyId, agentId) : false;
       const scopes: Array<{ scopeType: BudgetScopeType; scopeId: string }> = [
         { scopeType: "company", scopeId: companyId }, ...(agentId ? [{ scopeType: "agent" as const, scopeId: agentId }] : []),
         ...(context?.projectId ? [{ scopeType: "project" as const, scopeId: context.projectId }] : []),
@@ -847,7 +935,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
         if ((await resolveScopeRecord(db, scopeType, scopeId)).companyId !== companyId) throw notFound("Budget scope not found");
       }
       for (const { scopeType, scopeId } of scopes) {
-        const block = await reconcileScope(companyId, scopeType, scopeId);
+        const block = await reconcileScope(companyId, scopeType, scopeId, { hostedInference });
         if (block) return block;
       }
       return null;
@@ -868,8 +956,15 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
       if (incident.companyId !== companyId) throw notFound("Budget incident not found");
 
       const policy = await getPolicyRow(incident.policyId);
+      let appliedAmount: number | null = input.amount ?? null;
       if (input.action === "raise_budget_and_resume") {
-        const nextAmount = Math.max(0, Math.floor(input.amount ?? 0));
+        const requestedAmount = Math.max(0, Math.floor(input.amount ?? 0));
+        // A person's hosted raise stops at the operator's ceiling.
+        const nextAmount = isHostedMetric(policy) ? clampPersonHostedLimit(requestedAmount, policy.amount) : requestedAmount;
+        if (isHostedMetric(policy) && requestedAmount > policy.amount && nextAmount <= policy.amount) {
+          throw unprocessable("The hosted limit is already at its maximum");
+        }
+        appliedAmount = nextAmount;
         const observed = await computeObservedSpend(db, policy);
         if (policy.unpricedUsagePolicy !== "allow" && observed.unpricedEventCount > 0) {
           throw unprocessable("Resolve unpriced usage or explicitly allow it in the budget policy before resuming");
@@ -890,14 +985,14 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
           })
           .where(eq(budgetPolicies.id, policy.id));
 
-        if (policy.scopeType === "company" && policy.windowKind === "calendar_month_utc") {
+        if (policy.scopeType === "company" && policy.windowKind === "calendar_month_utc" && policy.metric === "billed_cents") {
           await db
             .update(companies)
             .set({ budgetMonthlyCents: nextAmount, updatedAt: now })
             .where(eq(companies.id, policy.scopeId));
         }
 
-        if (policy.scopeType === "agent" && policy.windowKind === "calendar_month_utc") {
+        if (policy.scopeType === "agent" && policy.windowKind === "calendar_month_utc" && policy.metric === "billed_cents") {
           await db
             .update(agents)
             .set({ budgetMonthlyCents: nextAmount, updatedAt: now })
@@ -936,7 +1031,8 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
         entityId: incident.id,
         details: {
           action: input.action,
-          amount: input.amount ?? null,
+          amount: appliedAmount,
+          ...(appliedAmount !== (input.amount ?? null) ? { requestedAmount: input.amount ?? null } : {}),
           scopeType: incident.scopeType,
           scopeId: incident.scopeId,
         },
@@ -1020,8 +1116,8 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
         }
       }
     },
-    upsertPolicy: (companyId: string, input: BudgetPolicyUpsertInput, actorUserId: string | null) =>
-      mutate(companyId, (service) => service.upsertPolicy(companyId, input, actorUserId)),
+    upsertPolicy: (companyId: string, input: BudgetPolicyUpsertInput, actorUserId: string | null, options?: BudgetPolicyUpsertOptions) =>
+      mutate(companyId, (service) => service.upsertPolicy(companyId, input, actorUserId, options)),
     evaluateCostEvent: (event: typeof costEvents.$inferSelect) =>
       mutate(event.companyId, (service) => service.evaluateCostEvent(event)),
     getInvocationBlock: (companyId: string, agentId: string | null, context?: { issueId?: string | null; projectId?: string | null }) =>

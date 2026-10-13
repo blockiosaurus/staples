@@ -505,7 +505,7 @@ describe("iMessage Photon channel control plane", () => {
               required: true,
               allowOther: false,
               options: [
-                { id: "one", label: "Same" },
+                { id: "one", label: "Same", recommended: true },
                 { id: "two", label: "Same" },
               ],
             },
@@ -1095,7 +1095,7 @@ describe("iMessage Photon channel control plane", () => {
               required: true,
               allowOther: false,
               options: [
-                { id: "one", label: "One" },
+                { id: "one", label: "One", recommended: true },
                 { id: "two", label: "Two" },
               ],
             },

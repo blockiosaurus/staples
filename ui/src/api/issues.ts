@@ -1,3 +1,4 @@
+import type { AssistantPageContext } from "@paperclipai/shared";
 import type { SetIssueTitle } from "@paperclipai/shared";
 import type { ExecutionReconciliation } from "@paperclipai/shared";
 import type {
@@ -40,8 +41,129 @@ import type {
   UpsertIssueWatchdog,
   UpsertIssueDocument,
 } from "@paperclipai/shared";
-import { api, ApiError, detachInflightGet, type RequestOptions } from "./client";
+import { api, ApiError, detachInflightGet, requestResponse, type RequestOptions } from "./client";
+import type { RequestConfirmationProposedActionPayload } from "@paperclipai/shared";
+
+/** The outcome the person's browser reports when accepting a proposed action. */
+export interface ProposedActionAcceptResult {
+  status: "executed" | "failed" | "stale";
+  httpStatus?: number;
+  message?: string;
+  /** Echo of the stored proposal hash. */
+  hash: string;
+}
+
+/** Stored proposal paths include the `/api` prefix; the api client adds it again. */
+function proposedActionClientPath(path: string) {
+  if (!path.startsWith("/api/")) throw new Error("Proposed action paths must start with /api/");
+  return path.slice("/api".length);
+}
+
+/** One line, capped: the message is relayed into the Assistant's wake prompt. */
+function shortMessage(value: string) {
+  const trimmed = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  return trimmed.length > 500 ? `${trimmed.slice(0, 497)}...` : trimmed;
+}
+
+type HostedLimitRecord = {
+  fromCents?: unknown; toCents?: unknown; neededCents?: unknown; ceilingCents?: unknown; limited?: unknown; failed?: unknown;
+};
+
+/** What a plan apply did to the company's hosted limit, if anything. */
+function hostedLimitSentence(limit: HostedLimitRecord | undefined): string {
+  if (!limit) return "";
+  if (limit.failed === true) {
+    return typeof limit.fromCents === "number"
+      ? ` Couldn't raise the hosted limit; it stays at ${formatDollars(limit.fromCents)}.`
+      : " Couldn't raise the hosted limit; it stays as it was.";
+  }
+  if (typeof limit.fromCents !== "number" || typeof limit.toCents !== "number") return "";
+  const raised = limit.toCents > limit.fromCents;
+  if (limit.limited !== true || typeof limit.neededCents !== "number") {
+    return raised ? ` Hosted limit raised from ${formatDollars(limit.fromCents)} to ${formatDollars(limit.toCents)}.` : "";
+  }
+  const needed = formatDollars(limit.neededCents);
+  if (raised) {
+    return ` Hosted limit raised from ${formatDollars(limit.fromCents)} to ${formatDollars(limit.toCents)}, the most a plan can set. The agents' monthly budgets come to ${needed}, so some may stop before their budgets run out.`;
+  }
+  const ceiling = typeof limit.ceilingCents === "number" ? ` (plans can raise it only up to ${formatDollars(limit.ceilingCents)})` : "";
+  return ` The agents' monthly budgets come to ${needed}, more than the ${formatDollars(limit.fromCents)} hosted limit${ceiling}, so some may stop before their budgets run out.`;
+}
+
+/** One line for the Assistant about what a plan apply created. */
+function planApplySummary(status: number, body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const record = body as {
+    agents?: Record<string, unknown>; tasks?: Record<string, unknown>; pendingAssignments?: unknown[]; routines?: unknown[];
+    hostedLimit?: HostedLimitRecord;
+  };
+  const count = (value: unknown) => (value && typeof value === "object" ? Object.keys(value).length : 0);
+  const agents = count(record.agents);
+  const tasks = count(record.tasks);
+  const routines = Array.isArray(record.routines) ? record.routines.length : 0;
+  const pending = Array.isArray(record.pendingAssignments) ? record.pendingAssignments.length : 0;
+  const parts = [`${agents} agent${agents === 1 ? "" : "s"}`, `${tasks} task${tasks === 1 ? "" : "s"}`];
+  if (routines) parts.push(`${routines} routine${routines === 1 ? "" : "s"}`);
+  const waiting = pending ? ` ${pending} task${pending === 1 ? " waits" : "s wait"} for hire approval.` : "";
+  return `${status === 200 ? "Plan was already created" : "Plan created"}: ${parts.join(", ")}.${waiting}${hostedLimitSentence(record.hostedLimit)}`;
+}
+
+function browserTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Perform an Assistant-proposed call exactly as stored (method, path, body)
+ * with the person's own session, through the app's api client. Never throws:
+ * failures are reported as a `failed` result for the accept call.
+ */
+export async function executeProposedAction(
+  action: Pick<RequestConfirmationProposedActionPayload, "method" | "path" | "body"> & { category?: string },
+  options: { idempotencyKey?: string } = {},
+): Promise<Omit<ProposedActionAcceptResult, "hash">> {
+  try {
+    const headers: Record<string, string> = {};
+    if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
+    // Plans may install agent templates whose routines run on the person's time zone.
+    if (action.category === "plan") {
+      const timeZone = browserTimeZone();
+      if (timeZone) headers["X-Staples-Timezone"] = timeZone;
+    }
+    const response = await requestResponse(proposedActionClientPath(action.path), {
+      method: action.method,
+      ...(Object.keys(headers).length ? { headers } : {}),
+      ...(action.body === null || action.body === undefined ? {} : { body: JSON.stringify(action.body) }),
+    });
+    let message = `HTTP ${response.status}`;
+    if (response.ok && action.category === "plan") {
+      const summary = planApplySummary(response.status, await response.clone().json().catch(() => null));
+      if (summary) message = shortMessage(summary);
+    }
+    return { status: response.ok ? "executed" : "failed", httpStatus: response.status, message };
+  } catch (error) {
+    if (error instanceof ApiError) return { status: "failed", httpStatus: error.status, message: shortMessage(error.message) };
+    return { status: "failed", message: shortMessage(error instanceof Error ? error.message : "The request could not be sent") };
+  }
+}
+
+/** Read the stale-check field fresh (never from cache). Returns null when it cannot be read. */
+export async function readProposedActionStaleValue(
+  staleCheck: NonNullable<RequestConfirmationProposedActionPayload["staleCheck"]>,
+): Promise<string | null> {
+  try {
+    const value = await api.get<Record<string, unknown>>(proposedActionClientPath(staleCheck.path), { cache: "no-store" });
+    const field = value?.[staleCheck.field];
+    return typeof field === "string" ? field : null;
+  } catch {
+    return null;
+  }
+}
 import { CommentSubmissionUnknownError } from "../lib/comment-submit-result";
+import { formatDollars } from "../lib/utils";
 
 function hasCommentReceipt(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -440,11 +562,18 @@ export const issuesApi = {
       selectedClientKeys?: string[];
       selectedOptionIds?: string[];
       rememberAction?: boolean;
+      proposedActionResult?: ProposedActionAcceptResult;
     },
   ) =>
     api.post<IssueThreadInteraction>(
       `/issues/${id}/interactions/${interactionId}/accept`,
       data ?? {},
+    ),
+  /** Reserve an Assistant proposed action before the browser executes it; the server re-validates it. */
+  claimProposedAction: (id: string, interactionId: string, hash: string) =>
+    api.post<IssueThreadInteraction>(
+      `/issues/${id}/interactions/${interactionId}/claim-proposed-action`,
+      { hash },
     ),
   rejectInteraction: (id: string, interactionId: string, reason?: string) =>
     api.post<IssueThreadInteraction>(
@@ -525,10 +654,14 @@ export const issuesApi = {
     interrupt?: boolean,
     attachmentIds?: string[],
     clientRequestId?: string,
+    options?: { metadata?: { pageContext?: AssistantPageContext } },
   ) =>
     confirmedCommentResponse(
       api.post<IssueComment>(`/issues/${id}/comments`, {
         body,
+        ...(options?.metadata?.pageContext
+          ? { metadata: { version: 1, pageContext: options.metadata.pageContext } }
+          : {}),
         ...(clientRequestId ? { clientRequestId } : {}),
         ...(reopen === undefined ? {} : { reopen }),
         ...(interrupt === undefined ? {} : { interrupt }),

@@ -1,0 +1,63 @@
+{
+  "version": "1.2.0",
+  "tagline": "Plans your social posts each week and keeps an eye on replies",
+  "icon": "share-2",
+  "marketplaceCategory": "content",
+  "preview": true,
+  "requiredApps": [
+    {
+      "capability": "social",
+      "anyOf": ["linkedin", "x"],
+      "why": "Publishes your posts and reads comments and mentions. Every post waits for your approval unless you turn on autopilot for posting."
+    }
+  ],
+  "setupQuestions": [
+    {
+      "id": "platforms",
+      "header": "Platforms",
+      "prompt": "Where should your social media manager post?",
+      "helpText": "You can add the other one later.",
+      "required": true,
+      "answerMode": "multi_select",
+      "options": [
+        { "id": "linkedin", "label": "LinkedIn", "description": "Best for reaching other businesses and professionals.", "recommended": true },
+        { "id": "x", "label": "X", "description": "Short, frequent posts and quick conversations." }
+      ]
+    },
+    {
+      "id": "voice",
+      "header": "Voice",
+      "prompt": "How should your posts sound?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        { "id": "friendly", "label": "Friendly", "description": "Warm and approachable, like talking to a regular customer.", "recommended": true },
+        { "id": "expert", "label": "Expert", "description": "Knowledgeable and useful, sharing what you know." },
+        { "id": "bold", "label": "Bold", "description": "Confident and direct, with strong opinions." }
+      ]
+    },
+    {
+      "id": "postsPerWeek",
+      "header": "Posts per week",
+      "prompt": "How many posts a week?",
+      "helpText": "Counted across all your platforms.",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        { "id": "3", "label": "3 posts a week", "description": "Steady and easy to keep up.", "recommended": true },
+        { "id": "5", "label": "5 posts a week", "description": "One every weekday." },
+        { "id": "7", "label": "7 posts a week", "description": "One every day if your platform can schedule posts; otherwise some weekdays get two." }
+      ]
+    }
+  ],
+  "outwardActions": [
+    {
+      "capability": "social",
+      "label": "Posting",
+      "destructiveLabel": "Deleting posts",
+      "toolPatterns": ["*post*", "*publish*", "*share*", "*tweet*", "*schedule*", "*reply*", "*comment*"],
+      "destructiveToolPatterns": ["*delete*", "*remove*"]
+    }
+  ],
+  "defaultBudgetMonthlyCents": 2500
+}

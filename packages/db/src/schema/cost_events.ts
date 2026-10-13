@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, text, timestamp, integer, index, numeric, uniqueIndex, check, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, integer, index, numeric, uniqueIndex, check, jsonb, boolean } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
 import { agents } from "./agents.js";
 import { issues } from "./issues.js";
@@ -31,6 +31,12 @@ export const costEvents = pgTable(
     biller: text("biller").notNull().default("unknown"),
     billingType: text("billing_type").notNull().default("unknown"),
     costStatus: text("cost_status").notNull().default("reported"),
+    /**
+     * Server-derived: billed to the operator's hosted-inference key
+     * (STAPLES_HOSTED_ANTHROPIC_API_KEY). Only these events count toward a
+     * `hosted_billed_cents` budget policy.
+     */
+    hostedInference: boolean("hosted_inference").notNull().default(false),
     model: text("model").notNull(),
     inputTokens: integer("input_tokens").notNull().default(0),
     cachedInputTokens: integer("cached_input_tokens").notNull().default(0),

@@ -24,12 +24,29 @@ export type FeatureTier = (typeof FEATURE_TIERS)[number];
 type ExperimentalSettings = z.infer<typeof instanceExperimentalSettingsSchema>;
 
 /**
+ * Flags that remain accepted by the settings schema so older stored rows and
+ * managed configs still parse, but are no longer feature-catalog entries.
+ */
+export const RETIRED_FEATURE_KEYS = [
+  "enableStreamlinedLeftNavigation",
+  "enableStreamlinedUi",
+  "enableConferenceRoomChat",
+  "enableGoalsSidebarLink",
+  "enableAgentChat",
+] as const;
+
+type RetiredFeatureKey = (typeof RETIRED_FEATURE_KEYS)[number];
+
+/**
  * The boolean flag keys of the experimental settings schema. Non-flag keys
  * (activation timestamps, numeric tuning values) are excluded.
  */
-export type InstanceFeatureKey = {
-  [K in keyof ExperimentalSettings]: ExperimentalSettings[K] extends boolean ? K : never;
-}[keyof ExperimentalSettings];
+export type InstanceFeatureKey = Exclude<
+  {
+    [K in keyof ExperimentalSettings]: ExperimentalSettings[K] extends boolean ? K : never;
+  }[keyof ExperimentalSettings],
+  RetiredFeatureKey
+>;
 
 export interface FeatureCatalogEntry {
   title: string;
@@ -89,21 +106,6 @@ export const INSTANCE_FEATURE_CATALOG: Record<InstanceFeatureKey, FeatureCatalog
     tier: "managed",
     cloudDefault: false,
     selfHostedDefault: false,
-  },
-  enableStreamlinedLeftNavigation: {
-    title: "Streamlined Left Navigation",
-    description: "Use the streamlined main sidebar navigation layout.",
-    tier: "preference",
-    cloudDefault: true,
-    selfHostedDefault: true,
-  },
-  enableStreamlinedUi: {
-    title: "Streamlined UI",
-    description:
-      "Use the streamlined application shell, shared task collections, focused task detail layout, contextual navigation, and simplified main sidebar.",
-    tier: "preference",
-    cloudDefault: true,
-    selfHostedDefault: true,
   },
   enableApps: {
     title: "Apps (compatibility)",
@@ -171,26 +173,10 @@ export const INSTANCE_FEATURE_CATALOG: Record<InstanceFeatureKey, FeatureCatalog
     cloudDefault: false,
     selfHostedDefault: false,
   },
-  enableAgentChat: {
-    title: "Agent Chat",
-    description:
-      "Persistent task-backed conversations that clarify goals and hand work off to tasks. Chat leads the Work group with an agent rail, and each chat's side panel shows the agent's tasks and artifacts as cards.",
-    tier: "managed",
-    cloudDefault: false,
-    selfHostedDefault: false,
-  },
   enableCombinedInboxTasks: {
     title: "Combined Inbox + Task List",
     description:
       "Inbox becomes a set of views inside Tasks: one Tasks row in the nav carries the unread badge, and a Views menu reaches every inbox and task view.",
-    tier: "managed",
-    cloudDefault: false,
-    selfHostedDefault: false,
-  },
-  enableConferenceRoomChat: {
-    title: "Conference Room Chat",
-    description:
-      "Add the Conference Room team chat, the live activity feed, and the redesigned onboarding; restyles task threads as chat bubbles.",
     tier: "managed",
     cloudDefault: false,
     selfHostedDefault: false,
@@ -269,13 +255,6 @@ export const INSTANCE_FEATURE_CATALOG: Record<InstanceFeatureKey, FeatureCatalog
     title: "Decisions",
     description:
       "Show the Decisions item in the main sidebar — the attention home that surfaces tasks awaiting input.",
-    tier: "preference",
-    cloudDefault: false,
-    selfHostedDefault: false,
-  },
-  enableGoalsSidebarLink: {
-    title: "Goals Sidebar Link",
-    description: "Restore the Goals item in the main sidebar while the goals surface is being evaluated.",
     tier: "preference",
     cloudDefault: false,
     selfHostedDefault: false,

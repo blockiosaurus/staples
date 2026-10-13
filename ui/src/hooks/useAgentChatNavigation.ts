@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Agent, Issue } from "@paperclipai/shared";
+import { isAssistantAgent, type Agent, type Issue } from "@paperclipai/shared";
 import { agentsApi } from "@/api/agents";
 import { agentChatsApi } from "@/api/agentChats";
 import { authApi } from "@/api/auth";
@@ -9,22 +9,36 @@ import { useSidebar } from "@/context/SidebarContext";
 import { queryKeys } from "@/lib/queryKeys";
 import { useNavigate } from "@/lib/router";
 import { agentRouteRef } from "@/lib/utils";
-import { useAgentChatEnabled } from "./useAgentChatEnabled";
+import { excludeAssistantAgents } from "@/lib/assistant-agent";
+
+const assistantAgentIds = (agents: Agent[]) => agents.filter(isAssistantAgent).map((agent) => agent.id);
 
 export function useAgentChatNavigation() {
   const { selectedCompanyId: companyId } = useCompany();
-  const { enabled, loaded } = useAgentChatEnabled();
   const session = useQuery({ queryKey: queryKeys.auth.session, queryFn: () => authApi.getSession() });
   const userId = session.data?.user?.id ?? session.data?.session?.userId ?? null;
+  // The Assistant has its own page (/assistant); it is not part of the Chats roster.
   const agents = useQuery({
     queryKey: queryKeys.agents.list(companyId!), queryFn: () => agentsApi.list(companyId!),
-    enabled: enabled && !!companyId,
+    enabled: !!companyId, select: excludeAssistantAgents,
   });
+  const assistantIds = useQuery({
+    queryKey: queryKeys.agents.list(companyId!), queryFn: () => agentsApi.list(companyId!),
+    enabled: !!companyId, select: assistantAgentIds,
+  });
+  const hiddenKey = (assistantIds.data ?? []).join(",");
+  const selectChats = useCallback(
+    (list: Issue[]) => {
+      const hidden = new Set(hiddenKey ? hiddenKey.split(",") : []);
+      return hidden.size === 0 ? list : list.filter((chat) => !hidden.has(chat.conversationAgentId ?? ""));
+    },
+    [hiddenKey],
+  );
   const chats = useQuery({
     queryKey: queryKeys.agentChats.list(companyId, userId), queryFn: () => agentChatsApi.list(companyId!),
-    enabled: enabled && !!companyId && session.isSuccess,
+    enabled: !!companyId && session.isSuccess, select: selectChats,
   });
-  return { companyId, userId, enabled, loaded, agents, chats, session };
+  return { companyId, userId, agents, chats, session };
 }
 
 /** Explicitly adding a chat uses the existing atomic, one-per-agent resolver. */

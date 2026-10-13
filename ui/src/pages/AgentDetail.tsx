@@ -6,6 +6,7 @@ import { InstructionHistory } from "../components/InstructionHistory";
 import { AgentCharacter } from "../components/AgentCharacter";
 import { characterStateForAgent } from "@paperclipai/shared";
 import { mergeRunLogChunks, readChunkSeq } from "../lib/run-log-chunks";
+import { TEMPLATE_SETUP_PAUSE_MESSAGE, isTemplateSetupPause } from "../lib/agent-pause";
 import { getPageVisibility, usePageVisibility } from "../lib/page-visibility";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useParams, useNavigate, Link, Navigate, useBeforeUnload, type NavigateFunction } from "@/lib/router";
@@ -44,6 +45,8 @@ import { assetsApi } from "../api/assets";
 import { toolsApi } from "../api/tools";
 import { getUIAdapter, buildTranscript, onAdapterChange } from "../adapters";
 import { StatusBadge } from "../components/StatusBadge";
+import { AgentTemplateChip } from "../staples/autopilot/AgentTemplateChip";
+import { AutopilotPanel } from "../staples/autopilot/AutopilotPanel";
 import { AgentLifecycleStatus, useAgentLifecycleStatus } from "../components/AgentLifecycleStatus";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { CopyText } from "../components/CopyText";
@@ -313,6 +316,18 @@ const LEGACY_AGENT_DETAIL_TABS = [
 ] as const;
 
 export const DISCARD_AGENT_CONFIG_CHANGES_MESSAGE = "Discard unsaved agent configuration changes?";
+
+export function plainRunStatus(status: string): string {
+  switch (status) {
+    case "succeeded": return "Finished";
+    case "failed": return "Hit a problem";
+    case "running": return "Working";
+    case "queued": return "Waiting to start";
+    case "cancelled": return "Stopped";
+    case "timed_out": return "Ran out of time";
+    default: return status.replace(/_/g, " ");
+  }
+}
 
 export function confirmAgentConfigNavigation(
   dirty: boolean,
@@ -937,7 +952,7 @@ export function AgentDetail() {
     enabled: !!resolvedCompanyId && needsOverviewData,
   });
 
-  const { data: skillSnapshot } = useQuery({
+  const { data: skillSnapshot, isLoading: skillSnapshotLoading, isError: skillSnapshotError } = useQuery({
     queryKey: queryKeys.agents.skills(resolvedAgentId ?? "__none__"),
     queryFn: () => agentsApi.skills(resolvedAgentId!, resolvedCompanyId ?? undefined),
     enabled: Boolean(resolvedCompanyId && resolvedAgentId && needsOverviewData),
@@ -957,8 +972,12 @@ export function AgentDetail() {
   const directReports = (allAgents ?? []).filter((a) => a.reportsTo === agent?.id && a.status !== "terminated");
   const overviewSkillNames = useMemo(() => {
     const namesByKey = new Map((overviewCompanySkills ?? []).map((skill) => [skill.key, skill.name]));
-    return (skillSnapshot?.desiredSkills ?? []).map((key) => namesByKey.get(key) ?? key);
-  }, [overviewCompanySkills, skillSnapshot?.desiredSkills]);
+    return overviewDesiredSkillKeys(skillSnapshot?.desiredSkills, agent?.adapterConfig).map((key) => namesByKey.get(key) ?? key);
+  }, [overviewCompanySkills, skillSnapshot?.desiredSkills, agent?.adapterConfig]);
+  // Only report loading/error while there is nothing to show; the stored
+  // desired skills stand in when the live snapshot is unavailable.
+  const overviewSkillsState: "ready" | "loading" | "error" =
+    skillSnapshot || overviewSkillNames.length > 0 ? "ready" : skillSnapshotError ? "error" : skillSnapshotLoading ? "loading" : "ready";
   const mobileLiveRun = useMemo(
     () => (heartbeats ?? []).find((r) => r.status === "running" || r.status === "queued") ?? null,
     [heartbeats],
@@ -1219,6 +1238,12 @@ export function AgentDetail() {
           </button>
         </div>
       ) : null}
+      {isTemplateSetupPause(agent) ? (
+        <div data-testid="agent-template-setup-pause" className="flex items-start gap-3 border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p className="min-w-0">{TEMPLATE_SETUP_PAUSE_MESSAGE}.</p>
+        </div>
+      ) : null}
       {pausedEscalationWarning ? (
         <div className="flex items-start gap-3 border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -1264,6 +1289,7 @@ export function AgentDetail() {
               <span>{getAdapterDisplay(agent.adapterType === "paperclip_runner" && agent.adapterConfig.provider === "openai_dot" ? "openai_dot" : agent.adapterType).label}</span><span>·</span>
               <span>{agent.title || roleLabels[agent.role] || agent.role}</span>
             </div>
+            <AgentTemplateChip agent={agent} companyId={resolvedCompanyId} />
             <AgentLifecycleStatus agent={currentAgent} refreshError={lifecycle.isError} onRetry={() => agentAction.mutate("retryLifecycle")} retryPending={agentAction.isPending} />
             <SetPrimaryAgentButton agent={agent} />
           </div>
@@ -1403,6 +1429,7 @@ export function AgentDetail() {
           reportsToAgent={reportsToAgent}
           directReportCount={directReports.length}
           skillNames={overviewSkillNames}
+          skillsState={overviewSkillsState}
           agentRouteId={canonicalAgentRef}
         />
       )}
@@ -1460,6 +1487,8 @@ export function AgentDetail() {
           companyId={resolvedCompanyId ?? undefined}
         />
       )}
+
+      {activeView === "autopilot" && <AutopilotPanel agent={agent} />}
 
       {activeView === "tools" && resolvedCompanyId && (
         <AgentToolsTab agent={agent} companyId={resolvedCompanyId} />
@@ -1710,6 +1739,16 @@ function LatestRunCard({
 
 /* ---- Agent Overview ---- */
 
+/** Desired skill keys: the live snapshot when present, else the agent's stored sync config. */
+export function overviewDesiredSkillKeys(snapshotKeys: string[] | undefined, adapterConfig: unknown): string[] {
+  if (snapshotKeys) return snapshotKeys;
+  const sync = adapterConfig && typeof adapterConfig === "object"
+    ? (adapterConfig as { paperclipSkillSync?: { desiredSkills?: unknown } }).paperclipSkillSync
+    : undefined;
+  const desired = sync?.desiredSkills;
+  return Array.isArray(desired) ? desired.filter((key): key is string => typeof key === "string") : [];
+}
+
 export function AgentOverview({
   agent,
   runs,
@@ -1718,6 +1757,7 @@ export function AgentOverview({
   reportsToAgent,
   directReportCount,
   skillNames,
+  skillsState = "ready",
   agentRouteId,
 }: {
   agent: AgentDetailRecord;
@@ -1727,6 +1767,7 @@ export function AgentOverview({
   reportsToAgent?: Agent;
   directReportCount: number;
   skillNames: string[];
+  skillsState?: "ready" | "loading" | "error";
   agentRouteId: string;
 }) {
   const issuesById = useMemo(() => {
@@ -1750,7 +1791,7 @@ export function AgentOverview({
       <div className="grid gap-4 md:grid-cols-2">
         <section className="rounded-lg border border-border p-4" aria-labelledby="agent-identity-heading">
           <div className="mb-4 flex items-center justify-between gap-3">
-            <h3 id="agent-identity-heading" className="text-sm font-medium">Identity</h3>
+            <h3 id="agent-identity-heading" className="text-sm font-medium">About</h3>
             <StatusBadge status={agent.status} />
           </div>
           <div className="space-y-3">
@@ -1764,34 +1805,19 @@ export function AgentOverview({
               ) : <span className="text-sm">Board</span>}
             </SummaryRow>
             <SummaryRow label="Direct reports"><span className="text-sm tabular-nums">{directReportCount}</span></SummaryRow>
-            <SummaryRow label="Public key">
-              {identity.isPending ? <span className="text-sm text-muted-foreground">Loading…</span>
-                : identity.isError ? <span className="text-sm text-destructive">Could not load public key</span>
-                : identity.data ? (
-                  <CopyText text={identity.data.publicKeyPem} ariaLabel="Copy public key" title="Copy public key">
-                    <span className="font-mono text-sm">{identity.data.keyId.slice(0, 19)}…</span>
-                  </CopyText>
-                ) : (
-                  <div className="text-sm">
-                    <div>Not created yet</div>
-                    <div className="text-xs text-muted-foreground">Created automatically on the next managed run</div>
-                  </div>
-                )}
-            </SummaryRow>
           </div>
         </section>
 
         <section className="rounded-lg border border-border p-4" aria-labelledby="agent-runtime-heading">
           <div className="mb-4 flex items-center justify-between gap-3">
-            <h3 id="agent-runtime-heading" className="text-sm font-medium">Harness / Runtime</h3>
+            <h3 id="agent-runtime-heading" className="text-sm font-medium">Setup</h3>
             <Link className="text-xs text-muted-foreground hover:text-foreground" to={agentDetailHref(agentRouteId, "runtime")}>Configure</Link>
           </div>
           <div className="space-y-3">
-            <SummaryRow label="Adapter"><span className="text-sm">{getAdapterDisplay(agent.adapterType === "paperclip_runner" && agent.adapterConfig.provider === "openai_dot" ? "openai_dot" : agent.adapterType).label}</span></SummaryRow>
+            <SummaryRow label="Runs on"><span className="text-sm">{getAdapterDisplay(agent.adapterType === "paperclip_runner" && agent.adapterConfig.provider === "openai_dot" ? "openai_dot" : agent.adapterType).label}</span></SummaryRow>
             <SummaryRow label="Model"><span className="max-w-64 truncate text-sm font-mono">{configuredModel}</span></SummaryRow>
-            <SummaryRow label="Session"><span className="max-w-64 truncate text-sm font-mono">{runtimeState?.sessionDisplayId ?? runtimeState?.sessionId ?? "No session"}</span></SummaryRow>
             <SummaryRow label="Last run">
-              <span className="text-sm">{lastRun ? `${lastRun.status} · ${relativeTime(lastRun.createdAt)}` : "No runs"}</span>
+              <span className="text-sm">{lastRun ? `${plainRunStatus(lastRun.status)} · ${relativeTime(lastRun.createdAt)}` : "No runs"}</span>
             </SummaryRow>
           </div>
         </section>
@@ -1810,7 +1836,11 @@ export function AgentOverview({
             <h3 id="agent-skills-heading" className="text-sm font-medium">Skills</h3>
             <Link className="text-xs text-muted-foreground hover:text-foreground" to={agentDetailHref(agentRouteId, "skills")}>Manage</Link>
           </div>
-          {skillNames.length > 0 ? (
+          {skillsState === "loading" ? (
+            <p className="text-sm text-muted-foreground" data-testid="agent-skills-loading">Loading skills…</p>
+          ) : skillsState === "error" ? (
+            <p className="text-sm text-destructive" data-testid="agent-skills-error">Skills could not be loaded.</p>
+          ) : skillNames.length > 0 ? (
             <div className="flex flex-wrap gap-2">
               {skillNames.slice(0, 8).map((skill) => <Badge key={skill} variant="secondary">{skill}</Badge>)}
               {skillNames.length > 8 ? <Badge variant="outline">+{skillNames.length - 8} more</Badge> : null}
@@ -1820,6 +1850,27 @@ export function AgentOverview({
           )}
         </section>
       </div>
+
+      <details className="rounded-lg border border-border p-4" data-testid="agent-overview-advanced">
+        <summary className="cursor-pointer text-sm font-medium">Advanced</summary>
+        <div className="mt-3 space-y-3">
+          <SummaryRow label="Public key">
+              {identity.isPending ? <span className="text-sm text-muted-foreground">Loading…</span>
+                : identity.isError ? <span className="text-sm text-destructive">Could not load public key</span>
+                : identity.data ? (
+                  <CopyText text={identity.data.publicKeyPem} ariaLabel="Copy public key" title="Copy public key">
+                    <span className="font-mono text-sm">{identity.data.keyId.slice(0, 19)}…</span>
+                  </CopyText>
+                ) : (
+                  <div className="text-sm">
+                    <div>Not created yet</div>
+                    <div className="text-xs text-muted-foreground">Created automatically the next time it runs</div>
+                  </div>
+                )}
+            </SummaryRow>
+          <SummaryRow label="Conversation"><span className="max-w-64 truncate text-sm font-mono">{runtimeState?.sessionDisplayId ?? runtimeState?.sessionId ?? "Not started"}</span></SummaryRow>
+        </div>
+      </details>
 
       <section className="space-y-3" aria-labelledby="agent-recent-tasks-heading">
         <div className="flex items-center justify-between">
@@ -2102,7 +2153,7 @@ export function ConfigurationTab({
         environmentVariablesPlacement="configuration"
         compactTestFeedback
         sectionOrder={["identity", "adapter", "configuration", "environment", "environment-variables", "run-policy"]}
-        sectionTitles={{ adapter: "Adapter", configuration: "Configuration", identity: "Agent identity" }}
+        sectionTitles={{ adapter: "Runs on", configuration: "Configuration", identity: "Name and role" }}
         canConfigureProviderTrace={canConfigureProviderTrace}
       /> : null}
 

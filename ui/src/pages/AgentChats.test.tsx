@@ -26,8 +26,6 @@ vi.mock("@/hooks/useAgentChatNavigation", () => ({
   useAgentChatNavigation: () => ({
     companyId: state.companyId,
     userId: state.userId,
-    enabled: true,
-    loaded: true,
     agents: { data: state.agents, isFetched: true, isPending: false, error: null },
     chats: { data: state.chats, isFetched: state.chatsFetched, isSuccess: state.chatsFetched && !state.chatsError, error: state.chatsError },
     session: { isFetched: !state.sessionError, isPending: false, error: state.sessionError },

@@ -1,12 +1,14 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents } from "@paperclipai/db";
+import { agents, routines } from "@paperclipai/db";
 import {
   getAgentWorkEligibility,
+  isAssistantAgent,
   type AgentEligibilityAgent,
   type AgentOrgChainHealth,
 } from "@paperclipai/shared";
-import { conflict, notFound, unprocessable } from "../errors.js";
+import { badRequest, conflict, notFound, unprocessable } from "../errors.js";
+import { isAssistantWeeklyUpdateRoutine } from "./assistant-weekly-update-origin.js";
 
 type AgentAssignmentKind = "work" | "routine";
 
@@ -67,7 +69,7 @@ function conflictDetails(input: {
   };
 }
 
-async function getAgent(db: Db, agentId: string): Promise<AssignabilityAgent | null> {
+async function getAgent(db: Db, agentId: string): Promise<(AssignabilityAgent & { metadata: unknown }) | null> {
   return db
     .select({
       id: agents.id,
@@ -75,6 +77,7 @@ async function getAgent(db: Db, agentId: string): Promise<AssignabilityAgent | n
       name: agents.name,
       status: agents.status,
       reportsTo: agents.reportsTo,
+      metadata: agents.metadata,
     })
     .from(agents)
     .where(eq(agents.id, agentId))
@@ -101,11 +104,30 @@ function assignmentReasonFromHealth(health: AgentOrgChainHealth): AgentAssignmen
   return "ancestor_missing";
 }
 
+async function isOwnWeeklyUpdateRoutine(db: Db, companyId: string, routineId: string | null | undefined) {
+  if (!routineId) return false;
+  const [routine] = await db
+    .select({ originKind: routines.originKind, originId: routines.originId })
+    .from(routines)
+    .where(and(eq(routines.id, routineId), eq(routines.companyId, companyId)));
+  return isAssistantWeeklyUpdateRoutine(routine);
+}
+
 export async function assertAssignableAgent(
   db: Db,
   companyId: string,
   agentId: string | null | undefined,
-  options: { kind?: AgentAssignmentKind } = {},
+  options: {
+    kind?: AgentAssignmentKind;
+    /** The issue's conversation agent; the Assistant may only hold its own conversation issues. */
+    conversationAgentId?: string | null;
+    /**
+     * The routine being assigned, or the routine an execution task was created
+     * from. The Assistant may hold its own weekly update routine and that
+     * routine's tasks; the routine's origin is checked here, never trusted.
+     */
+    routineId?: string | null;
+  } = {},
 ) {
   if (!agentId) return;
   const kind = options.kind ?? "work";
@@ -113,6 +135,12 @@ export async function assertAssignableAgent(
   if (!assignee) throw notFound("Assignee agent not found");
   if (assignee.companyId !== companyId) {
     throw unprocessable("Assignee must belong to same company");
+  }
+  if (isAssistantAgent(assignee)) {
+    const ownConversation = kind === "work" && options.conversationAgentId === agentId;
+    if (!ownConversation && !(await isOwnWeeklyUpdateRoutine(db, companyId, options.routineId))) {
+      throw badRequest("The Assistant can't be assigned tasks", { code: "assistant_not_assignable", assigneeAgentId: agentId });
+    }
   }
 
   const companyAgents = await listCompanyAgents(db, companyId);

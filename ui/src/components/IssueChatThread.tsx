@@ -1,4 +1,6 @@
 import { resolveIssueChatHumanAuthor } from "@/lib/issue-chat-human-author";
+import type { ProposedActionAcceptResult } from "../api/issues";
+import { TEMPLATE_SETUP_PAUSE_MESSAGE, TEMPLATE_SETUP_PAUSE_REASON } from "../lib/agent-pause";
 import { useWorkspaceBaseRefRecovery } from "./WorkspaceBaseRefRecovery";
 import { WorkspaceBaseRefRecoveryNotice } from "./WorkspaceBaseRefRecoveryNotice";
 import { DispositionRecoveryNotice, useDispositionRecoverySnapshot } from "./DispositionRecoveryNotice";
@@ -216,7 +218,7 @@ import {
 } from "../lib/transcriptPresentation";
 import { buildAgentMentionHref } from "@paperclipai/shared";
 import { useComposerStop } from "@/hooks/useComposerStop";
-import { cn, formatDateTime, formatShortDate } from "../lib/utils";
+import { agentUrl, cn, formatDateTime, formatShortDate } from "../lib/utils";
 import { liveBlueBadge } from "../lib/status-colors";
 import {
   nextWorkMode,
@@ -293,6 +295,7 @@ interface IssueChatMessageContext {
     selectedClientKeys?: string[],
     selectedOptionIds?: string[],
     rememberAction?: boolean,
+    proposedActionResult?: ProposedActionAcceptResult,
   ) => Promise<void> | void;
   onRejectInteraction?: (
     interaction:
@@ -698,6 +701,7 @@ interface IssueChatThreadProps {
     selectedClientKeys?: string[],
     selectedOptionIds?: string[],
     rememberAction?: boolean,
+    proposedActionResult?: ProposedActionAcceptResult,
   ) => Promise<void> | void;
   onRejectInteraction?: (
     interaction:
@@ -794,6 +798,12 @@ class IssueChatErrorBoundary extends Component<
   }
 }
 
+const AGENT_SETUP_LIFECYCLE_STATES: ReadonlySet<string> = new Set([
+  "preparing",
+  "verifying",
+  "resuming",
+]);
+
 export function IssueAssigneePausedNotice({
   agent,
   onResume,
@@ -803,11 +813,61 @@ export function IssueAssigneePausedNotice({
   onResume?: () => Promise<void> | void;
   resuming?: boolean;
 }) {
-  if (!agent || agent.status !== "paused") return null;
+  if (!agent) return null;
+
+  // First-run/lifecycle problems take precedence over a plain pause: resuming
+  // cannot fix a failed or in-flight setup, so point at the configuration page.
+  const lifecycleError = agent.lifecycleError?.trim() || null;
+  const settingUp =
+    !lifecycleError &&
+    agent.lifecycleState !== undefined &&
+    AGENT_SETUP_LIFECYCLE_STATES.has(agent.lifecycleState);
+  if (lifecycleError || settingUp) {
+    return (
+      <div data-testid="issue-assignee-paused-notice" className="mb-3">
+        <InlineBanner
+          tone={lifecycleError ? "danger" : "info"}
+          icon={lifecycleError ? AlertTriangle : Loader2}
+          compact
+          title={
+            lifecycleError ? (
+              <>
+                <span className="font-medium">{agent.name}</span> couldn&apos;t
+                start: {lifecycleError}
+              </>
+            ) : (
+              <>
+                <span className="font-medium">{agent.name}</span> is still being
+                set up…
+              </>
+            )
+          }
+          actions={
+            <Button size="sm" variant="outline" asChild>
+              <Link
+                to={`${agentUrl(agent)}/configuration`}
+                data-testid="issue-assignee-config-link"
+              >
+                Open configuration
+              </Link>
+            </Button>
+          }
+        >
+          {lifecycleError
+            ? "New runs will not start until the agent's setup succeeds."
+            : "New runs will start once setup finishes."}
+        </InlineBanner>
+      </div>
+    );
+  }
+
+  if (agent.status !== "paused") return null;
 
   const pauseDetail =
     agent.pauseReason === "budget"
       ? "It was paused by a budget hard stop."
+      : agent.pauseReason === TEMPLATE_SETUP_PAUSE_REASON
+      ? `${TEMPLATE_SETUP_PAUSE_MESSAGE}.`
       : agent.pauseReason === "import"
         ? "It arrived paused from an organization import — imported agents stay parked until you resume them."
         : agent.pauseReason === "system"
@@ -815,7 +875,7 @@ export function IssueAssigneePausedNotice({
           : "It was paused manually.";
   // Budget pauses clear on their own when the budget resets; resuming by hand
   // would fight the hard stop, so the action is only offered for the rest.
-  const canResume = Boolean(onResume) && agent.pauseReason !== "budget";
+  const canResume = Boolean(onResume) && agent.pauseReason !== "budget" && agent.pauseReason !== TEMPLATE_SETUP_PAUSE_REASON;
 
   return (
     <div data-testid="issue-assignee-paused-notice" className="mb-3">
@@ -2579,7 +2639,7 @@ function IssueChatAssistantMessage({
               </Badge>
             ) : null}
           </div>
-          {/* Canonical conference-room agent bubble (BoardChat.tsx:712). */}
+          {/* Canonical agent bubble. */}
           <div
             className={cn(
               "min-w-0 break-words px-3 py-2 text-sm overflow-x-auto overflow-y-visible [border-radius:14px_14px_14px_4px]",

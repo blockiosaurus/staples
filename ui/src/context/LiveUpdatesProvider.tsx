@@ -628,7 +628,9 @@ function readRunLiveStatusPatchFromPayload(
   }
 
   if (eventType === "heartbeat.run.event") {
-    const message = readString(payload.message);
+    // System-stream events are run plumbing ("Started … session sesn_…"):
+    // they stay in the run detail view, never in the chat's status line.
+    const message = readString(payload.stream) === "system" ? null : readString(payload.message);
     if (message) patch.message = message;
     patch.updatedAt = readString(payload.updatedAt) ?? eventCreatedAt;
     const currentToolName = readString(payload.currentToolName);
@@ -1229,12 +1231,15 @@ function invalidateHeartbeatQueries(
   queryClient: ReturnType<typeof useQueryClient>,
   companyId: string,
   payload: Record<string, unknown>,
+  /** Throttled Home briefing refresh; when absent, the briefing is invalidated directly. */
+  refreshBriefing?: (companyId: string) => void,
 ) {
   // Note: liveRuns(companyId) is intentionally NOT invalidated here — it is
   // event-sourced via applyRunLifecycleToCompanyLiveRuns in the caller.
   queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(companyId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(companyId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(companyId) });
+  refreshBriefingFor(queryClient, companyId, refreshBriefing);
   queryClient.invalidateQueries({ queryKey: ["costs", companyId] });
   queryClient.invalidateQueries({
     queryKey: queryKeys.sidebarBadges(companyId),
@@ -1268,15 +1273,113 @@ function invalidateHeartbeatProgressQueries(
   }
 }
 
+const SIGNALS_REFRESH_WINDOW_MS = 10_000;
+
+/**
+ * Per-company leading + trailing throttle for the company signals query. Signals
+ * are coarse counts that drive navigation growth, so a busy company's activity
+ * stream must not refetch them on every event: the first request refreshes now,
+ * any further requests inside the window collapse into one refresh at its end.
+ */
+const BRIEFING_REFRESH_WINDOW_MS = 2_000;
+
+function refreshBriefingFor(
+  queryClient: Pick<QueryClient, "invalidateQueries">,
+  companyId: string,
+  refreshBriefing?: (companyId: string) => void,
+) {
+  if (refreshBriefing) refreshBriefing(companyId);
+  else {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.briefing(companyId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.artifacts.home(companyId) });
+  }
+}
+
+/**
+ * Per-company trailing throttle for the Home briefing. One run start, its
+ * activity rows and agent status changes arrive together; the briefing is a
+ * whole-page read, so a burst collapses into one refresh at the window's end.
+ */
+function createBriefingRefreshThrottle(
+  queryClient: Pick<QueryClient, "invalidateQueries">,
+  windowMs = BRIEFING_REFRESH_WINDOW_MS,
+) {
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  return {
+    request(companyId: string) {
+      if (timers.has(companyId)) return;
+      timers.set(companyId, setTimeout(() => {
+        timers.delete(companyId);
+        // cancelRefetch: false keeps an in-flight read alive instead of
+        // aborting it; the refresh dedupes onto that fetch.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.briefing(companyId) }, { cancelRefetch: false });
+        // Home's "What we've made" rides the same burst: one fetch each.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.artifacts.home(companyId) }, { cancelRefetch: false });
+      }, windowMs));
+    },
+    dispose() {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    },
+  };
+}
+
+function createSignalsRefreshThrottle(
+  queryClient: Pick<QueryClient, "invalidateQueries">,
+  windowMs = SIGNALS_REFRESH_WINDOW_MS,
+) {
+  const windows = new Map<string, { timer: ReturnType<typeof setTimeout>; pending: boolean }>();
+  const refresh = (companyId: string) => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.signals(companyId) });
+  };
+  const openWindow = (companyId: string) => {
+    const entry = {
+      pending: false,
+      timer: setTimeout(() => {
+        windows.delete(companyId);
+        if (entry.pending) {
+          refresh(companyId);
+          openWindow(companyId);
+        }
+      }, windowMs),
+    };
+    windows.set(companyId, entry);
+  };
+  return {
+    request(companyId: string) {
+      const entry = windows.get(companyId);
+      if (entry) {
+        entry.pending = true;
+        return;
+      }
+      refresh(companyId);
+      openWindow(companyId);
+    },
+    dispose() {
+      for (const entry of windows.values()) clearTimeout(entry.timer);
+      windows.clear();
+    },
+  };
+}
+
 function invalidateActivityQueries(
   queryClient: ReturnType<typeof useQueryClient>,
   companyId: string,
   payload: Record<string, unknown>,
   currentActor: { userId: string | null; agentId: string | null },
-  options?: { pathname?: string; isForegrounded?: boolean },
+  options?: {
+    pathname?: string;
+    isForegrounded?: boolean;
+    /** Throttled signals refresh; when absent, signals are left alone. */
+    refreshSignals?: (companyId: string) => void;
+    /** Throttled Home briefing refresh; when absent, the briefing is invalidated directly. */
+    refreshBriefing?: (companyId: string) => void;
+  },
 ) {
   queryClient.invalidateQueries({ queryKey: queryKeys.activity(companyId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(companyId) });
+  refreshBriefingFor(queryClient, companyId, options?.refreshBriefing);
+  options?.refreshSignals?.(companyId);
   queryClient.invalidateQueries({
     queryKey: queryKeys.sidebarBadges(companyId),
   });
@@ -1682,6 +1785,8 @@ function handleLiveEvent(
   pushToast: (toast: ToastInput) => string | null,
   gate: ToastGate,
   currentActor: { userId: string | null; agentId: string | null },
+  refreshSignals?: (companyId: string) => void,
+  refreshBriefing?: (companyId: string) => void,
 ) {
   if (event.companyId !== expectedCompanyId) return;
 
@@ -1719,7 +1824,7 @@ function handleLiveEvent(
       expectedCompanyId,
       payload,
     );
-    invalidateHeartbeatQueries(queryClient, expectedCompanyId, payload);
+    invalidateHeartbeatQueries(queryClient, expectedCompanyId, payload, refreshBriefing);
     if (!liveRunsPatched) {
       // A new run we couldn't reconstruct from the event — refetch once to add it.
       queryClient.invalidateQueries({
@@ -1756,6 +1861,7 @@ function handleLiveEvent(
     queryClient.invalidateQueries({
       queryKey: queryKeys.org(expectedCompanyId),
     });
+    refreshBriefingFor(queryClient, expectedCompanyId, refreshBriefing);
     const agentId = readString(payload.agentId);
     if (agentId)
       queryClient.invalidateQueries({
@@ -1786,7 +1892,7 @@ function handleLiveEvent(
       expectedCompanyId,
       payload,
       currentActor,
-      { pathname },
+      { pathname, refreshSignals, refreshBriefing },
     );
     if (
       shouldDeferVisibleIssueCommentActivity(queryClient, pathname, payload)
@@ -1858,6 +1964,9 @@ function closeSocketQuietly(
 
 export const __liveUpdatesTestUtils = {
   buildActivityToast,
+  createSignalsRefreshThrottle,
+  createBriefingRefreshThrottle,
+  handleLiveEvent,
   applyRunLifecycleToCompanyLiveRuns,
   buildAgentStatusToast,
   buildRunStatusToast,
@@ -1936,6 +2045,10 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     [queryClient, invalidationBatcher],
   );
   useEffect(() => () => invalidationBatcher.dispose(), [invalidationBatcher]);
+  const signalsThrottle = useMemo(() => createSignalsRefreshThrottle(queryClient), [queryClient]);
+  useEffect(() => () => signalsThrottle.dispose(), [signalsThrottle]);
+  const briefingThrottle = useMemo(() => createBriefingRefreshThrottle(queryClient), [queryClient]);
+  useEffect(() => () => briefingThrottle.dispose(), [briefingThrottle]);
 
   useEffect(() => {
     pathnameRef.current = location.pathname;
@@ -2048,6 +2161,8 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
               userId: currentActorRef.current.userId,
               agentId: currentActorRef.current.agentId,
             },
+            signalsThrottle.request,
+            briefingThrottle.request,
           );
           // Fan the raw event out to component subscribers after cache
           // handling so any reader sees fresh query data.
@@ -2094,6 +2209,8 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     invalidationBatcher,
     queryClient,
     coalescingClient,
+    signalsThrottle,
+    briefingThrottle,
     liveCompanyId,
     pushToast,
     canConnectSocket,

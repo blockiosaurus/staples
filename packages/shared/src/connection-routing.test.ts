@@ -6,6 +6,7 @@ import {
   findAggregatorService,
   parseAggregatorRoute,
   aggregatorProviderQuestion,
+  aggregatorProviderQuestionSet,
   aggregatorContinuationInstruction,
 } from "./connection-routing.js";
 import type { ConnectionSearchResultItem } from "./types/connection-intent.js";
@@ -51,6 +52,10 @@ describe("aggregator routing contract", () => {
     ]);
     expect(question.selectionMode).toBe("single");
     expect(question.allowOther).toBe(false);
+    // The top-ranked provider is the recommendation in both representations.
+    expect(question.options.map((option) => option.recommended)).toEqual([true, undefined]);
+    expect(aggregatorProviderQuestionSet(question).questions[0]!.options!.map((option) => option.recommended))
+      .toEqual([true, undefined]);
   });
   it.each(AGGREGATOR_PRIORITY)(
     "does not claim underlying app readiness for %s",

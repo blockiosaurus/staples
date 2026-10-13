@@ -2106,7 +2106,7 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
                   prompt: "Continue the release?",
                   selectionMode: "single",
                   required: true,
-                  options: [{ id: "yes", label: "Yes" }],
+                  options: [{ id: "yes", label: "Yes", recommended: true }],
                 },
               ],
             },

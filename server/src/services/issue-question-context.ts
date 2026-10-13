@@ -6,7 +6,7 @@ export const TASK_QUESTION_GUIDANCE = "Unanswered questions are saved conversati
 /** Ordinary questions cannot carry approval or credential authority. */
 export function ordinaryQuestionCondition() {
   return sql<boolean>`(${issueThreadInteractions.kind} = 'ask_user_questions'
-    and not (${issueThreadInteractions.payload} ?| array['toolAction', 'secretProposal', 'connectionAuthorization']))`;
+    and not (${issueThreadInteractions.payload} ?| array['toolAction', 'secretProposal', 'connectionAuthorization', 'proposedAction']))`;
 }
 
 /** Match the feed's newer-human-message rule without storing UI dismissals. */
@@ -59,7 +59,7 @@ export function activeIssueInteractionCondition(input: {
         ${ordinaryQuestionCondition()}
         or (${issueThreadInteractions.kind} in ('request_confirmation', 'request_checkbox_confirmation')
           and ${issueThreadInteractions.effectiveResolverPolicy} = 'anyone'
-          and not (${issueThreadInteractions.payload} ?| array['toolAction', 'secretProposal', 'connectionAuthorization']))
+          and not (${issueThreadInteractions.payload} ?| array['toolAction', 'secretProposal', 'connectionAuthorization', 'proposedAction']))
       )
     )` : undefined,
   )!;

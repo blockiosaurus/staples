@@ -874,6 +874,48 @@ describeEmbeddedPostgres("companySearchService", () => {
     }
   });
 
+  it("does not return documents on private tasks the caller cannot read", async () => {
+    const previousMode = process.env.PAPERCLIP_ISSUE_PRIVACY_MODE;
+    process.env.PAPERCLIP_ISSUE_PRIVACY_MODE = "enforce";
+    try {
+      const companyId = await createCompany();
+      const ownerId = `owner-${randomUUID()}`;
+      const otherId = `other-${randomUUID()}`;
+      const agentId = await createAgent(companyId, { name: "Private Writer" });
+      const openIssueId = await createIssue(companyId, { title: "open holder" });
+      const privateId = randomUUID();
+      await createIssue(companyId, {
+        id: privateId,
+        title: "private holder",
+        visibility: "private",
+        privacyRootIssueId: privateId,
+        responsibleUserId: ownerId,
+      });
+      const openDocId = randomUUID();
+      const privateDocId = randomUUID();
+      await db.insert(documents).values([
+        { id: openDocId, companyId, title: "Open zebra notes", latestBody: "zebra", format: "markdown", createdByAgentId: agentId },
+        { id: privateDocId, companyId, title: "Private zebra notes", latestBody: "zebra", format: "markdown", createdByAgentId: agentId },
+      ]);
+      await db.insert(issueDocuments).values([
+        { companyId, issueId: openIssueId, documentId: openDocId, key: "open" },
+        { companyId, issueId: privateId, documentId: privateDocId, key: "secret" },
+      ]);
+      const conditionFor = (userId: string) => issueReadSqlCondition(db, { type: "board", userId, source: "session" });
+      const q = companySearchQuerySchema.parse({ q: "zebra", scope: "artifacts" });
+
+      const other = await svc.search(companyId, q, { issueReadCondition: await conditionFor(otherId) });
+      expect(other.results.map((row) => row.artifact?.issueId)).toEqual([openIssueId]);
+      expect(other.countsByType.artifact).toBe(1);
+
+      const owner = await svc.search(companyId, q, { issueReadCondition: await conditionFor(ownerId) });
+      expect(owner.countsByType.artifact).toBe(2);
+    } finally {
+      if (previousMode === undefined) delete process.env.PAPERCLIP_ISSUE_PRIVACY_MODE;
+      else process.env.PAPERCLIP_ISSUE_PRIVACY_MODE = previousMode;
+    }
+  });
+
   it("pushes private project filtering into project search and counts", async () => {
     const previousMode = process.env.PAPERCLIP_ISSUE_PRIVACY_MODE;
     process.env.PAPERCLIP_ISSUE_PRIVACY_MODE = "enforce";

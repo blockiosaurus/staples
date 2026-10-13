@@ -1039,6 +1039,17 @@ export const issueCommentMetadataSectionSchema = z
   })
   .strict();
 
+export const assistantPageContextSchema = z.object({
+  route: z.string().min(1).max(500),
+  title: z.string().max(200).optional(),
+  entity: z.object({
+    type: z.enum(["issue", "agent", "project", "goal", "routine", "approval", "skill", "artifact", "other"]),
+    id: z.string().max(200),
+    label: z.string().max(200).optional(),
+  }).optional(),
+}).strict();
+
+
 export const issueCommentMetadataSchema = z
   .object({
     version: z.literal(1),
@@ -1059,9 +1070,16 @@ export const issueCommentMetadataSchema = z
       reason: z.string().trim().min(1).max(160),
       assigneeAgentId: z.string().guid().nullable(),
     }).strict().optional(),
-    sections: z.array(issueCommentMetadataSectionSchema).min(1).max(20),
+    // Display-only page context the person sent with an Assistant chat message. Untrusted.
+    pageContext: assistantPageContextSchema.optional(),
+    // System notices carry 1-20 sections; chat messages carry only pageContext (sections stay empty).
+    sections: z.array(issueCommentMetadataSectionSchema).max(20).default([]),
   })
-  .strict();
+  .strict()
+  .refine((metadata) => metadata.sections.length > 0 || metadata.pageContext !== undefined, {
+    message: "metadata requires at least one section",
+    path: ["sections"],
+  });
 
 export type IssueCommentMetadata = z.infer<typeof issueCommentMetadataSchema>;
 
@@ -1268,6 +1286,11 @@ export const askUserQuestionsQuestionOptionSchema = z.object({
     .describe(
       "When true, selecting this option reveals an inline text field; the typed value is returned as the question's otherText. Use this for a real \"I'll describe it\" choice instead of authoring a dead option that does nothing. At most one free-text option per question.",
     ),
+
+  recommended: z
+    .boolean()
+    .optional()
+    .describe("Marks the asker's recommended answer; the form pre-selects it."),
 });
 
 export const askUserQuestionsQuestionSchema = z.object({
@@ -1287,7 +1310,7 @@ const paperclipQuestionOptionSchema = z.object({
   recommended: z.boolean().optional(),
 });
 
-const paperclipQuestionSchema = z
+export const paperclipQuestionSchema = z
   .object({
     id: z.string().min(1).max(160),
     header: z.string().max(1000).optional(),
@@ -1539,6 +1562,7 @@ export const requestConfirmationToolActionPayloadSchema = z.object({
   actionRequestId: z.string().guid(),
   invocationId: z.string().guid(),
   toolName: z.string().trim().min(1).max(500),
+  upstreamToolName: z.string().trim().min(1).max(500).nullable().optional(),
   toolDisplayName: z.string().trim().min(1).max(500),
   connectionId: z.string().guid().nullable(),
   applicationId: z.string().guid().nullable(),
@@ -1562,6 +1586,119 @@ export const requestConfirmationSecretProposalPayloadSchema = z.object({
   expiresAt: z.string().datetime({ offset: true }),
 });
 
+export const PROPOSED_ACTION_METHODS = ["POST", "PATCH", "PUT", "DELETE"] as const;
+export const PROPOSED_ACTION_CATEGORIES = [
+  "approval",
+  "agent_lifecycle",
+  "budget",
+  "secret",
+  "connection",
+  "outbound",
+  "delete",
+  "other_governed",
+  "brief",
+  "plan",
+] as const;
+/** Serialized JSON body limit for a proposed action. */
+export const PROPOSED_ACTION_BODY_MAX_BYTES = 20 * 1024;
+/**
+ * Company brief proposals carry the whole brief (up to 20,000 characters),
+ * which can serialize past the general limit once escaped or multi-byte.
+ */
+export const PROPOSED_BRIEF_BODY_MAX_BYTES = 96 * 1024;
+/**
+ * Plan proposals carry a whole starter plan: possibly the brief (up to 20,000
+ * characters) plus up to 25 tasks and 8 agents. The per-field limits allow far
+ * more than any real plan needs (25 x 8,000-character descriptions alone is
+ * 200,000 characters), so this total cap is what bounds the stored card. A
+ * full brief plus 25 tasks with ~2,500-character descriptions fits; a plan
+ * past it should be split or its descriptions shortened.
+ */
+export const PROPOSED_PLAN_BODY_MAX_BYTES = 128 * 1024;
+export function proposedActionBodyMaxBytes(category: string | null | undefined): number {
+  if (category === "brief") return PROPOSED_BRIEF_BODY_MAX_BYTES;
+  if (category === "plan") return PROPOSED_PLAN_BODY_MAX_BYTES;
+  return PROPOSED_ACTION_BODY_MAX_BYTES;
+}
+function proposedActionBodyBytes(value: unknown): number | null {
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? null : new TextEncoder().encode(serialized).length;
+  } catch {
+    return null;
+  }
+}
+
+const proposedActionPathSchema = z
+  .string()
+  .min(5)
+  .max(1000)
+  .refine((value) => value.startsWith("/api/"), "path must start with /api/");
+
+/**
+ * Server-owned display data the Assistant tool reads from the database (for
+ * approval decisions: the approval itself). Not part of the hash; shown on the
+ * card as "From the approval" so the person sees what they are deciding on.
+ */
+export const proposedActionContextSchema = z.object({
+  source: z.literal("approval"),
+  approvalType: z.string().trim().min(1).max(80),
+  requestedBy: z.string().max(200).nullable(),
+  agentName: z.string().max(200).nullable().optional(),
+  agentRole: z.string().max(80).nullable().optional(),
+  adapterType: z.string().max(120).nullable().optional(),
+  adapterConfigCommandFields: z.array(z.string().max(120)).max(20).optional(),
+  /** The approval's updatedAt when proposed; a claim is refused if it has changed since. */
+  approvalUpdatedAt: z.string().max(100).optional(),
+});
+
+/** Server-owned: an exact governed API call executed by the person's browser after Confirm. */
+export const requestConfirmationProposedActionPayloadSchema = z.object({
+  version: z.literal(1),
+  method: z.enum(PROPOSED_ACTION_METHODS),
+  path: proposedActionPathSchema,
+  body: z.unknown(),
+  summary: z.string().trim().min(1).max(500),
+  category: z.enum(PROPOSED_ACTION_CATEGORIES),
+  hash: z.string().regex(/^[a-f0-9]{64}$/, "hash must be a sha256 hex digest"),
+  staleCheck: z
+    .object({
+      path: proposedActionPathSchema,
+      field: z.literal("updatedAt"),
+      expected: z.string().trim().min(1).max(100),
+    })
+    .optional(),
+  context: proposedActionContextSchema.optional(),
+  planHireConnections: z.array(z.object({
+    clientKey: z.string().max(200),
+    provider: z.string().max(40).nullable(),
+  })).max(100).optional(),
+  planTemplateSummaries: z.array(z.object({
+    clientKey: z.string().max(200),
+    ref: z.string().max(200),
+    name: z.string().max(200),
+    needs: z.array(z.string().max(400)).max(20),
+    asksBefore: z.array(z.string().max(200)).max(20),
+    routineCount: z.number().int().min(0).max(100),
+    budgetMonthlyCents: z.number().int().min(0).nullable(),
+    readOnly: z.boolean().optional(),
+  })).max(8).optional(),
+  planBudget: z.object({
+    hiresMonthlyCents: z.number().int().min(0),
+    budgetedHireCount: z.number().int().min(0),
+    hostedCapCents: z.number().int().min(0).nullable(),
+    hostedNeededCents: z.number().int().min(0).nullable(),
+    hostedCapAfterCents: z.number().int().min(0).nullable(),
+    ceilingCents: z.number().int().min(0),
+  }).optional(),
+}).superRefine((value, ctx) => {
+  const max = proposedActionBodyMaxBytes(value.category);
+  const bytes = proposedActionBodyBytes(value.body);
+  if (bytes === null || bytes > max) {
+    ctx.addIssue({ code: "custom", path: ["body"], message: `body must be JSON no larger than ${max} bytes` });
+  }
+});
+
 export const requestConfirmationPayloadSchema = z.object({
   version: z.literal(1),
   prompt: z.string().trim().min(1).max(1000),
@@ -1582,6 +1719,7 @@ export const requestConfirmationPayloadSchema = z.object({
   target: requestConfirmationTargetSchema.nullable().optional(),
   toolAction: requestConfirmationToolActionPayloadSchema.optional(),
   secretProposal: requestConfirmationSecretProposalPayloadSchema.optional(),
+  proposedAction: requestConfirmationProposedActionPayloadSchema.optional(),
 });
 
 export const requestCheckboxConfirmationOptionSchema = z.object({
@@ -1727,6 +1865,12 @@ export const requestConfirmationSecretProposalResultSchema = z.object({
   updatedAt: z.string().datetime({ offset: true }),
 });
 
+export const requestConfirmationProposedActionResultSchema = z.object({
+  status: z.enum(["executed", "failed", "stale"]),
+  httpStatus: z.number().int().min(0).max(999).optional(),
+  message: z.string().trim().max(1000).optional(),
+});
+
 export const requestConfirmationResultSchema = z.object({
   version: z.literal(1),
   outcome: z.enum([
@@ -1747,6 +1891,7 @@ export const requestConfirmationResultSchema = z.object({
   resumeFailure: requestConfirmationResumeFailureSchema.nullable().optional(),
   toolAction: requestConfirmationToolActionResultSchema.optional(),
   secretProposal: requestConfirmationSecretProposalResultSchema.optional(),
+  proposedAction: requestConfirmationProposedActionResultSchema.optional(),
 });
 
 export const requestCheckboxConfirmationResultSchema =
@@ -2065,6 +2210,10 @@ export type CreateIssueThreadInteractionInput = z.input<
 export const acceptIssueThreadInteractionSchema = z
   .object({
     rememberAction: z.boolean().optional(),
+    /** Required (and only allowed) when accepting a proposed-action confirmation. */
+    proposedActionResult: requestConfirmationProposedActionResultSchema
+      .extend({ hash: z.string().regex(/^[a-f0-9]{64}$/) })
+      .optional(),
     selectedClientKeys: z
       .array(z.string().trim().min(1).max(120))
       .min(1)
@@ -2104,6 +2253,12 @@ export const acceptIssueThreadInteractionSchema = z
       seenOptionIds.add(optionId);
     }
   });
+/** Body for reserving a proposed action before the browser executes it. */
+export const claimProposedActionSchema = z.object({
+  hash: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+export type ClaimProposedAction = z.infer<typeof claimProposedActionSchema>;
+
 export type AcceptIssueThreadInteraction = z.infer<
   typeof acceptIssueThreadInteractionSchema
 >;

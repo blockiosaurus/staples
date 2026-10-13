@@ -30,6 +30,17 @@ describe("ui adapter registry", () => {
     syncExternalAdapters([]);
   });
 
+  it("registers the built-in Claude (hosted) adapter with the schema form and transcript parser", () => {
+    const adapter = findUIAdapter("claude_managed");
+    expect(adapter).toMatchObject({ type: "claude_managed", label: "Claude (hosted)", ConfigFields: SchemaConfigFields });
+    const ts = "2026-10-12T00:00:00.000Z";
+    expect(adapter!.parseStdoutLine(JSON.stringify({ type: "claude_managed.message", text: "Hello" }), ts)).toEqual([
+      { kind: "assistant", ts, text: "Hello" },
+    ]);
+    expect(adapter!.buildAdapterConfig({ model: "claude-opus-5-5", adapterSchemaValues: { environmentId: "env_1" } } as never))
+      .toMatchObject({ model: "claude-opus-5-5", environmentId: "env_1" });
+  });
+
   it("registers adapters for lookup and listing", () => {
     registerUIAdapter(externalUIAdapter);
 

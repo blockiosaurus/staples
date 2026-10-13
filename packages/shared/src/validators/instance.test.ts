@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { INSTANCE_FEATURE_CATALOG } from "../feature-catalog.js";
 import {
   instanceExperimentalSettingsSchema,
   patchInstanceExperimentalSettingsSchema,
@@ -18,11 +19,45 @@ describe("instance experimental settings validators", () => {
       .toEqual({ enableChatConnectors: false });
     expect(patchInstanceExperimentalSettingsSchema.safeParse({ enableChatConnectors: "true" }).success).toBe(false);
   });
-  it("defaults the streamlined UI on and accepts an explicit patch", () => {
+  it("still accepts the retired streamlined keys", () => {
+    expect(instanceExperimentalSettingsSchema.safeParse({ enableStreamlinedUi: false }).success).toBe(true);
+    expect(instanceExperimentalSettingsSchema.safeParse({ enableStreamlinedLeftNavigation: false }).success).toBe(true);
     expect(instanceExperimentalSettingsSchema.parse({}).enableStreamlinedUi).toBe(true);
-    expect(
-      patchInstanceExperimentalSettingsSchema.parse({ enableStreamlinedUi: false }),
-    ).toEqual({ enableStreamlinedUi: false });
+    expect(patchInstanceExperimentalSettingsSchema.parse({ enableStreamlinedUi: false })).toEqual({
+      enableStreamlinedUi: false,
+    });
+  });
+
+  it("does not expose the retired streamlined keys in the feature catalog", () => {
+    expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableStreamlinedUi");
+    expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableStreamlinedLeftNavigation");
+  });
+
+  it("still accepts the retired conference room chat key but not in the catalog", () => {
+    expect(instanceExperimentalSettingsSchema.safeParse({ enableConferenceRoomChat: true }).success).toBe(true);
+    expect(instanceExperimentalSettingsSchema.parse({}).enableConferenceRoomChat).toBe(false);
+    expect(patchInstanceExperimentalSettingsSchema.parse({ enableConferenceRoomChat: true })).toEqual({
+      enableConferenceRoomChat: true,
+    });
+    expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableConferenceRoomChat");
+  });
+
+  it("still accepts the retired agent chat key but not in the catalog", () => {
+    expect(instanceExperimentalSettingsSchema.safeParse({ enableAgentChat: true }).success).toBe(true);
+    expect(instanceExperimentalSettingsSchema.parse({}).enableAgentChat).toBe(false);
+    expect(patchInstanceExperimentalSettingsSchema.parse({ enableAgentChat: true })).toEqual({
+      enableAgentChat: true,
+    });
+    expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableAgentChat");
+  });
+
+  it("still accepts the retired goals sidebar link key but not in the catalog", () => {
+    expect(instanceExperimentalSettingsSchema.safeParse({ enableGoalsSidebarLink: true }).success).toBe(true);
+    expect(instanceExperimentalSettingsSchema.parse({}).enableGoalsSidebarLink).toBe(false);
+    expect(patchInstanceExperimentalSettingsSchema.parse({ enableGoalsSidebarLink: true })).toEqual({
+      enableGoalsSidebarLink: true,
+    });
+    expect(Object.keys(INSTANCE_FEATURE_CATALOG)).not.toContain("enableGoalsSidebarLink");
   });
 
   it("defaults the server info debug view off", () => {
@@ -53,12 +88,6 @@ describe("instance experimental settings validators", () => {
 
     expect(settings.enableWorkspaceBranchReconcileForward).toBe(true);
     expect(settings.enableWorkspaceDirtyQuarantineRepair).toBe(true);
-  });
-
-  it("defaults the goals sidebar link off", () => {
-    const settings = instanceExperimentalSettingsSchema.parse({});
-
-    expect(settings.enableGoalsSidebarLink).toBe(false);
   });
 
   it("defaults the sandbox duplex bridge kill switch off", () => {
@@ -167,16 +196,6 @@ describe("instance experimental settings validators", () => {
     ).toEqual({
       enableWorkspaceBranchReconcileForward: false,
       enableWorkspaceDirtyQuarantineRepair: false,
-    });
-  });
-
-  it("accepts goals sidebar link patches", () => {
-    expect(
-      patchInstanceExperimentalSettingsSchema.parse({
-        enableGoalsSidebarLink: true,
-      }),
-    ).toEqual({
-      enableGoalsSidebarLink: true,
     });
   });
 

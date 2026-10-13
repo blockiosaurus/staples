@@ -25,3 +25,17 @@ describe("saved harness verification", () => {
     expect(() => assertHarnessTestPassed(result(status, [...codes]))).not.toThrow();
   });
 });
+
+describe("harness test failure details", () => {
+  it("carries the failed test's check codes and levels (no messages) on the error", () => {
+    let caught: unknown;
+    try {
+      assertHarnessTestPassed({
+        adapterType: "claude_local", status: "warn", testedAt: new Date().toISOString(),
+        checks: [{ code: "claude_hello_probe_auth_required", level: "warn", message: "secret-ish detail" }],
+      });
+    } catch (error) { caught = error; }
+    expect(caught).toMatchObject({ code: "harness_test_failed", checks: [{ code: "claude_hello_probe_auth_required", level: "warn" }] });
+    expect(JSON.stringify((caught as { checks: unknown }).checks)).not.toContain("secret-ish");
+  });
+});

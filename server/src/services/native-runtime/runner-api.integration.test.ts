@@ -554,7 +554,7 @@ else if(m.id!==undefined) send({id:m.id,result:{}});
             prompt: "Choose a scope.",
             selectionMode: "single",
             required: true,
-            options: [{ id: "small", label: "Small" }],
+            options: [{ id: "small", label: "Small", recommended: true }],
           }],
         },
       };

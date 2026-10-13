@@ -192,4 +192,45 @@ describe("SidebarNavItem", () => {
 
     expect(link().getAttribute("aria-label")).toBe("Dashboard, 3 live");
   });
+
+  it("exposes the hint as an accessible description, not a title", () => {
+    render(<SidebarNavItem to="/routines" label="Routines" icon={Inbox} hint="Routines appeared because you scheduled one." />);
+
+    expect(link().getAttribute("title")).toBeNull();
+    const describedBy = link().getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    const description = document.getElementById(describedBy!);
+    expect(description?.textContent).toBe("Routines appeared because you scheduled one.");
+    expect(description?.classList).toContain("sr-only");
+    // The description is not part of the link's own content (and so not its name).
+    expect(link().contains(description!)).toBe(false);
+  });
+
+  it("sets no description without a hint", () => {
+    render(<SidebarNavItem to="/routines" label="Routines" icon={Inbox} />);
+
+    expect(link().getAttribute("title")).toBeNull();
+    expect(link().getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("announces a new surface in the rail aria-label", () => {
+    sidebarState.collapsed = true;
+    render(<SidebarNavItem to="/routines" label="Routines" icon={Inbox} textBadge="new" />);
+
+    expect(link().getAttribute("aria-label")).toBe("Routines, new");
+  });
+
+  it("appends new after other rail status text", () => {
+    sidebarState.collapsed = true;
+    render(<SidebarNavItem to="/inbox" label="Inbox" icon={Inbox} badge={2} badgeLabel="unread" textBadge="new" />);
+
+    expect(link().getAttribute("aria-label")).toBe("Inbox, 2 unread, new");
+  });
+
+  it("does not add new to the rail label for other text badges", () => {
+    sidebarState.collapsed = true;
+    render(<SidebarNavItem to="/status" label="Status" icon={Inbox} textBadge="beta" />);
+
+    expect(link().getAttribute("aria-label")).toBeNull();
+  });
 });

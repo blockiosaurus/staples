@@ -22,6 +22,7 @@ import {
   toolProfiles,
   toolRateLimitCounters,
 } from "@paperclipai/db";
+import { TOOL_NAME_PATTERN_MAX_LENGTH } from "@paperclipai/shared";
 import type {
   ToolAccessDecision,
   ToolAccessDecisionInput,
@@ -109,6 +110,201 @@ type TrustRuleConfig = {
 const SENSITIVE_KEY_RE =
   /(^|[_-])(api[_-]?key|authorization|bearer|client[_-]?secret|cookie|credential|jwt|password|private[_-]?key|refresh[_-]?token|secret|session[_-]?token|token)($|[_-])/i;
 const SECRET_VALUE_RE = /\b(sk-[a-z0-9_-]{12,}|ghp_[a-z0-9_]{12,}|xox[baprs]-[a-z0-9-]{12,}|bearer\s+[a-z0-9._-]{12,})\b/i;
+
+/**
+ * `config.source` of the tool policies an agent template seeds at install
+ * (plans/apply). Such a require_approval rule only narrows access.
+ */
+export const AGENT_TEMPLATE_POLICY_SOURCE = "agent_template";
+
+/**
+ * Agent-template guard rules (`config.templateRule`). These take precedence
+ * by type, not priority: they are evaluated for the calling agent before the
+ * ordered policies, so no allow rule, trust rule or reorder can get past them.
+ * `read_only_by_name` is a legacy read-only marker and is treated as
+ * `read_only`. The template's `outward` rule is an ordinary ordered policy.
+ */
+export const AGENT_TEMPLATE_GUARD_RULES = ["read_only", "read_only_by_name", "destructive"] as const;
+
+export type AgentTemplateGuardKind = "read_only" | "destructive";
+
+/** The guard kind of an agent-template guard policy, or null for any other policy. */
+export function agentTemplateGuardKind(policy: { config: unknown }): AgentTemplateGuardKind | null {
+  const config = policy.config;
+  if (!config || typeof config !== "object" || Array.isArray(config)) return null;
+  const record = config as Record<string, unknown>;
+  if (record.source !== AGENT_TEMPLATE_POLICY_SOURCE) return null;
+  if (record.templateRule === "destructive") return "destructive";
+  if (record.templateRule === "read_only" || record.templateRule === "read_only_by_name") return "read_only";
+  return null;
+}
+
+/**
+ * `config.source` of an agent's Autopilot marker. A marker is not an ordered
+ * allow: the policy loop never applies it. It names an agent, one
+ * connection, write risk and one outward category's tool-name patterns; for
+ * a call it matches, the access decision skips only that agent's template
+ * outward ask-first rule and the connection's seeded Ask first defaults
+ * (`app_gallery_finish` rows still marked `defaultAskFirst`). Every other
+ * rule (blocks, admin ask-first rules, connection-intent asks, rate limits,
+ * trust-rule review, the profile/grant fallback) still applies, and the
+ * template's destructive guard runs before all of it.
+ */
+export const AGENT_AUTOPILOT_POLICY_SOURCE = "agent_autopilot";
+
+/** `config.source` values only the server writes; the generic policy API refuses them. */
+export const RESERVED_TOOL_POLICY_SOURCES: readonly string[] = [AGENT_TEMPLATE_POLICY_SOURCE, AGENT_AUTOPILOT_POLICY_SOURCE];
+
+/** Why the generic policy API refuses to remove or switch off a server-owned row. */
+function reservedPolicyChangeMessage(source: unknown): string {
+  return source === AGENT_AUTOPILOT_POLICY_SOURCE
+    ? "This is an agent's Autopilot setting; change it from the agent's Autopilot panel instead."
+    : "This rule protects a hired agent; change the agent instead.";
+}
+
+/** Whether a policy is an agent's Autopilot rule. */
+export function isAgentAutopilotPolicy(policy: { config: unknown }): boolean {
+  const config = policy.config;
+  if (!config || typeof config !== "object" || Array.isArray(config)) return false;
+  return (config as Record<string, unknown>).source === AGENT_AUTOPILOT_POLICY_SOURCE;
+}
+
+/** Template guards and Autopilot markers keep their priority on a reorder (markers are not ordered anyway). */
+function keepsPriorityOnReorder(policy: { config: unknown }): boolean {
+  return Boolean(agentTemplateGuardKind(policy)) || isAgentAutopilotPolicy(policy);
+}
+
+/** The agent an agent-template policy is scoped to (its `selectors.agentId`). */
+function templatePolicyAgentId(policy: { selectors: unknown }): string | null {
+  const selectors = policy.selectors;
+  if (!selectors || typeof selectors !== "object" || Array.isArray(selectors)) return null;
+  const agentId = (selectors as Record<string, unknown>).agentId;
+  return typeof agentId === "string" && agentId.length > 0 ? agentId : null;
+}
+
+/** Risk levels a template's destructive guard always asks first for. */
+export const TEMPLATE_DESTRUCTIVE_RISK_LEVELS: readonly ToolRiskLevel[] = ["destructive", "high", "critical"];
+
+function configStrings(config: unknown, key: string): string[] {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return [];
+  const value = (config as Record<string, unknown>)[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function namesMatchPatterns(patterns: string[], names: Array<string | null | undefined>): boolean {
+  const actual = names.filter((name): name is string => Boolean(name));
+  return patterns.some((pattern) => actual.some((name) => toolNamePatternMatches(pattern.trim(), name)));
+}
+
+/**
+ * Whether an agent's template destructive guard asks first for a call:
+ * destructive/high/critical risk, or any call whose name matches the guard's
+ * `destructiveToolPatterns` (e.g. closing an issue is rated write but still
+ * always asks). Names apply whatever the tool's risk rating, because the
+ * generic classifier rates unannotated tools `read`; only a read-rated (or
+ * unrated) tool whose names are plainly read-only (`toolNameIsReadOnlyVerb`)
+ * is exempt.
+ */
+export function templateDestructiveGuardApplies(
+  guard: { config: unknown },
+  riskLevel: string | null | undefined,
+  names: Array<string | null | undefined>,
+): boolean {
+  if (riskLevel && (TEMPLATE_DESTRUCTIVE_RISK_LEVELS as readonly string[]).includes(riskLevel)) return true;
+  if (isReadRatedReadOnlyCall(riskLevel, names)) return false;
+  return namesMatchPatterns(configStrings(guard.config, "destructiveToolPatterns"), names);
+}
+
+/**
+ * Whether a call is exempt from a template's name-based patterns: rated `read`
+ * (or `low`, or not rated at all) and every name it is known by is plainly
+ * read-only. A read-rated `close_issue` or `push_files` is not exempt.
+ */
+function isReadRatedReadOnlyCall(riskLevel: string | null | undefined, names: Array<string | null | undefined>): boolean {
+  if (riskLevel && riskLevel !== "read" && riskLevel !== "low") return false;
+  const actual = names.filter((name): name is string => Boolean(name));
+  return actual.length > 0 && actual.every(toolNameIsReadOnlyVerb);
+}
+
+/**
+ * Risk levels a template outward ask-first rule and an Autopilot marker cover
+ * by name: `write`/`medium`, plus a read-rated (or unrated) call unless its
+ * names are plainly read-only. Never destructive/high/critical.
+ */
+export function templateOutwardRiskApplies(riskLevel: string | null | undefined, names: Array<string | null | undefined>): boolean {
+  if (riskLevel === "write" || riskLevel === "medium") return true;
+  if (riskLevel && riskLevel !== "read" && riskLevel !== "low") return false;
+  return !isReadRatedReadOnlyCall(riskLevel, names);
+}
+
+/** Read verbs: the first verb-like word of a read-only agent's tool name must be one of these (see `toolNameIsReadOnlyVerb`). */
+export const READ_ONLY_TOOL_VERBS = [
+  "list", "get", "retrieve", "search", "read", "fetch", "query", "describe", "count", "find", "show", "view", "lookup",
+] as const;
+const READ_ONLY_TOOL_VERB_SET = new Set<string>(READ_ONLY_TOOL_VERBS);
+
+/** Verbs that make a tool name not read-only when they lead it or follow a conjunction; elsewhere they are nouns (`get_post`, `retrieve_charge`). */
+export const MUTATING_TOOL_VERBS = [
+  "create", "update", "delete", "send", "post", "pay", "refund", "charge", "transfer", "cancel", "capture", "close",
+  "merge", "push", "publish", "deploy", "write", "remove", "attach", "apply", "submit",
+  "execute", "withdraw", "modify", "pause", "resume", "approve", "confirm", "reverse", "archive", "trash",
+  "move", "upload", "import", "sync",
+] as const;
+const MUTATING_TOOL_VERB_SET = new Set<string>(MUTATING_TOOL_VERBS);
+
+/**
+ * Words that are mutating verbs only when they lead the name, and nouns after
+ * a read verb: `issue_credit`, `record_payment`, `set_price` and `add_note`
+ * are denied, while `get_issue`, `get_record` and `list_records` are read-only.
+ */
+export const LEADING_MUTATING_TOOL_VERBS = ["set", "add", "issue", "record"] as const;
+const LEADING_MUTATING_TOOL_VERB_SET = new Set<string>(LEADING_MUTATING_TOOL_VERBS);
+
+function toolNameWords(name: string): string[] {
+  return name
+    .split(/[^A-Za-z0-9]+/)
+    .flatMap((part) => part.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+/g) ?? [])
+    .map((word) => word.toLowerCase());
+}
+
+/** Words after which the next word is in verb position (`get_and_charge`, `fetch_then_delete`). */
+const TOOL_NAME_CONJUNCTIONS = new Set(["and", "then", "or", "plus"]);
+
+/**
+ * Whether a tool name is plainly read-only. Words are split case-insensitively
+ * on separators and namespaces (`_`, `-`, `.`, `/`, `:`...) and camelCase.
+ * The first verb-like word (after any namespace prefix such as `stripe_` or
+ * `mcp__stripe__`) must be a read verb, and no mutating verb may appear in a
+ * verb position: leading, or right after a conjunction (`and`, `then`, `or`,
+ * `plus`). Mutating words elsewhere are nouns: `get_post`,
+ * `list_post_comments`, `get_merge_request`, `retrieve_charge`, `get_refund`,
+ * `get_upload_url`, `stripe_list_charges` and `get_issue` qualify;
+ * `refund_list`, `delete_saved_search`, `get_and_charge`,
+ * `fetch_then_delete`, `refundPayment`, `record_payment` and `listing` do not.
+ */
+export function toolNameIsReadOnlyVerb(name: string): boolean {
+  if (!name || name.length > 512) return false;
+  const words = toolNameWords(name);
+  const firstVerb = words.find((word) =>
+    READ_ONLY_TOOL_VERB_SET.has(word) || MUTATING_TOOL_VERB_SET.has(word) || LEADING_MUTATING_TOOL_VERB_SET.has(word));
+  if (!firstVerb || !READ_ONLY_TOOL_VERB_SET.has(firstVerb)) return false;
+  return !words.some((word, index) =>
+    index > 0
+    && TOOL_NAME_CONJUNCTIONS.has(words[index - 1]!)
+    && (MUTATING_TOOL_VERB_SET.has(word) || LEADING_MUTATING_TOOL_VERB_SET.has(word)));
+}
+
+/**
+ * Allowlist for read-only template agents: the catalog must rate the tool
+ * `read` and every name it is known by must be plainly read-only (first verb
+ * a read verb, no mutating verb in a verb position). Anything else (unknown risk, a write, a
+ * misclassified `stripe_create_refund`) is denied.
+ */
+export function readOnlyTemplateAllowsTool(input: { riskLevel: ToolRiskLevel | null; toolName: string | null; upstreamToolName?: string | null }): boolean {
+  if (input.riskLevel !== "read") return false;
+  const names = [input.toolName, input.upstreamToolName ?? null].filter((name): name is string => Boolean(name));
+  return names.length > 0 && names.every(toolNameIsReadOnlyVerb);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -240,6 +436,10 @@ function argumentFiltersMatch(filters: ToolTrustRuleArgumentFilters | null | und
     for (const [path, pattern] of Object.entries(filters.fieldMatches)) {
       const actual = readPath(ctx.arguments, path);
       if (typeof actual !== "string") return false;
+      // Bounded work per call: never test an over-long string. Stored
+      // patterns run under this cap even if today's write-time check would
+      // refuse them; the cap bounds their cost.
+      if (actual.length > POLICY_REGEX_MAX_INPUT_LENGTH) return false;
       let re: RegExp;
       try {
         re = new RegExp(pattern);
@@ -276,7 +476,7 @@ function trustRuleNeedsReview(policy: typeof toolPolicies.$inferSelect, ctx: Too
   );
 }
 
-function trustRuleIsActive(policy: typeof toolPolicies.$inferSelect, now = new Date()): boolean {
+export function trustRuleIsActive(policy: typeof toolPolicies.$inferSelect, now = new Date()): boolean {
   const rule = trustRuleConfig(policy);
   if (!rule) return false;
   if (rule.revokedAt) return false;
@@ -387,6 +587,52 @@ function asToolRiskLevel(value: unknown): ToolRiskLevel | null {
   return null;
 }
 
+/**
+ * Case-insensitive whole-name glob match where `*` is the only wildcard and
+ * every other character is literal. Malformed patterns match nothing.
+ */
+export function toolNamePatternMatches(pattern: string, name: string): boolean {
+  // Longer (or malformed) patterns never match; see TOOL_NAME_PATTERN_MAX_LENGTH.
+  if (!pattern || pattern.length > TOOL_NAME_PATTERN_MAX_LENGTH || !/[^*]/.test(pattern)) return false;
+  // Greedy two-pointer wildcard match (no regular expression, no exponential
+  // backtracking): on a mismatch, retry from the last `*`, letting it absorb
+  // one more character. Worst case is pattern length x name length.
+  const p = pattern.toLowerCase();
+  const n = name.toLowerCase();
+  let pi = 0;
+  let ni = 0;
+  let star = -1;
+  let starNi = 0;
+  while (ni < n.length) {
+    if (pi < p.length && p[pi] === "*") {
+      star = pi++;
+      starNi = ni;
+    } else if (pi < p.length && p[pi] === n[ni]) {
+      pi++;
+      ni++;
+    } else if (star >= 0) {
+      pi = star + 1;
+      ni = ++starNi;
+    } else {
+      return false;
+    }
+  }
+  while (pi < p.length && p[pi] === "*") pi++;
+  return pi === p.length;
+}
+
+/** `toolNamePatterns`: absent or empty means no restriction; otherwise any pattern matching any name. */
+function toolNamePatternsMatch(value: unknown, names: Array<string | null>): boolean {
+  if (value === undefined || value === null) return true;
+  // A present but malformed selector never widens a policy to every tool.
+  if (!Array.isArray(value)) return false;
+  const patterns = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  if (value.length === 0) return true;
+  if (patterns.length === 0) return false;
+  const actual = names.filter((name): name is string => Boolean(name));
+  return patterns.some((pattern) => actual.some((name) => toolNamePatternMatches(pattern.trim(), name)));
+}
+
 function selectorMatches(selector: ToolAccessSelector | Record<string, unknown> | null | undefined, ctx: ToolAccessContext): boolean {
   if (!selector || Object.keys(selector).length === 0) return true;
   const s = selector as Record<string, unknown>;
@@ -415,8 +661,30 @@ function selectorMatches(selector: ToolAccessSelector | Record<string, unknown> 
     match("applicationKey", "applicationKeys", ctx.applicationKey) &&
     match("providerType", "providerTypes", ctx.providerType) &&
     matchAny("toolName", "toolNames", [ctx.toolName, ctx.upstreamToolName]) &&
+    toolNamePatternsMatch(s.toolNamePatterns, [ctx.toolName, ctx.upstreamToolName]) &&
     match("riskLevel", "riskLevels", ctx.riskLevel)
   );
+}
+
+/**
+ * A template outward ask-first rule and an Autopilot marker match by name
+ * (see `templateOutwardRiskApplies`) instead of by their stored `riskLevels`,
+ * so a read-rated `merge_pull_request` is still asked first (and lifted by
+ * Autopilot) while a read-rated `list_issues` is not.
+ */
+function matchesByOutwardName(policy: { config: unknown }): boolean {
+  const config = policy.config;
+  if (!isRecord(config)) return false;
+  if (config.source === AGENT_AUTOPILOT_POLICY_SOURCE) return true;
+  return config.source === AGENT_TEMPLATE_POLICY_SOURCE && config.templateRule === "outward";
+}
+
+function policySelectorMatches(policy: { config: unknown; selectors: unknown }, ctx: ToolAccessContext): boolean {
+  const selectors = policy.selectors as Record<string, unknown> | null | undefined;
+  if (!matchesByOutwardName(policy) || !isRecord(selectors)) return selectorMatches(selectors, ctx);
+  if (!templateOutwardRiskApplies(ctx.riskLevel, [ctx.toolName, ctx.upstreamToolName])) return false;
+  const { riskLevel: _riskLevel, riskLevels: _riskLevels, ...rest } = selectors;
+  return selectorMatches(rest, ctx);
 }
 
 function conditionRecord(value: unknown): Record<string, unknown> | null {
@@ -478,6 +746,30 @@ function policyConditions(policy: typeof toolPolicies.$inferSelect): ToolPolicyC
   return isRecord(policy.conditions) && Object.keys(policy.conditions).length > 0
     ? policy.conditions as ToolPolicyConditions
     : null;
+}
+
+/**
+ * An ask-first policy's conditions with every `fieldMatches` entry whose
+ * argument is too long to test removed, so the rest of its conditions still
+ * decide whether it applies and the over-long argument counts as matching.
+ */
+function withoutOverLongRegexConditions(conditions: ToolPolicyConditions | null, ctx: ToolAccessContext): ToolPolicyConditions | null {
+  if (!conditions) return conditions;
+  const next: Record<string, unknown> = { ...conditions };
+  for (const key of ["arguments", "args"]) {
+    const group = conditionRecord(next[key]);
+    const fieldMatches = group ? conditionRecord(group.fieldMatches) : null;
+    if (!group || !fieldMatches) continue;
+    const kept = Object.fromEntries(Object.entries(fieldMatches).filter(([path]) => {
+      const actual = readPath(ctx.arguments, path);
+      return !(typeof actual === "string" && actual.length > POLICY_REGEX_MAX_INPUT_LENGTH);
+    }));
+    const rest: Record<string, unknown> = { ...group, fieldMatches: kept };
+    if (!Object.keys(kept).length) delete rest.fieldMatches;
+    if (Object.values(rest).some((value) => value !== undefined && value !== null)) next[key] = rest;
+    else delete next[key];
+  }
+  return next as ToolPolicyConditions;
 }
 
 function conditionGroupFail(group: string, reason: string): PolicyConditionEvaluation {
@@ -635,11 +927,156 @@ function assertGenericPolicyType(policyType: string) {
   }
 }
 
-function isSafePolicyRegex(pattern: string): boolean {
+/** Longest string a policy `fieldMatches` regex is ever tested against. */
+export const POLICY_REGEX_MAX_INPUT_LENGTH = 2_000;
+
+type RegexScanAtom = { text: string | null; optional: boolean; unbounded: boolean };
+
+/** Upper repeat count above which `{n,m}` is treated like `+`. */
+const REGEX_LARGE_REPEAT = 16;
+const REGEX_OVERLAP_SAMPLE = [
+  ...Array.from({ length: 0x7f - 0x20 }, (_, index) => String.fromCharCode(0x20 + index)),
+  "\t", "\n", "\r", " ", "é", "λ",
+];
+
+function regexAtomsOverlap(left: RegexScanAtom, right: RegexScanAtom): boolean {
+  if (left.text === null || right.text === null) return true;
+  try {
+    const a = new RegExp(`^(?:${left.text})$`);
+    const b = new RegExp(`^(?:${right.text})$`);
+    return REGEX_OVERLAP_SAMPLE.some((ch) => a.test(ch) && b.test(ch));
+  } catch {
+    return true;
+  }
+}
+
+type RegexScanQuantifier = { present: boolean; min: number; max: number };
+
+/**
+ * A small structural scan of a policy regex. Returns null when the pattern
+ * has a repeated group whose body is itself quantified (`(a+)+`,
+ * `(a?){25}`), otherwise the flat list of atoms in order. Each atom records
+ * whether it may match nothing (`?`, `*`, `{0,n}`, inside an optional group
+ * or a lookaround) and whether it repeats without a small bound. A
+ * quantified group appears as a wildcard atom after its contents.
+ */
+function scanPolicyRegex(pattern: string): RegexScanAtom[] | null {
+  const atoms: RegexScanAtom[] = [];
+  // Per open group: index into atoms where it started, whether its body is
+  // quantified, and whether it is a zero-width lookaround.
+  const groups: Array<{ start: number; quantified: boolean; lookaround: boolean }> = [];
+  let i = 0;
+  const readQuantifier = (): RegexScanQuantifier => {
+    const ch = pattern[i];
+    let quantifier: RegexScanQuantifier = { present: false, min: 1, max: 1 };
+    if (ch === "*") { quantifier = { present: true, min: 0, max: Infinity }; i += 1; }
+    else if (ch === "+") { quantifier = { present: true, min: 1, max: Infinity }; i += 1; }
+    else if (ch === "?") { quantifier = { present: true, min: 0, max: 1 }; i += 1; }
+    else if (ch === "{") {
+      const m = /^\{(\d+)(,(\d*))?\}/.exec(pattern.slice(i));
+      if (m) {
+        const min = Number(m[1]);
+        const max = m[2] === undefined ? min : m[3] === "" ? Infinity : Number(m[3]);
+        quantifier = { present: true, min, max };
+        i += m[0].length;
+      }
+    }
+    if (quantifier.present && (pattern[i] === "?" || pattern[i] === "+")) i += 1;
+    return quantifier;
+  };
+  const pushAtom = (text: string | null) => {
+    const quantifier = readQuantifier();
+    if (quantifier.present && groups.length) groups[groups.length - 1]!.quantified = true;
+    atoms.push({ text, optional: quantifier.min === 0, unbounded: quantifier.max > REGEX_LARGE_REPEAT });
+  };
+  while (i < pattern.length) {
+    const ch = pattern[i]!;
+    if (ch === "\\") {
+      const next = pattern[i + 1] ?? "";
+      let length = 2;
+      if (next === "x") length = 4;
+      else if (next === "u") length = 6;
+      else if (next === "c") length = 3;
+      const text = pattern.slice(i, i + length);
+      i += length;
+      if (next === "b" || next === "B") continue;
+      pushAtom(text);
+    } else if (ch === "[") {
+      let j = i + 1;
+      if (pattern[j] === "^") j += 1;
+      if (pattern[j] === "]") j += 1;
+      while (j < pattern.length && pattern[j] !== "]") j += pattern[j] === "\\" ? 2 : 1;
+      const text = pattern.slice(i, j + 1);
+      i = j + 1;
+      pushAtom(text);
+    } else if (ch === "(") {
+      const prefix = /^\((?:\?:|\?=|\?!|\?<=|\?<!|\?<[A-Za-z_][A-Za-z0-9_]*>)?/.exec(pattern.slice(i))!;
+      i += prefix[0].length;
+      groups.push({ start: atoms.length, quantified: false, lookaround: /^\(\?(?:=|!|<=|<!)$/.test(prefix[0]) });
+    } else if (ch === ")") {
+      i += 1;
+      const group = groups.pop();
+      const quantifier = readQuantifier();
+      // A repeated group whose body can itself vary in length backtracks
+      // exponentially: (a+)+, (a?){25}, (.*)*.
+      if (quantifier.present && quantifier.max > 1 && group?.quantified) return null;
+      if (group && (group.lookaround || quantifier.min === 0)) {
+        for (let index = group.start; index < atoms.length; index += 1) atoms[index]!.optional = true;
+      }
+      if ((quantifier.present || group?.quantified) && groups.length) groups[groups.length - 1]!.quantified = true;
+      if (quantifier.present && quantifier.max > 1) {
+        atoms.push({ text: null, optional: quantifier.min === 0, unbounded: quantifier.max > REGEX_LARGE_REPEAT });
+      }
+    } else if (ch === "^" || ch === "$" || ch === "|") {
+      i += 1;
+    } else {
+      i += 1;
+      pushAtom(ch === "." ? "." : ch.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&"));
+    }
+  }
+  return atoms;
+}
+
+/**
+ * Whether a policy `fieldMatches` regex is safe to run on agent-supplied
+ * arguments (which are also capped at POLICY_REGEX_MAX_INPUT_LENGTH). Refuses
+ * backreferences, alternation, nested quantifiers (`(a+)+`, `(a?){25}`) and
+ * unbounded repeats that can trade characters with each other: two whose
+ * character classes intersect and that are adjacent, separated only by atoms
+ * that may match nothing (`\w+\w+`, `\d+-?\d+`), or separated only by
+ * atoms both repeats could consume (`[\w.-]+\.[\w.-]+`). Repeats split by
+ * a separator one side cannot consume (`^\d+-\d+-\d+$`,
+ * `^[\w.-]+@[\w.-]+\.\w+$`) are accepted; the input cap bounds their cost.
+ */
+export function isSafePolicyRegex(pattern: string): boolean {
   if (pattern.length > 256) return false;
   if (/\\[1-9]/.test(pattern)) return false;
   if (/(^|[^\\])\|/.test(pattern)) return false;
-  if (/\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*{]/.test(pattern)) return false;
+  try {
+    new RegExp(pattern);
+  } catch {
+    return false;
+  }
+  const atoms = scanPolicyRegex(pattern);
+  if (!atoms) return false;
+  for (let index = 0; index < atoms.length; index += 1) {
+    const repeat = atoms[index]!;
+    if (!repeat.unbounded) continue;
+    // Required atoms between this repeat and a later one that this repeat
+    // could also consume (the `\.` in `[\w.-]+\.[\w.-]+`).
+    const absorbed: RegexScanAtom[] = [];
+    for (let next = index + 1; next < atoms.length; next += 1) {
+      const candidate = atoms[next]!;
+      if (
+        candidate.unbounded
+        && regexAtomsOverlap(repeat, candidate)
+        && absorbed.every((between) => regexAtomsOverlap(between, candidate))
+      ) return false;
+      if (candidate.optional) continue;
+      if (!regexAtomsOverlap(repeat, candidate)) break;
+      absorbed.push(candidate);
+    }
+  }
   return true;
 }
 
@@ -676,9 +1113,13 @@ function assertSupportedGenericPolicyShape(
   policyType: string,
   conditions: Record<string, unknown> | null | undefined,
   config: Record<string, unknown> | null | undefined,
+  options: { validateConditions?: boolean } = {},
 ) {
   assertGenericPolicyType(policyType);
-  assertSupportedPolicyConditions(conditions);
+  if (isRecord(config) && typeof config.source === "string" && RESERVED_TOOL_POLICY_SOURCES.includes(config.source)) {
+    throw unprocessable(`Tool policy config source '${config.source}' is managed by Staples and cannot be set directly`);
+  }
+  if (options.validateConditions !== false) assertSupportedPolicyConditions(conditions);
   if (policyType !== "rate_limit" && hasConfig(config)) {
     throw unprocessable(`Tool policy type '${policyType}' does not support config`);
   }
@@ -789,15 +1230,21 @@ export function toolAccessPolicyService(db: Db) {
       if (missingIds.length > 0) {
         throw unprocessable("All reordered policies must belong to the company", { missingPolicyIds: missingIds });
       }
-      if (uniquePolicyIds.length !== rows.length) {
+      // Agent-template guards apply by type, not priority, and an agent's
+      // Autopilot rule must stay ahead of its template's outward rule: neither
+      // is part of the ordering. Their ids are accepted and ignored, and they
+      // are never renumbered.
+      const reorderable = rows.filter((row) => !keepsPriorityOnReorder(row));
+      const orderedIds = uniquePolicyIds.filter((id) => !keepsPriorityOnReorder(byId.get(id)!));
+      if (orderedIds.length !== reorderable.length) {
         throw unprocessable("Reorder must include every non-trust policy for the company", {
-          expectedPolicyCount: rows.length,
-          receivedPolicyCount: uniquePolicyIds.length,
+          expectedPolicyCount: reorderable.length,
+          receivedPolicyCount: orderedIds.length,
         });
       }
 
       const now = new Date();
-      for (const [index, policyId] of uniquePolicyIds.entries()) {
+      for (const [index, policyId] of orderedIds.entries()) {
         await tx
           .update(toolPolicies)
           .set({ priority: (index + 1) * 100, updatedAt: now })
@@ -887,10 +1334,34 @@ export function toolAccessPolicyService(db: Db) {
     body: UpdateToolPolicy;
   }) {
     const existing = await getGenericPolicyRow(db, input.companyId, input.policyId);
+    const existingSource = isRecord(existing.config) ? existing.config.source : undefined;
+    if (typeof existingSource === "string" && RESERVED_TOOL_POLICY_SOURCES.includes(existingSource)) {
+      // Server-owned rows can only be renamed here. Agent-template rules
+      // change with the agent; an Autopilot marker is switched on or off
+      // only through the agent's Autopilot API (which checks
+      // agent-configuration access).
+      if (input.body.enabled !== undefined && input.body.enabled !== existing.enabled) {
+        throw unprocessable(reservedPolicyChangeMessage(existingSource));
+      }
+      const editable = new Set(["name", "description"]);
+      const other = Object.entries(input.body).filter(([key, value]) => value !== undefined && key !== "enabled" && !editable.has(key)).map(([key]) => key);
+      if (other.length) {
+        throw unprocessable(`This tool policy is managed by Staples; only ${[...editable].join(", ")} can be changed (got ${other.join(", ")})`);
+      }
+      const [policy] = await db.update(toolPolicies).set({
+        ...(input.body.name !== undefined ? { name: input.body.name } : {}),
+        ...(input.body.description !== undefined ? { description: input.body.description ?? null } : {}),
+        updatedAt: new Date(),
+      }).where(eq(toolPolicies.id, existing.id)).returning();
+      return policy;
+    }
     const nextPolicyType = input.body.policyType ?? existing.policyType;
     const nextConditions = input.body.conditions !== undefined ? input.body.conditions ?? null : existing.conditions ?? null;
     const nextConfig = input.body.config !== undefined ? input.body.config ?? null : existing.config ?? null;
-    assertSupportedGenericPolicyShape(nextPolicyType, nextConditions, nextConfig);
+    // Stored conditions are re-validated only when this update supplies them:
+    // renaming, disabling or re-prioritizing a policy never fails on a
+    // pattern an older check accepted.
+    assertSupportedGenericPolicyShape(nextPolicyType, nextConditions, nextConfig, { validateConditions: input.body.conditions !== undefined });
     const now = new Date();
     const [policy] = await db
       .update(toolPolicies)
@@ -912,6 +1383,10 @@ export function toolAccessPolicyService(db: Db) {
 
   async function deletePolicy(input: { companyId: string; policyId: string }) {
     const existing = await getGenericPolicyRow(db, input.companyId, input.policyId);
+    const existingSource = isRecord(existing.config) ? existing.config.source : undefined;
+    if (typeof existingSource === "string" && RESERVED_TOOL_POLICY_SOURCES.includes(existingSource)) {
+      throw unprocessable(reservedPolicyChangeMessage(existingSource));
+    }
     const [deleted] = await db
       .delete(toolPolicies)
       .where(eq(toolPolicies.id, existing.id))
@@ -1359,9 +1834,13 @@ export function toolAccessPolicyService(db: Db) {
     });
     const policies = await cachedRead(cache, `enabled-policies:${ctx.companyId}`, async () =>
       db.select().from(toolPolicies).where(and(eq(toolPolicies.companyId, ctx.companyId), eq(toolPolicies.enabled, true))).orderBy(asc(toolPolicies.priority), asc(toolPolicies.createdAt)));
-    for (const policy of policies) {
+    // Conditions (argument regexes included) are evaluated only for policies
+    // whose selectors match this call.
+    const selectedPolicies = policies.filter((policy) => policySelectorMatches(policy, ctx));
+    const forcedMatchPolicyIds = new Set<string>();
+    for (const policy of selectedPolicies) {
       const conditions = policyConditions(policy);
-      if (conditions && selectorMatches(policy.selectors, ctx)) {
+      if (conditions) {
         const parsed = toolPolicyConditionsSchema.safeParse(conditions);
         if (!parsed.success) {
           return decision(
@@ -1384,13 +1863,108 @@ export function toolAccessPolicyService(db: Db) {
             },
           );
         }
+        // A regex condition is never run on an over-long argument. For an
+        // allow or trust rule such a condition simply does not match (the
+        // call falls through to whatever else applies, e.g. ask first). An
+        // ask-first policy treats it as matching, so the call is asked about
+        // rather than denied. Block and rate-limit policies fail closed.
+        const overLongRegexArg = Object.entries(parsed.data.arguments?.fieldMatches ?? {}).find(([path]) => {
+          const actual = readPath(ctx.arguments, path);
+          return typeof actual === "string" && actual.length > POLICY_REGEX_MAX_INPUT_LENGTH;
+        });
+        if (!overLongRegexArg || policy.policyType === "allow" || policy.policyType === "trust_rule") continue;
+        if (policy.policyType === "require_approval") {
+          forcedMatchPolicyIds.add(policy.id);
+          continue;
+        }
+        return decision(
+          "deny",
+          "deny_policy_block",
+          `Tool access denied because the "${overLongRegexArg[0]}" argument is too long to check (over ${POLICY_REGEX_MAX_INPUT_LENGTH} characters).`,
+          effectiveProfileIds,
+          [policy.id],
+          { redactionPlan: redaction.redactionPlan, policyExplanation: { policyId: policy.id, policyType: policy.policyType, selectorMatched: true } },
+        );
       }
     }
-    const matchingPolicies = policies
-      .map((policy) => ({ policy, conditionEvaluation: evaluatePolicyConditions(policyConditions(policy), ctx) }))
-      .filter(({ policy, conditionEvaluation }) => selectorMatches(policy.selectors, ctx) && conditionEvaluation.matched);
-    const explicitBlock = matchingPolicies.find(({ policy }) => policy.policyType === "block");
+    const matchingPolicies = selectedPolicies
+      .map((policy) => ({
+        policy,
+        conditionEvaluation: evaluatePolicyConditions(
+          forcedMatchPolicyIds.has(policy.id) ? withoutOverLongRegexConditions(policyConditions(policy), ctx) : policyConditions(policy),
+          ctx,
+        ),
+      }))
+      .filter(({ conditionEvaluation }) => conditionEvaluation.matched);
+    // Template guards are applied by type below, not as ordinary blocks.
+    const explicitBlock = matchingPolicies.find(({ policy }) => policy.policyType === "block" && !agentTemplateGuardKind(policy));
+    const otherwiseAllowed = async () => permittedByProfile
+      || matchingPolicies.some(({ policy: other }) => !agentTemplateGuardKind(other) && !isAgentAutopilotPolicy(other) && (other.policyType === "allow"
+        || (other.policyType === "trust_rule" && (() => {
+          const rule = trustRuleConfig(other);
+          return Boolean(rule && trustRuleIsActive(other) && argumentFiltersMatch(rule.argumentFilters, ctx));
+        })())))
+      || await explicitGrant(ctx, cache);
+
+    // Agent-template guards apply by type, before (and regardless of) the
+    // ordered policies: priorities, reorders, allow rules and trust rules
+    // cannot get past them.
+    const templateGuards = ctx.agentId
+      ? policies.filter((policy) => agentTemplateGuardKind(policy) && templatePolicyAgentId(policy) === ctx.agentId)
+      : [];
+    const readOnlyGuard = templateGuards.find((policy) => agentTemplateGuardKind(policy) === "read_only");
+    if (readOnlyGuard && !readOnlyTemplateAllowsTool(ctx)) {
+      return decision(
+        "deny",
+        "deny_template_read_only",
+        readOnlyGuard.description ?? "This agent is read-only: it may only call tools that list, get or search.",
+        effectiveProfileIds,
+        [readOnlyGuard.id],
+        { redactionPlan: redaction.redactionPlan, policyExplanation: { policyId: readOnlyGuard.id, policyType: readOnlyGuard.policyType, templateGuard: "read_only" } },
+      );
+    }
+    const destructiveGuard = templateGuards.find((policy) => agentTemplateGuardKind(policy) === "destructive");
+    if (destructiveGuard && templateDestructiveGuardApplies(destructiveGuard, ctx.riskLevel, [ctx.toolName, ctx.upstreamToolName])) {
+      if (explicitBlock) {
+        return decision("deny", "deny_policy_block", explicitBlock.policy.description ?? "Tool access is blocked by policy.", effectiveProfileIds, [explicitBlock.policy.id], { redactionPlan: redaction.redactionPlan });
+      }
+      // The guard only narrows access: it asks first for a call something else
+      // would allow. A call nothing allows falls through to the ordinary rules,
+      // which cannot allow it either.
+      if (await otherwiseAllowed()) {
+        return decision(
+          "require_approval",
+          "requires_approval_policy",
+          destructiveGuard.description ?? "Tool access requires approval.",
+          effectiveProfileIds,
+          [destructiveGuard.id],
+          { redactionPlan: redaction.redactionPlan, policyExplanation: { policyId: destructiveGuard.id, policyType: destructiveGuard.policyType, templateGuard: "destructive" } },
+        );
+      }
+    }
+
+    // Autopilot: a marker for this agent, connection, write risk and tool
+    // pattern (and not one of its excluded destructive patterns) lifts only
+    // the template's outward ask and the connection's seeded Ask first
+    // defaults. Markers are never applied as ordered rules.
+    const autopilotMarker = ctx.agentId
+      ? matchingPolicies.find(({ policy }) => isAgentAutopilotPolicy(policy)
+        && templatePolicyAgentId(policy) === ctx.agentId
+        && !namesMatchPatterns(configStrings(policy.config, "excludedToolPatterns"), [ctx.toolName, ctx.upstreamToolName]))?.policy ?? null
+      : null;
+    const autopilotLifts = (policy: typeof toolPolicies.$inferSelect) => {
+      if (!autopilotMarker) return false;
+      const config = isRecord(policy.config) ? policy.config : {};
+      if (config.source === AGENT_TEMPLATE_POLICY_SOURCE) {
+        return config.templateRule === "outward" && templatePolicyAgentId(policy) === ctx.agentId;
+      }
+      return config.source === "app_gallery_finish" && config.defaultAskFirst === true
+        && typeof config.connectionId === "string" && config.connectionId === ctx.connectionId;
+    };
+
     for (const { policy, conditionEvaluation } of matchingPolicies) {
+      // Guards were applied above, by type; Autopilot markers are not ordered rules.
+      if (agentTemplateGuardKind(policy) || isAgentAutopilotPolicy(policy)) continue;
       const policyExplanation = {
         policyId: policy.id,
         policyType: policy.policyType,
@@ -1451,9 +2025,19 @@ export function toolAccessPolicyService(db: Db) {
         return decision("allow", "allow_trust_rule", policy.description ?? "Tool access allowed by trust rule.", effectiveProfileIds, [policy.id], { redactionPlan: redaction.redactionPlan, policyExplanation });
       }
       if (policy.policyType === "require_approval") {
+        if (autopilotLifts(policy)) continue;
         // The connection's Ask first control restricts an existing action grant;
         // it must never grant access to agents outside that connection's profile.
         if (["app_gallery_finish", "connection_intent"].includes(String(policy.config?.source)) && !permittedByProfile) continue;
+        // An agent template's install-time rule only ever narrows access: it
+        // asks first for a call something else would allow, and never turns a
+        // call nothing allows (or an explicit block) into an approval request.
+        if (policy.config?.source === AGENT_TEMPLATE_POLICY_SOURCE) {
+          if (explicitBlock) {
+            return decision("deny", "deny_policy_block", explicitBlock.policy.description ?? "Tool access is blocked by policy.", effectiveProfileIds, [explicitBlock.policy.id], { redactionPlan: redaction.redactionPlan });
+          }
+          if (!await otherwiseAllowed()) continue;
+        }
         if (policy.config?.source === "connection_intent" && explicitBlock) {
           return decision("deny", "deny_policy_block", explicitBlock.policy.description ?? "Tool access is blocked by policy.", effectiveProfileIds, [explicitBlock.policy.id], { redactionPlan: redaction.redactionPlan });
         }
@@ -1818,6 +2402,32 @@ export function toolAccessPolicyService(db: Db) {
     return exact;
   }
 
+  /**
+   * Destructive calls by an agent with a template destructive guard always ask
+   * first, so such an approval can never be remembered as a trust rule.
+   */
+  async function assertNoTemplateDestructiveGuard(
+    companyId: string,
+    invocation: Pick<typeof toolInvocations.$inferSelect, "agentId" | "riskLevel" | "matchedPolicyIds">,
+  ) {
+    if (!invocation.agentId) return;
+    const guards = (await db
+      .select({ id: toolPolicies.id, config: toolPolicies.config, selectors: toolPolicies.selectors })
+      .from(toolPolicies)
+      .where(and(
+        eq(toolPolicies.companyId, companyId),
+        sql`${toolPolicies.config} ->> 'source' = ${AGENT_TEMPLATE_POLICY_SOURCE}`,
+        sql`${toolPolicies.config} ->> 'templateRule' = 'destructive'`,
+      )))
+      .filter((guard) => templatePolicyAgentId(guard) === invocation.agentId);
+    if (guards.length === 0) return;
+    const matchedGuard = guards.some((guard) => (invocation.matchedPolicyIds ?? []).includes(guard.id));
+    const destructive = Boolean(invocation.riskLevel && TEMPLATE_DESTRUCTIVE_RISK_LEVELS.includes(invocation.riskLevel));
+    if (matchedGuard || destructive) {
+      throw unprocessable("This agent's template always asks first before destructive actions; they cannot be remembered as a trust rule");
+    }
+  }
+
   async function createTrustRuleFromActionRequest(input: {
     companyId: string;
     actionRequestId: string;
@@ -1845,6 +2455,7 @@ export function toolAccessPolicyService(db: Db) {
     if (invocation.catalogEntryId && !invocation.catalogVersionHash) {
       throw unprocessable("Trust rule promotion requires a reviewed tool catalog version on the source action request");
     }
+    await assertNoTemplateDestructiveGuard(input.companyId, invocation);
 
     const [issue] = invocation.issueId
       ? await db

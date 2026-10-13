@@ -8330,7 +8330,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       });
       const persistentConversation = direction === "persistent agent conversation";
       if (persistentConversation) {
-        await instanceSettingsService(db).updateExperimental({ enableAgentChat: true });
         await db.update(issues).set({
           conversationAgentId: agentId, conversationUserId: "responsible-user", conversationState: "active",
         }).where(eq(issues.id, issueId));
@@ -8448,7 +8447,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
         });
         expect(retained?.payload).toEqual(deferredPayload);
       } finally {
-        if (persistentConversation) await instanceSettingsService(db).updateExperimental({ enableAgentChat: false });
         // Keep this fixture's parked donor from being scheduled during teardown.
         await db
           .update(agents)
@@ -12555,29 +12553,24 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       livenessState: "advanced",
       resultJson: { finalizationReasonCode: "conversation_turn_finished" },
     });
-    await instanceSettingsService(db).updateExperimental({ enableAgentChat: true });
-    try {
-      await db.update(issues).set({
-        conversationAgentId: agentId,
-        conversationUserId: "responsible-user",
-        conversationState: "active",
-      }).where(eq(issues.id, issueId));
-      const result = await heartbeatService(db).reconcileStrandedAssignedIssues();
-      expect(result.continuationRequeued).toBe(0);
-      expect(result.escalated).toBe(0);
-      const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
-      expect(runs.map((run) => run.id)).toEqual([runId]);
-      const wakes = await db.select().from(agentWakeupRequests)
-        .where(eq(agentWakeupRequests.agentId, agentId));
-      expect(wakes).toHaveLength(1);
-      expect(wakes[0].reason).toBe("issue_assigned");
-      const [issue] = await db.select().from(issues).where(eq(issues.id, issueId));
-      // No fabricated idle state: durable response publication still settles it.
-      expect(issue.status).toBe("in_progress");
-      expect(issue.conversationState).toBe("active");
-    } finally {
-      await instanceSettingsService(db).updateExperimental({ enableAgentChat: false });
-    }
+    await db.update(issues).set({
+      conversationAgentId: agentId,
+      conversationUserId: "responsible-user",
+      conversationState: "active",
+    }).where(eq(issues.id, issueId));
+    const result = await heartbeatService(db).reconcileStrandedAssignedIssues();
+    expect(result.continuationRequeued).toBe(0);
+    expect(result.escalated).toBe(0);
+    const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs.map((run) => run.id)).toEqual([runId]);
+    const wakes = await db.select().from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.agentId, agentId));
+    expect(wakes).toHaveLength(1);
+    expect(wakes[0].reason).toBe("issue_assigned");
+    const [issue] = await db.select().from(issues).where(eq(issues.id, issueId));
+    // No fabricated idle state: durable response publication still settles it.
+    expect(issue.status).toBe("in_progress");
+    expect(issue.conversationState).toBe("active");
   });
 
   it("does not turn a pre-adapter setup failure into a duplicate continuation run", async () => {

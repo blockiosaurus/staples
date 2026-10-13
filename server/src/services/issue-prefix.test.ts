@@ -6,6 +6,7 @@ import {
   MAX_ISSUE_PREFIX_ATTEMPTS,
   deriveIssuePrefixBase,
   isIssuePrefixConflict,
+  isReservedIssuePrefix,
   issuePrefixSuffixForAttempt,
   pickAvailableIssuePrefix,
   type IssuePrefixReadDb,
@@ -141,5 +142,28 @@ describe("pickAvailableIssuePrefix", () => {
     );
     const { db } = stubPrefixReadDb(exhausted);
     await expect(pickAvailableIssuePrefix(db, "AC")).resolves.toBeNull();
+  });
+
+  it("never allocates a prefix that collides with a UI route root", async () => {
+    // "Org Labs" derives ORG, which is the /:prefix/org board route root.
+    const { db } = stubPrefixReadDb([]);
+    await expect(pickAvailableIssuePrefix(db, deriveIssuePrefixBase("Org Labs"))).resolves.toBe("ORGA");
+    // A one-letter name derives U, which is the /u route root.
+    await expect(pickAvailableIssuePrefix(db, deriveIssuePrefixBase("U"))).resolves.toBe("UA");
+  });
+
+  it("treats a reserved base like a taken one when the suffix is also taken", async () => {
+    const { db } = stubPrefixReadDb(["ORGA"]);
+    await expect(pickAvailableIssuePrefix(db, "ORG")).resolves.toBe("ORGAA");
+  });
+});
+
+describe("isReservedIssuePrefix", () => {
+  it("matches reserved route segments case-insensitively", () => {
+    expect(isReservedIssuePrefix("ORG")).toBe(true);
+    expect(isReservedIssuePrefix("u")).toBe(true);
+    expect(isReservedIssuePrefix("Auth")).toBe(true);
+    expect(isReservedIssuePrefix("ACM")).toBe(false);
+    expect(isReservedIssuePrefix("ORGA")).toBe(false);
   });
 });

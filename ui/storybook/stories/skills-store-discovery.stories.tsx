@@ -3,7 +3,6 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import {
   DiscoveryGrid,
   type DiscoveryCard,
-  type DiscoveryCategory,
   type DiscoveryTab,
 } from "@/pages/CompanySkills";
 
@@ -246,21 +245,12 @@ function DiscoveryGridHarness({
 }) {
   const [tab, setTab] = useState<DiscoveryTab>(initialTab);
   const [sort, setSort] = useState<DiscoverySort>("agents");
-  const [category, setCategory] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   const tabCards = useMemo(() => cardsForTab(cards, tab), [cards, tab]);
-  const categories = useMemo<DiscoveryCategory[]>(() => {
-    const counts = new Map<string, number>();
-    for (const card of tabCards) for (const c of card.categories) counts.set(c, (counts.get(c) ?? 0) + 1);
-    return Array.from(counts.entries())
-      .map(([slug, count]) => ({ slug, count }))
-      .sort((a, b) => b.count - a.count || a.slug.localeCompare(b.slug));
-  }, [tabCards]);
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = tabCards.filter((card) => {
-      if (category && !card.categories.includes(category)) return false;
       if (!q) return true;
       return `${card.name} ${card.author} ${card.categories.join(" ")}`.toLowerCase().includes(q);
     });
@@ -273,15 +263,11 @@ function DiscoveryGridHarness({
       if (sort === "alphabetical") return a.name.localeCompare(b.name);
       return b.agentCount - a.agentCount;
     });
-  }, [tabCards, category, search, sort, tab]);
+  }, [tabCards, search, sort, tab]);
 
   return (
     <DiscoveryGrid
       tab={tab}
-      categories={categories}
-      categoryTotal={tabCards.length}
-      activeCategory={category}
-      onCategoryChange={setCategory}
       search={search}
       onSearchChange={setSearch}
       sort={sort}
@@ -296,7 +282,6 @@ function DiscoveryGridHarness({
       onImportFromProject={() => {}}
       onBrowseDiscover={() => {
         setTab("discover");
-        setCategory(null);
       }}
       onScan={() => {}}
       scanPending={false}

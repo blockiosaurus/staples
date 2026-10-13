@@ -3059,7 +3059,7 @@ const LEGACY_PLUGIN_OPERATION_ORIGIN_KINDS = [
   "plugin:paperclipai.content-machine:source-sync",
 ] as const;
 
-function nonPluginOperationIssueCondition() {
+export function nonPluginOperationIssueCondition() {
   return sql<boolean>`NOT (
     ${issues.originKind} LIKE 'plugin:%:operation'
     OR ${issues.originKind} LIKE 'plugin:%:operation:%'
@@ -4584,6 +4584,7 @@ async function listIssueReviewAttentionMap(
         title: agents.title,
         status: agents.status,
         reportsTo: agents.reportsTo,
+        metadata: agents.metadata,
       })
       .from(agents)
       .where(eq(agents.companyId, companyId)),
@@ -5646,6 +5647,7 @@ async function listIssueBlockedInboxAttentionMap(
           title: agents.title,
           status: agents.status,
           reportsTo: agents.reportsTo,
+          metadata: agents.metadata,
         })
         .from(agents)
         .where(eq(agents.companyId, companyId)),
@@ -5665,6 +5667,7 @@ async function listIssueBlockedInboxAttentionMap(
     title: string | null;
     status: string;
     reportsTo: string | null;
+    metadata: unknown;
   }>;
   const graphIssueIds = graphIssues.map((issue) => issue.id);
   const issuesById = new Map<string, IssueRow>(
@@ -9954,6 +9957,9 @@ export function issueService(db: Db) {
       if (data.assigneeAgentId) {
         await assertAssignableAgent(db, companyId, data.assigneeAgentId, {
           kind: "work",
+          conversationAgentId: data.conversationAgentId ?? null,
+          // A routine's execution task: the Assistant may hold its own weekly update routine's tasks.
+          routineId: data.originKind === "routine_execution" && data.originId ? data.originId : null,
         });
       }
       if (data.assigneeUserId) {
@@ -11046,7 +11052,11 @@ export function issueService(db: Db) {
           dbOrTx as Db,
           existing.companyId,
           nextAssigneeAgentId,
-          { kind: "work" },
+          {
+            kind: "work",
+            conversationAgentId: existing.conversationAgentId,
+            routineId: existing.originKind === "routine_execution" ? existing.originId : null,
+          },
         );
       }
       if (issueData.assigneeUserId) {
@@ -11719,13 +11729,20 @@ export function issueService(db: Db) {
       checkoutRunId: string | null,
     ) => {
       const issueCompany = await db
-        .select({ companyId: issues.companyId })
+        .select({
+          companyId: issues.companyId,
+          conversationAgentId: issues.conversationAgentId,
+          originKind: issues.originKind,
+          originId: issues.originId,
+        })
         .from(issues)
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
       if (!issueCompany) throw notFound("Issue not found");
       await assertAssignableAgent(db, issueCompany.companyId, agentId, {
         kind: "work",
+        conversationAgentId: issueCompany.conversationAgentId,
+        routineId: issueCompany.originKind === "routine_execution" ? issueCompany.originId : null,
       });
 
       const now = new Date();
@@ -12534,9 +12551,6 @@ export function issueService(db: Db) {
 
       if (!issue) throw notFound("Issue not found");
 
-      if (issue.conversationAgentId && actor.userId && !(await instanceSettingsService(dbOrTx).getExperimental()).enableAgentChat) {
-        throw unprocessable("Agent Chat is disabled in Experimental settings");
-      }
       const currentUserRedactionOptions = {
         // Keep every read on the caller's transaction connection. Re-entering
         // the outer pool here can deadlock when concurrent transactions fill
@@ -13104,7 +13118,6 @@ export function issueService(db: Db) {
       if (
         authorType === "user" &&
         actor.userId &&
-        actor.userId !== "board-concierge" &&
         !createdByRunId
       ) {
         const { issueThreadInteractionService } =

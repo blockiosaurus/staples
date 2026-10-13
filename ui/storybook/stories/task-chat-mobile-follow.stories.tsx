@@ -33,7 +33,7 @@ function MobileFollow() {
       style={{ "--tc-composer-bottom": "var(--tc-composer-visible-nav-offset)" } as CSSProperties}>
       <div data-testid="task-chat-thread" className="-mx-4 flex flex-col">
         <StreamingResponse running={running} />
-        <TaskChatComposerDock mobile streamlined={false}>
+        <TaskChatComposerDock mobile>
           <TaskChatComposer mobile workMode="standard" onAdd={async () => setRunning(true)}
             onStop={running ? async () => setRunning(false) : undefined} />
         </TaskChatComposerDock>

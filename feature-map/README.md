@@ -86,7 +86,7 @@ manual verification steps, and gotchas.
 
 | Feature | What it covers |
 | --- | --- |
-| [Developer previews and diagnostic labs](./developer-labs.md) | Design examples, interaction fixtures, performance checks; not production acceptance. |
+| [Developer previews](./developer-labs.md) | Design guide and Storybook examples; not production acceptance. |
 
 These are verification instructions, not a claim that every journey passed a live
 test. A component test proves its component; a scripted provider proves that

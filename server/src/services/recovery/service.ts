@@ -13,7 +13,6 @@ import {
   LEGACY_DISPOSITION_REPAIR_INSTRUCTION, type LegacyDispositionEpisode,
 } from "./legacy-continuation.js";
 import { hasLiveLegacyController } from "../legacy-controller-lease.js";
-import { instanceSettingsService } from "../instance-settings.js";
 import { isWaitingConversation, settleConversationTurn, deliverConversationComments } from "../agent-conversations.js";
 import {
   and,
@@ -4436,10 +4435,7 @@ export function recoveryService(
             if (current) Object.assign(issue, current);
           }
         }
-        if (!(await instanceSettingsService(db).getExperimental()).enableAgentChat) { result.skipped += 1; continue; }
-        {
-          await deliverConversationComments(db, issue, deps.enqueueWakeup);
-        }
+        await deliverConversationComments(db, issue, deps.enqueueWakeup);
       }
       if (isWaitingConversation(issue)) { result.skipped += 1; continue; }
       const executionState = issue.status === "in_review"
@@ -4474,6 +4470,18 @@ export function recoveryService(
       }
 
       let latestRun = await getLatestIssueRun(issue.companyId, issue.id);
+      // The Assistant's weekly update task is never re-woken: once its run has
+      // ended and nothing will retry it, it is closed ("No update this week",
+      // or done if an update was saved) instead. A pending retry keeps it open,
+      // and that retry owns it: generic recovery never starts a second chain.
+      if (issue.originKind === "routine_execution" && latestRun && isTerminalIssueRun(latestRun)) {
+        const { settleWeeklyUpdateTask } = await import("../assistant-weekly-update.js");
+        const settled = await settleWeeklyUpdateTask(db, issue.id, { reason: "stranded_after_run", endedRunId: latestRun.id });
+        if (settled !== "not_weekly") {
+          result.skipped += 1;
+          continue;
+        }
+      }
       // Terminal run/wake rows survive a restart even if finalization never
       // reached the escalation transaction. Retry that idempotent disposition
       // before the participant-only review branch can skip pathless reviews.

@@ -3,6 +3,7 @@ import {
   publishActivity,
   type ActivityPublication,
 } from "./activity-log.js";
+import { withPageContextLine } from "./assistant-page-context.js";
 import type { NativeStatusDecision } from "./native-runtime/status-arbiter.js";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import {
@@ -77,7 +78,7 @@ export function isConversationReset(body: string): boolean {
   return body.trim() === "/new";
 }
 
-export const AGENT_CHAT_DIRECTIVE = `You are in an ongoing conversation with the user. Help them clarify the outcome they want. Ask focused questions when missing information materially affects the task; when the request is already clear, do not require a ritual confirmation.
+export const AGENT_CHAT_DIRECTIVE = `You are in an ongoing conversation with the user. Help them clarify the outcome they want. Ask focused questions when missing information materially affects the task; when the request is already clear, do not require a ritual confirmation. Every question you ask a person must include your recommended answer (mark one option \`recommended: true\`; for free-text questions put your recommendation in \`initialText\`).
 
 Research, clarify, and develop full plans here using the conversation's plan document. Revise the draft as the discussion develops. Planning alone does not create execution tasks. Put implementation and substantial execution into separate tasks.
 
@@ -461,7 +462,9 @@ export async function conversationReplay(
     .map((row) =>
       JSON.stringify({
         author: row.authorAgentId ? "agent" : "user",
-        body: sanitizeQuarantinedCommentForHigherTrust(row).body.slice(0, 8000),
+        body: row.authorAgentId
+          ? sanitizeQuarantinedCommentForHigherTrust(row).body.slice(0, 8000)
+          : withPageContextLine(sanitizeQuarantinedCommentForHigherTrust(row).body.slice(0, 8000), row.metadata),
       }),
     )
     .join("\n");

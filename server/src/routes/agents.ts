@@ -1,6 +1,12 @@
 import { cancellationRequestId } from "../services/native-runtime/native-cancellation-request.js";
+import { isHeldForTemplateSetup, TEMPLATE_SETUP_RESUME_MESSAGE } from "../lib/staples-template-metadata.js";
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
+import { assistantAdapterAvailability, assistantConfigureRoleAllowed, assistantSetupRequestSchema, assistantSetupStatus, canConfigureAssistant, CLAUDE_MANAGED_ADAPTER_TYPE, geminiCredentialsPresent, hasAnthropicKeyBinding, readAssistantLifecycle, resolveAssistantSetupEngine, type AssistantSetupRequest } from "../services/assistant-setup.js";
+import { agentChosenHostedBudgetCents, clampToHostedCeiling, hostedInference, usesHostedInferenceKey } from "../services/hosted-inference.js";
+import { ensureHostedAssistantBudget, hostedInferenceAllowedFor } from "../services/hosted-inference-access.js";
+import { HOSTED_BILLED_CENTS_METRIC } from "../services/budgets.js";
+import { getConfiguredSecretProvider } from "../secrets/configured-provider.js";
 
 import { agentIdentityService } from "../services/agent-identity.js";
 import { aiConnectionRouterService, poolMemberRuntimeConfig } from "../services/ai-connection-router.js";
@@ -34,6 +40,7 @@ import { paperclipRunnerTransitionConfig, normalizeLegacyRunnerProvider, isPaper
 import { applyMcpReasoningEffort } from "../services/public-mcp/agent-config.js";
 import { executionProjectionForRun, executionProjectionsForRuns } from "../services/execution-projection.js";
 import { selectDashboardRunIds } from "../services/dashboard-run-selection.js";
+import { liveRunColumns, liveRunsQuery as buildLiveRunsQuery } from "../services/live-runs.js";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
@@ -77,6 +84,8 @@ import {
   type AgentAdapterType,
 } from "@paperclipai/shared";
 import {
+  ensureCommandResolvable,
+  ensurePathInEnv,
   isForbiddenConfigEnvKey,
   normalizePaperclipRunnerAdapterConfig,
   PAPERCLIP_OPERATIONAL_SKILL_KEY,
@@ -111,9 +120,10 @@ import {
   workspaceOperationService,
 } from "../services/index.js";
 import { badRequest, conflict, forbidden, HttpError, notFound, unprocessable } from "../errors.js";
+import { isStaplesTemplatedAgent } from "../lib/agent-permissions.js";
 import { ONBOARDING_FIRST_TASK_SKILL_KEY, PAPERCLIP_CORE_SKILL_KEYS } from "../services/company-skills.js";
 import { createRunSecretRedactionRegistry } from "../services/run-secret-redaction.js";
-import { assertAuthenticated, assertBoard, assertCompanyAccess, assertInstanceAdmin, buildActorSecretContext, getAccessibleResource, getActorInfo, hasCompanyAccess } from "./authz.js";
+import { assertAuthenticated, assertBoard, assertCompanyAccess, assertInstanceAdmin, buildActorSecretContext, getAccessibleResource, getActorInfo, hasCompanyAccess, isDelegatedBoardSource } from "./authz.js";
 import { runAdapterLoginStartSpine } from "./adapter-login-route-spine.js";
 import { isLoginCommandSupportedAdapterType } from "../services/login-command.js";
 import {
@@ -1380,8 +1390,11 @@ export function agentRoutes(
     companyId: string,
     agentId: string,
     grantedByUserId: string | null,
+    permissions?: unknown,
   ) {
     await access.ensureMembership(companyId, "agent", agentId, "member", "active");
+    // A read-only template agent is hired with canAssignTasks: false.
+    if (permissions && typeof permissions === "object" && (permissions as Record<string, unknown>).canAssignTasks === false) return;
     await access.setPrincipalPermission(
       companyId,
       "agent",
@@ -3020,9 +3033,9 @@ export function agentRoutes(
   async function validateManagedAgentBinding(req: Request, companyId: string, agentId: string, adapterType: string, config: Record<string, unknown>, binding: AiRuntimeConnectionBinding, environmentId: string | null | undefined, test: boolean, newAgent = false) {
     if (binding.mode === "router") {
       const settings = await import("../services/instance-settings.js");
-      if (!(await settings.instanceSettingsService(db).getExperimental()).enableAiConnectionRouters) throw unprocessable("Ask your instance operator to enable AI connection routing.");
+      if (!(await settings.instanceSettingsService(db).getExperimental()).enableAiConnectionRouters) throw unprocessable("Ask your instance operator to enable AI connection routing.", { code: "ai_connection_pool_unavailable" });
       const pool = (await aiConnectionRouterService(db).selectable(companyId, responsibleUserForAiRequest(req) ?? "")).find((p) => p.id === binding.connectionId && p.enabled);
-      if (!pool) throw unprocessable("Enable the selected connection pool");
+      if (!pool) throw unprocessable("Enable the selected connection pool", { code: "ai_connection_pool_unavailable" });
       const userId = responsibleUserForAiRequest(req);
       const memberConnectionIds = new Set<string>();
       let compatible = false;
@@ -3040,7 +3053,7 @@ export function agentRoutes(
           if (!(error instanceof HttpError && [403, 422].includes(error.status))) throw error;
         }
       }
-      if (!compatible) throw unprocessable("This pool has no compatible harness");
+      if (!compatible) throw unprocessable("This pool has no compatible harness", { code: "ai_connection_pool_incompatible" });
       if (!memberConnectionIds.size) throw unprocessable("Install or repair a compatible pool member for this agent.", { code: "ai_connection_pool_no_eligible_member" });
       return { connectionId: pool.id, ...(newAgent ? { memberConnectionIds: [...memberConnectionIds] } : {}) };
     }
@@ -3293,7 +3306,9 @@ export function agentRoutes(
           const tested = await testManagedEnvironment(type, { companyId, adapterType: type, config: managed.config, executionTarget, environmentName }, aiBinding, managed, savedAgentId ?? undefined);
           tested.checks.unshift({ code: "ai_connection_tested", level: "info", message: `Tested ${managed.accountName} — ${managed.accountOwnerUserId ? managed.accountOwnerUserId === responsibleUserForAiRequest(req) ? "your personal account" : "the owner’s account authorized for this agent" : "company-shared account"}. Responsible user: ${req.actor.type === "agent" ? responsibleUserForAiRequest(req) ?? "unavailable" : "the signed-in user"}.` });
           return tested;
-        }) : await adapter.testEnvironment({ companyId, adapterType: type, config: effectiveAdapterConfig, executionTarget, environmentName });
+        }) : await adapter.testEnvironment({ companyId, adapterType: type, config: effectiveAdapterConfig, executionTarget, environmentName,
+          // Server-owned: the server's key for a claude_managed agent without its own key; the probe is one free list call, so no caps are written (runs ensure them).
+          hostedInferenceAllowed: await hostedInferenceAllowedFor(db, { id: savedAgentId ?? "", companyId, adapterType: type, adapterConfig: effectiveAdapterConfig }, process.env, { probeOnly: true }) });
 
         const prefixChecks = [
           ...(sandboxIdentityCheck ? [sandboxIdentityCheck] : []),
@@ -4097,10 +4112,12 @@ export function agentRoutes(
     }
 
     const actor = getActorInfo(req);
+    // An agent's rollback never restores a budget: budgets are a person's to set.
+    const keepBudget = req.actor.type === "agent";
     const updated = await svc.rollbackConfigRevision(id, revisionId, {
       agentId: actor.agentId,
       userId: actor.actorType === "user" ? actor.actorId : null,
-    });
+    }, { keepBudget });
     if (!updated) {
       res.status(404).json({ error: "Revision not found" });
       return;
@@ -4292,6 +4309,11 @@ export function agentRoutes(
       ...hireInput,
       adapterConfig: normalizedAdapterConfig,
       runtimeConfig: normalizedRuntimeConfig,
+      // An agent may not give a hire on the operator's hosted key a budget
+      // above the hosted default (the same rule as POST /companies/:id/agents).
+      ...(req.actor.type === "agent" && typeof hireInput.budgetMonthlyCents === "number"
+        ? { budgetMonthlyCents: agentChosenHostedBudgetCents({ adapterType: hireInput.adapterType, adapterConfig: normalizedAdapterConfig }, hireInput.budgetMonthlyCents) }
+        : {}),
     };
     await assertAgentEnvironmentSelection(companyId, hireInput.adapterType, hireInput.defaultEnvironmentId);
     await assertAgentDefaultEnvironmentSelection(companyId, hireInput.defaultEnvironmentId, {
@@ -4483,6 +4505,7 @@ export function agentRoutes(
         companyId,
         agent.id,
         actor.actorType === "user" ? actor.actorId : null,
+        agent.permissions,
       );
 
       if (approval) {
@@ -4666,20 +4689,42 @@ export function agentRoutes(
       companyId,
       agent.id,
       req.actor.type === "board" ? (req.actor.userId ?? null) : null,
+      agent.permissions,
     );
     await builtInAgentService(db).ensureCompanyDefaultAgentGrants(companyId);
 
     if (agent.budgetMonthlyCents > 0) {
+      // An agent may set a lower cap on an agent it creates, but on the
+      // operator's hosted key never a higher one than the hosted default.
+      const amount = actor.actorType !== "user" ? agentChosenHostedBudgetCents(agent, agent.budgetMonthlyCents) : agent.budgetMonthlyCents;
       await budgets.upsertPolicy(
         companyId,
         {
           scopeType: "agent",
           scopeId: agent.id,
-          amount: agent.budgetMonthlyCents,
+          amount,
           windowKind: "calendar_month_utc",
         },
         actor.actorType === "user" ? actor.actorId : null,
       );
+      // A person's budget for an agent on the operator's hosted key is also its
+      // hosted limit (at most the operator's ceiling), as plan apply and hire
+      // approval set it. An agent creator gets the hosted default instead.
+      if (actor.actorType === "user" && usesHostedInferenceKey(agent)) {
+        await budgets.upsertPolicy(
+          companyId,
+          {
+            scopeType: "agent",
+            scopeId: agent.id,
+            metric: HOSTED_BILLED_CENTS_METRIC,
+            amount: clampToHostedCeiling(agent.budgetMonthlyCents),
+            hardStopEnabled: true,
+            isActive: true,
+            windowKind: "calendar_month_utc",
+          },
+          actor.actorId,
+        );
+      }
     }
 
     res.status(201).json(redactAgentRowForResponse(agent));
@@ -4698,6 +4743,11 @@ export function agentRoutes(
       }
       if (actorAgent.role !== "ceo") {
         res.status(403).json({ error: "Only CEO can manage permissions" });
+        return;
+      }
+      // A templated agent (whatever its role) never changes permissions.
+      if (isStaplesTemplatedAgent(actorAgent)) {
+        res.status(403).json({ error: "An agent installed from a Staples template cannot manage permissions" });
         return;
       }
     } else {
@@ -4933,7 +4983,7 @@ export function agentRoutes(
   });
 
   router.put("/agents/:id/instructions-bundle/file", validate(upsertAgentInstructionsFileSchema), async (req, res) => {
-    if (req.actor.source === "mcp_oauth" && req.body.path === "promptTemplate.legacy.md") {
+    if (isDelegatedBoardSource(req.actor.source) && req.body.path === "promptTemplate.legacy.md") {
       throw unprocessable("Migrate legacy prompt instructions to a managed instruction file in Paperclip before editing through an assistant", { code: "MCP_LEGACY_INSTRUCTIONS_UNVERSIONED" });
     }
     const id = req.params.id as string;
@@ -5158,10 +5208,36 @@ export function agentRoutes(
       return;
     }
 
-    const patchData = { ...(req.body as Record<string, unknown>) };
+    const agent = await patchAgent(req, existing, req.body as Record<string, unknown>);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    res.json(redactAgentRowForResponse(agent));
+  });
+
+  /**
+   * The PATCH /agents/:id update path: adapter/runtime validation, secret and
+   * AI-connection bindings, then the lifecycle configuration update (config
+   * revision, lifecycle invalidation). Shared with the Assistant setup route so
+   * both write configuration through one checked path.
+   */
+  async function patchAgent(req: Request, existing: NonNullable<Awaited<ReturnType<typeof svc.getById>>>, body: Record<string, unknown>, revisionSource = "patch") {
+    const id = existing.id;
+    const patchData = { ...body };
     const requestedStatus = patchData.status;
     delete patchData.status;
     if (requestedStatus !== undefined && !["paused", "idle", "terminated"].includes(String(requestedStatus))) throw badRequest("Use an agent lifecycle command to change status");
+    // Setting idle resumes the agent: same template-setup hold as POST /resume.
+    if (requestedStatus === "idle" && isHeldForTemplateSetup(existing)) {
+      throw conflict(TEMPLATE_SETUP_RESUME_MESSAGE, { code: "agent_template_setup_pending" });
+    }
+    // A budget is a spending cap a person sets (as PATCH /agents/:id/budgets is
+    // board-only): an agent may not send one for itself or another agent, even
+    // unchanged (writing it would also write the agent's budget policy).
+    if (req.actor.type === "agent" && hasOwn(patchData, "budgetMonthlyCents")) {
+      throw forbidden("Only a person can change an agent's monthly budget");
+    }
     const replaceAdapterConfig = patchData.replaceAdapterConfig === true;
     delete patchData.replaceAdapterConfig;
     // The apply-existing flag is not an agent column. The server binds the fixed
@@ -5171,10 +5247,7 @@ export function agentRoutes(
     delete patchData.applyStoredClaudeLogin;
     if (hasOwn(patchData, "adapterConfig")) {
       const adapterConfig = asRecord(patchData.adapterConfig);
-      if (!adapterConfig) {
-        res.status(422).json({ error: "adapterConfig must be an object" });
-        return;
-      }
+      if (!adapterConfig) throw unprocessable("adapterConfig must be an object");
       assertNoAgentAdapterConfigMutation(req, adapterConfig);
       const changingInstructionsConfig = adapterConfigTouchesInstructionsConfig(adapterConfig);
       if (changingInstructionsConfig) {
@@ -5196,16 +5269,13 @@ export function agentRoutes(
     let requestedRuntimeConfig: Record<string, unknown> | null = null;
     if (hasOwn(patchData, "runtimeConfig")) {
       const runtimeConfig = asRecord(patchData.runtimeConfig);
-      if (!runtimeConfig) {
-        res.status(422).json({ error: "runtimeConfig must be an object" });
-        return;
-      }
+      if (!runtimeConfig) throw unprocessable("runtimeConfig must be an object");
       assertProviderTraceSettingTransition(
         req,
         runtimeConfig,
         existing.runtimeConfig,
       );
-      requestedRuntimeConfig = req.actor.source === "mcp_oauth" ? { ...existing.runtimeConfig, ...runtimeConfig } : runtimeConfig;
+      requestedRuntimeConfig = isDelegatedBoardSource(req.actor.source) ? { ...existing.runtimeConfig, ...runtimeConfig } : runtimeConfig;
     }
     const touchesAdapterConfiguration =
       hasOwn(patchData, "adapterType") ||
@@ -5234,7 +5304,7 @@ export function agentRoutes(
       if (requestedAdapterConfig && !changingAdapterType && !replaceAdapterConfig) {
         rawEffectiveAdapterConfig = { ...existingAdapterConfig, ...rawEffectiveAdapterConfig };
       }
-      if (req.actor.source === "mcp_oauth" && requestedAdapterConfig) {
+      if (isDelegatedBoardSource(req.actor.source) && requestedAdapterConfig) {
         rawEffectiveAdapterConfig = applyMcpReasoningEffort(requestedAdapterType, rawEffectiveAdapterConfig, requestedAdapterConfig);
       }
       if (changingAdapterType) {
@@ -5348,7 +5418,7 @@ export function agentRoutes(
       recordRevision: {
         createdByAgentId: actor.agentId,
         createdByUserId: actor.actorType === "user" ? actor.actorId : null,
-        source: "patch",
+        source: revisionSource,
       },
       claudeLogin: {
         ownerUserId: req.actor.type === "agent" ? null : (req.actor.userId ?? null),
@@ -5362,10 +5432,7 @@ export function agentRoutes(
     const agent = command
       ? await svcLifecycle.updateAndTransition(id, command, patchData, updateOptions)
       : await svc.update(id, patchData, updateOptions);
-    if (!agent) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
+    if (!agent) return null;
 
     await logActivity(db, {
       companyId: agent.companyId,
@@ -5379,9 +5446,8 @@ export function agentRoutes(
       entityId: agent.id,
       details: summarizeAgentUpdateDetails(patchData),
     });
-
-    res.json(redactAgentRowForResponse(agent));
-  });
+    return agent;
+  }
 
   router.post("/agents/:id/lifecycle/retry", async (req, res) => {
     assertBoard(req);
@@ -5396,6 +5462,205 @@ export function agentRoutes(
       agentId: actor.agentId, runId: actor.runId, agentApiKeyId: actor.agentApiKeyId,
       action: "agent.lifecycle_retried", entityType: "agent", entityId: agent.id });
     res.json(redactAgentRowForResponse(agent));
+  });
+
+  /**
+   * Connects a model for the company Assistant (the inline setup card). Writes
+   * the adapter through the same checked path as PATCH /agents/:id, then
+   * retries a failed setup. Not gated by `enableBuiltInAgents`: every company
+   * has an Assistant.
+   */
+  async function assertCanConfigureAssistant(req: Request, companyId: string) {
+    assertBoard(req);
+    assertCompanyAccess(req, companyId);
+    if (!req.actor.userId) throw forbidden("Board user access required");
+    // Role first, so viewers learn nothing and nothing is provisioned for them.
+    if (!assistantConfigureRoleAllowed(req.actor, companyId)) throw forbidden("Ask an owner to connect a model");
+    const assistant = await builtInAgentService(db).ensureAssistant(companyId);
+    if (!(await canConfigureAssistant(access, req.actor, companyId, assistant.id))) {
+      throw forbidden("Ask an owner to connect a model");
+    }
+    return assistant;
+  }
+
+  /** Prefix of the company secrets the Assistant setup card creates (and may later replace). */
+  const ASSISTANT_KEY_SECRET_PREFIX = "ANTHROPIC_API_KEY.assistant-setup.";
+
+  /** The secret id an env binding references, when it is a company secret reference. */
+  function anthropicKeySecretId(adapterConfig: unknown): string | null {
+    const env = asRecord(asRecord(adapterConfig)?.env);
+    const binding = asRecord(env?.ANTHROPIC_API_KEY);
+    return binding?.type === "secret_ref" && typeof binding.secretId === "string" ? binding.secretId : null;
+  }
+
+  /** An Anthropic key is bound and, for a company secret reference, that secret still exists in this company. */
+  async function assistantAnthropicKeyUsable(companyId: string, adapterConfig: unknown): Promise<boolean> {
+    if (!hasAnthropicKeyBinding(adapterConfig)) return false;
+    const secretId = anthropicKeySecretId(adapterConfig);
+    if (!secretId) return true;
+    const secret = await secretsSvc.getById(secretId).catch(() => null);
+    return Boolean(secret && secret.companyId === companyId && secret.status === "active");
+  }
+
+  /**
+   * The Assistant's runtime adapters on this host, from cheap detection only
+   * (command lookup, ACP Node prerequisite, host-local sign-in signals). No
+   * model calls: the chosen adapter gets the full environment test.
+   */
+  router.get("/companies/:companyId/assistant/adapters", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const assistant = await assertCanConfigureAssistant(req, companyId);
+    res.setHeader("Cache-Control", "no-store");
+    const adapters = await assistantAdapterAvailability({
+      hostedInferenceAvailable: hostedInference().available,
+      anthropicKeyBound: await assistantAnthropicKeyUsable(companyId, assistant.adapterConfig),
+      nodeVersion: process.version,
+      commandResolvable: (command) => ensureCommandResolvable(command, process.cwd(), ensurePathInEnv({ ...process.env }))
+        .then(() => true, () => false),
+      authSignal: async (adapterType) => adapterType === "claude_local"
+        ? evaluateClaudeAuthSignal(req, companyId, null)
+        : adapterType === "codex_local" ? evaluateCodexAuthSignal(req, companyId, null) : "unknown",
+      geminiCredentialsPresent: () => geminiCredentialsPresent(),
+    });
+    res.json({ adapters });
+  });
+
+  /**
+   * After setup binds a different key, deletes the key secret the setup card
+   * created earlier, once nothing references it any more. Best effort.
+   */
+  async function removeSupersededAssistantKeySecret(companyId: string, actorUserId: string, previousSecretId: string | null, currentSecretId: string | null) {
+    if (!previousSecretId || previousSecretId === currentSecretId) return;
+    try {
+      const previous = await secretsSvc.getById(previousSecretId);
+      if (!previous || previous.companyId !== companyId || !previous.key?.startsWith(ASSISTANT_KEY_SECRET_PREFIX)) return;
+      if ((await secretsSvc.listBindings(companyId, previousSecretId)).length > 0) return;
+      const removed = await secretsSvc.remove(previousSecretId);
+      if (!removed) return;
+      await logActivity(db, {
+        companyId,
+        actorType: "user",
+        actorId: actorUserId,
+        action: "secret.deleted",
+        entityType: "secret",
+        entityId: previousSecretId,
+        details: { name: previous.name, source: "assistant_setup_replaced" },
+      });
+    } catch (error) {
+      logger.warn({ err: error, companyId }, "Could not remove a superseded Assistant key secret");
+    }
+  }
+
+  router.post("/companies/:companyId/assistant/setup", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    // Access first, so callers who cannot configure learn nothing from validation.
+    const assistant = await assertCanConfigureAssistant(req, companyId);
+    const parsed = assistantSetupRequestSchema.safeParse(req.body);
+    // Issue paths and messages only: never echo request values (an API key may be among them).
+    if (!parsed.success) throw badRequest("Validation error", parsed.error.issues.map(({ code, path, message }) => ({ code, path, message })));
+    const body: AssistantSetupRequest = parsed.data;
+    const existing = await svc.getById(assistant.id);
+    if (!existing || existing.companyId !== companyId) throw notFound("Assistant not found");
+    const lifecycle = await readAssistantLifecycle(db, existing.id);
+    const changingAdapter = body.adapterType !== existing.adapterType;
+    const existingConfig = asRecord(existing.adapterConfig) ?? {};
+    const adapterConfig: Record<string, unknown> = { ...(body.adapterConfig ?? {}) };
+    if (body.model !== undefined && adapterConfig.model === undefined) adapterConfig.model = body.model;
+    let createdKeySecretId: string | null = null;
+    const previousKeySecretId = anthropicKeySecretId(existingConfig);
+    if (body.adapterType === CLAUDE_MANAGED_ADAPTER_TYPE) {
+      const hosted = hostedInference();
+      const existingEnv = asRecord(existingConfig.env) ?? {};
+      const requestedEnv = asRecord(adapterConfig.env);
+      let keyBinding: Record<string, unknown> | null = null;
+      if (body.apiKeySecretId) {
+        // An existing company secret: only bound after checking it belongs to this company.
+        const secret = await secretsSvc.getById(body.apiKeySecretId).catch(() => null);
+        if (!secret || secret.companyId !== companyId || secret.status !== "active") {
+          throw unprocessable("That secret was not found in this company.", { code: "assistant_anthropic_key_secret_not_found" });
+        }
+        keyBinding = { type: "secret_ref", secretId: secret.id, version: "latest" };
+      }
+      const keyAlreadyBound = !keyBinding && await assistantAnthropicKeyUsable(companyId, { env: { ...existingEnv, ...(requestedEnv ?? {}) } });
+      if (!body.apiKey && !keyBinding && !hosted.available && !keyAlreadyBound) {
+        throw unprocessable("Add an Anthropic API key to use Claude (hosted).", { code: "assistant_anthropic_key_required" });
+      }
+      // claude_managed always needs a model for a complete config.
+      if (adapterConfig.model === undefined && (changingAdapter || typeof existingConfig.model !== "string")) adapterConfig.model = hosted.model;
+      if (body.apiKey) {
+        // Same shape the agent config form uses for adapter keys: a company
+        // secret bound by reference, never a plain value in adapterConfig.
+        const suffix = randomUUID();
+        const secret = await secretsSvc.create(companyId, {
+          name: `ANTHROPIC_API_KEY · Assistant setup · ${suffix.slice(0, 8)}`,
+          key: `${ASSISTANT_KEY_SECRET_PREFIX}${suffix}`,
+          provider: getConfiguredSecretProvider(),
+          value: body.apiKey,
+          description: "Anthropic API key supplied while connecting the Assistant to Claude (hosted).",
+        }, { userId: req.actor.userId ?? "board", agentId: null });
+        createdKeySecretId = secret.id;
+        try {
+          await logActivity(db, {
+            companyId,
+            actorType: "user",
+            actorId: req.actor.userId ?? "board",
+            action: "secret.created",
+            entityType: "secret",
+            entityId: secret.id,
+            details: { name: secret.name, provider: secret.provider, source: "assistant_setup" },
+          });
+        } catch (error) {
+          await secretsSvc.remove(secret.id).catch(() => null);
+          throw error;
+        }
+        keyBinding = { type: "secret_ref", secretId: secret.id, version: "latest" };
+      }
+      if (keyBinding) {
+        adapterConfig.env = { ...existingEnv, ...(requestedEnv ?? {}), ANTHROPIC_API_KEY: keyBinding };
+      } else if (requestedEnv) {
+        adapterConfig.env = { ...existingEnv, ...requestedEnv };
+      }
+    }
+    // Keep the current model on the same adapter; a new adapter starts on its default.
+    if (!changingAdapter && adapterConfig.model === undefined && typeof existingConfig.model === "string") adapterConfig.model = existingConfig.model;
+    const engine = resolveAssistantSetupEngine(lifecycle ?? {}, body.adapterType, body.adapterConfig?.engine);
+    if (engine) adapterConfig.engine = engine;
+    const runtimeConfig = asRecord(existing.runtimeConfig) ?? {};
+    let updated: Awaited<ReturnType<typeof patchAgent>>;
+    try {
+      updated = await patchAgent(req, existing, {
+        adapterType: body.adapterType,
+        adapterConfig,
+        ...(body.aiConnection ? { runtimeConfig: { ...runtimeConfig, aiConnection: body.aiConnection } } : {}),
+        ...(body.applyStoredClaudeLogin ? { applyStoredClaudeLogin: true } : {}),
+      }, "assistant_setup");
+    } catch (error) {
+      // Don't leave an unbound key secret behind when the save is refused.
+      if (createdKeySecretId) await secretsSvc.remove(createdKeySecretId).catch(() => null);
+      throw error;
+    }
+    if (!updated) throw notFound("Assistant not found");
+    await removeSupersededAssistantKeySecret(companyId, req.actor.userId ?? "board", previousKeySecretId, anthropicKeySecretId(updated.adapterConfig));
+    // On the operator's key: the hard-stop budget exists before the first run
+    // (the run path enforces it again and withholds the key if it can't).
+    if (updated.adapterType === CLAUDE_MANAGED_ADAPTER_TYPE && hostedInference().available && !hasAnthropicKeyBinding(updated.adapterConfig)) {
+      await ensureHostedAssistantBudget(db, updated).catch((error) => {
+        logger.warn({ err: error, companyId, agentId: updated.id }, "Could not ensure the hosted Assistant's budget at setup");
+      });
+    }
+    // A config change already restarts an in-flight setup; an unchanged one
+    // (e.g. the person just signed in) needs the failed attempt retried now.
+    const agent = ["preparing", "verifying", "resuming"].includes(updated.lifecycleState ?? "")
+      ? (await svcLifecycle.retry(updated.id)) ?? updated
+      : updated;
+    const nextLifecycle = await readAssistantLifecycle(db, agent.id);
+    res.json({
+      agent: { id: agent.id, name: agent.name, urlKey: agent.urlKey, adapterType: agent.adapterType, status: agent.status },
+      setup: assistantSetupStatus(nextLifecycle ?? {
+        adapterType: agent.adapterType, lifecycleState: agent.lifecycleState ?? "ready",
+        lifecycleVersion: agent.lifecycleVersion ?? 0, lifecycleError: agent.lifecycleError ?? null,
+      }),
+    });
   });
 
   router.post("/agents/:id/pause", async (req, res) => {
@@ -5431,6 +5696,13 @@ export function agentRoutes(
       return;
     }
     await assertCanResumeAgent(req, existing);
+    if (isHeldForTemplateSetup(existing)) {
+      res.status(409).json({
+        error: TEMPLATE_SETUP_RESUME_MESSAGE,
+        code: "agent_template_setup_pending",
+      });
+      return;
+    }
     if (existing.orgChainHealth?.status === "invalid_org_chain") {
       res.status(409).json({
         error: existing.orgChainHealth?.repairGuidance ?? "Repair this agent's reporting chain before resuming it",
@@ -6661,57 +6933,8 @@ export function agentRoutes(
     const limit = readLiveRunsQueryInt(req.query.limit, 50, 50);
     const distinctTasks = req.query.distinctTasks === "true";
 
-    const columns = {
-      id: heartbeatRuns.id,
-      runtimeMode: heartbeatRuns.runtimeMode,
-      companyId: heartbeatRuns.companyId,
-      status: heartbeatRuns.status,
-      invocationSource: heartbeatRuns.invocationSource,
-      triggerDetail: heartbeatRuns.triggerDetail,
-      contextCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'commentId'`.as("contextCommentId"),
-      contextWakeCommentId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'wakeCommentId'`.as("contextWakeCommentId"),
-      startedAt: heartbeatRuns.startedAt,
-      finishedAt: heartbeatRuns.finishedAt,
-      createdAt: heartbeatRuns.createdAt,
-      agentId: heartbeatRuns.agentId,
-      agentName: agentsTable.name,
-      agentAppearance: agentsTable.appearance,
-      adapterType: agentsTable.adapterType,
-      logBytes: heartbeatRuns.logBytes,
-      livenessState: heartbeatRuns.livenessState,
-      livenessReason: heartbeatRuns.livenessReason,
-      continuationAttempt: heartbeatRuns.continuationAttempt,
-      lastUsefulActionAt: heartbeatRuns.lastUsefulActionAt,
-      nextAction: heartbeatRuns.nextAction,
-      lastOutputAt: heartbeatRuns.lastOutputAt,
-      lastOutputSeq: heartbeatRuns.lastOutputSeq,
-      lastOutputStream: heartbeatRuns.lastOutputStream,
-      lastOutputBytes: heartbeatRuns.lastOutputBytes,
-      processStartedAt: heartbeatRuns.processStartedAt,
-      scopeKind: heartbeatRuns.scopeKind,
-      issueId: heartbeatRuns.issueId,
-      inputTokens: sql<number | null>`(${heartbeatRuns.usageJson} ->> 'inputTokens')::numeric`.as("inputTokens"),
-      cachedInputTokens: sql<number | null>`(${heartbeatRuns.usageJson} ->> 'cachedInputTokens')::numeric`.as("cachedInputTokens"),
-      outputTokens: sql<number | null>`(${heartbeatRuns.usageJson} ->> 'outputTokens')::numeric`.as("outputTokens"),
-      totalTokens: sql<number | null>`(${heartbeatRuns.usageJson} ->> 'totalTokens')::numeric`.as("totalTokens"),
-      costUsd: sql<number | null>`coalesce(
-        (${heartbeatRuns.resultJson} ->> 'costUsd')::numeric,
-        (${heartbeatRuns.resultJson} ->> 'cost_usd')::numeric,
-        (${heartbeatRuns.resultJson} ->> 'total_cost_usd')::numeric
-      )`.as("costUsd"),
-    };
-
-    const liveRunsQuery = db
-      .select(columns)
-      .from(heartbeatRuns)
-      .innerJoin(agentsTable, eq(heartbeatRuns.agentId, agentsTable.id))
-      .where(
-        and(
-          eq(heartbeatRuns.companyId, companyId),
-          inArray(heartbeatRuns.status, ["queued", "running"]),
-        ),
-      )
-      .orderBy(desc(heartbeatRuns.createdAt));
+    const columns = liveRunColumns();
+    const liveRunsQuery = buildLiveRunsQuery(db, companyId, columns);
 
     const liveRuns = distinctTasks ? [] : await liveRunsQuery.limit(limit);
     let rows = liveRuns;

@@ -1068,6 +1068,11 @@ function deriveImportedSkillSource(
   };
 }
 
+/** The company skill keys an inline package import of these files would use (before any conflict rename). */
+export function packageSkillImportKeys(companyId: string, files: Record<string, string>): string[] {
+  return readInlineSkillImports(companyId, files).map((skill) => skill.key);
+}
+
 function readInlineSkillImports(companyId: string, files: Record<string, string>): ImportedSkill[] {
   const normalizedFiles = normalizePackageFileMap(files);
   const skillPaths = Object.keys(normalizedFiles).filter(

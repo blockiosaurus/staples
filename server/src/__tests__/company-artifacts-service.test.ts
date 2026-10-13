@@ -405,6 +405,41 @@ describeEmbeddedPostgres("companyArtifactsService", () => {
     expect(incompatibleKind.body).toEqual({ artifacts: [], nextCursor: null });
   });
 
+  it("lists no artifacts from private tasks the person can't read, and can leave out the weekly updates", async () => {
+    const { companyId, issueId } = await seedArtifacts();
+    const app = express();
+    app.use((req, _res, next) => {
+      req.actor = {
+        type: "board",
+        userId: "member-1",
+        source: "session",
+        companyIds: [companyId],
+        memberships: [{ companyId, membershipRole: "member", status: "active" }],
+      };
+      next();
+    });
+    app.use("/api/companies", companyRoutes(db, createStorageService()));
+    app.use(errorHandler);
+    const issueIdsOf = (body: { artifacts: Array<{ issue: { id: string } }> }) => new Set(body.artifacts.map((artifact) => artifact.issue.id));
+
+    const before = await request(app).get(`/api/companies/${companyId}/artifacts?limit=50`);
+    expect(before.status).toBe(200);
+    expect(issueIdsOf(before.body).has(issueId)).toBe(true);
+
+    await db.update(issues).set({ visibility: "private", createdByUserId: "owner-1", responsibleUserId: "owner-1" }).where(eq(issues.id, issueId));
+    const hidden = await request(app).get(`/api/companies/${companyId}/artifacts?limit=50`);
+    expect(hidden.status).toBe(200);
+    expect(issueIdsOf(hidden.body).has(issueId)).toBe(false);
+    expect(hidden.body.artifacts.length).toBeGreaterThan(0);
+
+    // The weekly updates task's documents stay on the Artifacts page, but Home can leave them out.
+    await db.update(issues).set({ visibility: "open", originKind: "assistant_weekly_updates" }).where(eq(issues.id, issueId));
+    const all = await request(app).get(`/api/companies/${companyId}/artifacts?limit=50`);
+    expect(issueIdsOf(all.body).has(issueId)).toBe(true);
+    const home = await request(app).get(`/api/companies/${companyId}/artifacts?limit=50&excludeWeeklyUpdates=true`);
+    expect(issueIdsOf(home.body).has(issueId)).toBe(false);
+  });
+
   it("returns an empty starred view for agent callers", async () => {
     const { companyId, otherRunId } = await seedArtifacts();
     await db.insert(documentMemberships).values({

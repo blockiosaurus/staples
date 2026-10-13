@@ -1,11 +1,7 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense } from "react";
 import type { ToolConnectionCredentialSource } from "@paperclipai/shared";
 import { Navigate, Outlet, Route, Routes, useActiveCompanyPrefix, useLocation, useParams } from "@/lib/router";
-import { Button } from "@/components/ui/button";
-import { useTranslation } from "@/i18n";
 import { Layout } from "./components/Layout";
-import { Layout as ProductionLayout } from "./components/Layout.production";
-import { ConferenceRoomChatGate } from "./components/ConferenceRoomChatGate";
 import { TaskChatLab } from "./pages/TaskChatLab";
 import { PipelinesExperimentalGate } from "./components/PipelinesExperimentalGate";
 import { CasesExperimentalGate } from "./components/CasesExperimentalGate";
@@ -20,12 +16,11 @@ import {
 import { useHiddenSettings } from "./hooks/useHiddenSettings";
 import { Cases } from "./pages/Cases";
 import { CaseDetail } from "./pages/CaseDetail";
-import { OnboardingWizardVariant } from "./components/OnboardingWizardVariant";
 import { CloudAccessGate } from "./components/CloudAccessGate";
 import { PaperclipLoading } from "./components/AnimatedPaperclipIcon";
+import { UnprefixedBoardRedirect } from "./components/UnprefixedBoardRedirect";
 import { Dashboard } from "./pages/Dashboard";
 import { DashboardLive } from "./pages/DashboardLive";
-import { Timeline } from "./pages/Timeline";
 import { Companies } from "./pages/Companies";
 import { AGENT_FILTER_TABS, Agents } from "./pages/Agents";
 import { AgentDetail } from "./pages/AgentDetail";
@@ -38,7 +33,9 @@ import { Search } from "./pages/Search";
 import { IssueDetail } from "./pages/IssueDetail";
 import { AgentChats } from "./pages/AgentChats";
 import { AgentChat } from "./pages/AgentChat";
-import { IssueChatLongThreadPerf } from "./pages/IssueChatLongThreadPerf";
+import { AssistantPage } from "./staples/assistant/AssistantPage";
+import { CompanyBriefPage } from "./staples/brief/CompanyBriefPage";
+import { HomePage } from "./staples/home/HomePage";
 import { Routines } from "./pages/Routines";
 import { Learnings, PipelineItemDetail, PipelineItemLegacyRedirect, Pipelines, ReviewQueue } from "./pages/Pipelines";
 import { PipelineSettings } from "./pages/PipelineSettings";
@@ -53,17 +50,12 @@ import { Approvals } from "./pages/Approvals";
 import { ApprovalDetail } from "./pages/ApprovalDetail";
 import { CompanyActivity } from "./pages/audit/CompanyActivity";
 import { AuditHub } from "./pages/audit/AuditHub";
-import { Costs } from "./pages/Costs";
 import { Inbox } from "./pages/Inbox";
 import { useCombinedInboxTasksEnabled } from "./hooks/useCombinedInboxTasksEnabled";
 import { WhatNeedsMe } from "./pages/WhatNeedsMe";
 import { DecisionQueuePage } from "./pages/DecisionQueuePage";
-import { BoardChat } from "./pages/BoardChat";
 import { CompanySettings } from "./pages/CompanySettings";
 import { CompanyEnvironments } from "./pages/CompanyEnvironments";
-import { BootstrapSetupUxLab } from "./pages/BootstrapSetupUxLab";
-import { ResponsibleUserDenialUxLab } from "./pages/ResponsibleUserDenialUxLab";
-import { CrossIssueCollaborationUxLab } from "./pages/CrossIssueCollaborationUxLab";
 import { CompanySettingsPluginPage } from "./pages/CompanySettingsPluginPage";
 import { CompanyAccess, CompanyAccessLegacyRoute } from "./pages/CompanyAccess";
 import { AdvancedToolsRoute } from "./pages/tools/AdvancedToolsRoute";
@@ -97,6 +89,7 @@ import { PluginSettings } from "./pages/PluginSettings";
 import { AdapterManager } from "./pages/AdapterManager";
 import { PluginPage } from "./pages/PluginPage";
 import { NewAgent } from "./pages/NewAgent";
+import { MarketplacePage } from "./staples/marketplace/MarketplacePage";
 import { AuthPage } from "./pages/Auth";
 import { BoardClaimPage } from "./pages/BoardClaim";
 import { AssistantConnection } from "./pages/apps/AssistantConnection";
@@ -106,61 +99,31 @@ import { InviteLandingPage } from "./pages/InviteLanding";
 import { JoinRequestQueue } from "./pages/JoinRequestQueue";
 import { NotFoundPage } from "./pages/NotFound";
 import { useCompany } from "./context/CompanyContext";
-import { useDialogActions, useDialogState } from "./context/DialogContext";
 import { loadLastInboxTab } from "./lib/inbox";
 import { TASK_VIEW_PARAM, taskViewForInboxTab, type TaskViewKey } from "./lib/task-views";
-import {
-  isOnboardingWizardActive,
-  onboardingStepForCompany,
-  shouldRedirectCompanylessRouteToOnboarding,
-} from "./lib/onboarding-route";
+import { StartCompanyPage } from "./staples/start/StartCompanyPage";
+import { OnboardingRedirect } from "./staples/start/OnboardingRedirect";
 import { filterHiddenInstanceSettingsPath, normalizeRememberedInstanceSettingsPath } from "./lib/instance-settings";
-import { useCloudInstance } from "./hooks/useCloudInstance";
-import { useStreamlinedUiEnabled } from "./hooks/useStreamlinedUiEnabled";
-import { cloudStackCreateUrl } from "./lib/cloudLinks";
-import { navigateTopLevel } from "@/lib/browserNavigation";
 
 const CompanyExport = lazy(() =>
   import("./pages/CompanyExport").then((module) => ({ default: module.CompanyExport })),
 );
 
-const ProductionAgents = lazy(() =>
-  import("./pages/Agents.production").then((module) => ({ default: module.Agents })),
-);
-const ProductionRoutines = lazy(() =>
-  import("./pages/Routines.production").then((module) => ({ default: module.Routines })),
-);
-const ProductionRoutineDetail = lazy(() =>
-  import("./pages/RoutineDetail.production").then((module) => ({ default: module.RoutineDetail })),
-);
-const ProductionCompanySkills = lazy(() =>
-  import("./pages/CompanySkills.production").then((module) => ({ default: module.CompanySkills })),
-);
-const ProductionCompanyActivity = lazy(() =>
-  import("./pages/audit/CompanyActivity.production").then((module) => ({ default: module.CompanyActivity })),
-);
-const ProductionOrgChart = lazy(() =>
-  import("./pages/OrgChart.production").then((module) => ({ default: module.OrgChart })),
-);
-
-function ProductionSurface({ children }: { children: ReactNode }) {
-  return <Suspense fallback={<PaperclipLoading />}>{children}</Suspense>;
-}
-
-function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: boolean) {
-  // Combined Inbox + Task List (PAP-670) only exists in the streamlined shell.
-  const mergedTasks = streamlinedUiEnabled && combinedInboxTasksEnabled;
+function boardRoutes(combinedInboxTasksEnabled: boolean) {
+  const mergedTasks = combinedInboxTasksEnabled;
   return (
     <>
-      <Route index element={<Navigate to="dashboard" replace />} />
+      <Route index element={<Navigate to="home" replace />} />
+      <Route path="home" element={<HomePage />} />
       <Route path="dashboard" element={<Dashboard />} />
       <Route path="dashboard/live" element={<DashboardLive />} />
       <Route
         path="timeline"
-        element={streamlinedUiEnabled ? <AuditCompatibilityRedirect to="/activity/timeline" /> : <Timeline />}
+        element={<AuditCompatibilityRedirect to="/activity/timeline" />}
       />
-      <Route path="onboarding" element={<OnboardingRoutePage />} />
+      <Route path="onboarding" element={<OnboardingRedirect />} />
       <Route path="companies" element={<Companies />} />
+      <Route path="company/brief" element={<CompanyBriefPage />} />
       <Route path="company/settings" element={<CompanySettings />} />
       <Route path="company/settings/environments" element={<Navigate to="/company/settings/instance/environments" replace />} />
       <Route path="company/settings/cloud-upstream" element={<Navigate to="/company/export" replace />} />
@@ -273,24 +236,25 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="skills/:skillId/studio" element={<LegacySkillStudioRedirect />} />
       <Route
         path="skills/*"
-        element={streamlinedUiEnabled ? <CompanySkills /> : <ProductionSurface><ProductionCompanySkills /></ProductionSurface>}
+        element={<CompanySkills />}
       />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
       <Route path="plugins/:pluginId" element={<PluginPage />} />
       <Route
         path="org"
-        element={streamlinedUiEnabled ? <Navigate to="/agents/all" replace /> : <ProductionSurface><ProductionOrgChart /></ProductionSurface>}
+        element={<Navigate to="/agents/all" replace />}
       />
       <Route path="agents" element={<Navigate to="/agents/all" replace />} />
       {AGENT_FILTER_TABS.map((tab) => (
         <Route
           key={tab}
           path={`agents/${tab}`}
-          element={streamlinedUiEnabled ? <Agents /> : <ProductionSurface><ProductionAgents /></ProductionSurface>}
+          element={<Agents />}
         />
       ))}
-      <Route path="agents/new" element={<NewAgent />} />
+      <Route path="agents/new" element={<MarketplacePage />} />
+      <Route path="agents/new/custom" element={<NewAgent />} />
       <Route path="agents/:agentId" element={<AgentDetail />} />
       <Route path="agents/:agentId/:tab" element={<AgentDetail />} />
       <Route path="agents/:agentId/runs/:runId" element={<AgentDetail />} />
@@ -331,11 +295,9 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       )}
       <Route path="chats" element={<AgentChats />} />
       <Route path="chats/:agentRef" element={<AgentChat />} />
+      <Route path="assistant" element={<AssistantPage />} />
       <Route path="issues/:issueId" element={<IssueDetail />} />
-      {import.meta.env.DEV ? (
-        <Route path="tests/perf/long-thread" element={<IssueChatLongThreadPerf />} />
-      ) : null}
-      <Route path="routines" element={streamlinedUiEnabled ? <Routines /> : <ProductionSurface><ProductionRoutines /></ProductionSurface>} />
+      <Route path="routines" element={<Routines />} />
       <Route
         path="cases"
         element={<CasesExperimentalGate><Cases /></CasesExperimentalGate>}
@@ -387,8 +349,8 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
         path="pipelines/:pipelineId/cases/:caseId"
         element={<PipelinesExperimentalGate><PipelineItemLegacyRedirect /></PipelinesExperimentalGate>}
       />
-      <Route path="routines/:routineId" element={streamlinedUiEnabled ? <RoutineDetail /> : <ProductionSurface><ProductionRoutineDetail /></ProductionSurface>} />
-      <Route path="routines/:routineId/:section" element={streamlinedUiEnabled ? <RoutineDetail /> : <ProductionSurface><ProductionRoutineDetail /></ProductionSurface>} />
+      <Route path="routines/:routineId" element={<RoutineDetail />} />
+      <Route path="routines/:routineId/:section" element={<RoutineDetail />} />
       <Route element={<IsolatedWorkspacesRouteGate />}>
         <Route element={<ExecutionWorkspaceCompanyGate />}>
           <Route path="execution-workspaces/:workspaceId" element={<ExecutionWorkspaceDetail />} />
@@ -406,38 +368,20 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
       <Route path="approvals/pending" element={<Approvals />} />
       <Route path="approvals/all" element={<Approvals />} />
       <Route path="approvals/:approvalId" element={<ApprovalDetail />} />
-      <Route path="activity" element={streamlinedUiEnabled ? <CompanyActivity /> : <ProductionSurface><ProductionCompanyActivity /></ProductionSurface>} />
-      {streamlinedUiEnabled ? (
-        <>
-          <Route path="activity/runs" element={<AuditHub section="runs" />} />
-          <Route path="activity/costs" element={<AuditHub section="costs" />} />
-          <Route path="activity/budgets" element={<AuditHub section="budgets" />} />
-          <Route path="activity/timeline" element={<AuditHub section="timeline" />} />
-          <Route path="audit" element={<AuditCompatibilityRedirect to="/activity" forceAgentMode />} />
-          <Route path="audit/activity" element={<AuditCompatibilityRedirect to="/activity" />} />
-          <Route path="audit/runs" element={<AuditCompatibilityRedirect to="/activity/runs" />} />
-          <Route path="audit/costs" element={<AuditCompatibilityRedirect to="/activity/costs" />} />
-          <Route path="audit/budgets" element={<AuditCompatibilityRedirect to="/activity/budgets" />} />
-          <Route path="audit/timeline" element={<AuditCompatibilityRedirect to="/activity/timeline" />} />
-          <Route path="runs" element={<AuditCompatibilityRedirect to="/activity/runs" />} />
-          <Route path="costs" element={<AuditCompatibilityRedirect to="/activity/costs" />} />
-          <Route path="budgets" element={<AuditCompatibilityRedirect to="/activity/budgets" />} />
-        </>
-      ) : (
-        <>
-          <Route path="costs" element={<Costs />} />
-          <Route path="audit" element={<Navigate to="/activity?mode=agents" replace />} />
-        </>
-      )}
-      {/* Conference Room Chat surfaces (PAP-136/PAP-137): routes stay
-          registered but redirect to the company home while the experimental
-          flag is off. The board-level `artifacts` mount below is the new
-          conference-room one; the master-level mount above it still serves
-          `/artifacts` in both modes. */}
-      <Route element={<ConferenceRoomChatGate />}>
-        <Route path="board-chat" element={<BoardChat />} />
-        <Route path="artifacts" element={<Artifacts />} />
-      </Route>
+      <Route path="activity" element={<CompanyActivity />} />
+      <Route path="activity/runs" element={<AuditHub section="runs" />} />
+      <Route path="activity/costs" element={<AuditHub section="costs" />} />
+      <Route path="activity/budgets" element={<AuditHub section="budgets" />} />
+      <Route path="activity/timeline" element={<AuditHub section="timeline" />} />
+      <Route path="audit" element={<AuditCompatibilityRedirect to="/activity" forceAgentMode />} />
+      <Route path="audit/activity" element={<AuditCompatibilityRedirect to="/activity" />} />
+      <Route path="audit/runs" element={<AuditCompatibilityRedirect to="/activity/runs" />} />
+      <Route path="audit/costs" element={<AuditCompatibilityRedirect to="/activity/costs" />} />
+      <Route path="audit/budgets" element={<AuditCompatibilityRedirect to="/activity/budgets" />} />
+      <Route path="audit/timeline" element={<AuditCompatibilityRedirect to="/activity/timeline" />} />
+      <Route path="runs" element={<AuditCompatibilityRedirect to="/activity/runs" />} />
+      <Route path="costs" element={<AuditCompatibilityRedirect to="/activity/costs" />} />
+      <Route path="budgets" element={<AuditCompatibilityRedirect to="/activity/budgets" />} />
       {/* Task chat dev harness — dev builds only. */}
       {import.meta.env.DEV ? (
         <Route path="dev/task-chat-lab" element={<TaskChatLab />} />
@@ -493,9 +437,8 @@ function AppsConnectEntryRoute({
 }
 
 function InboxRootRedirect() {
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const { enabled: combinedInboxTasksEnabled } = useCombinedInboxTasksEnabled();
-  return streamlinedUiEnabled && combinedInboxTasksEnabled
+  return combinedInboxTasksEnabled
     ? <TaskViewRedirect view={taskViewForInboxTab(loadLastInboxTab())} />
     : <Navigate to={`/inbox/${loadLastInboxTab()}`} replace />;
 }
@@ -554,15 +497,7 @@ function LegacySettingsRedirect() {
     null;
 
   if (!targetCompany) {
-    if (
-      shouldRedirectCompanylessRouteToOnboarding({
-        pathname: location.pathname,
-        hasCompanies: false,
-      })
-    ) {
-      return <Navigate to="/onboarding" replace />;
-    }
-    return <NoCompaniesStartPage />;
+    return <Navigate to="/start" replace />;
   }
 
   const normalizedPath = filterHiddenInstanceSettingsPath(
@@ -600,85 +535,8 @@ function legacyToolsRedirectTarget(tab?: string) {
   return `/apps/advanced/${tab}`;
 }
 
-export function OnboardingRoutePage() {
-  const { companies } = useCompany();
-  const { openOnboarding } = useDialogActions();
-  const { t } = useTranslation();
-  const cloudInstance = useCloudInstance();
-  const createStackUrl = cloudStackCreateUrl(cloudInstance?.cloudBaseUrl ?? null);
-  const { onboardingOpen, onboardingRouteDismissed } = useDialogState();
-  const { companyPrefix } = useParams<{ companyPrefix?: string }>();
-  const matchedCompany = companyPrefix
-    ? companies.find((company) => company.issuePrefix.toUpperCase() === companyPrefix.toUpperCase()) ?? null
-    : null;
-  // The OnboardingWizard auto-opens on this route (and can also be opened
-  // explicitly). While it is showing it covers the whole screen, so the
-  // launcher card below must not stay interactive behind it — otherwise users
-  // can tab/click through to the form behind the modal (PAP-52). The launcher
-  // only needs to render as a re-entry point once the wizard is dismissed.
-  if (isOnboardingWizardActive({ onboardingOpen, routeDismissed: onboardingRouteDismissed })) {
-    return null;
-  }
-
-  const title = matchedCompany
-    ? `Add another agent to ${matchedCompany.name}`
-    : companies.length > 0
-      ? "Create another organization"
-      : "Create your first organization";
-  const description = matchedCompany
-    ? "Run onboarding again to add an agent and a starter task for this organization."
-    : companies.length > 0
-      ? "Run onboarding again to create another organization and seed its first agent."
-      : "Get started by creating an organization and your first agent.";
-
-  return (
-    <div className="mx-auto max-w-xl py-10">
-      <div className="rounded-lg border border-border bg-card p-6">
-        <h1 className="text-xl font-semibold">{title}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">{description}</p>
-        <div className="mt-4">
-          {/* On a managed stack whose Cloud origin is unknown there is nowhere
-              to send this click: creation lives on Cloud, and in-app creation
-              is a 403 floor. A button that does nothing is worse than none, so
-              say why instead of rendering an inert control. */}
-          {!matchedCompany && cloudInstance && !createStackUrl ? (
-            <p className="text-sm text-muted-foreground">
-              {t("app.cloudCreateUnavailable", {
-                defaultValue:
-                  "Organizations are created in Paperclip Cloud. This instance can't reach it right now — try again from your Cloud portfolio.",
-              })}
-            </p>
-          ) : (
-            <Button
-              onClick={() =>
-                matchedCompany
-                  ? openOnboarding({
-                      // "Add another agent" to a company that already has its
-                      // mission must not stop to ask for the mission again. An
-                      // unsettled or failed lookup reads as "no mission" and
-                      // costs the step, which the customer can pass - and the
-                      // mission step now updates the existing goal rather than
-                      // adding a second one.
-                      initialStep: onboardingStepForCompany(),
-                      companyId: matchedCompany.id,
-                    })
-                  : cloudInstance && createStackUrl
-                    ? navigateTopLevel(createStackUrl)
-                    : openOnboarding()
-              }
-            >
-              {matchedCompany ? "Add Agent" : "Start Onboarding"}
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function CompanyRootRedirect() {
   const { companies, selectedCompany, loading } = useCompany();
-  const location = useLocation();
 
   if (loading) {
     return <PaperclipLoading />;
@@ -686,18 +544,10 @@ function CompanyRootRedirect() {
 
   const targetCompany = selectedCompany ?? companies[0] ?? null;
   if (!targetCompany) {
-    if (
-      shouldRedirectCompanylessRouteToOnboarding({
-        pathname: location.pathname,
-        hasCompanies: false,
-      })
-    ) {
-      return <Navigate to="/onboarding" replace />;
-    }
-    return <NoCompaniesStartPage />;
+    return <Navigate to="/start" replace />;
   }
 
-  return <Navigate to={`/${targetCompany.issuePrefix}/dashboard`} replace />;
+  return <Navigate to={`/${targetCompany.issuePrefix}/home`} replace />;
 }
 
 function StatusCardsLegacyRedirect() {
@@ -721,82 +571,8 @@ function AuditCompatibilityRedirect({
   return <Navigate to={`${to}${search ? `?${search}` : ""}${location.hash}`} replace />;
 }
 
-function UnprefixedBoardRedirect() {
-  const location = useLocation();
-  const { companies, selectedCompany, loading } = useCompany();
-
-  if (loading) {
-    return <PaperclipLoading />;
-  }
-
-  const targetCompany = selectedCompany ?? companies[0] ?? null;
-  if (!targetCompany) {
-    if (
-      shouldRedirectCompanylessRouteToOnboarding({
-        pathname: location.pathname,
-        hasCompanies: false,
-      })
-    ) {
-      return <Navigate to="/onboarding" replace />;
-    }
-    return <NoCompaniesStartPage />;
-  }
-
-  return (
-    <Navigate
-      to={`/${targetCompany.issuePrefix}${location.pathname}${location.search}${location.hash}`}
-      replace
-    />
-  );
-}
-
-function NoCompaniesStartPage() {
-  const { openOnboarding } = useDialogActions();
-  const { t } = useTranslation();
-  // A managed stack with no visible companies is a loading or error state, not
-  // an invitation to create one in-app — creation lives on Cloud (403 floor).
-  const cloudInstance = useCloudInstance();
-  const createStackUrl = cloudStackCreateUrl(cloudInstance?.cloudBaseUrl ?? null);
-
-  return (
-    <div className="mx-auto max-w-xl py-10">
-      <div className="rounded-lg border border-border bg-card p-6">
-        <h1 className="text-xl font-semibold">
-          {t("app.noCompanies.title", { defaultValue: "Create your first organization" })}
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {t("app.noCompanies.description", { defaultValue: "Get started by creating an organization." })}
-        </p>
-        <div className="mt-4">
-          {/* Same as the onboarding route: no Cloud origin means nowhere to
-              send the click, and in-app creation is a 403 floor here. */}
-          {cloudInstance && !createStackUrl ? (
-            <p className="text-sm text-muted-foreground">
-              {t("app.cloudCreateUnavailable", {
-                defaultValue:
-                  "Organizations are created in Paperclip Cloud. This instance can't reach it right now — try again from your Cloud portfolio.",
-              })}
-            </p>
-          ) : (
-            <Button
-              onClick={() =>
-                cloudInstance && createStackUrl
-                  ? navigateTopLevel(createStackUrl)
-                  : openOnboarding()
-              }
-            >
-              {t("app.noCompanies.newCompany", { defaultValue: "New Organization" })}
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function App() {
-  const { enabled: streamlinedUiEnabled, loaded: streamlinedUiLoaded } = useStreamlinedUiEnabled();
-  const { enabled: combinedInboxTasksEnabled } = useCombinedInboxTasksEnabled();
+  const { enabled: combinedInboxTasksEnabled, loaded: experimentalSettingsLoaded } = useCombinedInboxTasksEnabled();
 
   return (
     <>
@@ -810,23 +586,21 @@ export function App() {
         <Route path="assistant-connections" element={<AssistantConnectionsPage />} />
         <Route path="cli-auth/:id" element={<CliAuthPage />} />
         <Route path="invite/:token" element={<InviteLandingPage />} />
-        <Route element={streamlinedUiLoaded ? <CloudAccessGate allowMembershipRequest /> : <PaperclipLoading />}>
+        <Route element={experimentalSettingsLoaded ? <CloudAccessGate allowMembershipRequest /> : <PaperclipLoading />}>
           {/* The identity APIs enforce the chat rollout flag. Nonmembers cannot
               read experimental settings, but a private invitation may request membership. */}
           <Route path="chat-identity/confirm" element={<ChatIdentityConfirm />} />
         </Route>
-        <Route path="tests/perf/long-thread" element={<IssueChatLongThreadPerf />} />
-        <Route path="ux-lab/bootstrap-setup" element={<BootstrapSetupUxLab />} />
-        <Route path="ux-lab/responsible-user-denial" element={<ResponsibleUserDenialUxLab />} />
-        <Route path="ux-lab/cross-issue-collaboration" element={<CrossIssueCollaborationUxLab />} />
 
-        <Route element={streamlinedUiLoaded ? <CloudAccessGate /> : <PaperclipLoading />}>
+        <Route element={experimentalSettingsLoaded ? <CloudAccessGate /> : <PaperclipLoading />}>
           <Route index element={<CompanyRootRedirect />} />
-          <Route path="onboarding" element={<OnboardingRoutePage />} />
+          <Route path="start" element={<StartCompanyPage />} />
+          <Route path="onboarding" element={<OnboardingRedirect />} />
           <Route path="instance" element={<LegacySettingsRedirect />} />
           <Route path="instance/settings" element={<LegacySettingsRedirect />} />
           <Route path="instance/settings/*" element={<LegacySettingsRedirect />} />
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
+          <Route path="home" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
           <Route path="tasks" element={<UnprefixedBoardRedirect />} />
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />
@@ -848,17 +622,14 @@ export function App() {
           <Route path="pipelines/:pipelineId/cases/:caseId" element={<UnprefixedBoardRedirect />} />
           <Route path="artifacts" element={<UnprefixedBoardRedirect />} />
           <Route path="audit" element={<UnprefixedBoardRedirect />} />
-          {streamlinedUiEnabled ? (
-            <>
-              <Route path="audit/*" element={<UnprefixedBoardRedirect />} />
-              <Route path="activity" element={<UnprefixedBoardRedirect />} />
-              <Route path="activity/*" element={<UnprefixedBoardRedirect />} />
-              <Route path="runs" element={<UnprefixedBoardRedirect />} />
-              <Route path="costs" element={<UnprefixedBoardRedirect />} />
-              <Route path="budgets" element={<UnprefixedBoardRedirect />} />
-            </>
-          ) : null}
+          <Route path="audit/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="activity" element={<UnprefixedBoardRedirect />} />
+          <Route path="activity/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="runs" element={<UnprefixedBoardRedirect />} />
+          <Route path="costs" element={<UnprefixedBoardRedirect />} />
+          <Route path="budgets" element={<UnprefixedBoardRedirect />} />
           <Route path="decisions" element={<UnprefixedBoardRedirect />} />
+          <Route path="assistant" element={<UnprefixedBoardRedirect />} />
           <Route path="u/:userSlug" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/studio" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/studio/new" element={<UnprefixedBoardRedirect />} />
@@ -872,6 +643,7 @@ export function App() {
             <Route key={tab} path={`agents/${tab}`} element={<UnprefixedBoardRedirect />} />
           ))}
           <Route path="agents/new" element={<UnprefixedBoardRedirect />} />
+          <Route path="agents/new/custom" element={<UnprefixedBoardRedirect />} />
           <Route path="agents/:agentId" element={<UnprefixedBoardRedirect />} />
           <Route path="agents/:agentId/:tab" element={<UnprefixedBoardRedirect />} />
           <Route path="agents/:agentId/runs/:runId" element={<UnprefixedBoardRedirect />} />
@@ -890,13 +662,12 @@ export function App() {
           <Route path="execution-workspaces/:workspaceId/runtime-logs" element={<UnprefixedExecutionWorkspaceRedirect />} />
           <Route path="execution-workspaces/:workspaceId/issues" element={<UnprefixedExecutionWorkspaceRedirect />} />
           <Route path="execution-workspaces/:workspaceId/routines" element={<UnprefixedExecutionWorkspaceRedirect />} />
-          <Route path=":companyPrefix" element={streamlinedUiEnabled ? <Layout /> : <ProductionLayout />}>
-            {boardRoutes(streamlinedUiEnabled, combinedInboxTasksEnabled)}
+          <Route path=":companyPrefix" element={<Layout />}>
+            {boardRoutes(combinedInboxTasksEnabled)}
           </Route>
           <Route path="*" element={<NotFoundPage scope="global" />} />
         </Route>
       </Routes>
-      <OnboardingWizardVariant />
     </>
   );
 }

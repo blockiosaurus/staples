@@ -541,6 +541,7 @@ function parseQuestionSet(value: unknown): PaperclipQuestionSet | null {
       id: text(option.id, `option-${optionIndex + 1}`).slice(0, 160),
       label: text(option.label, `Option ${optionIndex + 1}`).slice(0, 1_000),
       ...(nullableText(option.description) ? { description: text(option.description).slice(0, 4_000) } : {}),
+      ...(option.recommended === true ? { recommended: true } : {}),
     }));
     const customAnswer = record(question.customAnswer);
     const validation = record(question.textValidation);

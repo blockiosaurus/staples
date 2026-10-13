@@ -97,6 +97,12 @@ export interface CatalogTeam {
   trustLevel: CatalogTeamTrustLevel;
   compatibility: CatalogTeamCompatibility;
   contentHash: string;
+  /**
+   * Raw `staples.template.json` sidecar, present only for Staples agent
+   * templates (catalog/optional/staples/<slug>). Validated by the server's
+   * agent-templates service, not by the catalog builder.
+   */
+  staplesTemplate?: Record<string, unknown>;
 }
 
 export interface CatalogManifest {

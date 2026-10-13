@@ -15,7 +15,6 @@ export const SectionCollapsed: Story = { play: async ({ canvasElement }) => {
 } };
 export const MobileDrawer: Story = { globals: mobile, render: () => <PrimaryPage drawer /> };
 export const MobileDrawerClosed: Story = { globals: mobile };
-export const ClassicShell: Story = { parameters: { primaryAgent: { classic: true } } };
 export const LoadingPreference: Story = { parameters: { primaryAgent: { loading: true } } };
 export const NoPrimary: Story = { parameters: { primaryAgent: { primaryId: null } } };
 export const Light: Story = { globals: { theme: "light" } };

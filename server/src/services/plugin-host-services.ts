@@ -93,6 +93,8 @@ import {
   SANDBOX_STARTUP_SPAN_ATTRS,
 } from "@paperclipai/adapter-utils/acpx-engine/startup-timing";
 import { recordProviderPluginSpan, type ParsedTraceparent } from "../instrumentation.js";
+import { conflict } from "../errors.js";
+import { isHeldForTemplateSetup, TEMPLATE_SETUP_RESUME_MESSAGE } from "../lib/staples-template-metadata.js";
 
 // ---------------------------------------------------------------------------
 // SSRF protection for plugin HTTP fetch
@@ -3022,6 +3024,11 @@ export function buildHostServices(
         await ensurePluginAvailableForCompany(companyId);
         const agent = await agents.getById(params.agentId);
         requireInCompany("Agent", agent, companyId);
+        // Same rule as the board resume route: an agent held for template
+        // setup stays paused until its guards exist.
+        if (isHeldForTemplateSetup(agent!)) {
+          throw conflict(TEMPLATE_SETUP_RESUME_MESSAGE, { code: "agent_template_setup_pending" });
+        }
         return (await agentsLifecycle.resumeAgent(params.agentId)) as Agent;
       },
       async invoke(params) {

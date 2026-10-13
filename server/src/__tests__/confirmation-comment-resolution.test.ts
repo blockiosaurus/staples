@@ -71,7 +71,7 @@ const support = await getEmbeddedPostgresTestSupport();
     const f = await seed(false, conversation);
     const question = (prompt: string) => ({ kind: "ask_user_questions" as const, payload: { version: 1 as const,
       supersedeOnUserComment: true, questions: [{ id: "color", prompt, selectionMode: "single" as const, required: true,
-        options: [{ id: "blue", label: "Blue" }, { id: "green", label: "Green" }] }] } });
+        options: [{ id: "blue", label: "Blue", recommended: true }, { id: "green", label: "Green" }] }] } });
     const first = await f.svc.create(f.issue, question("Which color?"), { agentId: f.agentId });
     await f.svc.expireRequestConfirmationsSupersededByComment(f.issue,
       { id: f.comment.id, authorUserId: "operator", createdAt: new Date(Date.now() + 1000) }, { userId: "operator" });
@@ -103,7 +103,7 @@ const support = await getEmbeddedPostgresTestSupport();
       ...(kind === "other-agent" ? { agentId: randomUUID() } : {}),
     })).toBeNull();
   });
-  it.each(["toolAction", "secretProposal", "connectionAuthorization", "questions", "expired"])("excludes %s from ordinary confirmation context", async kind => {
+  it.each(["toolAction", "secretProposal", "connectionAuthorization", "proposedAction", "questions", "expired"])("excludes %s from ordinary confirmation context", async kind => {
     const f = await seed(false, true);
     await db.update(issueThreadInteractions).set(kind === "questions" ? { kind: "ask_user_questions" }
       : kind === "expired" ? { status: "expired" }
@@ -216,7 +216,15 @@ const support = await getEmbeddedPostgresTestSupport();
     await expect(resolveConfirmationFromComment(db, f.args)).rejects.toThrow();
     expect((await readCard(f.card.id)).status).toBe("pending");
   });
-  it.each(["human_only", "not_creator", "addressee", "toolAction", "secretProposal", "connectionAuthorization", "questions", "closed"])("preserves %s restrictions", async kind => {
+  it("never lets the agent resolve a proposed action from the person's chat reply", async () => {
+    const f = await seed(false, true);
+    const proposedAction = { version: 1, method: "POST", path: `/api/approvals/${randomUUID()}/approve`, body: null, summary: "Approve", category: "approval", hash: "d".repeat(64) };
+    await db.update(issueThreadInteractions).set({ payload: { ...f.card.payload, proposedAction } }).where(eq(issueThreadInteractions.id, f.card.id));
+    await expect(resolveConfirmationFromComment(db, f.args)).rejects.toThrow(/dedicated approval controls/);
+    expect((await readCard(f.card.id)).status).toBe("pending");
+    expect(await audit(f.issueId)).toHaveLength(0);
+  });
+  it.each(["human_only", "not_creator", "addressee", "toolAction", "secretProposal", "connectionAuthorization", "proposedAction", "questions", "closed"])("preserves %s restrictions", async kind => {
     const f = await seed();
     if (kind === "closed") await db.update(issues).set({ status: "done" }).where(eq(issues.id, f.issueId));
     else if (kind === "human_only" || kind === "not_creator") await db.update(issueThreadInteractions).set({ effectiveResolverPolicy: kind }).where(eq(issueThreadInteractions.id, f.card.id));

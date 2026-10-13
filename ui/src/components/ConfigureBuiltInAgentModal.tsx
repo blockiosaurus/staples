@@ -163,7 +163,7 @@ export function ConfigureBuiltInAgentModal({
             board.
           </InlineBanner>
 
-          <Field label="Adapter type">
+          <Field label="Runs on">
             <AdapterTypeDropdown
               value={adapterType}
               onChange={(next) => {

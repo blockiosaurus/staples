@@ -1076,7 +1076,7 @@ export function CompanyImport() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: selectedCompany?.name ?? "Company", href: "/dashboard" },
+      { label: selectedCompany?.name ?? "Company", href: "/home" },
       { label: "Settings", href: "/company/settings" },
       { label: "Import" },
     ]);
@@ -1303,7 +1303,7 @@ export function CompanyImport() {
             const importedCompany = await companiesApi.get(outcome.companyId);
             setSelectedCompanyId(importedCompany.id);
             expiredCompanyName = importedCompany.name;
-            expiredDashboardPath = `/${importedCompany.issuePrefix}/dashboard`;
+            expiredDashboardPath = `/${importedCompany.issuePrefix}/home`;
           } catch {
             // The company id may be unreadable (permissions, race); the
             // refreshed company list still surfaces the import.
@@ -1344,7 +1344,7 @@ export function CompanyImport() {
       setImportOutcome({
         kind: "full",
         result,
-        dashboardPath: `/${importedCompany.issuePrefix}/dashboard`,
+        dashboardPath: `/${importedCompany.issuePrefix}/home`,
         pausedAutomations: submittedPauseAutomations,
       });
     },
@@ -1738,7 +1738,7 @@ export function CompanyImport() {
               // immediately visible (same reason as the full-outcome CTA).
               onClick={() => window.location.assign(importOutcome.dashboardPath!)}
             >
-              Open organization dashboard
+              Open organization
             </Button>
           </div>
         ) : null}
@@ -1856,7 +1856,7 @@ export function CompanyImport() {
             variant="outline"
             onClick={() => window.location.assign(dashboardPath)}
           >
-            Go to dashboard
+            Continue
           </Button>
         </div>
       </div>

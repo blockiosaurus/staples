@@ -132,6 +132,33 @@ export {
   type UpsertSidebarOrderPreference,
 } from "./sidebar-preferences.js";
 export {
+  surfaceIdSchema,
+  patchUiPreferencesSchema,
+  type PatchUiPreferences,
+} from "./ui-preferences.js";
+export {
+  COMPANY_BRIEF_MAX_CHARS,
+  COMPANY_BRIEF_PATH,
+  COMPANY_BRIEF_WAKE_EXCERPT_CHARS,
+  updateCompanyBriefSchema,
+  type UpdateCompanyBrief,
+} from "./company-brief.js";
+export {
+  applyPlanAgentSchema,
+  applyPlanSchema,
+  PLAN_TEMPLATE_ANSWERS_MAX_KEYS,
+  PLAN_TEMPLATE_REF_PATTERN,
+  planAgentCreationOrder,
+  planStructureErrors,
+  planTaskCreationOrder,
+  PlanStructureError,
+  type ApplyPlan,
+  type ApplyPlanAgent,
+  type ApplyPlanInput,
+  type ApplyPlanResult,
+  type ApplyPlanTask,
+} from "./plan.js";
+export {
   resourceMembershipStateSchema,
   updateDocumentResourceMembershipSchema,
   updateResourceMembershipSchema,
@@ -449,6 +476,7 @@ export {
   issueCommentMetadataRowSchema,
   issueCommentMetadataSectionSchema,
   issueCommentMetadataSchema,
+  assistantPageContextSchema,
   addIssueCommentSchema,
   issueThreadInteractionStatusSchema,
   issueThreadInteractionKindSchema,
@@ -466,6 +494,7 @@ export {
   suggestTasksResultSchema,
   askUserQuestionsQuestionOptionSchema,
   askUserQuestionsQuestionSchema,
+  paperclipQuestionSchema,
   paperclipQuestionSetPayloadSchema,
   askUserQuestionsPayloadSchema,
   askUserQuestionsAnswerSchema,
@@ -478,6 +507,15 @@ export {
   requestConfirmationResultSchema,
   requestConfirmationSecretProposalPayloadSchema,
   requestConfirmationSecretProposalResultSchema,
+  requestConfirmationProposedActionPayloadSchema,
+  proposedActionContextSchema,
+  requestConfirmationProposedActionResultSchema,
+  PROPOSED_ACTION_METHODS,
+  PROPOSED_ACTION_CATEGORIES,
+  PROPOSED_ACTION_BODY_MAX_BYTES,
+  PROPOSED_BRIEF_BODY_MAX_BYTES,
+  PROPOSED_PLAN_BODY_MAX_BYTES,
+  proposedActionBodyMaxBytes,
   requestCheckboxConfirmationOptionSchema,
   requestCheckboxConfirmationPayloadSchema,
   requestCheckboxConfirmationResultSchema,
@@ -488,6 +526,7 @@ export {
   requestItemVerdictsResultSchema,
   createIssueThreadInteractionSchema,
   acceptIssueThreadInteractionSchema,
+  claimProposedActionSchema,
   resolveConfirmationFromCommentSchema,
   type ResolveConfirmationFromComment,
   rejectIssueThreadInteractionSchema,
@@ -884,6 +923,9 @@ export {
   toolRuntimeSlotStatusSchema,
   toolTransportConfigSchema,
   toolAccessSelectorSchema,
+  toolNamePatternsSchema,
+  TOOL_NAME_PATTERNS_MAX,
+  TOOL_NAME_PATTERN_MAX_LENGTH,
   toolPolicyConditionsSchema,
   toolRateLimitRuleSchema,
   toolTrustRuleArgumentFiltersSchema,
@@ -996,3 +1038,5 @@ export { restoreAgentInstructionSchema } from "./agent.js";
 
 export * from "./skill-source.js";
 export * from "./agent-commentary.js";
+export * from "./agent-template.js";
+export * from "./agent-autopilot.js";

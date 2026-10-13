@@ -125,6 +125,7 @@ async function mount(
           canLogin={canLogin}
           localEnvironment={localEnvironment}
           onBack={() => {}}
+          hideBack={mountOptions.hideBack}
           testConnection={test}
           onConnected={connected}
           managedAccount={managedAccount}
@@ -138,6 +139,7 @@ async function mount(
   if (savedApiKeys && !managedAccount && !advancedConnection) await vi.waitFor(() => expect(host.textContent).toContain("2 saved API keys"));
   return { test, connected, key };
 }
+const mountOptions = { hideBack: false };
 function click(text: string) {
   const button = [...host.querySelectorAll("button")].find((b) =>
     b.getAttribute("aria-label") ? b.getAttribute("aria-label") === text : b.textContent?.includes(text),
@@ -151,6 +153,21 @@ function openProvider() {
   );
 }
 describe("AgentProviderConnection reuse", () => {
+  it("omits the footer Back button when the host provides its own way back", async () => {
+    await mount("codex_local", false, true, true, true, false, undefined, false, "local_trusted", true);
+    expect([...host.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Back")).toBe(true);
+    root.unmount();
+    host.remove();
+    mountOptions.hideBack = true;
+    try {
+      await mount("codex_local", false, true, true, true, false, undefined, false, "local_trusted", true);
+      expect([...host.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Back")).toBe(false);
+    } finally {
+      mountOptions.hideBack = false;
+    }
+  });
+
+
   it("keeps all three connection tiles visible while switching forms", async () => {
     await mount("codex_local", false, true, true, true, false, undefined, false, "local_trusted", true, {
       content: <div>Advanced connection picker</div>,

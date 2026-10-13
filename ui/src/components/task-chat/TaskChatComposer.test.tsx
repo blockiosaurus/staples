@@ -885,6 +885,46 @@ describe("TaskChatComposer", () => {
     expect(editable().textContent).toBe("");
   });
 
+  it("fills the editor from a draft request and focuses it", async () => {
+    const onApplied = vi.fn();
+    render(<TaskChatComposer onAdd={vi.fn()} workMode="standard" draftRequest={{ text: "Ask this", nonce: 1 }} onDraftRequestApplied={onApplied} />);
+    await flushAsync();
+    expect(editable().textContent).toBe("Ask this");
+    expect(onApplied).toHaveBeenCalledWith(1);
+    await act(async () => { await new Promise((resolve) => requestAnimationFrame(() => resolve(null))); });
+    expect(document.activeElement).toBe(editable());
+  });
+
+  it("sends a draft request once through the normal add path", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    render(<TaskChatComposer onAdd={onAdd} workMode="standard" draftRequest={{ text: "Ask this", nonce: 1, send: true }} />);
+    await flushAsync();
+    await flushAsync();
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    expect(onAdd).toHaveBeenCalledWith("Ask this", undefined, undefined, undefined, expect.any(String));
+  });
+
+  it("keeps a send request as a draft with a notice when the composer is disabled", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    render(<TaskChatComposer onAdd={onAdd} disabled workMode="standard" draftRequest={{ text: "Ask this", nonce: 1, send: true }} />);
+    await flushAsync();
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(editable().textContent).toBe("Ask this");
+    expect(container.textContent).toContain("can't take messages right now");
+  });
+
+  it("sends a draft request only once under StrictMode", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    render(
+      <StrictMode>
+        <TaskChatComposer onAdd={onAdd} workMode="standard" draftRequest={{ text: "Ask this", nonce: 1, send: true }} />
+      </StrictMode>,
+    );
+    await flushAsync();
+    await flushAsync();
+    expect(onAdd).toHaveBeenCalledTimes(1);
+  });
+
   it("submits on Ctrl+Enter", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     render(<TaskChatComposer onAdd={onAdd} workMode="standard" />);
@@ -2887,7 +2927,9 @@ describe("TaskChatComposer", () => {
         (button) => button.textContent?.trim() === "Production",
       );
       expect(staging?.getAttribute("data-recommended")).toBe("true");
-      expect(staging?.className.split(" ")).toContain("bg-muted/50");
+      // The recommendation starts selected; deselecting it keeps its tint.
+      expect(staging?.getAttribute("data-selected")).toBe("true");
+      expect(staging?.className.split(" ")).toContain("bg-foreground/5");
       expect(
         production?.className
           .split(" ")
@@ -2897,8 +2939,8 @@ describe("TaskChatComposer", () => {
       ).toBe(false);
 
       flushSync(() => staging?.click());
-      expect(staging?.getAttribute("data-selected")).toBe("true");
-      expect(staging?.className.split(" ")).toContain("bg-foreground/5");
+      expect(staging?.getAttribute("data-selected")).toBe("false");
+      expect(staging?.className.split(" ")).toContain("bg-muted/50");
     });
 
     it("hides Skip when the takeover already provides a request-changes path", () => {

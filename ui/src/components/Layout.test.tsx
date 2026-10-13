@@ -31,7 +31,6 @@ const mockPluginSlotContexts = vi.hoisted(
   () => [] as Array<Record<string, unknown>>,
 );
 const mockSetPeeking = vi.hoisted(() => vi.fn());
-const mockSetForceCollapsed = vi.hoisted(() => vi.fn());
 const mockSidebarState = vi.hoisted(() => ({
   sidebarOpen: true,
   isMobile: false,
@@ -42,6 +41,7 @@ let currentPathname = "/PAP/dashboard";
 
 vi.mock("@/lib/router", () => ({
   Outlet: () => <div>Outlet content</div>,
+  Navigate: ({ to }: { to: string }) => <div data-testid="navigate" data-to={to} />,
   useLocation: () => ({
     pathname: currentPathname,
     search: "",
@@ -208,11 +208,9 @@ vi.mock("../plugins/slots", async () => {
 vi.mock("../context/DialogContext", () => ({
   useDialog: () => ({
     openNewIssue: vi.fn(),
-    openOnboarding: vi.fn(),
   }),
   useDialogActions: () => ({
     openNewIssue: vi.fn(),
-    openOnboarding: vi.fn(),
   }),
 }));
 
@@ -242,11 +240,26 @@ vi.mock("../context/SidebarContext", () => ({
     collapsed: mockSidebarState.collapsed,
     peeking: mockSidebarState.peeking,
     setPeeking: mockSetPeeking,
-    setForceCollapsed: mockSetForceCollapsed,
     isMobile: mockSidebarState.isMobile,
     routeRequestsCollapsed: false,
     setRouteRequestsCollapsed: vi.fn(),
   }),
+}));
+
+const mockSignalsState = vi.hoisted(() => ({
+  value: { signals: { agents: 1 }, loaded: true, failed: false } as {
+    signals: { agents: number } | null;
+    loaded: boolean;
+    failed: boolean;
+  },
+}));
+
+vi.mock("../hooks/useCompanySignals", () => ({
+  useCompanySignals: () => mockSignalsState.value,
+}));
+
+vi.mock("../staples/assistant/StageZeroShell", () => ({
+  StageZeroShell: () => <div data-testid="stage-zero-shell">Stage zero Assistant</div>,
 }));
 
 vi.mock("../hooks/useKeyboardShortcuts", () => ({
@@ -330,13 +343,172 @@ describe("Layout", () => {
     mockSidebarState.collapsed = false;
     mockSidebarState.peeking = false;
     mockSetPeeking.mockClear();
-    mockSetForceCollapsed.mockClear();
   });
 
   afterEach(() => {
     container.remove();
     document.body.innerHTML = "";
     vi.clearAllMocks();
+  });
+
+  async function renderLayout() {
+    const root = createRoot(container);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Layout />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+    return root;
+  }
+
+  describe("stage 0", () => {
+    afterEach(() => {
+      mockSignalsState.value = { signals: { agents: 1 }, loaded: true, failed: false };
+    });
+
+    it("shows only the Assistant, without the sidebar, when the company has no staff agents", async () => {
+      mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+      const root = await renderLayout();
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).not.toBeNull();
+      expect(container.textContent).not.toContain("Main company nav");
+      expect(container.textContent).not.toContain("Outlet content");
+      await act(async () => root.unmount());
+    });
+
+    it("renders the normal shell once a staff agent exists", async () => {
+      mockSignalsState.value = { signals: { agents: 2 }, loaded: true, failed: false };
+      const root = await renderLayout();
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).toBeNull();
+      expect(container.textContent).toContain("Main company nav");
+      expect(container.textContent).toContain("Outlet content");
+      await act(async () => root.unmount());
+    });
+
+    it("shows a neutral loading state, not the sidebar, while signals load", async () => {
+      mockSignalsState.value = { signals: null, loaded: false, failed: false };
+      const root = await renderLayout();
+      expect(container.querySelector("[data-testid='layout-signals-loading']")).not.toBeNull();
+      expect(container.textContent).not.toContain("Main company nav");
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).toBeNull();
+      await act(async () => root.unmount());
+    });
+
+    it("keeps the previous shell while another company's signals load", async () => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const root = createRoot(container);
+      const draw = async () => {
+        await act(async () => {
+          root.render(
+            <QueryClientProvider client={queryClient}>
+              <Layout />
+            </QueryClientProvider>,
+          );
+        });
+        await flushReact();
+      };
+      mockSignalsState.value = { signals: { agents: 3 }, loaded: true, failed: false };
+      await draw();
+      expect(container.textContent).toContain("Main company nav");
+      mockSignalsState.value = { signals: null, loaded: false, failed: false };
+      await draw();
+      expect(container.querySelector("[data-testid='layout-signals-loading']")).toBeNull();
+      expect(container.textContent).toContain("Main company nav");
+      mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+      await draw();
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).not.toBeNull();
+      mockSignalsState.value = { signals: null, loaded: false, failed: false };
+      await draw();
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).not.toBeNull();
+      await act(async () => root.unmount());
+    });
+
+    it("falls back to the normal shell when signals fail to load", async () => {
+      mockSignalsState.value = { signals: null, loaded: false, failed: true };
+      const root = await renderLayout();
+      expect(container.textContent).toContain("Main company nav");
+      await act(async () => root.unmount());
+    });
+
+    it("keeps company settings reachable in stage 0", async () => {
+      mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+      currentPathname = "/PAP/company/settings";
+      const root = await renderLayout();
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).toBeNull();
+      expect(container.textContent).toContain("Company settings sidebar");
+      expect(container.textContent).toContain("Outlet content");
+      await act(async () => root.unmount());
+    });
+
+    it.each(["/PAP/agents", "/PAP/agents/writer", "/PAP/apps", "/PAP/issues/PAP-1", "/PAP/approvals/approval-1"])(
+      "keeps %s, which the Assistant links to, reachable in stage 0",
+      async (pathname) => {
+        mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+        currentPathname = pathname;
+        const root = await renderLayout();
+        expect(container.querySelector("[data-testid='stage-zero-shell']")).toBeNull();
+        expect(container.textContent).toContain("Outlet content");
+        await act(async () => root.unmount());
+      },
+    );
+
+    describe("stage 0 -> stage 1", () => {
+      async function drawer() {
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const root = createRoot(container);
+        const draw = async () => {
+          await act(async () => {
+            root.render(
+              <QueryClientProvider client={queryClient}>
+                <Layout />
+              </QueryClientProvider>,
+            );
+          });
+          await flushReact();
+        };
+        return { root, draw };
+      }
+      const homeCalls = () => mockNavigate.mock.calls.filter(([to]) => String(to).endsWith("/home"));
+
+      it("stays on /assistant and shows the sidebar when the first staff agent arrives in place", async () => {
+        currentPathname = "/PAP/assistant";
+        const { root, draw } = await drawer();
+        mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+        await draw();
+        expect(container.querySelector("[data-testid='stage-zero-shell']")).not.toBeNull();
+        expect(container.textContent).not.toContain("Main company nav");
+        mockSignalsState.value = { signals: { agents: 1 }, loaded: true, failed: false };
+        await draw();
+        await draw();
+        expect(homeCalls()).toEqual([]);
+        expect(container.querySelector("[data-testid='stage-zero-shell']")).toBeNull();
+        expect(container.textContent).toContain("Main company nav");
+        expect(container.textContent).toContain("Outlet content");
+        await act(async () => root.unmount());
+      });
+
+      it("does not navigate a company that already has staff agents", async () => {
+        currentPathname = "/PAP/assistant";
+        const { root, draw } = await drawer();
+        mockSignalsState.value = { signals: { agents: 1 }, loaded: true, failed: false };
+        await draw();
+        await draw();
+        expect(homeCalls()).toEqual([]);
+        await act(async () => root.unmount());
+      });
+    });
+
+    it("still shows only the Assistant on other company pages in stage 0", async () => {
+      mockSignalsState.value = { signals: { agents: 0 }, loaded: true, failed: false };
+      currentPathname = "/PAP/projects";
+      const root = await renderLayout();
+      expect(container.querySelector("[data-testid='stage-zero-shell']")).not.toBeNull();
+      await act(async () => root.unmount());
+    });
   });
 
   it("does not render the deployment explainer in the shared layout", async () => {
@@ -370,11 +542,79 @@ describe("Layout", () => {
     });
   });
 
+  it("redirects an unprefixed board path to the selected company instead of showing not found", async () => {
+    currentPathname = "/dashboard";
+    mockCompanyState.companies = [{ id: "company-2", issuePrefix: "TST", name: "Test Co" }];
+    mockCompanyState.selectedCompany = { id: "company-2", issuePrefix: "TST", name: "Test Co" };
+    mockCompanyState.selectedCompanyId = "company-2";
+    const root = createRoot(container);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Layout />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    expect(container.textContent).not.toContain("Organization not found");
+    expect(container.querySelector("[data-testid='navigate']")?.getAttribute("data-to")).toBe(
+      "/TST/dashboard",
+    );
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  describe("company-less start redirect", () => {
+    async function renderCompanyless(health: Record<string, unknown>) {
+      mockNavigate.mockClear();
+      mockCompanyState.companies = [];
+      mockCompanyState.selectedCompany = null as never;
+      mockCompanyState.selectedCompanyId = null as never;
+      mockHealthApi.get.mockResolvedValue({ status: "ok", version: "1.2.3", ...health });
+      const root = createRoot(container);
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <Layout />
+          </QueryClientProvider>,
+        );
+      });
+      await flushReact();
+      await flushReact();
+      await act(async () => {
+        root.unmount();
+      });
+    }
+
+    it("sends a self-hosted instance with no companies to /start", async () => {
+      await renderCompanyless({ deploymentMode: "local_trusted" });
+      expect(mockNavigate).toHaveBeenCalledWith("/start", { replace: true });
+    });
+
+    it("does not auto-start in authenticated mode", async () => {
+      await renderCompanyless({ deploymentMode: "authenticated" });
+      expect(mockNavigate).not.toHaveBeenCalledWith("/start", expect.anything());
+    });
+
+    it("does not auto-start on a Cloud-managed stack", async () => {
+      await renderCompanyless({ deploymentMode: "local_trusted", cloud: { managed: true } });
+      expect(mockNavigate).not.toHaveBeenCalledWith("/start", expect.anything());
+    });
+  });
+
   it("scopes the Streamlined task-detail surface while preserving balanced horizontal gutters", async () => {
     currentPathname = "/PAP/issues/PAP-1";
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({
       enableApps: true,
-      enableStreamlinedUi: true,
     });
     const root = createRoot(container);
     const queryClient = new QueryClient({
@@ -571,36 +811,6 @@ describe("Layout", () => {
     expect(container.textContent).not.toContain("Company rail");
     expect(container.textContent).not.toContain("Instance sidebar");
     expect(container.textContent).not.toContain("Plugin route sidebar");
-
-    await act(async () => {
-      root.unmount();
-    });
-  });
-
-  it("keeps the global sidebar beside legacy settings navigation when Streamlined UI is off", async () => {
-    currentPathname = "/PAP/company/settings/access";
-    mockInstanceSettingsApi.getExperimental.mockResolvedValue({
-      enableApps: true,
-      enableStreamlinedUi: false,
-    });
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <Layout />
-        </QueryClientProvider>,
-      );
-    });
-    await flushReact();
-    await flushReact();
-
-    expect(container.textContent).toContain("Main company nav");
-    expect(container.textContent).toContain("Company settings sidebar");
-    expect(mockSetForceCollapsed).toHaveBeenCalledWith(true);
 
     await act(async () => {
       root.unmount();
@@ -980,78 +1190,11 @@ describe("Layout", () => {
     }
   });
 
-  it("keeps global navigation with agent configuration navigation in the legacy shell", async () => {
-    mockInstanceSettingsApi.getExperimental.mockResolvedValue({
-      enableApps: true,
-      enableStreamlinedUi: false,
-    });
-
-    for (const pathname of [
-      "/PAP/agents/briefing-analyst/skills",
-      "/PAP/routines/routine-1/overview",
-    ]) {
-      currentPathname = pathname;
-      const root = createRoot(container);
-      const queryClient = new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      });
-
-      await act(async () => {
-        root.render(
-          <QueryClientProvider client={queryClient}>
-            <Layout />
-          </QueryClientProvider>,
-        );
-      });
-      await flushReact();
-      await flushReact();
-
-      expect(container.textContent).toContain("Main company nav");
-      if (pathname.includes("/agents/")) expect(container.textContent).toContain("Agent sidebar");
-      else expect(container.textContent).not.toContain("Agent sidebar");
-      expect(container.textContent).not.toContain("Routine sidebar");
-
-      await act(async () => {
-        root.unmount();
-      });
-      container.innerHTML = "";
-    }
-  });
-
-  it("keeps the global rail beside Skills navigation in the legacy shell", async () => {
-    currentPathname = "/PAP/skills/studio";
-    mockInstanceSettingsApi.getExperimental.mockResolvedValue({
-      enableApps: true,
-      enableStreamlinedUi: false,
-    });
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <Layout />
-        </QueryClientProvider>,
-      );
-    });
-    await flushReact();
-    await flushReact();
-
-    expect(container.textContent).toContain("Main company nav");
-    expect(container.textContent).toContain("Skills sidebar");
-    expect(mockSetForceCollapsed).toHaveBeenCalledWith(true);
-
-    await act(async () => {
-      root.unmount();
-    });
-  });
-
   it("keeps Agent and Routine collection routes in global navigation", async () => {
     for (const pathname of [
       "/PAP/agents/all",
       "/PAP/agents/new",
+      "/PAP/agents/new/custom",
       "/PAP/routines",
     ]) {
       currentPathname = pathname;

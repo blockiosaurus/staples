@@ -6,6 +6,7 @@ import {
   buildCompanyUserProfileMap,
   buildIssueMentionOptions,
   buildMarkdownMentionOptions,
+  isAgentTaskTarget,
 } from "./company-members";
 
 const activeMember = (overrides: Partial<CompanyMember>): CompanyMember => ({
@@ -24,6 +25,21 @@ const activeMember = (overrides: Partial<CompanyMember>): CompanyMember => ({
 });
 
 describe("company-members helpers", () => {
+  it("never treats the Assistant as a task target or mention option", () => {
+    const assistant = {
+      id: "assistant-1",
+      name: "Assistant",
+      status: "idle" as const,
+      icon: null,
+      metadata: { paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } },
+    };
+    const staff = { id: "agent-1", name: "Coder", status: "idle" as const, icon: null, metadata: null };
+    expect(isAgentTaskTarget(assistant)).toBe(false);
+    expect(isAgentTaskTarget(staff)).toBe(true);
+    const options = buildMarkdownMentionOptions({ agents: [assistant, staff] });
+    expect(options.map((option) => option.id)).toEqual(["agent:agent-1"]);
+  });
+
   it("builds labels from company member profiles", () => {
     const labels = buildCompanyUserLabelMap([
       activeMember({ principalId: "user-1", user: { id: "user-1", name: "Taylor", email: "taylor@example.com", image: null } }),

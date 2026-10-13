@@ -34,7 +34,9 @@
 
 import {
   INSTANCE_FEATURE_CATALOG,
+  RETIRED_FEATURE_KEYS,
   instanceExperimentalSettingsSchema,
+  type InstanceFeatureKey,
   type ManagedExperimentalFeatureKey,
 } from "@paperclipai/shared";
 
@@ -192,6 +194,9 @@ export function parseManagedConfigEnv(env: ManagedConfigEnv): ManagedInstanceCon
   }
   const knownKeys = managedFeatureKeySet();
   for (const [key, value] of Object.entries(doc.features)) {
+    // Retired flags are still valid schema keys but no longer catalog entries;
+    // older documents may carry them, so accept and ignore them.
+    if ((RETIRED_FEATURE_KEYS as readonly string[]).includes(key)) continue;
     if (!knownKeys.has(key)) {
       fail(
         `"features" has unknown feature key "${key}"; known keys are the boolean flags of instanceExperimentalSettingsSchema`,
@@ -203,7 +208,7 @@ export function parseManagedConfigEnv(env: ManagedConfigEnv): ManagedInstanceCon
     // code-pinned `floor`, or a tier demoted since the document's
     // `catalogVersion` was published) is version skew — refuse startup rather
     // than apply a control with mismatched catalog semantics.
-    const tier = INSTANCE_FEATURE_CATALOG[key as ManagedExperimentalFeatureKey].tier;
+    const tier = INSTANCE_FEATURE_CATALOG[key as InstanceFeatureKey].tier;
     if (tier !== "managed") {
       fail(
         `"features" key "${key}" has tier "${tier}" in this build's feature catalog; only tier "managed" keys may be set by a managed-config document (catalogVersion ${JSON.stringify(doc.catalogVersion)} is incompatible with this build)`,

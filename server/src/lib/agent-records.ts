@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { agents, costEvents, type Db } from "@paperclipai/db";
 import {
@@ -9,7 +10,9 @@ import {
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
 import { normalizeAgentPermissions } from "./agent-permissions.js";
-import { builtInAgentMarkersEqual, readBuiltInAgentMarker } from "./built-in-agent-metadata.js";
+import type { ActivityPublication } from "../types/activity-publication.js";
+import { builtInAgentMarkersEqual, rawBuiltInAgentMarker, readBuiltInAgentMarker } from "./built-in-agent-metadata.js";
+import { assertStaplesTemplateMetadataUnchanged } from "./staples-template-metadata.js";
 
 export function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -92,6 +95,12 @@ export interface CreateAgentOptions {
   aiConnectionInstall?: { connectionId: string; memberConnectionIds?: string[]; createdByUserId: string | null };
   allowBuiltInAgentMetadata?: boolean;
   claudeLogin?: ClaudeLoginContext;
+  /**
+   * Server-only hook run inside the creating transaction, right after the
+   * insert. Built-in provisioning records its provenance here so the agent row
+   * and its provenance commit (or roll back) together.
+   */
+  onCreatedInTransaction?: (tx: Db, created: typeof agents.$inferSelect, publications: ActivityPublication[]) => Promise<void>;
 }
 
 interface AgentShortnameRow {
@@ -458,10 +467,18 @@ export function agentRecordQueries(db: Db) {
     afterMetadata: unknown,
     options?: { allowBuiltInAgentMetadata?: boolean },
   ) {
+    // Template provenance is server-written by plans/apply, never by callers (built-in ones included).
+    assertStaplesTemplateMetadataUnchanged(beforeMetadata, afterMetadata);
     if (options?.allowBuiltInAgentMetadata) return;
     const beforeMarker = readBuiltInAgentMarker(beforeMetadata);
     const afterMarker = readBuiltInAgentMarker(afterMetadata);
-    if (builtInAgentMarkersEqual(beforeMarker, afterMarker)) return;
+    // Raw presence matters, not just a well-formed marker: a partial or
+    // malformed marker must never be writable by callers, and a stored marker
+    // may only be resubmitted exactly as stored.
+    const rawBefore = rawBuiltInAgentMarker(beforeMetadata);
+    const rawAfter = rawBuiltInAgentMarker(afterMetadata);
+    const rawUnchanged = rawAfter === undefined || (rawBefore !== undefined && isDeepStrictEqual(rawBefore, rawAfter));
+    if (rawUnchanged && builtInAgentMarkersEqual(beforeMarker, afterMarker)) return;
     throw conflict("Built-in agent marker is managed by Paperclip and cannot be edited directly", {
       code: "built_in_agent_marker_readonly",
       key: beforeMarker?.key ?? afterMarker?.key ?? null,

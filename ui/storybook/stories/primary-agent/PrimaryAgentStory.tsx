@@ -3,10 +3,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { Decorator } from "@storybook/react-vite";
 import type { Agent, Issue, ResourceMemberships } from "@paperclipai/shared";
 import { Layout } from "@/components/Layout";
-import { Layout as ClassicLayout } from "@/components/Layout.production";
 import { SidebarAgents } from "@/components/SidebarAgents";
 import { Agents } from "@/pages/Agents";
-import { Agents as ClassicAgents } from "@/pages/Agents.production";
 import { AgentDetail } from "@/pages/AgentDetail";
 import { AgentChats } from "@/pages/AgentChats";
 import { AgentChat } from "@/pages/AgentChat";
@@ -37,7 +35,6 @@ export interface PrimaryScenario {
   loading?: boolean;
   failNext?: boolean;
   firstCreated?: boolean;
-  classic?: boolean;
   drawer?: boolean;
   recentAssignee?: boolean;
   recentChat?: boolean;
@@ -82,8 +79,8 @@ function installFixtures(state: StoryState, changed: () => void) {
     if (path === "/api/auth/get-session") return json(storybookAuthSession);
     if (path === "/api/companies") return json([{ ...storybookCompanies[0], name: "Northstar", requireBoardApprovalForNewAgents: false }]);
     if (path === "/api/health") return json({ deploymentMode: "authenticated", status: "ok" });
-    if (path === "/api/instance/settings/experimental") return json({ enableStreamlinedUi: !state.options.classic, enableAgentChat: true, enableManagedSandboxOnly: false, enableCombinedInboxTasks: true });
-    if (path === "/api/instance/settings") return json({ experimental: { enableStreamlinedUi: !state.options.classic, enableAgentChat: true, enableBuiltInAgents: false, enableEnvironments: false } });
+    if (path === "/api/instance/settings/experimental") return json({ enableStreamlinedUi: true, enableAgentChat: true, enableManagedSandboxOnly: false, enableCombinedInboxTasks: true });
+    if (path === "/api/instance/settings") return json({ experimental: { enableStreamlinedUi: true, enableAgentChat: true, enableBuiltInAgents: false, enableEnvironments: false } });
     if (path === "/api/cli-auth/me" || path.endsWith("/access/me")) return json({ user: storybookAuthSession.user, userId: "user-board", source: "authenticated", isInstanceAdmin: false, companyIds: [companyId], memberships: [{ companyId, membershipRole: "owner", status: "active" }], keyId: null });
     if (path.endsWith("/resource-memberships/me")) return json(state.memberships);
     const membership = path.match(/resource-memberships\/me\/agents\/([^/]+)$/);
@@ -257,8 +254,8 @@ export function PrimaryPage({ task, drawer }: { task?: "primary" | "recent" | "e
     }
   }, [drawer, openNewIssue, setSidebarOpen, state, task]);
   return <PluginLauncherProvider><Routes>
-    <Route path="/:companyPrefix" element={state.options.classic ? <ClassicLayout /> : <Layout sidebarSections={<SidebarAgents streamlined />} />}>
-      <Route path="agents/all" element={state.options.classic ? <ClassicAgents /> : <Agents />} />
+    <Route path="/:companyPrefix" element={<Layout sidebarSections={<SidebarAgents />} />}>
+      <Route path="agents/all" element={<Agents />} />
       <Route path="agents" element={<Navigate to="/PAP/agents/all" replace />} />
       <Route path="agents/:agentId/:tab?" element={<AgentDetail />} />
       <Route path="chats" element={<ChatEntry />} />

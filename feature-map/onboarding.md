@@ -28,7 +28,7 @@ Preconditions: follow the [baseline](./README.md#before-driving-a-journey). Use 
 
 ### `web-wizard`
 
-Automated: [wizard tests](../ui/src/components/OnboardingWizard.test.tsx) cover mocked wizard behavior; [onboarding browser suite](../tests/e2e/onboarding.spec.ts) supplies its own test environment. Live model execution is a separate check.
+Automated: the onboarding wizard is retired; new companies start at `/start` and continue in the Assistant. [Start page tests](../ui/src/staples/start/StartCompanyPage.test.tsx) cover mocked creation; the [release smoke](../tests/release-smoke/docker-auth-onboarding.spec.ts) drives `/start` to the Assistant and its setup card in a packaged build. Live model execution is a separate check.
 
 Manual: Create a disposable company and first agent. Save and leave midway, reopen, and finish. Follow the created first task, verify the selected agent and company, and inspect its output or explicit authentication gate. Reload both company and task.
 

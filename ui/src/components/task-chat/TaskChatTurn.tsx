@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { useStreamlinedTaskChatPresentation } from "./presentation-mode";
 import { Check, ChevronRight, X } from "lucide-react";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import type {
@@ -75,7 +74,6 @@ export function TaskChatTurn({
   timestampPrefix,
   leading,
 }: TaskChatTurnProps) {
-  const streamlined = useStreamlinedTaskChatPresentation();
   const parentRow = !item.settled && item.liveStatus != null;
   // The new Paperclip Runner task surface owns one durable chronological
   // timeline. The Worked/Stopped row is its stable header, so it stays directly
@@ -190,7 +188,7 @@ export function TaskChatTurn({
         item.standaloneHeader
           ? "border-b border-border/70 py-2 text-sm"
           : "py-0.5 text-xs",
-        streamlined && "min-w-0",
+        "min-w-0",
       )}
       data-testid="task-chat-turn-summary"
     >
@@ -253,17 +251,10 @@ export function TaskChatTurn({
       data-settled={item.settled ? "true" : "false"}
     >
       {leading ? (
-        streamlined ? (
-          <div className="flex w-full items-center justify-between gap-2">
-            <div className="min-w-0">{header}</div>
-            <div className="shrink-0">{leading}</div>
-          </div>
-        ) : (
-          <div className="flex items-center gap-1">
-            {leading}
-            {header}
-          </div>
-        )
+        <div className="flex w-full items-center justify-between gap-2">
+          <div className="min-w-0">{header}</div>
+          <div className="shrink-0">{leading}</div>
+        </div>
       ) : (
         header
       )}

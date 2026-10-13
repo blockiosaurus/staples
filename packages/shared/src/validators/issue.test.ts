@@ -4,6 +4,7 @@ import {
   addIssueCommentSchema,
   paperclipQuestionSetPayloadSchema,
   issueCommentMetadataSchema,
+  assistantPageContextSchema,
   createIssueSchema,
   issueBlockedInboxAttentionSchema,
   resolveIssueRecoveryActionSchema,
@@ -695,5 +696,20 @@ describe("persisted canonical question initial text", () => {
       expect(paperclipQuestionSetPayloadSchema.safeParse(input({ initialText })).success).toBe(false);
     }
     expect(paperclipQuestionSetPayloadSchema.safeParse(input({ answerMode: "single_select", options: [{ id: "a", label: "A" }], initialText: "a" })).success).toBe(false);
+  });
+});
+
+describe("assistantPageContextSchema", () => {
+  it("accepts chat metadata carrying only pageContext", () => {
+    const pageContext = { route: "/issues/PAP-12", title: "Fix it", entity: { type: "issue" as const, id: "abc", label: "PAP-12" } };
+    expect(addIssueCommentSchema.parse({ body: "hi", metadata: { version: 1, pageContext } }).metadata?.pageContext).toEqual(pageContext);
+  });
+  it("rejects oversized or unknown fields", () => {
+    expect(assistantPageContextSchema.safeParse({ route: "x".repeat(501) }).success).toBe(false);
+    expect(assistantPageContextSchema.safeParse({ route: "" }).success).toBe(false);
+    expect(assistantPageContextSchema.safeParse({ route: "/a", title: "x".repeat(201) }).success).toBe(false);
+    expect(assistantPageContextSchema.safeParse({ route: "/a", entity: { type: "issue", id: "x".repeat(201) } }).success).toBe(false);
+    expect(assistantPageContextSchema.safeParse({ route: "/a", entity: { type: "bogus", id: "1" } }).success).toBe(false);
+    expect(assistantPageContextSchema.safeParse({ route: "/a", extra: 1 }).success).toBe(false);
   });
 });

@@ -176,7 +176,7 @@ describe("CompanySettingsSidebar", () => {
     expect(container.textContent).not.toContain("Tools & Access");
     expect(sidebarNavItemMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: "/dashboard",
+        to: "/home",
         label: "Back to app",
       }),
     );

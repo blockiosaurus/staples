@@ -3,10 +3,12 @@
 import type { ComponentProps, ReactElement } from "react";
 import { act, forwardRef, useImperativeHandle, type ForwardedRef } from "react";
 import { flushSync } from "react-dom";
+import { loadDraft } from "@/lib/composer-draft";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { EmbeddedSurfaceContext } from "@/context/EmbeddedSurfaceContext";
 import { TaskChatThread } from "./TaskChatThread";
 import type {
   IssueDocument,
@@ -44,7 +46,6 @@ const DIRECT_ADAPTER_TYPES = [
   "custom_plugin",
 ] as const;
 const editorCallbacks = vi.hoisted(() => ({ change: (_value: string) => {} }));
-const streamlinedState = vi.hoisted(() => ({ enabled: true }));
 
 vi.mock("@/components/transcript/useLiveRunTranscripts", () => ({
   useLiveRunTranscripts: ({ runs }: { runs: unknown[] }) => {
@@ -71,12 +72,6 @@ vi.mock("@/context/SidebarContext", () => ({
 }));
 vi.mock("@/hooks/useIssuePlanDocument", () => ({
   useIssuePlanDocument: () => planState,
-}));
-vi.mock("@/hooks/useStreamlinedUiEnabled", () => ({
-  useStreamlinedUiEnabled: () => ({
-    enabled: streamlinedState.enabled,
-    loaded: true,
-  }),
 }));
 vi.mock("@/lib/router", () => ({
   Link: ({
@@ -122,7 +117,6 @@ beforeEach(() => {
   transcriptHookRuns.native.length = 0;
   sidebarState.isMobile = false;
   planState.data = null;
-  streamlinedState.enabled = true;
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -175,8 +169,7 @@ describe.each(["legacy", "native"] as const)("historical %s system status", (run
     ]);
   };
 
-  it.each([true, false].flatMap(streamlined => ["done", "cancelled"].map(issueStatus => ({ streamlined, issueStatus }))))("removes failures, stops, waits and stored notices on $issueStatus tasks (streamlined=$streamlined)", ({ streamlined, issueStatus }) => {
-    streamlinedState.enabled = streamlined;
+  it.each(["done", "cancelled"])("removes failures, stops, waits and stored notices on %s tasks", (issueStatus) => {
     setTranscript("failed");
     const props = {
       comments: [
@@ -275,8 +268,7 @@ describe.each(["legacy", "native"] as const)("historical %s system status", (run
   });
 });
 
-it.each([true, false])("interleaves browser sessions with their requests and preserves position on status updates (streamlined=%s)", (streamlined) => {
-  streamlinedState.enabled = streamlined;
+it("interleaves browser sessions with their requests and preserves position on status updates", () => {
   const onOpenBrowser = vi.fn();
   const comments = [0, 2, 4].map((minute) => ({
     id: `comment-${minute}`, companyId: "company", issueId: "issue",
@@ -312,6 +304,36 @@ it.each([true, false])("interleaves browser sessions with their requests and pre
   expect(anchors()).toEqual(expected);
 });
 
+it.each([false, true])("on a mobile viewport, embedded=%s decides window auto-follow vs its own scroller", async (embedded) => {
+  sidebarState.isMobile = true;
+  window.history.scrollRestoration = "auto";
+  document.documentElement.classList.remove("task-chat-window-scroll");
+  const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  render(
+    <EmbeddedSurfaceContext.Provider value={embedded}>
+      <TaskChatThread issueId="embedded-issue" comments={[]} onAdd={async () => {}} />
+    </EmbeddedSurfaceContext.Provider>,
+  );
+  await act(async () => {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  });
+  const thread = container.querySelector('[data-testid="task-chat-thread"]');
+  if (embedded) {
+    expect(document.documentElement.classList.contains("task-chat-window-scroll")).toBe(false);
+    expect(window.history.scrollRestoration).toBe("auto");
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(thread?.className).toContain("min-h-0 flex-1");
+  } else {
+    expect(document.documentElement.classList.contains("task-chat-window-scroll")).toBe(true);
+    expect(window.history.scrollRestoration).toBe("manual");
+    expect(thread?.className).not.toContain("min-h-0 flex-1");
+  }
+  flushSync(() => root!.render(<></>));
+  expect(document.documentElement.classList.contains("task-chat-window-scroll")).toBe(false);
+  expect(window.history.scrollRestoration).toBe("auto");
+  scrollTo.mockRestore();
+});
+
 it("coordinates first reveal while keeping the composer and visible history mounted through refresh", async () => {
   sidebarState.isMobile = true;
   const props = {
@@ -339,6 +361,29 @@ it("coordinates first reveal while keeping the composer and visible history moun
   ).toBeNull();
   expect(container.querySelector('[data-testid="mock-editor"]')).toBe(composer);
   expect(container.querySelector('.task-chat-history-pending')).toBeNull();
+});
+
+it("reveals ready history in a hidden document, where animation frames never fire", async () => {
+  // Hidden documents (background tabs, a hidden embedded browser pane) pause
+  // requestAnimationFrame. The reveal must not depend on a frame there, or the
+  // thread stays concealed as skeletons until the stalled-history timeout.
+  vi.useFakeTimers();
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+  try {
+    sidebarState.isMobile = false;
+    const props = { issueId: "hidden-issue", comments: [], onAdd: async () => {} };
+    render(<TaskChatThread {...props} initialHistoryPending />);
+    render(<TaskChatThread {...props} initialHistoryPending={false} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(container.querySelector('[data-testid="task-chat-history-loading"]')).toBeNull();
+    expect(container.querySelector('[data-testid="task-chat-history-content"]')?.hasAttribute("inert")).toBe(false);
+    expect(container.textContent).not.toContain("Some task history is still loading.");
+  } finally {
+    raf.mockRestore();
+    visibility.mockRestore();
+    vi.useRealTimers();
+  }
 });
 
 it.each([true, false])("reveals saved conversation when initial history stalls (mobile=%s)", async (mobile) => {
@@ -775,6 +820,94 @@ describe("TaskChatThread draft pass-through", () => {
     expect(dock?.classList).not.toContain("md:pb-4");
     expect(dock?.classList).not.toContain("bg-background/80");
     expect(dock?.classList).not.toContain("backdrop-blur");
+  });
+
+  it("renders a custom empty state whose suggestions fill the composer", async () => {
+    render(
+      <TaskChatThread
+        comments={[]}
+        onAdd={async () => {}}
+        draftKey="assistant-draft"
+        emptyState={({ fill }) => (
+          <button type="button" data-testid="suggestion" onClick={() => fill("Build a newsletter")}>Suggest</button>
+        )}
+      />,
+    );
+    expect(container.textContent).not.toContain("No messages yet.");
+    const suggestion = container.querySelector<HTMLButtonElement>('[data-testid="suggestion"]');
+    expect(suggestion).not.toBeNull();
+    await act(async () => { suggestion!.click(); });
+    expect(container.querySelector('[data-testid="mock-editor"]')?.textContent).toBe("Build a newsletter");
+    expect(loadDraft("assistant-draft")).toBe("Build a newsletter");
+  });
+
+  it("fills the composer from an external draft request and reports it consumed once", async () => {
+    const consumed = vi.fn();
+    render(
+      <TaskChatThread
+        comments={[]}
+        onAdd={async () => {}}
+        draftKey="external-draft"
+        externalDraftRequest={{ text: "Ask about this", nonce: 4 }}
+        onDraftRequestConsumed={consumed}
+      />,
+    );
+    await act(async () => {});
+    expect(container.querySelector('[data-testid="mock-editor"]')?.textContent).toBe("Ask about this");
+    expect(consumed).toHaveBeenCalledTimes(1);
+    expect(consumed).toHaveBeenCalledWith(4);
+  });
+
+  it("sends an external draft request once through onAdd", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    render(
+      <TaskChatThread
+        comments={[]}
+        onAdd={onAdd}
+        draftKey="external-send"
+        externalDraftRequest={{ text: "Ask about this", nonce: 1, send: true }}
+      />,
+    );
+    await act(async () => {});
+    await act(async () => {});
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    expect(onAdd.mock.calls[0]![0]).toBe("Ask about this");
+  });
+
+  it("keeps an external send request as a draft while the composer is replaced", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    const props = { comments: [], onAdd, draftKey: "external-replaced" };
+    const request = { text: "Ask about this", nonce: 1, send: true };
+    render(<TaskChatThread {...props} externalDraftRequest={request} composerReplacement={<div>Connect a model</div>} />);
+    await act(async () => {});
+    render(<TaskChatThread {...props} externalDraftRequest={null} />);
+    await act(async () => {});
+    await act(async () => {});
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="mock-editor"]')?.textContent).toBe("Ask about this");
+  });
+
+  it("lets the composer replacement explain a paused, failed agent instead of the lifecycle banner", () => {
+    const agent = { id: "assistant", name: "Assistant", status: "paused", lifecycleState: "verifying",
+      lifecycleError: "The lifecycle step failed. Retry the operation." } as never;
+    const props = { comments: [], onAdd: async () => {}, currentAssigneeValue: "agent:assistant", agentMap: new Map([["assistant", agent]]) };
+    render(<TaskChatThread {...props} />);
+    expect(container.querySelector('[data-testid="issue-assignee-paused-notice"]')).not.toBeNull();
+    render(<TaskChatThread {...props} composerReplacement={<div data-testid="setup-card">Connect a model</div>} />);
+    expect(container.querySelector('[data-testid="issue-assignee-paused-notice"]')).toBeNull();
+    expect(container.textContent).not.toContain("couldn't start");
+  });
+
+  it("renders a composer replacement in place of the composer", () => {
+    render(
+      <TaskChatThread
+        comments={[]}
+        onAdd={async () => {}}
+        composerReplacement={<div data-testid="setup-card">Connect a model</div>}
+      />,
+    );
+    expect(container.querySelector('[data-testid="setup-card"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="mock-editor"]')).toBeNull();
   });
 
   it("forwards draftKey so the composer restores a task's saved draft", () => {
@@ -3245,28 +3378,6 @@ describe("TaskChatThread composer alignment", () => {
     expect(dock?.className).not.toContain("md:w-(--pct-80)");
   });
 
-  it("uses master's production composer and gutters when Streamlined UI is off", () => {
-    streamlinedState.enabled = false;
-    render(<TaskChatThread comments={[]} onAdd={async () => {}} />);
-
-    const dock = container.querySelector(
-      '[data-testid="task-chat-composer-dock"]',
-    );
-    const composer = container.querySelector(".paperclip-task-chat-composer");
-    const send = container.querySelector(
-      '[data-testid="task-chat-composer-send"]',
-    );
-
-    expect(dock?.classList).not.toContain("md:px-0");
-    expect(dock?.classList).not.toContain("md:pb-4");
-    expect(dock?.classList).toContain("bg-background/80");
-    expect(dock?.classList).toContain("pt-1");
-    expect(dock?.classList).not.toContain("-mt-(--radius-task-composer)");
-    expect(composer?.classList).not.toContain("border");
-    expect(composer?.classList).toContain("bg-card");
-    expect(send?.classList).toContain("rounded-full");
-    expect(send?.classList).not.toContain("rounded-md");
-  });
 });
 
 describe("TaskChatThread no-live-execution-path recovery", () => {
@@ -4656,5 +4767,49 @@ describe("TaskChatThread composer execution controls", () => {
   it("does not offer Stop for settled work even when a callback is available", () => {
     render(<TaskChatThread comments={[]} onAdd={async () => {}} issueStatus="todo" onCancelRun={vi.fn()} />);
     expect(container.querySelector('[data-testid="task-chat-composer-stop"]')).toBeNull();
+  });
+});
+
+describe("TaskChatThread proposed plan card", () => {
+  const PLAN_PATH = "/api/companies/company-1/plans/apply";
+  function planProposal(status: "pending" | "accepted"): IssueThreadInteraction {
+    const base = planReviewInteraction(status);
+    return {
+      ...base,
+      id: "plan-proposal",
+      addresseeUserId: "user-board",
+      result: status === "accepted"
+        ? { version: 1, proposedAction: { status: "executed", httpStatus: 201, message: "Plan created: 1 agent, 1 task.", hash: "a".repeat(64) } }
+        : null,
+      payload: {
+        version: 1,
+        prompt: "Set up a writer",
+        acceptLabel: "Create plan",
+        rejectLabel: "Cancel",
+        proposedAction: {
+          version: 1, method: "POST", path: PLAN_PATH, summary: "Set up a writer", category: "plan", hash: "a".repeat(64),
+          body: { agents: [], tasks: [{ clientKey: "t1", title: "Write intro", blockedByClientKeys: [] }] },
+        },
+      },
+    } as unknown as IssueThreadInteraction;
+  }
+  const createPlanButtons = () => Array.from(container.querySelectorAll("button")).filter(b => b.textContent?.trim() === "Create plan");
+
+  it("shows the full card once (in the takeover) with a stub in the timeline while pending", () => {
+    render(<TaskChatThread comments={[]} interactions={[planProposal("pending")]} currentUserId="user-board" onAdd={async () => {}} />);
+    expect(createPlanButtons()).toHaveLength(1);
+    expect(container.querySelectorAll('[data-testid="proposed-action-card"]')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="task-chat-composer-takeover"] [data-testid="proposed-action-card"]')).not.toBeNull();
+    const stub = container.querySelector('[data-testid="task-chat-proposed-action-stub"]');
+    expect(stub?.textContent).toContain("Plan waiting for your confirmation");
+    expect(container.querySelector('[data-testid="task-chat-composer-takeover"] [data-testid="task-chat-proposed-action-stub"]')).toBeNull();
+  });
+
+  it("shows the outcome in the timeline once resolved, with no stub", () => {
+    render(<TaskChatThread comments={[]} interactions={[planProposal("accepted")]} currentUserId="user-board" onAdd={async () => {}} />);
+    expect(container.querySelector('[data-testid="task-chat-proposed-action-stub"]')).toBeNull();
+    expect(createPlanButtons()).toHaveLength(0);
+    const card = container.querySelector('[data-testid="proposed-action-card"]');
+    expect(card?.textContent).toContain("Plan created: 1 agent, 1 task.");
   });
 });

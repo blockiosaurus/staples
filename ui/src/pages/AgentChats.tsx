@@ -11,13 +11,13 @@ import { agentRouteRef } from "@/lib/utils";
 
 export function AgentChats() {
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { companyId, userId, enabled, loaded, agents, chats, session } = useAgentChatNavigation();
+  const { companyId, userId, agents, chats, session } = useAgentChatNavigation();
   useEffect(() => setBreadcrumbs([{ label: "Chat" }]), [setBreadcrumbs]);
   return <AgentChatsContent key={`${companyId}:${userId}`} companyId={companyId} userId={userId}
-    enabled={enabled} loaded={loaded} agents={agents} chats={chats} session={session} />;
+    agents={agents} chats={chats} session={session} />;
 }
 
-function AgentChatsContent({ companyId, userId, enabled, loaded, agents, chats, session }: Pick<ReturnType<typeof useAgentChatNavigation>, "companyId" | "userId" | "enabled" | "loaded" | "agents" | "chats" | "session">) {
+function AgentChatsContent({ companyId, userId, agents, chats, session }: Pick<ReturnType<typeof useAgentChatNavigation>, "companyId" | "userId" | "agents" | "chats" | "session">) {
   const primary = usePrimaryAgentPresentation(companyId);
   const openChat = useOpenAgentChat(companyId, userId);
   const navigate = useNavigate();
@@ -31,7 +31,7 @@ function AgentChatsContent({ companyId, userId, enabled, loaded, agents, chats, 
   // missing agent or a saved issue needs history to validate that visit.
   const needsHistory = !!firstId && (!firstAgent || !!recordedAgentChatIssueId(companyId ?? "", userId, firstId));
   const resolvingRecent = recentIds.length > 0 && !blockingError && (!agents.isFetched || !session.isFetched || (needsHistory && !chats.isFetched && !chats.error));
-  const recentChatPath = loaded && enabled && companyId && !blockingError && !resolvingRecent
+  const recentChatPath = companyId && !blockingError && !resolvingRecent
     ? recentIds.map(id => {
       const agent = agents.data?.find(item => item.id === id);
       const historyIssue = chats.data?.find(chat => chat.conversationAgentId === id);
@@ -45,14 +45,12 @@ function AgentChatsContent({ companyId, userId, enabled, loaded, agents, chats, 
     : undefined;
   const primaryAgent = agents.data?.find(agent => agent.id === primary?.primaryAgentId
     && agent.status !== "terminated" && agent.status !== "pending_approval");
-  const entryPath = recentChatPath ?? (loaded && enabled && !blockingError && !resolvingRecent
+  const entryPath = recentChatPath ?? (!blockingError && !resolvingRecent
     && agents.isFetched && session.isFetched && !primary?.loading && primaryAgent
     ? `/chats/${encodeURIComponent(agentRouteRef(primaryAgent))}` : undefined);
   useEffect(() => {
     if (entryPath) navigate(entryPath, { replace: true });
   }, [navigate, entryPath]);
-  if (!loaded) return <p role="status" className="text-sm text-muted-foreground">Loading chat…</p>;
-  if (!enabled) return <p className="text-sm text-muted-foreground">Agent Chat is disabled. Enable it in Experimental settings.</p>;
   if (!companyId) return <p className="text-sm text-muted-foreground">Select a company to start a conversation.</p>;
   if (resolvingRecent || entryPath || primary?.loading) return <p role="status" className="text-sm text-muted-foreground">Opening chat…</p>;
   const error = blockingError ?? (recentIds.length > 0 ? chats.error : null);

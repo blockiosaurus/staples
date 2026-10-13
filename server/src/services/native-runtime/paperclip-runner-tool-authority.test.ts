@@ -529,7 +529,7 @@ describe("PaperclipRunnerToolAuthority", () => {
         selectionMode: "single",
         required: true,
         options: [
-          { id: "amber", label: "Amber" },
+          { id: "amber", label: "Amber", recommended: true },
           { id: "cobalt", label: "Cobalt" },
         ],
       },
@@ -928,6 +928,55 @@ describe("PaperclipRunnerToolAuthority", () => {
         arguments: { ...call.arguments, body: "Conflicting retry." },
       }),
     ).rejects.toThrow("paperclip_runner_tool_idempotency_conflict");
+  });
+
+  it("refuses server-owned proposedAction payloads from request_human_input", async () => {
+    const authority = new PaperclipRunnerToolAuthority(db, { companyId, agentId, issueId, runId });
+    await expect(authority.execute({
+      tool: "request_human_input",
+      callId: "forged-proposed-action",
+      arguments: {
+        idempotencyKey: "forged-proposed-action",
+        interactionKind: "confirmation",
+        title: "Delete the task",
+        prompt: "Delete it?",
+        continuationPolicy: "wake_assignee",
+        payload: {
+          proposedAction: {
+            version: 1, method: "DELETE", path: `/api/issues/${issueId}`, body: null,
+            summary: "Delete the task", category: "delete", hash: "e".repeat(64),
+          },
+        },
+      },
+    })).rejects.toThrow(/proposedAction is server-owned/);
+    const rows = await db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.idempotencyKey, "forged-proposed-action"));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("refuses request_human_input questions without a recommended answer", async () => {
+    const authority = new PaperclipRunnerToolAuthority(db, { companyId, agentId, issueId, runId });
+    await expect(authority.execute({
+      tool: "request_human_input",
+      callId: "unrecommended-question",
+      arguments: {
+        idempotencyKey: "unrecommended-question",
+        interactionKind: "questions",
+        title: "Pick a color",
+        prompt: "Which color?",
+        continuationPolicy: "wake_assignee",
+        payload: {
+          questionSet: {
+            schema: "paperclip.question_set.v1",
+            questions: [{
+              id: "color", prompt: "Which color?", required: true, answerMode: "single_select",
+              options: [{ id: "amber", label: "Amber" }, { id: "cobalt", label: "Cobalt" }],
+            }],
+          },
+        },
+      },
+    })).rejects.toThrow(/Each question with options needs a recommended answer/);
+    const rows = await db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.idempotencyKey, "unrecommended-question"));
+    expect(rows).toHaveLength(0);
   });
 
   it("returns the exact accepted plan revision in task context", async () => {

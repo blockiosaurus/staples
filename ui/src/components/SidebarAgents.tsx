@@ -12,6 +12,7 @@ import {
   PlayCircle,
   Plus,
   Star,
+  UserPlus,
   Users,
   AlertTriangle,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import { useDialogActions } from "../context/DialogContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useToastActions } from "../context/ToastContext";
 import { agentsApi } from "../api/agents";
+import { excludeAssistantAgents } from "../lib/assistant-agent";
 import { builtInAgentsApi, type BuiltInAgentStatus } from "../api/builtInAgents";
 import { BuiltInLifecycleChip } from "./BuiltInAgentBadges";
 import { authApi } from "../api/auth";
@@ -294,7 +296,7 @@ function SidebarAgentItem({
   );
 }
 
-export function SidebarAgents({ streamlined = false }: { streamlined?: boolean } = {}) {
+export function SidebarAgents() {
   const [open, setOpen] = useState(true);
   const [pendingAgentIds, setPendingAgentIds] = useState<Set<string>>(() => new Set());
   const [liveLingerVersion, setLiveLingerVersion] = useState(0);
@@ -312,6 +314,7 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
     queryKey: queryKeys.agents.list(selectedCompanyId!),
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
+    select: excludeAssistantAgents,
   });
   const { data: experimentalSettings } = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
@@ -435,15 +438,39 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
     });
   }, [liveCountByAgent, liveLingerVersion, sortedAgents]);
   const hasActiveAgents = runningAgents.length > 0;
-  const displayedAgents = !streamlined
-    ? sortedAgents
-    : hasActiveAgents
-      ? runningAgents
-      : sortedAgents.slice(0, RECENT_AGENT_LIMIT);
+  const displayedAgents = hasActiveAgents
+    ? runningAgents
+    : sortedAgents.slice(0, RECENT_AGENT_LIMIT);
   // Always expose "See all agents" whenever the displayed list is a subset of all
-  // agents, so users never lose the entry point to the full list. In classic mode
-  // every agent is already shown, so the link is unnecessary.
-  const showSeeAllLink = streamlined && sortedAgents.length > 0;
+  // agents, so users never lose the entry point to the full list.
+  const showSeeAllLink = sortedAgents.length > 0;
+
+  // Deliberately NOT SidebarNavItems: quiet muted affordances (plain Links)
+  // that must not adopt nav-row active-route highlighting.
+  const renderQuietLink = (to: string, label: string, Icon: typeof Users) => {
+    const link = (
+      <Link
+        to={to}
+        state={SIDEBAR_SCROLL_RESET_STATE}
+        aria-label={rail ? label : undefined}
+        onClick={() => {
+          if (isMobile) setSidebarOpen(false);
+        }}
+        className="flex items-center gap-2.5 mx-2 rounded-lg px-2 py-1.5 pointer-coarse:py-1 text-(length:--text-compact) font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      >
+        <Icon className="shrink-0 h-4 w-4" />
+        <span className={rail ? SIDEBAR_RAIL_HIDDEN_LABEL : undefined}>{label}</span>
+      </Link>
+    );
+    return rail ? (
+      <Tooltip>
+        <TooltipTrigger asChild>{link}</TooltipTrigger>
+        <TooltipContent side="right">{label}</TooltipContent>
+      </Tooltip>
+    ) : (
+      link
+    );
+  };
 
   const agentMatch = location.pathname.match(/^\/(?:[^/]+\/)?agents\/([^/]+)(?:\/([^/]+))?/);
   const activeAgentId = agentMatch?.[1] ?? null;
@@ -479,8 +506,6 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
   }, [sortModeStorageKey]);
 
   useEffect(() => {
-    if (!streamlined) return;
-
     const now = Date.now();
     let nextExpiryAt: number | null = null;
     for (const agent of sortedAgents) {
@@ -500,7 +525,7 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [streamlined, sortedAgents, liveCountByAgent, liveLingerVersion]);
+  }, [sortedAgents, liveCountByAgent, liveLingerVersion]);
 
   const persistSortMode = useCallback(
     (value: string) => {
@@ -661,32 +686,8 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
         ...starredAgents.filter(agent => agent.id !== primaryAgent?.id),
         ...dedupedDisplayedAgents.filter(agent => agent.id !== primaryAgent?.id),
       ].map(agent => renderAgentRow(agent, starredAgentIdSet.has(agent.id)))}
-      {showSeeAllLink && (() => {
-        // Deliberately NOT a SidebarNavItem: this is a quiet muted affordance
-        // (plain Link) that must not adopt nav-row active-route highlighting.
-        const seeAllLink = (
-          <Link
-            to="/agents/all"
-            state={SIDEBAR_SCROLL_RESET_STATE}
-            aria-label={rail ? "See all agents" : undefined}
-            onClick={() => {
-              if (isMobile) setSidebarOpen(false);
-            }}
-            className="flex items-center gap-2.5 mx-2 rounded-lg px-2 py-1.5 pointer-coarse:py-1 text-(length:--text-compact) font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          >
-            <Users className="shrink-0 h-4 w-4" />
-            <span className={rail ? SIDEBAR_RAIL_HIDDEN_LABEL : undefined}>See all agents</span>
-          </Link>
-        );
-        return rail ? (
-          <Tooltip>
-            <TooltipTrigger asChild>{seeAllLink}</TooltipTrigger>
-            <TooltipContent side="right">See all agents</TooltipContent>
-          </Tooltip>
-        ) : (
-          seeAllLink
-        );
-      })()}
+      {showSeeAllLink ? renderQuietLink("/agents/all", "See all agents", Users) : null}
+      {renderQuietLink("/agents/new", "Hire an agent", UserPlus)}
     </SidebarSection>
   );
 }

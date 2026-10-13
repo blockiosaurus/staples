@@ -3,7 +3,6 @@ import { createRunDispatch, deriveCommentId } from "../../modules/run-dispatch/i
 import { buildExecutionContinuation } from "../execution-continuation.js";
 import { issueService } from "../issues.js";
 import { activityService } from "../activity.js";
-import { instanceSettingsService } from "../instance-settings.js";
 import { buildPaperclipWakePayload, heartbeatService } from "../heartbeat.js";
 import { legacyExecutionNeedsReconciliation, terminalizeLegacyExecution } from "../legacy-execution-recovery.js";
 import { deliverExecutionStatuses } from "../execution-status-delivery.js";
@@ -442,7 +441,6 @@ const support = externalDatabaseUrl
       await expect(validateExecutionReconciliation({ ...input, decision: verified })).resolves.toMatchObject({ id: source.runId });
       await markExecutionReconciliation(db, action, verified, "operator");
       // Occupy the only agent slot. Exercise real admission without a provider.
-      await instanceSettingsService(db).updateExperimental({ enableAgentChat: true });
       await db.update(agents).set({ status: "active", adapterType: "grok_local", runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } } }).where(eq(agents.id, source.agentId));
       await db.update(issues).set({ responsibleUserId: "board-user" }).where(eq(issues.id, source.issueId));
       await db.insert(heartbeatRuns).values({ companyId: source.companyId, agentId: source.agentId, status: "running" });

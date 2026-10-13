@@ -1,0 +1,1 @@
+ALTER TABLE "cost_events" ADD COLUMN "hosted_inference" boolean DEFAULT false NOT NULL;

@@ -52,7 +52,8 @@ export function nativePhotonInteraction(
     interaction.kind === "request_confirmation" &&
     !interaction.payload.toolAction &&
     !interaction.payload.secretProposal &&
-    !interaction.payload.connectionAuthorization
+    !interaction.payload.connectionAuthorization &&
+    !interaction.payload.proposedAction
   );
 }
 export function photonResponseCommand(text: string): {

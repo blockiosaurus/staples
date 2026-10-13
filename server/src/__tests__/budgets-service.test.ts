@@ -196,6 +196,7 @@ describeEmbeddedPostgres("budgetService release gate enforcement", () => {
       scopeType: "agent",
       scopeId: agentId,
       scopeName: "Budget Agent SECRET_TOKEN_SHOULD_NOT_LEAK",
+      code: "budget_reached",
       reason: "Agent is paused because its budget hard-stop was reached.",
     });
 
@@ -322,6 +323,7 @@ describeEmbeddedPostgres("budgetService release gate enforcement", () => {
       scopeType: "project",
       scopeId: projectId,
       scopeName: "Budget Project",
+      code: "budget_reached",
       reason: "Project cannot start work because its budget hard-stop is still exceeded.",
     });
 

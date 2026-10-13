@@ -31,6 +31,7 @@ export const AGENT_ADAPTER_TYPES = [
   "codex_local",
   "paperclip_runner",
   "cursor_cloud",
+  "claude_managed",
   "gemini_local",
   "grok_local",
   "hermes_gateway",
@@ -365,6 +366,8 @@ export const ISSUE_ORIGIN_KINDS = [
   TASK_WATCHDOG_PRODUCT_BUG_ORIGIN_KIND,
   ONBOARDING_FIRST_TASK_ORIGIN_KIND,
   "chat_channel",
+  // The company's single "Weekly updates" task; the Assistant saves its weekly update documents there.
+  "assistant_weekly_updates",
 ] as const;
 export type BuiltInIssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
 export type PluginIssueOriginKind = `plugin:${string}`;
@@ -669,8 +672,9 @@ export type RoutineRunSource = (typeof ROUTINE_RUN_SOURCES)[number];
 
 // "import" marks agents parked by a company import (safety default) so the UI
 // can explain the pause and offer a scoped bulk-resume; "system" remains the
-// reason for platform-managed pauses (plugins, built-ins).
-export const PAUSE_REASONS = ["manual", "budget", "system", "company_archived", "import"] as const;
+// reason for platform-managed pauses (plugins, built-ins). "template_setup"
+// holds an agent hired from a Staples template until its guards are in place.
+export const PAUSE_REASONS = ["manual", "budget", "system", "company_archived", "import", "template_setup"] as const;
 export type PauseReason = (typeof PAUSE_REASONS)[number];
 
 export const PROJECT_COLORS = [
@@ -875,7 +879,13 @@ export type FinanceUnit = (typeof FINANCE_UNITS)[number];
 export const BUDGET_SCOPE_TYPES = ["company", "agent", "project"] as const;
 export type BudgetScopeType = (typeof BUDGET_SCOPE_TYPES)[number];
 
-export const BUDGET_METRICS = ["billed_cents"] as const;
+/**
+ * `billed_cents`: all billed spend in the scope. `hosted_billed_cents`: only
+ * spend billed to the operator's hosted-inference key (company or agent scope;
+ * set by the server and board routes for hosted inference; never pauses the
+ * company or an agent, it only refuses hosted runs).
+ */
+export const BUDGET_METRICS = ["billed_cents", "hosted_billed_cents"] as const;
 export type BudgetMetric = (typeof BUDGET_METRICS)[number];
 
 export const BUDGET_WINDOW_KINDS = ["calendar_month_utc", "lifetime"] as const;
@@ -1505,6 +1515,7 @@ export const WORKSPACE_OVERVIEW_LINKED_ISSUE_LIMIT = 4;
  * These map to first-class host pages under `/:companyPrefix/...`.
  */
 export const PLUGIN_RESERVED_COMPANY_ROUTE_SEGMENTS = [
+  "home",
   "dashboard",
   "onboarding",
   "companies",

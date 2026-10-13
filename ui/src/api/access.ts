@@ -241,6 +241,8 @@ export type CurrentBoardAccess = {
     companyId: string;
     membershipRole: HumanCompanyRole | "member" | null;
     status: "pending" | "active" | "suspended" | "archived";
+    /** Whether the server lets this person assign tasks here, which "Update me now" needs. */
+    canAssignTasks?: boolean;
   }>;
   source: string;
   keyId: string | null;

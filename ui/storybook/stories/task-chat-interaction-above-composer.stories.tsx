@@ -114,7 +114,7 @@ function InteractionAboveComposer({ interaction, mobile = false }: { interaction
             {messages.map((body, index) => <p key={index} className="ml-8 rounded-lg bg-secondary px-3 py-2">{body}</p>)}
           </div>
           <div className="min-h-4 flex-1" />
-          <TaskChatComposerDock mobile streamlined={false}>{composer}</TaskChatComposerDock>
+          <TaskChatComposerDock mobile>{composer}</TaskChatComposerDock>
         </div>
       </main>
       <MobileBottomNav visible />

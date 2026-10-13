@@ -28,7 +28,6 @@ import { instanceSettingsApi } from "../../api/instanceSettings";
 import { issuesApi } from "../../api/issues";
 import { useIssuePlanDocument } from "@/hooks/useIssuePlanDocument";
 import { useIssueDocuments } from "@/hooks/useIssueDocuments";
-import { useStreamlinedUiEnabled } from "@/hooks/useStreamlinedUiEnabled";
 import { selectAgentArtifactAttachments } from "@/lib/issue-artifacts";
 import { projectsApi } from "../../api/projects";
 import { useCompany } from "../../context/CompanyContext";
@@ -115,6 +114,14 @@ import {
 import { PropertyPicker } from "./property-picker";
 import { PropertyChip, PropertyRow, PropertySection } from "./primitives";
 import {
+  MoreFieldsToggle,
+  executionHasContent as executionHasContentFn,
+  isSectionHidden,
+  relationshipsHaveContent as relationshipsHaveContentFn,
+  useMoreFieldsExpanded,
+  workspaceHasContent as workspaceHasContentFn,
+} from "./more-fields";
+import {
   buildWorkspaceSelectionUpdate,
   currentWorkspaceSelection,
 } from "../../lib/issue-workspace-selection";
@@ -154,8 +161,7 @@ function TruncatedCopyable({ value, icon: Icon }: { value: string; icon: Compone
       timerRef.current = setTimeout(() => setCopied(false), 1500);
     } catch { /* noop */ }
   }, [value]);
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
-  const middle = streamlinedUiEnabled ? splitMiddleTruncation(value) : null;
+  const middle = splitMiddleTruncation(value);
 
   return (
     <div className="flex items-center gap-1.5 min-w-0 flex-1" title={value}>
@@ -164,13 +170,13 @@ function TruncatedCopyable({ value, icon: Icon }: { value: string; icon: Compone
         type="button"
         className={cn(
           "cursor-pointer text-left font-mono text-sm transition-colors hover:text-foreground",
-          streamlinedUiEnabled ? "min-w-0 flex-1" : "min-w-0 truncate",
+          "min-w-0 flex-1",
         )}
         onClick={handleCopy}
         title={value}
         aria-label={`Copy ${value} to clipboard`}
       >
-        {!streamlinedUiEnabled ? value : middle ? (
+        {middle ? (
           <span className="flex min-w-0" data-middle-truncate="true">
             <span className="min-w-0 truncate">{middle.prefix}</span>
             <span className="max-w-1/2 shrink-0 truncate">{middle.suffix}</span>
@@ -265,17 +271,16 @@ export function IssueProperties({
   // the folder the policy exists to hide.
   const hideHostPaths =
     experimentalSettings === undefined || experimentalSettings.enableManagedSandboxOnly === true;
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   // Classic Task Interface: gate the Properties | Plans | Artifacts tab shell.
   // Flag ON renders the legacy stacked sections verbatim (no Tabs wrapper);
   // flag OFF — including while settings load — renders the chat-style tab
   // shell. This pane is always task-scoped, so the flag alone is a sufficient
   // gate.
   // Classic Task Interface alone controls the production tabbed-vs-stacked
-  // boundary. Streamlined UI layers new relationship tabs and visual treatment
-  // onto master's tabbed task-chat pane without changing that boundary.
+  // boundary; the streamlined relationship tabs and visual treatment layer onto
+  // the tabbed task-chat pane without changing it.
   const taskChatShellEnabled = experimentalSettings?.enableClassicTaskInterface !== true;
-  const streamlinedPropertiesEnabled = streamlinedUiEnabled && taskChatShellEnabled;
+  const streamlinedPropertiesEnabled = taskChatShellEnabled;
   // When hosted by the resizable PropertiesPanel, the tab strip portals into
   // the pane's header bar (left of the window controls). The slot only exists
   // once the panel has committed, hence the effect; inline hosts (mobile sheet)
@@ -2340,6 +2345,55 @@ export function IssueProperties({
     </>
   );
 
+  // Progressive disclosure: Relationships / Execution / Workspace render only
+  // when they hold a non-default value; otherwise they fold behind "More fields".
+  // Ambiguous cases (pull requests, related tasks, external objects, review
+  // policy badge, unavailable execution policy) count as content so we fail open.
+  const [moreFieldsExpanded, toggleMoreFields] = useMoreFieldsExpanded(companyId);
+  const workspaceSectionRendered = Boolean(
+    workspacePickerEligible || hasWorkspaceRuntimeControls || issue.currentExecutionWorkspace?.branchName
+      || issue.currentExecutionWorkspace?.cwd || issue.executionWorkspaceId,
+  );
+  const relationshipsHaveContent = relationshipsHaveContentFn({
+    parentId: issue.parentId,
+    blockedByCount: (issue.blockedBy ?? []).length,
+    blockingCount: blockingIssues.length,
+    childCount: childIssues.length,
+    relatedTaskCount: relatedTasks.length,
+    pullRequestCount: pullRequests.length,
+    workProductsError,
+    externalObjectCount: remainingExternalObjects?.length ?? 0,
+    externalObjectsLoading,
+    externalObjectsError,
+  });
+  const executionHasContent = executionHasContentFn({
+    policyAvailable,
+    hasReviewPolicyBadge: Boolean(reviewPolicyBadge),
+    reviewerCount: reviewerValues.length,
+    approverCount: approverValues.length,
+    hasMonitor: Boolean(executionPolicy?.monitor || issue.executionState?.monitor || issue.monitorNextCheckAt),
+    hasWatchdog: Boolean(issue.watchdog),
+    currentExecutionLabel,
+    showScheduledRetryRow: Boolean(showScheduledRetryRow),
+  });
+  const workspaceHasContent = workspaceHasContentFn({
+    hasWorkspaceOverride,
+    executionWorkspaceId: issue.executionWorkspaceId,
+    branchName: issue.currentExecutionWorkspace?.branchName,
+    cwd: issue.currentExecutionWorkspace?.cwd,
+    hasRuntimeControls: hasWorkspaceRuntimeControls,
+  });
+  const relationshipsHidden = isSectionHidden(relationshipsHaveContent, moreFieldsExpanded);
+  const executionHidden = isSectionHidden(executionHasContent, moreFieldsExpanded);
+  const workspaceHidden = isSectionHidden(workspaceHasContent, moreFieldsExpanded);
+  const hasHideableSection = !relationshipsHaveContent || !executionHasContent
+    || (workspaceSectionRendered && !workspaceHasContent);
+  const moreFieldsControls = [
+    "issue-props-relationships",
+    "issue-props-execution",
+    ...(workspaceSectionRendered ? ["issue-props-workspace"] : []),
+  ].join(" ");
+
   const propertiesBody = (
     <div className={cn(streamlinedPropertiesEnabled && "task-detail-properties pl-4")}>
       <PropertySection
@@ -2439,6 +2493,7 @@ export function IssueProperties({
         </PropertyPicker>
       </PropertySection>
 
+      <div id="issue-props-relationships" hidden={relationshipsHidden}>
       <PropertySection title="Relationships" streamlined={streamlinedPropertiesEnabled}>
         <PropertyPicker
           inline={inline}
@@ -2617,7 +2672,9 @@ export function IssueProperties({
           onRetryExternalObjects={onRetryExternalObjects}
         />
       </PropertySection>
+      </div>
 
+      <div id="issue-props-execution" hidden={executionHidden}>
       <PropertySection title="Execution" streamlined={streamlinedPropertiesEnabled}>
         {/* Read-only: agents set the policy, the board does not. */}
         {reviewPolicyBadge ? (
@@ -2737,8 +2794,10 @@ export function IssueProperties({
           {watchdogContent}
         </PropertyPicker>
       </PropertySection>
+      </div>
 
-      {workspacePickerEligible || hasWorkspaceRuntimeControls || issue.currentExecutionWorkspace?.branchName || issue.currentExecutionWorkspace?.cwd || issue.executionWorkspaceId ? (
+      {workspaceSectionRendered ? (
+        <div id="issue-props-workspace" hidden={workspaceHidden}>
         <PropertySection title="Workspace" streamlined={streamlinedPropertiesEnabled}>
           {workspacePickerEligible ? (
             <PropertyPicker
@@ -2906,6 +2965,15 @@ export function IssueProperties({
             </PropertyRow>
           )}
         </PropertySection>
+        </div>
+      ) : null}
+
+      {hasHideableSection ? (
+        <MoreFieldsToggle
+          expanded={moreFieldsExpanded}
+          onToggle={toggleMoreFields}
+          controls={moreFieldsControls}
+        />
       ) : null}
 
       <PropertySection title="About" streamlined={streamlinedPropertiesEnabled}>

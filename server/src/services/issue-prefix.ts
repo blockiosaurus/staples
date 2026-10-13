@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import type { Db } from "@paperclipai/db";
 import { cases, companies, issues } from "@paperclipai/db";
+import { isReservedCompanyRouteSegment } from "@paperclipai/shared";
 
 type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
@@ -29,6 +30,14 @@ export const MAX_ISSUE_PREFIX_ATTEMPTS = 10_000;
 export function deriveIssuePrefixBase(name: string) {
   const normalized = name.toUpperCase().replace(/[^A-Z]/g, "");
   return normalized.slice(0, 3) || ISSUE_PREFIX_FALLBACK;
+}
+
+/**
+ * Whether a prefix equals a UI route root (case-insensitive), e.g. "ORG" or
+ * "U". Such a prefix would make `/:prefix/...` ambiguous with a board route.
+ */
+export function isReservedIssuePrefix(prefix: string) {
+  return isReservedCompanyRouteSegment(prefix);
 }
 
 /** Disambiguating suffix for the nth allocation attempt: "", "A", "AA", ... */
@@ -61,7 +70,8 @@ export function isIssuePrefixConflict(error: unknown) {
 
 /**
  * Returns the first free `${base}${suffix}` prefix, or null when the whole
- * suffix space is taken.
+ * suffix space is taken. A candidate that equals a reserved UI route root is
+ * treated as taken, so the suffix logic moves past it.
  *
  * A standalone INSERT can simply retry on the unique violation, because each
  * failed statement is its own implicit transaction. Inside an explicit
@@ -94,7 +104,7 @@ export async function pickAvailableIssuePrefix(
   );
   for (let attempt = 1; attempt <= MAX_ISSUE_PREFIX_ATTEMPTS; attempt += 1) {
     const candidate = `${base}${issuePrefixSuffixForAttempt(attempt)}`;
-    if (!taken.has(candidate)) return candidate;
+    if (!taken.has(candidate) && !isReservedIssuePrefix(candidate)) return candidate;
   }
   return null;
 }

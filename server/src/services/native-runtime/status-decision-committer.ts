@@ -570,7 +570,7 @@ async function materializeDecisionEffect(input: {
               id: "response",
               prompt: effect.prompt ?? "Provide the required response.",
               selectionMode: "single",
-              options: [{ id: "continue", label: "Continue" }],
+              options: [{ id: "continue", label: "Continue", recommended: true }],
             },
           ],
         },

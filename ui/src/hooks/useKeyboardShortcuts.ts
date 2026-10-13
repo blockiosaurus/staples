@@ -13,6 +13,8 @@ interface ShortcutHandlers {
   onTogglePanel?: () => void;
   onShowShortcuts?: () => void;
   onGoToInbox?: () => void;
+  /** Cmd/Ctrl+J: works from text inputs too, but not over a modal dialog. */
+  onToggleAssistant?: () => void;
 }
 
 export function useKeyboardShortcuts({
@@ -22,6 +24,7 @@ export function useKeyboardShortcuts({
   onTogglePanel,
   onShowShortcuts,
   onGoToInbox,
+  onToggleAssistant,
 }: ShortcutHandlers) {
   useEffect(() => {
     // g → i chord state. IssueDetail runs its own capture-phase handler with
@@ -51,6 +54,18 @@ export function useKeyboardShortcuts({
     function handleKeyDown(e: KeyboardEvent) {
       if (e.defaultPrevented) {
         disarmGoChord();
+        return;
+      }
+
+      // Cmd/Ctrl+J → toggle the Assistant dock. Checked before the text-input
+      // guard so it works from the composer; preventDefault stops Chrome's
+      // Ctrl+J downloads page.
+      if (onToggleAssistant && isAssistantToggleShortcut(e)) {
+        if (hasBlockingDialogOtherThanAssistant()) return;
+        disarmGoChord();
+        e.preventDefault();
+        // Holding the keys must not flap the dock open and shut.
+        if (!e.repeat) onToggleAssistant();
         return;
       }
 
@@ -145,5 +160,15 @@ export function useKeyboardShortcuts({
       document.removeEventListener("focusin", handleFocusIn, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [onNewIssue, onSearch, onToggleSidebar, onTogglePanel, onShowShortcuts, onGoToInbox]);
+  }, [onNewIssue, onSearch, onToggleSidebar, onTogglePanel, onShowShortcuts, onGoToInbox, onToggleAssistant]);
+}
+
+/** The mobile Assistant sheet is itself a modal dialog; Cmd/Ctrl+J still closes it. */
+function hasBlockingDialogOtherThanAssistant() {
+  return [...document.querySelectorAll("[role='dialog'][aria-modal='true']")]
+    .some((dialog) => !dialog.closest("[data-assistant-dock]"));
+}
+
+export function isAssistantToggleShortcut(e: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">) {
+  return (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "j";
 }

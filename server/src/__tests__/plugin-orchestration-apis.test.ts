@@ -158,6 +158,24 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
     return root;
   }
 
+  it("refuses agents.resume for an agent held for template setup", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    await db.update(agents).set({
+      status: "paused",
+      pauseReason: "template_setup",
+      pausedAt: new Date(),
+      metadata: { staplesTemplate: { ref: "staples/coding-agent", version: "1.0.0", readOnly: false, outwardActions: [], requiredApps: [], setupPending: true } },
+    }).where(eq(agents.id, agentId));
+    const services = buildHostServices(db, "plugin-record-id", "paperclip.missions", createEventBusStub());
+
+    await expect(services.agents.resume({ agentId, companyId })).rejects.toMatchObject({
+      status: 409,
+      details: { code: "agent_template_setup_pending" },
+    });
+    const [row] = await db.select().from(agents).where(eq(agents.id, agentId));
+    expect(row).toMatchObject({ status: "paused", pauseReason: "template_setup" });
+  });
+
   it("returns plugin-safe execution workspace metadata scoped to the company", async () => {
     const { companyId } = await seedCompanyAndAgent();
     const otherCompanyId = randomUUID();

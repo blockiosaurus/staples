@@ -55,11 +55,6 @@ vi.mock("./components/CasesExperimentalGate", () => ({
   CasesExperimentalGate: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
-// Rendered by <App> outside <Routes> and needs DialogProvider; irrelevant here.
-vi.mock("./components/OnboardingWizardVariant", () => ({
-  OnboardingWizardVariant: () => null,
-}));
-
 // Sentinel pages so we can assert *which* route resolved.
 vi.mock("./pages/Cases", () => ({ Cases: () => <div>CASES_LIST_PAGE</div> }));
 vi.mock("./pages/CaseDetail", () => ({ CaseDetail: () => <div>CASE_DETAIL_PAGE</div> }));

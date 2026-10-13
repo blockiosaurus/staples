@@ -15,6 +15,7 @@ import type {
   AskUserQuestionsInteraction,
   PaperclipQuestionSetPayload,
 } from "@paperclipai/shared";
+import { askUserQuestionsPayloadToQuestionSet } from "@paperclipai/shared";
 import type { PaperclipQuestionResponse } from "../vendor/paperclip-runner/index.js";
 import { isUniqueViolation } from "../db-errors.js";
 import { getTelemetryClient } from "../telemetry.js";
@@ -107,48 +108,9 @@ function compactLine(value: unknown): string | null {
 function canonicalQuestionSet(
   interaction: Pick<AskUserQuestionsInteraction, "title" | "payload">,
 ): PaperclipQuestionSetPayload {
-  if (interaction.payload.questionSet)
-    return structuredClone(interaction.payload.questionSet);
-  return {
-    schema: "paperclip.question_set.v1",
-    ...(interaction.title ? { title: interaction.title } : {}),
-    ...(interaction.payload.submitLabel
-      ? { submitLabel: interaction.payload.submitLabel }
-      : {}),
-    questions: interaction.payload.questions.map((question) => {
-      const customOption = question.options.find(
-        (option) => option.freeText === true,
-      );
-      return {
-        id: question.id,
-        prompt: question.prompt,
-        ...(question.helpText ? { helpText: question.helpText } : {}),
-        required: question.required === true,
-        answerMode:
-          question.selectionMode === "multi"
-            ? ("multi_select" as const)
-            : ("single_select" as const),
-        options: question.options
-          .filter((option) => option.freeText !== true)
-          .map((option) => ({
-            id: option.id,
-            label: option.label,
-            ...(option.description ? { description: option.description } : {}),
-          })),
-        ...(customOption
-          ? {
-              customAnswer: {
-                enabled: true as const,
-                label: customOption.label,
-                ...(customOption.description
-                  ? { placeholder: customOption.description }
-                  : {}),
-              },
-            }
-          : {}),
-      };
-    }),
-  };
+  return structuredClone(
+    askUserQuestionsPayloadToQuestionSet(interaction.payload, { title: interaction.title }),
+  );
 }
 
 export function buildQuestionResponseDeliveryEnvelope(

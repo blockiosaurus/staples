@@ -3,7 +3,6 @@ import {
   BookOpen,
   Bot,
   CheckCircle2,
-  FlaskConical,
   FolderKanban,
   FormInput,
   Layers3,
@@ -30,12 +29,6 @@ const storyGroups = [
     icon: ShieldCheck,
     stories: "Issue rows, approvals, budget cards, activity rows, metrics",
     why: "The V1 board UI depends on these dense operational patterns staying legible.",
-  },
-  {
-    title: "UX Labs",
-    icon: FlaskConical,
-    stories: "Issue chat, run transcripts, invite/access flows",
-    why: "The old `/tests/ux/*` pages are fixture-backed Storybook stories now.",
   },
   {
     title: "Navigation & Layout",

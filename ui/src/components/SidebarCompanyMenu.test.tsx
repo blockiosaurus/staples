@@ -7,7 +7,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { queryKeys } from "@/lib/queryKeys";
 import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
-import { SidebarCompanyMenu as SidebarCompanyMenuProduction } from "./SidebarCompanyMenu.production";
 
 vi.mock("./PluginOrganizationSwitcher", () => ({ PluginOrganizationSwitcher: ({ children }: { children: ReactNode }) => children }));
 
@@ -20,7 +19,6 @@ const mockAuthApi = vi.hoisted(() => ({
   signOut: vi.fn(),
 }));
 const mockNavigate = vi.hoisted(() => vi.fn());
-const mockOpenOnboarding = vi.hoisted(() => vi.fn());
 const mockSetSelectedCompanyId = vi.hoisted(() => vi.fn());
 const mockSetSidebarOpen = vi.hoisted(() => vi.fn());
 const mockLocation = vi.hoisted(() => ({ pathname: "/PAP/dashboard" }));
@@ -93,12 +91,6 @@ vi.mock("@/context/CompanyContext", () => ({
   }),
 }));
 
-vi.mock("@/context/DialogContext", () => ({
-  useDialogActions: () => ({
-    openOnboarding: mockOpenOnboarding,
-  }),
-}));
-
 vi.mock("./CompanyPatternIcon", () => ({
   CompanyPatternIcon: ({ companyName, logoUrl }: { companyName: string; logoUrl?: string | null }) => (
     <span aria-hidden="true" data-logo-url={logoUrl ?? undefined}>{companyName.slice(0, 1)}</span>
@@ -168,7 +160,7 @@ describe("SidebarCompanyMenu", () => {
     vi.clearAllMocks();
   });
 
-  function renderMenu(options: { cloud?: boolean; health?: unknown; production?: boolean } = {}) {
+  function renderMenu(options: { cloud?: boolean; health?: unknown } = {}) {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -178,11 +170,10 @@ describe("SidebarCompanyMenu", () => {
       queryClient.setQueryData(queryKeys.health, options.health ?? CLOUD_HEALTH);
     }
     const root = createRoot(container);
-    const Menu = options.production ? SidebarCompanyMenuProduction : SidebarCompanyMenu;
     act(() => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <Menu />
+          <SidebarCompanyMenu />
         </QueryClientProvider>,
       );
     });
@@ -347,56 +338,6 @@ describe("SidebarCompanyMenu", () => {
     });
   });
 
-  it("shows the production-shell invite shortcut when no surface is hidden", async () => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    queryClient.setQueryData(queryKeys.health, { status: "ok" });
-    const root = createRoot(container);
-    act(() => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <SidebarCompanyMenuProduction />
-        </QueryClientProvider>,
-      );
-    });
-    await flushReact();
-    await flushReact();
-
-    await openMenu("Open Acme Labs company switcher");
-
-    expect(document.body.textContent).toContain("Invite people to Acme Labs");
-
-    act(() => {
-      root.unmount();
-    });
-  });
-
-  it("hides the production-shell invite shortcut when the operator hides the invites surface", async () => {
-    // The production shell (streamlined UI disabled) must honor
-    // PAPERCLIP_HIDDEN_SETTINGS like the streamlined menu — this is the knob
-    // Paperclip Cloud uses to drop the shortcut on its managed stacks.
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    queryClient.setQueryData(queryKeys.health, { status: "ok", hiddenSettings: ["company.invites"] });
-    const root = createRoot(container);
-    act(() => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <SidebarCompanyMenuProduction />
-        </QueryClientProvider>,
-      );
-    });
-    await flushReact();
-    await flushReact();
-
-    await openMenu("Open Acme Labs company switcher");
-
-    expect(document.body.textContent).toContain("Organizations");
-    expect(document.body.textContent).not.toContain("Invite people");
-
-    act(() => {
-      root.unmount();
-    });
-  });
-
   it("keeps the invite shortcut out of the menu until hidden settings resolve", async () => {
     // No health data in the cache: the hidden-settings set is unknown, so the
     // shortcut must not flash in and then disappear once the response lands.
@@ -508,7 +449,7 @@ describe("SidebarCompanyMenu", () => {
     });
   });
 
-  it("navigates to the selected company dashboard from company-prefixed routes", async () => {
+  it("navigates to the selected company Home from company-prefixed routes", async () => {
     mockLocation.pathname = "/PAP/issues";
     const root = createRoot(container);
     const queryClient = new QueryClient({
@@ -544,7 +485,7 @@ describe("SidebarCompanyMenu", () => {
     await flushReact();
 
     expect(mockSetSelectedCompanyId).toHaveBeenCalledWith("company-2");
-    expect(mockNavigate).toHaveBeenCalledWith("/STR/dashboard");
+    expect(mockNavigate).toHaveBeenCalledWith("/STR/home");
 
     act(() => {
       root.unmount();
@@ -567,7 +508,7 @@ describe("SidebarCompanyMenu", () => {
     });
     await flushReact();
 
-    expect(mockOpenOnboarding).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).toHaveBeenCalledWith("/start");
     expect(mockNavigateTopLevel).not.toHaveBeenCalled();
 
     act(() => {
@@ -630,20 +571,20 @@ describe("SidebarCompanyMenu", () => {
       });
     });
 
-    it.each([false, true])("keeps company navigation without local creation when a managed host has no switcher plugin (production=%s)", async (production) => {
-      const { root } = renderMenu({ cloud: true, production });
+    it("keeps company navigation without local creation when a managed host has no switcher plugin", async () => {
+      const { root } = renderMenu({ cloud: true });
       await flushReact();
       await flushReact();
-      await openMenu(`Open Acme Labs ${production ? "company" : "organization"} switcher`);
+      await openMenu("Open Acme Labs organization switcher");
       expect(document.body.textContent).toContain("Anachronist Wiki");
       expect(document.body.textContent).toContain("ANA");
       expect(document.body.textContent).not.toContain("Create organization");
-      expect(mockOpenOnboarding).not.toHaveBeenCalled();
+      expect(mockNavigate).not.toHaveBeenCalledWith("/start");
       const row = [...document.querySelectorAll('[data-slot="dropdown-menu-item"]')]
         .find(element => element.textContent?.includes("Anachronist Wiki"));
       act(() => row?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
       expect(mockSetSelectedCompanyId).toHaveBeenCalledWith("company-3");
-      expect(mockNavigate).toHaveBeenCalledWith("/ANA/dashboard");
+      expect(mockNavigate).toHaveBeenCalledWith("/ANA/home");
       expect(mockNavigateTopLevel).not.toHaveBeenCalled();
       act(() => root.unmount());
     });

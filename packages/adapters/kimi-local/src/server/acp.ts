@@ -37,6 +37,8 @@ export interface KimiEngineSelection {
   engine: KimiExecutionEngine;
   explicit: boolean;
   unavailableReason?: string;
+  /** Set when the engine is unavailable because Node is too old (not for any other reason). */
+  unavailableCause?: "node_version";
 }
 
 type KimiEngineResolutionInput =
@@ -67,13 +69,14 @@ export async function resolveKimiExecutionEngineForRun(
   const selection = normalizeEngine(input.config.engine);
   // Engine availability must never change the agent's execution or permission contract.
   if (selection.engine === "cli") return selection;
-  const unavailable = (reason: string): KimiEngineSelection => ({
+  const unavailable = (reason: string, cause?: "node_version"): KimiEngineSelection => ({
     ...selection,
+    ...(cause ? { unavailableCause: cause } : {}),
     unavailableReason: `${reason} Repair the ACP setup, or explicitly set engine=cli to use the CLI engine.`,
   });
 
   const reason = await kimiAcpUnavailableReason(input);
-  return reason ? unavailable(reason) : selection;
+  return reason ? unavailable(reason, reason === nodeVersionUnsupportedReason() ? "node_version" : undefined) : selection;
 }
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {
@@ -243,6 +246,10 @@ function sandboxTargetHasProcessSessionBridge(
   return target?.kind === "remote" && target.transport === "sandbox" && Boolean(target.runner);
 }
 
+function nodeVersionUnsupportedReason(): string {
+  return `Node ${process.version} (${process.execPath}) does not satisfy Kimi ACP's Node >=${MIN_ACP_NODE_VERSION} prerequisite.`;
+}
+
 async function kimiAcpUnavailableReason(
   input: KimiEngineResolutionInput,
 ): Promise<string | null> {
@@ -257,7 +264,7 @@ async function kimiAcpUnavailableReason(
     return "Kimi ACP supports sandbox remote targets only; this run targets a non-sandbox remote environment.";
   }
   if (!nodeVersionMeetsKimiAcpMinimum()) {
-    return `Node ${process.version} (${process.execPath}) does not satisfy Kimi ACP's Node >=${MIN_ACP_NODE_VERSION} prerequisite.`;
+    return nodeVersionUnsupportedReason();
   }
   const command = resolveKimiAcpCommand(input.config);
   if (!(await commandIsResolvable(command, resolveConfigPath(input.config), input))) {

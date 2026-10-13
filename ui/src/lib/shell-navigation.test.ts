@@ -37,6 +37,7 @@ describe("shell navigation", () => {
       "/PAP/agents/error",
       "/PAP/agents/builtin",
       "/PAP/agents/new",
+      "/PAP/agents/new/custom",
       "/PAP/routines",
     ]) {
       expect(classifyShellRoute(pathname, "PAP").builtInContextualSurface).toBeNull();

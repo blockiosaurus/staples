@@ -97,7 +97,7 @@ export async function buildNativeSessionHandoff(input: {
     }).from(issueThreadInteractions).where(and(eq(issueThreadInteractions.companyId, companyId), eq(issueThreadInteractions.issueId, issueId),
       eq(issueThreadInteractions.createdByAgentId, agentId), sql`${issueThreadInteractions.status} <> 'pending'`,
       sql`${issueThreadInteractions.kind} in ('ask_user_questions', 'request_confirmation', 'request_checkbox_confirmation', 'connection_intent')`,
-      sql`not (${issueThreadInteractions.payload} ?| array['toolAction', 'secretProposal', 'connectionAuthorization'])`,
+      sql`not (${issueThreadInteractions.payload} ?| array['toolAction', 'secretProposal', 'connectionAuthorization', 'proposedAction'])`,
       lte(issueThreadInteractions.resolvedAt, input.before), afterBoundary(issueThreadInteractions.createdAt),
       cutoff ? and(lte(issueThreadInteractions.createdAt, cutoff.createdAt), lte(issueThreadInteractions.resolvedAt, cutoff.createdAt)) : undefined,
     )).orderBy(desc(issueThreadInteractions.resolvedAt), desc(issueThreadInteractions.id)).limit(9),

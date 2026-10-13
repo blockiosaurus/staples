@@ -165,7 +165,7 @@ If `currentParticipant` does not match you, do not try to advance the stage — 
 
 **Human input questions.**
 
-For an open answer, use a text field. Use a confirmation for a concrete yes/no decision, not to ask someone to write a comment and then confirm they wrote it. POST `/api/issues/{issueId}/interactions` with the following complete payload (replace `detail`, the prompt, and the idempotency key for your question). Put every text and choice question in one complete `questionSet`. Paperclip generates the compatibility `questions` entries. Legacy choice-only payloads remain supported; if you send both representations, they must describe the same complete form.
+For an open answer, use a text field. Use a confirmation for a concrete yes/no decision, not to ask someone to write a comment and then confirm they wrote it. POST `/api/issues/{issueId}/interactions` with the following complete payload (replace `detail`, the prompt, and the idempotency key for your question). Put every text and choice question in one complete `questionSet`. Paperclip generates the compatibility `questions` entries. Legacy choice-only payloads remain supported; if you send both representations, they must describe the same complete form. Every question you ask a person must include your recommended answer (mark one option `recommended: true`; for free-text questions put your recommendation in `initialText`).
 
 Omit `addresseeUserId` for ordinary questions.
 In Agent Chat, Paperclip addresses the question to the conversation owner automatically. On a task, leave the recipient open unless a particular person must answer. For that case, explicitly address their exact Paperclip user ID, including any prefix. The server rejects unknown or unauthorized recipients. Do not guess IDs or infer authority from a title. Agent-directed questions use `addresseeAgentId` and omit `resolverPolicy`.
@@ -180,7 +180,7 @@ In Agent Chat, Paperclip addresses the question to the conversation owner automa
     "version": 1,
     "questionSet": {
       "schema": "paperclip.question_set.v1",
-      "questions": [{ "id": "detail", "prompt": "What should I know?", "answerMode": "text", "required": true }]
+      "questions": [{ "id": "detail", "prompt": "What should I know?", "answerMode": "text", "required": true, "initialText": "My recommendation: ..." }]
     }
   }
 }
@@ -751,6 +751,23 @@ do not substitute an `ask_user_questions` permission checklist or ask the human
 to edit settings manually. Yield while waiting. Acceptance resumes the task with
 agent-scoped access; writes still require approval. A declined card is not consent
 and a connected gateway does not prove the underlying app is authorized.
+
+**Connect tasks.** A Connect task is created for a templated agent when a
+service it needs is not connected yet. Its description is written for the
+person and does not tell you what to do. The marker is the signal: the task's
+`originId` (in the issue and in `heartbeat-context`) is
+`app-connection:<slug>,<slug>`, listing the acceptable service identifiers. Do
+this first: call `connection_request` for one of those slugs (the card lets the
+person choose; use `connections_search` to look up a slug's details or find a
+saved connection). Yield while waiting; you are woken when it is done. When the
+service is connected, mark the Connect task done so your other starter tasks can
+begin. Never ask for passwords, API keys or other credentials in comments.
+
+Fallback for older tasks created before the marker existed: a task titled
+"Connect <service>" whose description tells you to call `connection_request` is
+also a Connect task; follow its description. Do not treat other tasks that
+merely start with "Connect" (for example "Connect with the accountant") as
+Connect tasks.
 
 ## Incidental feedback
 

@@ -329,6 +329,7 @@ export function aggregatorProviderQuestion(
         label: `${AGGREGATOR_NAMES[result.aggregator!.provider]}${index === 0 ? " — Recommended" : ""}`,
         description:
           result.reason ?? "Verify the app in this external provider.",
+        ...(index === 0 ? { recommended: true } : {}),
       })),
       {
         id: "none",
@@ -348,7 +349,9 @@ export function aggregatorProviderQuestionSet(question: AskUserQuestionsQuestion
       prompt: question.prompt,
       required: true,
       answerMode: "single_select",
-      options: question.options.map(({ id, label, description }) => ({ id, label, ...(description != null ? { description } : {}) })),
+      options: question.options.map(({ id, label, description, recommended }) => ({
+        id, label, ...(description != null ? { description } : {}), ...(recommended ? { recommended } : {}),
+      })),
     }],
   };
 }

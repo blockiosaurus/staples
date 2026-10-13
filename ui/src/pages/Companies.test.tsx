@@ -12,7 +12,7 @@ const mockCompaniesApi = vi.hoisted(() => ({
   update: vi.fn(),
   remove: vi.fn(),
 }));
-const mockOpenOnboarding = vi.hoisted(() => vi.fn());
+const mockNavigate = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/companies", () => ({
   companiesApi: mockCompaniesApi,
@@ -37,8 +37,8 @@ vi.mock("../context/CompanyContext", () => ({
   }),
 }));
 
-vi.mock("../context/DialogContext", () => ({
-  useDialogActions: () => ({ openOnboarding: mockOpenOnboarding }),
+vi.mock("@/lib/router", () => ({
+  useNavigate: () => mockNavigate,
 }));
 
 vi.mock("../context/BreadcrumbContext", () => ({
@@ -100,24 +100,32 @@ describe("Companies page", () => {
     return root;
   }
 
-  it("offers the company wizard when self-hosted", async () => {
+  it("sends New Organization to /start when self-hosted", async () => {
     const root = await renderPage();
 
     expect(container.textContent).toContain("New Organization");
+
+    const button = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("New Organization"),
+    );
+    act(() => {
+      button?.click();
+    });
+    expect(mockNavigate).toHaveBeenCalledWith("/start");
 
     act(() => {
       root.unmount();
     });
   });
 
-  it("hides the company wizard on a cloud-managed instance", async () => {
+  it("hides New Organization on a cloud-managed instance", async () => {
     const root = await renderPage({ cloud: true });
 
     // Cloud stacks hold exactly one company and POST /companies is a 403 floor,
     // so the entry point must not be offered at all.
     expect(container.textContent).not.toContain("New Organization");
     expect(container.textContent).toContain("Acme Labs");
-    expect(mockOpenOnboarding).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
 
     act(() => {
       root.unmount();

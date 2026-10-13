@@ -4,6 +4,9 @@ export const queryKeys = {
     all: (companyId: string) => ["skill-sources", companyId] as const,
     repositories: (companyId: string) => ["skill-source-repositories", companyId] as const,
   },
+  assistant: {
+    detail: (companyId: string | null) => ["assistant", companyId] as const,
+  },
   agentChats: {
     list: (companyId: string | null, userId?: string | null) =>
       ["agent-chats", companyId, userId] as const,
@@ -580,6 +583,8 @@ export const queryKeys = {
       ] as const,
     byAgent: (companyId: string, agentId: string) =>
       ["artifacts", companyId, "by-agent", agentId] as const,
+    /** Latest few for Home; separate from `list`, which the Artifacts page fills with pages. */
+    home: (companyId: string) => ["artifacts", companyId, "home"] as const,
   },
   budgets: {
     overview: (companyId: string) =>
@@ -623,6 +628,16 @@ export const queryKeys = {
     projectOrder: (companyId: string, userId: string) =>
       ["sidebar-preferences", "project-order", companyId, userId] as const,
   },
+  signals: (companyId: string) => ["company-signals", companyId] as const,
+  companyBrief: (companyId: string) => ["company-brief", companyId] as const,
+  briefing: (companyId: string) => ["briefing", companyId] as const,
+  agentTemplates: {
+    list: (companyId: string) => ["agent-templates", companyId] as const,
+    detail: (companyId: string, slug: string) => ["agent-templates", companyId, slug] as const,
+  },
+  agentAutopilot: (agentId: string) => ["agent-autopilot", agentId] as const,
+  uiPreferences: (companyId: string, userId: string) =>
+    ["ui-preferences", companyId, userId] as const,
   primaryAgent: {
     mine: (companyId: string, userId: string) => ["primary-agent", companyId, userId] as const,
   },

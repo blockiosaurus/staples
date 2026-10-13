@@ -100,13 +100,13 @@ function PersonaPage({ path, meet = false }: { path: string; meet?: boolean }) {
       <Route path="/:companyPrefix" element={<Layout />}>
         <Route path="agents" element={<Agents />} />
         <Route path="agents/all" element={<Agents />} />
-        <Route path="agents/new" element={<NewAgent />} />
+        <Route path="agents/new/custom" element={<NewAgent />} />
         <Route path="agents/:agentId/:tab?" element={<AgentDetail />} />
         <Route path="issues/:issueId" element={<IssueDetail />} />
         <Route path="dashboard" element={<Dashboard />} />
       </Route>
     </Routes>
-    {meet && <AgentBasicsDialog open={dialogOpen} onClose={() => setDialogOpen(false)} onContinue={basics => { setDialogOpen(false); navigate(`/PAP/agents/new?name=${encodeURIComponent(basics.name)}&adapterType=${basics.adapterType}`); }} />}
+    {meet && <AgentBasicsDialog open={dialogOpen} onClose={() => setDialogOpen(false)} onContinue={basics => { setDialogOpen(false); navigate(`/PAP/agents/new/custom?name=${encodeURIComponent(basics.name)}&adapterType=${basics.adapterType}`); }} />}
   </PluginLauncherProvider>;
 }
 const meta = { title: "Agents/Personas/Full pages", parameters: { layout: "fullscreen", a11y: { test: "off" } } } satisfies Meta;
@@ -117,4 +117,4 @@ export const AgentOverview: Story = { render: () => <PersonaPage path="/PAP/agen
 export const Task: Story = { render: () => <PersonaPage path={`/PAP/issues/${issue.identifier}`} /> };
 export const CompanyDashboard: Story = { name: "Dashboard", render: () => <PersonaPage path="/PAP/dashboard" /> };
 export const MeetYourNextAgent: Story = { render: () => <PersonaPage path="/PAP/agents/all" meet /> };
-export const NewAgentConnection: Story = { render: () => <PersonaPage path="/PAP/agents/new?name=Carl&adapterType=codex_local" /> };
+export const NewAgentConnection: Story = { render: () => <PersonaPage path="/PAP/agents/new/custom?name=Carl&adapterType=codex_local" /> };

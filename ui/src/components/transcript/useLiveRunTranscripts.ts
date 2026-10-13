@@ -129,6 +129,9 @@ export function useLiveRunTranscripts({
   const normalizedRuns = useMemo(() => runs.map((run) => ({ ...run })), [runsKey]);
   const [chunksByRun, setChunksByRun] = useState<Map<string, RunLogChunk[]>>(new Map());
   const [hydratedRunIds, setHydratedRunIds] = useState<Set<string>>(new Set());
+  // Read by the log effect without re-running it when hydration lands.
+  const hydratedRunIdsRef = useRef(hydratedRunIds);
+  hydratedRunIdsRef.current = hydratedRunIds;
   const [errorsByRun, setErrorsByRun] = useState<ReadonlyMap<string, Error>>(new Map());
   const [retryGeneration, setRetryGeneration] = useState(0);
   const retry = useCallback(() => {
@@ -298,8 +301,15 @@ export function useLiveRunTranscripts({
   }, [normalizedRuns, pruneTick]);
 
   useEffect(() => {
-    if (!visible) return;
-    const readableRuns = normalizedRuns.filter(canReadPersistedLog);
+    // Hidden tabs pause recurring reads, but still take the one-shot read of
+    // settled history: it is immutable, bounded, and never repeated, and task
+    // views conceal the thread until it is hydrated. Pausing it left a task
+    // opened in a hidden document (background tab, hidden embedded pane) as
+    // skeletons until the reveal timeout.
+    const readableRuns = normalizedRuns.filter((run) =>
+      canReadPersistedLog(run) &&
+      (visible || (isTerminalStatus(run.status) && !hydratedRunIdsRef.current.has(run.id))),
+    );
     if (readableRuns.length === 0) return;
 
     let cancelled = false;

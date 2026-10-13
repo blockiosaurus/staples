@@ -1,4 +1,5 @@
 import { usePrimaryAgentPresentation } from "./primary-agent/PrimaryAgentPresentation";
+import { TEMPLATE_SETUP_PAUSE_MESSAGE, TEMPLATE_SETUP_PAUSE_REASON } from "../lib/agent-pause";
 import { useWorkspaceIsolationControls } from "@/hooks/useWorkspaceIsolationControls";
 import { useState, useEffect, useRef, useCallback, useMemo, type CSSProperties, type DragEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -23,7 +24,6 @@ import {
   issueExecutionWorkspaceModeForExistingWorkspace,
 } from "../lib/project-workspace-defaults";
 import { useProjectOrder } from "../hooks/useProjectOrder";
-import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { getRecentAssigneeIds, getRecentAssigneeSelectionIds, sortAgentsByRecency, trackRecentAssignee, trackRecentAssigneeUser } from "../lib/recent-assignees";
 import { getLastProjectId, getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
 import { recordRecentTask } from "../lib/recent-tasks";
@@ -39,7 +39,6 @@ import { cn } from "../lib/utils";
 import type { MentionOption } from "./MarkdownEditor";
 import { TaskChatComposer } from "./task-chat/TaskChatComposer";
 import { ComposerWorktreePicker } from "./task-chat/ComposerWorktreePicker";
-import { TaskChatPresentationProvider } from "./task-chat/presentation-mode";
 import { mergeComposerRunSettings, type ComposerRunSettings } from "./task-chat/composer-run-settings";
 import { useSidebar } from "../context/SidebarContext";
 import { InlineBanner } from "./InlineBanner";
@@ -285,7 +284,6 @@ export function NewIssueDialog() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { pushToast } = useToastActions();
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const [title, setTitle] = useState("");
   const [hasTitle, setHasTitle] = useState(false);
   const [description, setDescription] = useState("");
@@ -460,7 +458,7 @@ export function NewIssueDialog() {
       trackRecentProject(issue.projectId ?? "", companyId);
       if (issue.assigneeAgentId) trackRecentAssignee(issue.assigneeAgentId, companyId);
       if (issue.assigneeUserId) trackRecentAssigneeUser(issue.assigneeUserId, companyId);
-      if (streamlinedUiEnabled) recordRecentTask(issue, currentUserId);
+      recordRecentTask(issue, currentUserId);
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(companyId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.listMineByMe(companyId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(companyId) });
@@ -1145,7 +1143,6 @@ export function NewIssueDialog() {
           onDragLeave={handleFileDragLeave}
           onDrop={handleFileDrop}
         >
-          <TaskChatPresentationProvider mode={streamlinedUiEnabled ? "streamlined" : "production"}>
             <TaskChatComposer
               workMode={workMode}
               onWorkModeChange={setWorkMode}
@@ -1345,10 +1342,12 @@ export function NewIssueDialog() {
                         <InlineBanner tone="warning" icon={PauseCircle} compact>
                           <span className="font-medium">{selectedAssigneeAgent.name}</span> is paused and will not start
                           work on this task until it is resumed
-                          {selectedAssigneeAgent.pauseReason === "import"
-                            ? " — it arrived paused from an organization import"
-                            : ""}
-                          . You can resume it from the task page after creating the task.
+                          {selectedAssigneeAgent.pauseReason === TEMPLATE_SETUP_PAUSE_REASON
+                            ? `. ${TEMPLATE_SETUP_PAUSE_MESSAGE}.`
+                            : <>
+                              {selectedAssigneeAgent.pauseReason === "import" ? " — it arrived paused from an organization import" : ""}
+                              . You can resume it from the task page after creating the task.
+                            </>}
                         </InlineBanner>
                       </div>
                     ) : null}
@@ -1454,7 +1453,6 @@ export function NewIssueDialog() {
                 ),
               }}
             />
-          </TaskChatPresentationProvider>
         </div>
       </DialogContent>
     </Dialog>

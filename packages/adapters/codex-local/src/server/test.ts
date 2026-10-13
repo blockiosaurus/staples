@@ -264,7 +264,11 @@ export async function testEnvironment(
         hint: ctx.executionTarget?.kind === "remote"
           ? "In the agent’s runtime settings, select the CLI engine, or use a sandbox image with the Codex ACP server installed."
           : undefined,
-      }],
+      },
+      ...(engineSelection.unavailableCause === "node_version"
+        ? [{ code: "adapter_engine_node_unsupported", level: "error" as const, message: engineSelection.unavailableReason }]
+        : []),
+      ],
       testedAt: new Date().toISOString(),
     };
   }

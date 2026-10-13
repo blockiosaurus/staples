@@ -33,6 +33,8 @@ export type HealthStatus = {
   deploymentMode?: "local_trusted" | "authenticated";
   deploymentExposure?: "private" | "public";
   localAiLoginSupported?: boolean;
+  /** The server holds an Anthropic key, so the Assistant can run on Claude (hosted). */
+  hostedInferenceAvailable?: boolean;
   authReady?: boolean;
   bootstrapStatus?: "ready" | "bootstrap_pending";
   bootstrapInviteActive?: boolean;

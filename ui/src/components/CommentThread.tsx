@@ -10,6 +10,7 @@ import type {
   FeedbackVoteValue,
   IssueComment,
 } from "@paperclipai/shared";
+import { isAssistantAgent } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowRight, Check, Copy, Paperclip } from "lucide-react";
@@ -816,12 +817,12 @@ export function CommentThread({
     return map;
   }, [feedbackVotes]);
 
-  // Build mention options from agent map (exclude terminated agents)
+  // Build mention options from agent map (exclude terminated agents and the Assistant)
   const mentions = useMemo<MentionOption[]>(() => {
     if (providedMentions) return providedMentions;
     if (!agentMap) return [];
     return Array.from(agentMap.values())
-      .filter((a) => a.status !== "terminated")
+      .filter((a) => a.status !== "terminated" && !isAssistantAgent(a))
       .map((a) => ({
         id: `agent:${a.id}`,
         name: a.name,

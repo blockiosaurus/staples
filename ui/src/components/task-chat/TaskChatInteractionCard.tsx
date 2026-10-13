@@ -63,6 +63,23 @@ export function TaskChatInteractionCard({
       </button>
     );
   }
+  // Assistant proposed actions always render the governed Confirm card: it
+  // executes the exact stored call from the person's browser on Confirm.
+  if (interaction.kind === "request_confirmation" && interaction.payload.proposedAction) {
+    // While pending, the full card lives once in the composer takeover; the
+    // timeline keeps a one-line stub. With no way to reach a takeover (no
+    // onReviewRequest) the timeline keeps the full card so it is never lost.
+    if (presentation === "timeline" && interaction.status === "pending" && onReviewRequest) {
+      const isPlan = interaction.payload.proposedAction.category === "plan";
+      return (
+        <div id={`interaction-${interaction.id}`} data-testid="task-chat-proposed-action-stub" className="flex w-full flex-wrap items-center gap-2 text-sm">
+          <span className="min-w-0 flex-1 text-muted-foreground">{isPlan ? "Plan waiting for your confirmation" : "Waiting for your confirmation"}</span>
+          <Button className="ml-auto" size="sm" variant="outline" onClick={() => onReviewRequest(interaction.id)}>{isPlan ? "Review plan" : "Review request"}</Button>
+        </div>
+      );
+    }
+    return <IssueThreadInteractionCard interaction={interaction} {...cardProps} />;
+  }
   if (interaction.kind === "request_confirmation" && interaction.payload.toolAction) {
     const action = interaction.payload.toolAction;
     if (presentation === "takeover") {

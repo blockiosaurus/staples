@@ -1,7 +1,7 @@
 import { verifyAppWebhook } from "./app-webhook.js";
 import crypto from "node:crypto";
 import { verifyFirefliesWebhook } from "./fireflies-webhook.js";
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, not, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, not, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -66,6 +66,17 @@ import { getTelemetryClient } from "../telemetry.js";
 import { getConfiguredSecretProvider } from "../secrets/configured-provider.js";
 import { issueService } from "./issues.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
+import {
+  ASSISTANT_WEEKLY_UPDATE_ROUTINE_ORIGIN_ID,
+  ASSISTANT_WEEKLY_UPDATE_ROUTINE_ORIGIN_KIND,
+  BUILT_IN_BUNDLES_ACTOR_USER_ID,
+  WEEKLY_UPDATE_HOSTED_ADAPTER_TYPE,
+  companyHasStaffAgents,
+  isAssistantWeeklyUpdateRoutine,
+  weeklyUpdateRoutineSetByPerson,
+  weeklyUpdateRunsUnattended,
+} from "./assistant-weekly-update-origin.js";
+import { settleWeeklyUpdateTask } from "./assistant-weekly-update.js";
 import { visibleIssueCondition } from "./issue-visibility.js";
 import { secretService } from "./secrets.js";
 import { getSecretProvider } from "../secrets/provider-registry.js";
@@ -1477,9 +1488,9 @@ export function routineService(
         routineId: input.routine.id,
         triggerId: input.trigger.id,
         triggeredAt,
-        status: input.reason === "paused"
+        status: input.reason === "paused" || input.reason === "assistant_not_hosted"
           ? "skipped_paused"
-          : input.reason === "no_external_activity"
+          : input.reason === "no_external_activity" || input.reason === "no_other_agents"
             ? "skipped_no_activity"
             : "skipped_worktree_execution_cutoff",
         nextRunAt: input.nextRunAt,
@@ -1719,6 +1730,66 @@ export function routineService(
       );
   }
 
+  /**
+   * The Assistant's weekly update routine is created paused on a local adapter.
+   * Once the Assistant runs on the hosted adapter, turn it on, unless a person
+   * last changed it (they paused it, or set it up themselves) or switched its
+   * schedule off. The next run is
+   * the next scheduled time, never a catch-up.
+   */
+  async function activateWeeklyUpdateRoutinesOnHostedAssistants(now: Date) {
+    const paused = await db
+      .select({ routine: routines })
+      .from(routines)
+      .innerJoin(agents, and(eq(agents.id, routines.assigneeAgentId), eq(agents.companyId, routines.companyId)))
+      .where(and(
+        eq(routines.originKind, ASSISTANT_WEEKLY_UPDATE_ROUTINE_ORIGIN_KIND),
+        eq(routines.originId, ASSISTANT_WEEKLY_UPDATE_ROUTINE_ORIGIN_ID),
+        eq(routines.status, "paused"),
+        eq(agents.adapterType, WEEKLY_UPDATE_HOSTED_ADAPTER_TYPE),
+        ne(agents.status, "terminated"),
+        // A schedule a person switched off stays off.
+        sql`exists (select 1 from ${routineTriggers} where ${routineTriggers.routineId} = ${routines.id}
+          and ${routineTriggers.kind} = 'schedule' and ${routineTriggers.enabled} = true and ${routineTriggers.archived} = false)`,
+      ));
+    for (const { routine } of paused) {
+      if (weeklyUpdateRoutineSetByPerson(routine)) continue;
+      try {
+        const activated = await db.transaction(async (tx) => {
+          const [row] = await tx.update(routines)
+            .set({ status: "active", updatedByUserId: BUILT_IN_BUNDLES_ACTOR_USER_ID, updatedByAgentId: null, updatedAt: now })
+            .where(and(eq(routines.id, routine.id), eq(routines.status, "paused"), or(
+              isNull(routines.updatedByUserId), eq(routines.updatedByUserId, BUILT_IN_BUNDLES_ACTOR_USER_ID),
+            )))
+            .returning({ id: routines.id });
+          if (!row) return false;
+          const schedules = await tx.select().from(routineTriggers).where(and(
+            eq(routineTriggers.routineId, routine.id), eq(routineTriggers.kind, "schedule"), eq(routineTriggers.archived, false),
+          ));
+          for (const trigger of schedules) {
+            if (!trigger.cronExpression || !trigger.timezone) continue;
+            await tx.update(routineTriggers)
+              .set({ nextRunAt: nextCronTickInTimeZone(trigger.cronExpression, trigger.timezone, now), updatedAt: now })
+              .where(eq(routineTriggers.id, trigger.id));
+          }
+          return true;
+        });
+        if (!activated) continue;
+        await logActivity(db, {
+          companyId: routine.companyId,
+          actorType: "system",
+          actorId: "routine-scheduler",
+          action: "routine.updated",
+          entityType: "routine",
+          entityId: routine.id,
+          details: { status: "active", _previous: { status: "paused" }, reason: "assistant_on_hosted", source: "assistant_weekly_update" },
+        });
+      } catch (err) {
+        logger.warn({ err, routineId: routine.id }, "could not turn on the weekly update routine");
+      }
+    }
+  }
+
   async function dispatchRoutineRun(input: {
     routine: typeof routines.$inferSelect;
     trigger: typeof routineTriggers.$inferSelect | null;
@@ -1743,7 +1814,7 @@ export function routineService(
     if (!assigneeAgentId) {
       throw unprocessable("Default agent required");
     }
-    await assertAssignableAgent(db, input.routine.companyId, assigneeAgentId, { kind: "routine" });
+    await assertAssignableAgent(db, input.routine.companyId, assigneeAgentId, { kind: "routine", routineId: input.routine.id });
     const automaticVariables: Record<string, string | number | boolean> = {};
     if (input.executionWorkspaceId && routineUsesWorkspaceBranch(input.routine)) {
       const workspace = await db
@@ -2302,7 +2373,7 @@ export function routineService(
       if (patch.projectId !== undefined) await assertProject(existing.companyId, nextProjectId);
       if (patch.folderId !== undefined) await assertRoutineFolder(existing.companyId, nextFolderId);
       if (patch.assigneeAgentId !== undefined || patch.status === "active") {
-        await assertAssignableAgent(db, existing.companyId, nextAssigneeAgentId, { kind: "routine" });
+        await assertAssignableAgent(db, existing.companyId, nextAssigneeAgentId, { kind: "routine", routineId: existing.id });
       }
       if (patch.goalId) await assertGoal(existing.companyId, patch.goalId);
       if (patch.parentIssueId) await assertParentIssue(existing.companyId, patch.parentIssueId);
@@ -2866,7 +2937,7 @@ export function routineService(
       if (routine.status === "archived") throw conflict("Routine is archived");
       await assertProject(routine.companyId, input.projectId ?? null);
       const assigneeAgentId = input.assigneeAgentId ?? routine.assigneeAgentId ?? null;
-      await assertAssignableAgent(db, routine.companyId, assigneeAgentId, { kind: "routine" });
+      await assertAssignableAgent(db, routine.companyId, assigneeAgentId, { kind: "routine", routineId: routine.id });
       const trigger = input.triggerId ? await getTriggerById(input.triggerId) : null;
       if (trigger && trigger.routineId !== routine.id) throw forbidden("Trigger does not belong to routine");
       if (trigger && !trigger.enabled) throw conflict("Routine trigger is not active");
@@ -2894,7 +2965,7 @@ export function routineService(
       if (routine.status === "archived") throw conflict("Routine is archived");
       await assertProject(routine.companyId, input.projectId ?? null);
       const assigneeAgentId = input.assigneeAgentId ?? routine.assigneeAgentId ?? null;
-      await assertAssignableAgent(db, routine.companyId, assigneeAgentId, { kind: "routine" });
+      await assertAssignableAgent(db, routine.companyId, assigneeAgentId, { kind: "routine", routineId: routine.id });
       return dispatchRoutineRun({
         routine,
         trigger: null,
@@ -3183,6 +3254,7 @@ export function routineService(
     },
 
     tickScheduledTriggers: async (now: Date = new Date()) => {
+      await activateWeeklyUpdateRoutinesOnHostedAssistants(now);
       const worktreeActivation = isTruthyRuntimeEnvValue(runtimeEnv.PAPERCLIP_IN_WORKTREE)
         ? await resolveWorktreeRunExecutionActivationState({
           getExperimental: instanceSettings.getExperimental,
@@ -3287,6 +3359,52 @@ export function routineService(
             },
           });
           continue;
+        }
+
+        // The Assistant's weekly update has nothing to report until the company has other agents.
+        if (isAssistantWeeklyUpdateRoutine(row.routine) && !(await companyHasStaffAgents(db, row.routine.companyId))) {
+          await recordSuppressedAutomaticRun({
+            routine: row.routine,
+            trigger: row.trigger,
+            source: "schedule",
+            reason: "no_other_agents",
+            nextRunAt: claimedNextRunAt,
+          });
+          continue;
+        }
+        // Unattended Monday runs happen only on the hosted adapter; on a local adapter they would use
+        // the person's own machine and account. A person who turned it on themselves keeps it running.
+        if (isAssistantWeeklyUpdateRoutine(row.routine) && !weeklyUpdateRoutineSetByPerson(row.routine)) {
+          const assistant = row.routine.assigneeAgentId
+            ? await db.select({ adapterType: agents.adapterType }).from(agents)
+              .where(and(eq(agents.id, row.routine.assigneeAgentId), eq(agents.companyId, row.routine.companyId)))
+              .then((rows) => rows[0] ?? null)
+            : null;
+          if (!weeklyUpdateRunsUnattended(assistant)) {
+            await recordSuppressedAutomaticRun({
+              routine: row.routine,
+              trigger: row.trigger,
+              source: "schedule",
+              reason: "assistant_not_hosted",
+              nextRunAt: claimedNextRunAt,
+            });
+            continue;
+          }
+        }
+        // Last week's task still open with nothing running on it (its run never saved): close it so it
+        // never blocks this week. A task whose run is still queued or running is left alone, and
+        // skip_if_active then skips this week's dispatch.
+        if (isAssistantWeeklyUpdateRoutine(row.routine)) {
+          const stale = await db
+            .select({ id: issues.id })
+            .from(issues)
+            .where(and(
+              eq(issues.companyId, row.routine.companyId),
+              eq(issues.originKind, "routine_execution"),
+              eq(issues.originId, row.routine.id),
+              notInArray(issues.status, ["done", "cancelled"]),
+            ));
+          for (const task of stale) await settleWeeklyUpdateTask(db, task.id, { reason: "superseded_by_next_week" });
         }
 
         for (let i = 0; i < runCount; i += 1) {

@@ -76,26 +76,7 @@ const NEW_TOKENS = [
   { name: "gradient-extract-2", value: "linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))", comment: "Costs.tsx subtle white card gradient." },
   { name: "gradient-extract-3", value: "radial-gradient(circle at top left,rgba(244,114,182,0.08),transparent 35%),radial-gradient(circle at bottom right,rgba(56,189,248,0.1),transparent 32%)", comment: "AccountingModelCard.tsx decorative overlay." },
   { name: "gradient-extract-4", value: "linear-gradient(180deg,rgba(255,70,70,0.10),rgba(255,255,255,0.02))", comment: "BudgetIncidentCard.tsx incident-card gradient." },
-  { name: "gradient-extract-5", value: "radial-gradient(circle at top left,rgba(8,145,178,0.08),transparent 36%),radial-gradient(circle at bottom right,rgba(245,158,11,0.10),transparent 28%)", comment: "RunTranscriptUxLab.tsx:78 hero gradient." },
-  { name: "gradient-extract-6", value: "linear-gradient(135deg,rgba(8,145,178,0.08),transparent 28%),linear-gradient(180deg,rgba(245,158,11,0.08),transparent 40%),var(--background)", comment: "RunTranscriptUxLab.tsx:203 hero-card gradient." },
   { name: "gradient-extract-7", value: "radial-gradient(circle at top right,rgba(255,255,255,0.22),transparent 34%),radial-gradient(circle at bottom left,rgba(255,255,255,0.08),transparent 36%)", comment: "ProfileSettings.tsx:162 decorative overlay." },
-  { name: "gradient-extract-8", value: "radial-gradient(circle at top,rgba(8,145,178,0.18),transparent 48%),linear-gradient(180deg,rgba(15,23,42,0.96),rgba(2,6,23,1))", comment: "InviteUxLab.tsx:510 dark hero gradient." },
-  { name: "gradient-extract-9", value: "linear-gradient(135deg,rgba(8,145,178,0.10),transparent 28%),linear-gradient(180deg,rgba(245,158,11,0.10),transparent 44%),var(--background)", comment: "IssueChatUxLab.tsx:139 + InviteUxLab.tsx:700 hero-card gradient (identical string, 2 sites)." },
-  { name: "gradient-extract-10", value: "linear-gradient(180deg,rgba(168,85,247,0.06),transparent 28%),var(--background)", comment: "IssueChatUxLab.tsx:203 + InviteUxLab.tsx:909 accent gradient (identical string, 2 sites)." },
-  { name: "gradient-extract-11", value: "linear-gradient(180deg,rgba(16,185,129,0.06),transparent 28%),var(--background)", comment: "IssueChatUxLab.tsx:226 accent gradient." },
-  { name: "gradient-extract-12", value: "linear-gradient(180deg,rgba(6,182,212,0.05),transparent 28%),var(--background)", comment: "IssueChatUxLab.tsx:263 accent gradient." },
-  { name: "gradient-extract-13", value: "linear-gradient(180deg,rgba(59,130,246,0.06),transparent 28%),var(--background)", comment: "IssueChatUxLab.tsx:294 accent gradient." },
-  { name: "gradient-extract-14", value: "linear-gradient(180deg,rgba(168,85,247,0.05),transparent 26%),var(--background)", comment: "IssueChatUxLab.tsx:315 accent gradient." },
-  { name: "gradient-extract-15", value: "linear-gradient(180deg,rgba(245,158,11,0.08),transparent 26%),var(--background)", comment: "IssueChatUxLab.tsx:339 accent gradient." },
-  { name: "gradient-extract-16", value: "linear-gradient(135deg,rgba(245,158,11,0.10),transparent 28%),linear-gradient(180deg,rgba(8,145,178,0.08),transparent 44%),var(--background)", comment: "SystemNoticeUxLab.tsx:140 hero-card gradient." },
-  { name: "gradient-extract-17", value: "linear-gradient(180deg,rgba(245,158,11,0.05),transparent 28%),var(--background)", comment: "SystemNoticeUxLab.tsx:193 accent gradient." },
-  { name: "gradient-extract-18", value: "linear-gradient(180deg,rgba(8,145,178,0.05),transparent 28%),var(--background)", comment: "SystemNoticeUxLab.tsx:225 accent gradient." },
-  { name: "gradient-extract-19", value: "linear-gradient(180deg,rgba(244,63,94,0.05),transparent 28%),var(--background)", comment: "SystemNoticeUxLab.tsx:289 accent gradient." },
-  { name: "gradient-extract-20", value: "linear-gradient(180deg,rgba(16,185,129,0.05),transparent 28%),var(--background)", comment: "SystemNoticeUxLab.tsx:331 accent gradient." },
-  { name: "gradient-extract-21", value: "linear-gradient(180deg,rgba(59,130,246,0.05),transparent 30%),var(--background)", comment: "InviteUxLab.tsx:753 accent gradient." },
-  { name: "gradient-extract-22", value: "linear-gradient(180deg,rgba(234,179,8,0.06),transparent 28%),var(--background)", comment: "InviteUxLab.tsx:807 accent gradient." },
-  { name: "gradient-extract-23", value: "linear-gradient(180deg,rgba(16,185,129,0.06),transparent 30%),var(--background)", comment: "InviteUxLab.tsx:884 accent gradient." },
-  { name: "gradient-extract-24", value: "linear-gradient(180deg,rgba(244,114,182,0.06),transparent 28%),var(--background)", comment: "InviteUxLab.tsx:921 accent gradient." },
 ];
 
 /**
@@ -277,50 +258,9 @@ const SITES = [
     ],
   },
   {
-    file: "pages/RunTranscriptUxLab.tsx",
-    replaceAll: [
-      ['bg-[radial-gradient(circle_at_top_left,rgba(8,145,178,0.08),transparent_36%),radial-gradient(circle_at_bottom_right,rgba(245,158,11,0.10),transparent_28%)]', 'bg-(image:--gradient-extract-5)'],
-      ['bg-[linear-gradient(135deg,rgba(8,145,178,0.08),transparent_28%),linear-gradient(180deg,rgba(245,158,11,0.08),transparent_40%),var(--background)]', 'bg-(image:--gradient-extract-6)'],
-    ],
-  },
-  {
     file: "pages/ProfileSettings.tsx",
     replaceAll: [
       ['bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.22),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(255,255,255,0.08),transparent_36%)]', 'bg-(image:--gradient-extract-7)'],
-    ],
-  },
-  {
-    file: "pages/InviteUxLab.tsx",
-    replaceAll: [
-      ['bg-[radial-gradient(circle_at_top,rgba(8,145,178,0.18),transparent_48%),linear-gradient(180deg,rgba(15,23,42,0.96),rgba(2,6,23,1))]', 'bg-(image:--gradient-extract-8)'],
-      ['bg-[linear-gradient(135deg,rgba(8,145,178,0.10),transparent_28%),linear-gradient(180deg,rgba(245,158,11,0.10),transparent_44%),var(--background)]', 'bg-(image:--gradient-extract-9)'],
-      ['bg-[linear-gradient(180deg,rgba(59,130,246,0.05),transparent_30%),var(--background)]', 'bg-(image:--gradient-extract-21)'],
-      ['bg-[linear-gradient(180deg,rgba(234,179,8,0.06),transparent_28%),var(--background)]', 'bg-(image:--gradient-extract-22)'],
-      ['bg-[linear-gradient(180deg,rgba(16,185,129,0.06),transparent_30%),var(--background)]', 'bg-(image:--gradient-extract-23)'],
-      ['bg-[linear-gradient(180deg,rgba(168,85,247,0.06),transparent_28%),var(--background)]', 'bg-(image:--gradient-extract-10)'],
-      ['bg-[linear-gradient(180deg,rgba(244,114,182,0.06),transparent_28%),var(--background)]', 'bg-(image:--gradient-extract-24)'],
-    ],
-  },
-  {
-    file: "pages/IssueChatUxLab.tsx",
-    replaceAll: [
-      ['bg-[linear-gradient(135deg,rgba(8,145,178,0.10),transparent_28%),linear-gradient(180deg,rgba(245,158,11,0.10),transparent_44%),var(--background)]', 'bg-(image:--gradient-extract-9)'],
-      ['bg-[linear-gradient(180deg,rgba(168,85,247,0.06),transparent_28%),var(--background)]', 'bg-(image:--gradient-extract-10)'],
-      ['bg-[linear-gradient(180deg,rgba(16,185,129,0.06),transparent_28%),var(--background)]', 'bg-(image:--gradient-extract-11)'],
-      ['bg-[linear-gradient(180deg,rgba(6,182,212,0.05),transparent_28%),var(--background)]', 'bg-(image:--gradient-extract-12)'],
-      ['bg-[linear-gradient(180deg,rgba(59,130,246,0.06),transparent_28%),var(--background)]', 'bg-(image:--gradient-extract-13)'],
-      ['bg-[linear-gradient(180deg,rgba(168,85,247,0.05),transparent_26%),var(--background)]', 'bg-(image:--gradient-extract-14)'],
-      ['bg-[linear-gradient(180deg,rgba(245,158,11,0.08),transparent_26%),var(--background)]', 'bg-(image:--gradient-extract-15)'],
-    ],
-  },
-  {
-    file: "pages/SystemNoticeUxLab.tsx",
-    replaceAll: [
-      ['bg-[linear-gradient(135deg,rgba(245,158,11,0.10),transparent_28%),linear-gradient(180deg,rgba(8,145,178,0.08),transparent_44%),var(--background)]', 'bg-(image:--gradient-extract-16)'],
-      ['bg-[linear-gradient(180deg,rgba(245,158,11,0.05),transparent_28%),var(--background)]', 'bg-(image:--gradient-extract-17)'],
-      ['bg-[linear-gradient(180deg,rgba(8,145,178,0.05),transparent_28%),var(--background)]', 'bg-(image:--gradient-extract-18)'],
-      ['bg-[linear-gradient(180deg,rgba(244,63,94,0.05),transparent_28%),var(--background)]', 'bg-(image:--gradient-extract-19)'],
-      ['bg-[linear-gradient(180deg,rgba(16,185,129,0.05),transparent_28%),var(--background)]', 'bg-(image:--gradient-extract-20)'],
     ],
   },
 ];
@@ -364,16 +304,6 @@ const ALLOWLIST_COMMENTS = [
     file: "components/FileViewerSheet.tsx",
     anchor: 'isHighlighted && "bg-[var(--paperclip-code-highlight-bg,rgba(250,204,21,0.12))]",',
     commentLine: "                // token-extraction: allowlisted — half-migrated var(--x, fallback) pattern; --paperclip-code-highlight-bg/-border don't exist in index.css yet. Needs human decision (see TOKEN-AUDIT.md 2) before minting, since defining the var changes a fallback-CSS-var-expression, not a plain literal swap.",
-  },
-  {
-    file: "pages/InviteUxLab.tsx",
-    anchor: '      <div className="flex items-start gap-4">\n        <CompanyPatternIcon\n          companyName="Acme Robotics"\n          logoUrl="/api/invites/pcp_invite_test/logo"\n          brandColor="#114488"\n          className="h-16 w-16 rounded-none border border-zinc-800"',
-    commentLine: "      {/* token-extraction: allowlisted — brandColor feeds CompanyPatternIcon's hexToHue() color math via a canvas fill; demo/showcase-only prop, not a rendered CSS value. */}",
-  },
-  {
-    file: "pages/InviteUxLab.tsx",
-    anchor: '      <div className="flex items-center gap-3">\n        <CompanyPatternIcon\n          companyName="Acme Robotics"\n          logoUrl="/api/invites/pcp_invite_test/logo"\n          brandColor="#114488"\n          className="h-12 w-12 rounded-none border border-zinc-800"',
-    commentLine: "      {/* token-extraction: allowlisted — brandColor feeds CompanyPatternIcon's hexToHue() color math via a canvas fill; demo/showcase-only prop, not a rendered CSS value. */}",
   },
 ];
 

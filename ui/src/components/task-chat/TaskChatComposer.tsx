@@ -9,7 +9,6 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import { useComposerStop } from "@/hooks/useComposerStop";
-import { useStreamlinedTaskChatPresentation } from "./presentation-mode";
 import {
   DRAFT_DEBOUNCE_MS,
   clearDraft,
@@ -148,6 +147,10 @@ interface TaskChatComposerProps {
   mobile?: boolean;
   /** Storage key used to restore, persist, and clear this task's text draft. */
   draftKey?: string;
+  /** Each new request (by nonce) replaces the draft with `text` and focuses the editor. */
+  draftRequest?: { text: string; nonce: number; send?: boolean } | null;
+  /** Called once a request has been applied (and sent, when it asked to be). */
+  onDraftRequestApplied?: (nonce: number) => void;
   onReviewConversation?: () => Promise<void>;
   /** When set, the main composer temporarily edits this queued message. */
   queuedEdit?: { commentId: string; body: string; stale?: boolean } | null;
@@ -401,6 +404,8 @@ export function TaskChatComposer({
   issueStatus,
   mobile = false,
   draftKey,
+  draftRequest = null,
+  onDraftRequestApplied,
   onReviewConversation,
   queuedEdit = null,
   onSaveQueuedEdit,
@@ -412,7 +417,6 @@ export function TaskChatComposer({
   onRunnerGoalCommand,
   onRunnerGoalReassign,
 }: TaskChatComposerProps) {
-  const streamlined = useStreamlinedTaskChatPresentation();
   const stopControl = useComposerStop(onStop, stopPending);
   const [localBody, setBody] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
   const body = creation ? creation.value : localBody;
@@ -517,6 +521,32 @@ export function TaskChatComposer({
     setTakeoverBusy(false);
     setTakeoverError(null);
   }, [takeover?.id]);
+
+  const changeBodyRef = useRef(changeBody);
+  changeBodyRef.current = changeBody;
+  const draftRequestNonce = draftRequest?.nonce ?? 0;
+  const draftRequestText = draftRequest?.text ?? "";
+  const draftRequestSend = draftRequest?.send === true;
+  const appliedDraftNonceRef = useRef(0);
+  useEffect(() => {
+    if (draftRequestNonce <= 0 || draftRequestNonce === appliedDraftNonceRef.current) return;
+    appliedDraftNonceRef.current = draftRequestNonce;
+    changeBodyRef.current(draftRequestText);
+    if (draftKey && !creation) saveDraft(draftKey, draftRequestText);
+    requestAnimationFrame(() => editorRef.current?.focus());
+    // A send request goes through the same submit as pressing Send. `send` is
+    // dropped by the owner once applied, so a remount never sends it twice.
+    if (draftRequestSend) {
+      if (disabled || pause) {
+        setActionError("The Assistant can't take messages right now — your message is in the box to send later.");
+      } else {
+        void submit();
+      }
+    }
+    onDraftRequestApplied?.(draftRequestNonce);
+    // Only a new request (nonce) replaces the draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftRequestNonce]);
 
   useEffect(() => {
     const previousId = previousQueuedEditIdRef.current;
@@ -1263,9 +1293,7 @@ export function TaskChatComposer({
       ) : null}
       <div
         className={cn(
-        streamlined
-          ? "paperclip-task-chat-composer rounded-(--radius-task-composer) border border-border bg-card p-(--sz-18px) shadow-(--shadow-task-composer) dark:border-0 dark:bg-muted dark:shadow-none"
-          : "paperclip-task-chat-composer rounded-xl bg-card p-(--sz-18px)",
+        "paperclip-task-chat-composer rounded-(--radius-task-composer) border border-border bg-card p-(--sz-18px) shadow-(--shadow-task-composer) dark:border-0 dark:bg-muted dark:shadow-none",
         mobile && "p-3",
       )}
         onKeyDownCapture={(e) => {
@@ -1613,9 +1641,7 @@ export function TaskChatComposer({
               aria-busy={submitting}
               className={cn(
                 "flex size-8 min-h-8 min-w-8 shrink-0 aspect-square items-center justify-center rounded-full transition-transform hover:scale-105 disabled:scale-100",
-                streamlined
-                  ? "bg-foreground text-background disabled:bg-foreground disabled:text-background disabled:opacity-100"
-                  : "bg-primary text-primary-foreground disabled:bg-muted disabled:text-muted-foreground",
+                "bg-foreground text-background disabled:bg-foreground disabled:text-background disabled:opacity-100",
               )}
               data-testid={
                 showStop ? "task-chat-composer-stop" : "task-chat-composer-send"

@@ -73,6 +73,7 @@ import {
 import {
   addIssueCommentSchema,
   acceptIssueThreadInteractionSchema,
+  claimProposedActionSchema,
   resolveConfirmationFromCommentSchema,
   attachmentArtifactWorkProductMetadataSchema,
   cancelIssueThreadInteractionSchema,
@@ -246,6 +247,7 @@ import {
   assertCompanyAccess,
   getAccessibleResource,
   getActorInfo,
+  isDelegatedBoardSource,
 } from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
@@ -2455,6 +2457,45 @@ function readSecretProposalContinuationContext(interaction: {
   };
 }
 
+/**
+ * Wake context for an Assistant proposed action: what was proposed and what
+ * the person's browser reported. The Assistant never executed the call itself.
+ */
+function readProposedActionContinuationContext(interaction: {
+  status: string;
+  payload?: unknown;
+  result?: unknown;
+}) {
+  const proposal = readObject(readObject(interaction.payload).proposedAction);
+  const method = readNonEmptyString(proposal.method);
+  const path = readNonEmptyString(proposal.path);
+  if (!method || !path) return null;
+  const summary = readNonEmptyString(proposal.summary);
+  if (interaction.status === "rejected") {
+    const reason = readNonEmptyString(readObject(interaction.result).reason);
+    return {
+      method, path, ...(summary ? { summary } : {}),
+      decision: "cancelled", executionStatus: "cancelled",
+      ...(reason ? { declineReason: reason } : {}),
+      instructions: "the person cancelled this proposed action; it was not executed. Do not propose it again unless they ask.",
+    };
+  }
+  if (interaction.status !== "accepted") return null;
+  const execution = readObject(readObject(interaction.result).proposedAction);
+  const executionStatus = readNonEmptyString(execution.status) ?? "unknown";
+  const httpStatus = typeof execution.httpStatus === "number" ? execution.httpStatus : null;
+  const message = readNonEmptyString(execution.message);
+  return {
+    method, path, ...(summary ? { summary } : {}),
+    decision: "confirmed", executionStatus,
+    ...(httpStatus !== null ? { httpStatus } : {}),
+    ...(message ? { message } : {}),
+    instructions: executionStatus === "executed"
+      ? "the person confirmed and their browser executed this call; verify the outcome before telling them it is done."
+      : "the person confirmed but the call did not succeed; explain the failure and suggest a next step. Do not retry automatically.",
+  };
+}
+
 const REQUEST_ITEM_VERDICTS_WAKE_COALESCE_WINDOW_MS = 2_000;
 
 function buildRequestItemVerdictsWakeIdempotencyKey(args: {
@@ -2573,6 +2614,9 @@ async function queueResolvedInteractionContinuationWakeup(input: {
   const secretProposal = readSecretProposalContinuationContext(
     input.interaction,
   );
+  const proposedAction = readProposedActionContinuationContext(
+    input.interaction,
+  );
   const newlyResolvedItemIds =
     input.newlyResolvedItemIds?.filter((value) => value.length > 0) ?? [];
   const itemVerdicts =
@@ -2648,6 +2692,7 @@ async function queueResolvedInteractionContinuationWakeup(input: {
         ...(checkboxSelection ? { checkboxSelection } : {}),
         ...(toolAction ? { toolAction } : {}),
         ...(secretProposal ? { secretProposal } : {}),
+        ...(proposedAction ? { proposedAction } : {}),
         ...(itemVerdicts ? { itemVerdicts, newlyResolvedItemIds } : {}),
         ...(rejectionAgentMessage
           ? { paperclipAgentMessage: rejectionAgentMessage }
@@ -2674,6 +2719,7 @@ async function queueResolvedInteractionContinuationWakeup(input: {
         ...(checkboxSelection ? { checkboxSelection } : {}),
         ...(toolAction ? { toolAction } : {}),
         ...(secretProposal ? { secretProposal } : {}),
+        ...(proposedAction ? { proposedAction } : {}),
         ...(itemVerdicts ? { itemVerdicts, newlyResolvedItemIds } : {}),
         ...(rejectionAgentMessage
           ? { paperclipAgentMessage: rejectionAgentMessage }
@@ -4616,7 +4662,9 @@ export function issueRoutes(
             (("toolAction" in interaction.payload &&
               interaction.payload.toolAction !== undefined) ||
               ("secretProposal" in interaction.payload &&
-                interaction.payload.secretProposal !== undefined))
+                interaction.payload.secretProposal !== undefined) ||
+              ("proposedAction" in interaction.payload &&
+                interaction.payload.proposedAction !== undefined))
           ),
       );
       if (!designatedReviewConfirmation) {
@@ -5201,7 +5249,8 @@ export function issueRoutes(
     return false;
     }
     if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) return true;
-    const instanceAdmin = req.actor.source !== "cloud_tenant"
+    // Delegated channels (MCP connections, Assistant runs) never use the person's instance-admin role.
+    const instanceAdmin = req.actor.source !== "cloud_tenant" && !isDelegatedBoardSource(req.actor.source)
       ? await db
           .select({ id: instanceUserRoles.id })
           .from(instanceUserRoles)
@@ -6024,6 +6073,7 @@ export function issueRoutes(
         ? (interaction.payload as {
             toolAction?: unknown;
             secretProposal?: unknown;
+            proposedAction?: unknown;
           })
         : null;
     const actor = getActorInfo(req);
@@ -6042,7 +6092,8 @@ export function issueRoutes(
         governedAction:
           interaction.kind === "request_confirmation" &&
           (payload?.toolAction !== undefined ||
-            payload?.secretProposal !== undefined),
+            payload?.secretProposal !== undefined ||
+            payload?.proposedAction !== undefined),
       });
     if (!decision.allowed) {
       return denyIssueThreadInteractionResolution(res, {
@@ -9969,7 +10020,7 @@ export function issueRoutes(
                 agentId: actor.agentId ?? null,
                 userId: actor.actorType === "user" ? actor.actorId : null,
               },
-              allowBoardOverride: req.actor.type === "board" && req.actor.source !== "mcp_oauth",
+              allowBoardOverride: req.actor.type === "board" && !isDelegatedBoardSource(req.actor.source),
               commentBody: resolutionNote ?? null,
             });
             Object.assign(updateFields, transition.patch);
@@ -13543,7 +13594,7 @@ export function issueRoutes(
       if (req.body.visibility !== undefined && !(req.actor.type === "agent" && req.body.visibility === "private")
         && !(await resolveManagedIssueForPrivacy(req, res, existing))) return;
       // MCP task changes cannot stop a run or implicitly decide a pending review.
-      const mcpParticipationChange = req.actor.source === "mcp_oauth" &&
+      const mcpParticipationChange = isDelegatedBoardSource(req.actor.source) &&
         ["status", "assigneeAgentId", "assigneeUserId", "blockedByIssueIds", "parentId", "projectId"].some(key => req.body[key] !== undefined);
       if (mcpParticipationChange) await assertMcpTaskParticipation(db, existing);
 
@@ -13689,7 +13740,7 @@ export function issueRoutes(
         });
       }
       const shouldCancelActiveRunForCancelledStatus =
-        req.actor.source !== "mcp_oauth" && existing.status !== "cancelled" && updateFields.status === "cancelled";
+        !isDelegatedBoardSource(req.actor.source) && existing.status !== "cancelled" && updateFields.status === "cancelled";
       if (resumeRequested === true && !commentBody) {
         res.status(400).json({ error: "Follow-up intent requires a comment" });
         return;
@@ -13988,7 +14039,7 @@ export function issueRoutes(
           agentId: actor.agentId ?? null,
           userId: actor.actorType === "user" ? actor.actorId : null,
         },
-        allowBoardOverride: req.actor.type === "board" && req.actor.source !== "mcp_oauth",
+        allowBoardOverride: req.actor.type === "board" && !isDelegatedBoardSource(req.actor.source),
         commentBody,
         reviewRequest: reviewRequest === undefined ? undefined : reviewRequest,
         monitorExplicitlyUpdated:
@@ -14231,7 +14282,7 @@ export function issueRoutes(
       // Only this request may finish a mutation that intentionally stops its
       // own run (for example handing work to a signoff reviewer).
       const issueMutationStopId = randomUUID();
-      if (req.actor.source !== "mcp_oauth" && assigneeWillChange && existing.assigneeAgentId) {
+      if (!isDelegatedBoardSource(req.actor.source) && assigneeWillChange && existing.assigneeAgentId) {
         await stopRunnerGoalForOwnershipChange({
           companyId: existing.companyId,
           issueId: existing.id,
@@ -14267,7 +14318,7 @@ export function issueRoutes(
         updateFields.status !== existing.status &&
         isClosedIssueStatus(updateFields.status);
       if (
-        req.actor.source !== "mcp_oauth" && !assigneeWillChange &&
+        !isDelegatedBoardSource(req.actor.source) && !assigneeWillChange &&
         terminalizingIssue &&
         existing.assigneeAgentId
       ) {
@@ -16226,7 +16277,6 @@ export function issueRoutes(
       const decision = await decideIssueAccess(req, issue, "issue:comment");
       if (!decision.allowed) throw forbidden(decision.explanation, authorizationDeniedDetails(decision));
       if (issue.conversationAgentId) {
-        if (!(await instanceSettings.getExperimental()).enableAgentChat) throw notFound("Agent Chat is disabled");
         if (req.actor.userId !== issue.conversationUserId) {
           throw forbidden("Only the conversation owner can interrupt a chat to send queued messages");
         }
@@ -16680,6 +16730,14 @@ export function issueRoutes(
           "payload.secretProposal is server-owned metadata and cannot be supplied when creating an interaction",
         );
       }
+      if (
+        req.body.kind === "request_confirmation" &&
+        req.body.payload?.proposedAction !== undefined
+      ) {
+        throw unprocessable(
+          "payload.proposedAction is server-owned metadata and cannot be supplied when creating an interaction",
+        );
+      }
 
       // Plan-document confirmation targets are validated authoritatively inside
       // issueThreadInteractionService.create, which re-reads the plan document's
@@ -16811,6 +16869,37 @@ export function issueRoutes(
   );
 
   router.post(
+    "/issues/:id/interactions/:interactionId/claim-proposed-action",
+    validate(claimProposedActionSchema),
+    async (req, res) => {
+      const issue = await getAccessibleResource(req, res, svc.getById(req.params.id as string), "Issue not found");
+      if (!issue) return;
+      // Only the addressed person in their own interactive session; never an
+      // agent, the Assistant run itself, MCP OAuth or an API key.
+      if (
+        req.actor.type !== "board" ||
+        (req.actor.source !== "session" && req.actor.source !== "local_implicit") ||
+        !req.actor.userId
+      ) {
+        throw forbidden("Only the addressed person can confirm a proposed action from their own session");
+      }
+      assertCompanyAccess(req, issue.companyId);
+      const interactionSvc = issueThreadInteractionService(db);
+      const claimed = await interactionSvc.claimProposedAction(issue, req.params.interactionId as string, {
+        userId: req.actor.userId,
+        hash: req.body.hash,
+      });
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        companyId: issue.companyId, actorType: actor.actorType, actorId: actor.actorId, agentId: actor.agentId, runId: actor.runId,
+        action: "issue.thread_interaction_proposed_action_claimed", entityType: "issue", entityId: issue.id,
+        details: { interactionId: claimed.id },
+      });
+      res.json(claimed);
+    },
+  );
+
+  router.post(
     "/issues/:id/interactions/:interactionId/accept",
     validate(acceptIssueThreadInteractionSchema),
     async (req, res) => {
@@ -16849,6 +16938,43 @@ export function issueRoutes(
             )
           : true;
       if (!suggestedTaskEffectsAuthorized) return;
+
+      const storedProposedAction =
+        current.kind === "request_confirmation"
+          ? current.payload.proposedAction
+          : undefined;
+      if (storedProposedAction) {
+        // Only the addressed person, in their own interactive session, may
+        // confirm. Delegated channels (the Assistant run itself, MCP OAuth),
+        // API keys and agents never confirm a proposal on the person's behalf.
+        if (
+          req.actor.type !== "board" ||
+          (req.actor.source !== "session" &&
+            req.actor.source !== "local_implicit") ||
+          !req.actor.userId ||
+          req.actor.userId !== current.addresseeUserId
+        ) {
+          throw forbidden(
+            "Only the addressed person can confirm a proposed action from their own session",
+          );
+        }
+        if (!req.body.proposedActionResult) {
+          throw badRequest(
+            "proposedActionResult is required to accept a proposed action",
+          );
+        }
+        if (req.body.proposedActionResult.hash !== storedProposedAction.hash) {
+          throw badRequest(
+            "proposedActionResult.hash does not match the proposed action",
+          );
+        }
+        // The service requires a prior claim by this person under the row
+        // lock (the claim lives on the raw row, not the hydrated payload).
+      } else if (req.body.proposedActionResult) {
+        throw badRequest(
+          "proposedActionResult is only accepted for proposed-action confirmations",
+        );
+      }
 
       const actor = getActorInfo(req);
       if (
@@ -18047,7 +18173,6 @@ export function issueRoutes(
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     if (req.actor.type !== "board" || !req.actor.userId) throw forbidden("Board user access required");
-    if (!(await instanceSettings.getExperimental()).enableAgentChat) throw notFound("Agent Chat is disabled");
     const conversations = await svc.listConversations(companyId, req.actor.userId);
     res.json(await filterIssuesForActor(req, conversations));
   });
@@ -18058,7 +18183,6 @@ export function issueRoutes(
       const companyId = req.params.companyId as string;
       assertCompanyAccess(req, companyId);
       if (req.actor.type !== "board" || !req.actor.userId) throw forbidden("Board user access required");
-      if (!(await instanceSettings.getExperimental()).enableAgentChat) throw notFound("Agent Chat is disabled");
       const resolved = await agentsSvc.resolveByReference(companyId, req.params.agentRef as string);
       if (resolved.ambiguous) throw conflict("Agent reference is ambiguous");
       if (!resolved.agent) throw notFound("Agent not found");
@@ -18091,10 +18215,19 @@ export function issueRoutes(
       );
       if (!issue) return;
       if (issue.conversationAgentId && req.actor.type === "board") {
-        if (!(await instanceSettings.getExperimental()).enableAgentChat) throw notFound("Agent Chat is disabled");
         if (!req.actor.userId) throw forbidden("Board user access required");
+        // The Assistant acts as the person but is never the person speaking in a chat.
+        if (req.actor.source === "assistant_run") throw forbidden("The Assistant can't post or edit in chats.");
         if (req.actor.userId !== issue.conversationUserId) throw forbidden("Only the conversation owner can send messages or start a new session");
         if (!req.body.clientRequestId) throw unprocessable("Chat messages require a clientRequestId for safe retries");
+        // The person may attach only display-only page context to a chat message.
+        const chatMetadata = req.body.metadata ?? null;
+        if (chatMetadata) {
+          const onlyPageContext = Object.keys(chatMetadata).every((key) => key === "version" || key === "pageContext" || key === "sections")
+            && !(chatMetadata.sections?.length)
+            && chatMetadata.pageContext != null;
+          if (!onlyPageContext) throw badRequest("Chat messages may carry only pageContext metadata");
+        }
         if (!(await assertAgentIssueCommentAllowed(req, res, issue))) return;
         if (req.body.body.trim() !== "/new" && !(await assertBoardCommentNotPaused(req, res, issue))) return;
         const actor = getActorInfo(req);
@@ -18110,6 +18243,7 @@ export function issueRoutes(
           ));
           const saved = await svc.addComment(issue.id, req.body.body, { userId }, {
             clientRequestId: req.body.clientRequestId, authorType: "user", attachmentIds: req.body.attachmentIds,
+            ...(chatMetadata ? { metadata: chatMetadata } : {}),
           }, tx);
           if (!existing) await logActivity(tx as unknown as Db, {
             companyId: issue.companyId, actorType: actor.actorType, actorId: actor.actorId,
@@ -18123,6 +18257,10 @@ export function issueRoutes(
         await deliverConversationComments(db, issue, heartbeat.wakeup);
         res.status(201).json(comment);
         return;
+      }
+      // Page context belongs only to the person's own chat messages.
+      if (req.body.metadata?.pageContext !== undefined) {
+        throw badRequest("pageContext is only accepted on chat messages from the conversation owner");
       }
       if (req.actor.type === "agent" && req.body.onBehalfOfUserId != null) {
         await auditAgentIssueCommentAttributionSpoof({
@@ -19243,9 +19381,6 @@ export function issueRoutes(
       if (issue.companyId !== companyId) {
         res.status(422).json({ error: "Issue does not belong to company" });
         return;
-      }
-      if (issue.conversationAgentId && req.actor.type === "board" && !(await instanceSettings.getExperimental()).enableAgentChat) {
-        throw notFound("Agent Chat is disabled");
       }
       if (issue.conversationAgentId && req.actor.type === "board" && req.actor.userId !== issue.conversationUserId) {
         throw forbidden("Only the conversation owner can upload attachments");

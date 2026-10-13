@@ -209,11 +209,72 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           id: "scope",
           prompt: "Which scope?",
           selectionMode: "single" as const,
-          options: [{ id: "phase-1", label: "Phase 1" }],
+          options: [{ id: "phase-1", label: "Phase 1", recommended: true }],
         }],
       },
     };
   }
+
+  it("rejects new questions without a recommended answer and allows trusted exemptions", async () => {
+    const { companyId, issueId } = await seedSourceQuestionFixture({});
+    const issue = { id: issueId, companyId };
+    const message = "Each question with options needs a recommended answer: mark exactly one option recommended: true (single choice), or at least one (multiple choice). Text questions are exempt; set initialText to suggest an answer.";
+    const unrecommendedSet = {
+      schema: "paperclip.question_set.v1" as const,
+      questions: [
+        { id: "scope", prompt: "Scope?", required: true, answerMode: "single_select" as const, options: [{ id: "a", label: "A" }, { id: "b", label: "B" }] },
+        { id: "notes", prompt: "Notes?", required: false, answerMode: "text" as const },
+      ],
+    };
+    await expect(interactionsSvc.create(issue, {
+      kind: "ask_user_questions", payload: { version: 1, questionSet: unrecommendedSet },
+    }, { userId: "local-board" })).rejects.toMatchObject({ status: 422, message });
+    await expect(interactionsSvc.create(issue, {
+      kind: "ask_user_questions",
+      payload: { version: 1, questions: [{ id: "many", prompt: "Which?", selectionMode: "multi", options: [{ id: "a", label: "A" }] }] },
+    }, { userId: "local-board" })).rejects.toMatchObject({ status: 422, message });
+    const recommended = await interactionsSvc.create(issue, {
+      kind: "ask_user_questions",
+      payload: { version: 1, questionSet: { ...unrecommendedSet, questions: [
+        { ...unrecommendedSet.questions[0]!, options: [{ id: "a", label: "A", recommended: true }, { id: "b", label: "B" }] },
+        unrecommendedSet.questions[1]!,
+      ] } },
+    }, { userId: "local-board" });
+    if (recommended.kind !== "ask_user_questions") throw new Error("expected questions");
+    expect(recommended.payload.questions[0]!.options[0]).toMatchObject({ id: "a", recommended: true });
+    const exempt = await interactionsSvc.create(issue, {
+      kind: "ask_user_questions", idempotencyKey: "exempt", payload: { version: 1, questionSet: unrecommendedSet },
+    }, { userId: "local-board" }, { allowQuestionsWithoutRecommendation: true });
+    expect(exempt.status).toBe("pending");
+  });
+
+  it("accepts a single-select question with exactly one recommended option", async () => {
+    const { companyId, issueId } = await seedSourceQuestionFixture({});
+    const created = await interactionsSvc.create({ id: issueId, companyId }, {
+      kind: "ask_user_questions",
+      payload: { version: 1, questionSet: { schema: "paperclip.question_set.v1", questions: [{
+        id: "pick", prompt: "Pick one?", required: true, answerMode: "single_select",
+        options: [{ id: "x", label: "X" }, { id: "y", label: "Y", recommended: true }],
+      }] } },
+    }, { userId: "local-board" });
+    expect(created).toMatchObject({ kind: "ask_user_questions", status: "pending" });
+    if (created.kind !== "ask_user_questions") throw new Error("expected questions");
+    expect(created.payload.questionSet?.questions[0]?.options?.[1]).toMatchObject({ id: "y", recommended: true });
+  });
+
+  it("replays an existing idempotent question even when it predates the recommendation rule", async () => {
+    const { companyId, issueId } = await seedSourceQuestionFixture({});
+    const issue = { id: issueId, companyId };
+    const input = {
+      kind: "ask_user_questions" as const,
+      idempotencyKey: "pre-rule-question",
+      payload: { version: 1 as const, questions: [{ id: "old", prompt: "Old?", selectionMode: "single" as const, options: [{ id: "a", label: "A" }, { id: "b", label: "B" }] }] },
+    };
+    // Stands in for a row stored before recommendations were required.
+    const stored = await interactionsSvc.create(issue, input, { userId: "local-board" }, { allowQuestionsWithoutRecommendation: true });
+    const replayed = await interactionsSvc.create(issue, input, { userId: "local-board" });
+    expect(replayed.id).toBe(stored.id);
+  });
 
   it("persists and answers a canonical-only mixed question form", async () => {
     const { companyId, issueId } = await seedSourceQuestionFixture({});
@@ -221,8 +282,8 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
       schema: "paperclip.question_set.v1" as const,
       questions: [
         { id: "repo", prompt: "Repository URL?", required: true, answerMode: "text" as const },
-        { id: "scope", prompt: "Review scope?", required: true, answerMode: "single_select" as const, options: [{ id: "all", label: "All changes" }, { id: "selected", label: "Selected changes" }] },
-        { id: "hosting", prompt: "Preview hosting?", required: true, answerMode: "multi_select" as const, options: [{ id: "existing", label: "Existing host" }, { id: "new", label: "New host" }] },
+        { id: "scope", prompt: "Review scope?", required: true, answerMode: "single_select" as const, options: [{ id: "all", label: "All changes", recommended: true }, { id: "selected", label: "Selected changes" }] },
+        { id: "hosting", prompt: "Preview hosting?", required: true, answerMode: "multi_select" as const, options: [{ id: "existing", label: "Existing host", recommended: true }, { id: "new", label: "New host" }] },
       ],
     };
     const input = { kind: "ask_user_questions" as const, idempotencyKey: "canonical:mixed", payload: { version: 1 as const, questionSet } };
@@ -268,7 +329,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
       expect((await interactionsSvc.answerQuestions(issue, created.id, { answers: [{ questionId: "value", optionIds: [], otherText: entry.valid }] }, { userId: "local-board" })).status).toBe("answered");
     }
     const custom = await interactionsSvc.create(issue, { kind: "ask_user_questions", payload: { version: 1, questionSet: {
-      schema: "paperclip.question_set.v1", questions: [{ id: "scope", prompt: "Scope?", required: true, answerMode: "single_select", options: [{ id: "all", label: "All" }, { id: "selected", label: "Selected" }], customAnswer: { enabled: true }, textValidation: { minLength: 3 } }],
+      schema: "paperclip.question_set.v1", questions: [{ id: "scope", prompt: "Scope?", required: true, answerMode: "single_select", options: [{ id: "all", label: "All", recommended: true }, { id: "selected", label: "Selected" }], customAnswer: { enabled: true }, textValidation: { minLength: 3 } }],
     } } }, { userId: "local-board" });
     await expect(interactionsSvc.answerQuestions(issue, custom.id, { answers: [{ questionId: "scope", optionIds: [], otherText: "ab" }] }, { userId: "local-board" })).rejects.toThrow("at least 3");
     expect((await interactionsSvc.answerQuestions(issue, custom.id, { answers: [{ questionId: "scope", optionIds: [], otherText: "abc" }] }, { userId: "local-board" })).status).toBe("answered");
@@ -277,7 +338,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
   it("accepts existing custom-answer IDs in compatible dual forms", async () => {
     const { companyId, issueId } = await seedSourceQuestionFixture({});
     const issue = { id: issueId, companyId };
-    const options = [{ id: "all", label: "All" }, { id: "selected", label: "Selected" }];
+    const options = [{ id: "all", label: "All", recommended: true }, { id: "selected", label: "Selected" }];
     const created = await interactionsSvc.create(issue, { kind: "ask_user_questions", payload: {
       version: 1,
       questions: [{ id: "scope", prompt: "Scope?", required: true, selectionMode: "single", options: [...options, { id: "existing-custom-id", label: "Other", freeText: true }] }],
@@ -291,7 +352,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
     const { companyId, issueId } = await seedSourceQuestionFixture({});
     const issue = { id: issueId, companyId };
     const created = await interactionsSvc.create(issue, { kind: "ask_user_questions", payload: { version: 1, questionSet: {
-      schema: "paperclip.question_set.v1", questions: [{ id: "scope", prompt: "Scope?", required: true, answerMode: "single_select", options: [{ id: "all", label: "All" }, { id: "selected", label: "Selected" }], customAnswer: { enabled: true }, textValidation: { minLength: 3 } }],
+      schema: "paperclip.question_set.v1", questions: [{ id: "scope", prompt: "Scope?", required: true, answerMode: "single_select", options: [{ id: "all", label: "All", recommended: true }, { id: "selected", label: "Selected" }], customAnswer: { enabled: true }, textValidation: { minLength: 3 } }],
     } } }, { userId: "local-board" });
     if (created.kind !== "ask_user_questions") throw new Error("expected questions");
     const historicalPayload = structuredClone(created.payload);
@@ -573,26 +634,6 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
     expect(created).toMatchObject({ kind: "request_confirmation", status: "pending" });
   });
 
-  it("does not treat the board concierge reply as human direction", async () => {
-    const fixture = await seedSourceQuestionFixture({ paperclipWake: { comments: [] } });
-    await db.insert(issueComments).values({
-      companyId: fixture.companyId,
-      issueId: fixture.issueId,
-      authorType: "user",
-      authorUserId: "board-concierge",
-      body: "The concierge relay replied.",
-      createdAt: new Date("2026-07-25T12:01:00.000Z"),
-      updatedAt: new Date("2026-07-25T12:01:00.000Z"),
-    });
-
-    const created = await interactionsSvc.create(
-      { id: fixture.issueId, companyId: fixture.companyId },
-      questionCreateInput(fixture.runId),
-      { agentId: fixture.agentId, runId: fixture.runId },
-    );
-    expect(created.status).toBe("pending");
-  });
-
   it("rejects an explicitly mismatched source-run issue or agent", async () => {
     const fixture = await seedSourceQuestionFixture({ paperclipWake: { comments: [] } });
     const otherAgentId = randomUUID();
@@ -675,7 +716,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
               id: "scope",
               prompt: "Which scope?",
               selectionMode: "single",
-              options: [{ id: "phase-1", label: "Phase 1" }],
+              options: [{ id: "phase-1", label: "Phase 1", recommended: true }],
             }],
           },
         },
@@ -909,7 +950,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           id: "scope",
           prompt: "Which scope?",
           selectionMode: "single" as const,
-          options: [{ id: "phase-1", label: "Phase 1" }],
+          options: [{ id: "phase-1", label: "Phase 1", recommended: true }],
         }],
       },
     };
@@ -1024,7 +1065,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
             id: "scope",
             prompt: "Which scope?",
             selectionMode: "single",
-            options: [{ id: "phase-1", label: "Phase 1" }],
+            options: [{ id: "phase-1", label: "Phase 1", recommended: true }],
           }],
         },
       },
@@ -1092,7 +1133,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
               id: "scope",
               prompt: "Which scope?",
               selectionMode: "single",
-              options: [{ id: "phase-1", label: "Phase 1" }],
+              options: [{ id: "phase-1", label: "Phase 1", recommended: true }],
             }],
           },
         },
@@ -1146,7 +1187,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
             id: "scope",
             prompt: "Which scope?",
             selectionMode: "single",
-            options: [{ id: "phase-1", label: "Phase 1" }],
+            options: [{ id: "phase-1", label: "Phase 1", recommended: true }],
           }],
         },
       },
@@ -1501,7 +1542,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
             selectionMode: "single",
             required: true,
             options: [
-              { id: "phase-1", label: "Phase 1" },
+              { id: "phase-1", label: "Phase 1", recommended: true },
               { id: "phase-2", label: "Phase 2" },
             ],
           },
@@ -1510,7 +1551,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
             prompt: "Optional extras",
             selectionMode: "multi",
             options: [
-              { id: "tests", label: "Tests" },
+              { id: "tests", label: "Tests", recommended: true },
               { id: "docs", label: "Docs" },
             ],
           },
@@ -1601,7 +1642,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           selectionMode: "single",
           required: true,
           options: [
-            { id: "phase-1", label: "Phase 1" },
+            { id: "phase-1", label: "Phase 1", recommended: true },
             { id: "phase-2", label: "Phase 2" },
           ],
         }],
@@ -1653,7 +1694,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
             id: "scope",
             prompt: "Scope?",
             selectionMode: "single" as const,
-            options: [{ id: "one", label: "One" }],
+            options: [{ id: "one", label: "One", recommended: true }],
           }],
         },
       },
@@ -1729,7 +1770,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           id: "scope",
           prompt: "Choose the scope",
           selectionMode: "single",
-          options: [{ id: "phase-1", label: "Phase 1" }],
+          options: [{ id: "phase-1", label: "Phase 1", recommended: true }],
         }],
       },
     }, {
@@ -1784,7 +1825,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           id: "scope",
           prompt: "Choose the scope",
           selectionMode: "single",
-          options: [{ id: "phase-1", label: "Phase 1" }],
+          options: [{ id: "phase-1", label: "Phase 1", recommended: true }],
         }],
       },
     }, {
@@ -1825,7 +1866,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           id: "scope",
           prompt: "Choose the scope",
           selectionMode: "single",
-          options: [{ id: "phase-1", label: "Phase 1" }],
+          options: [{ id: "phase-1", label: "Phase 1", recommended: true }],
         }],
       },
     }, {
@@ -1886,7 +1927,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           id: "scope",
           prompt: "Choose the scope",
           selectionMode: "single",
-          options: [{ id: "phase-1", label: "Phase 1" }],
+          options: [{ id: "phase-1", label: "Phase 1", recommended: true }],
         }],
       },
     }, {
@@ -2006,7 +2047,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
             id: "scope",
             prompt: "Pick a scope",
             selectionMode: "single" as const,
-            options: [{ id: "phase-2", label: "Phase 2" }],
+            options: [{ id: "phase-2", label: "Phase 2", recommended: true }],
           },
         ],
       },
@@ -2149,7 +2190,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           id: "q",
           prompt,
           selectionMode: "single" as const,
-          options: [{ id: "opt", label: "Option" }],
+          options: [{ id: "opt", label: "Option", recommended: true }],
         }],
       },
     });
@@ -2243,7 +2284,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           id: "q",
           prompt,
           selectionMode: "single" as const,
-          options: [{ id: "L", label: "L" }],
+          options: [{ id: "L", label: "L", recommended: true }],
         }],
       },
     });
@@ -2258,7 +2299,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           prompt: "What would you like your team to focus on first?",
           selectionMode: "single",
           options: [
-            { id: "mvp", label: "Ship the MVP" },
+            { id: "mvp", label: "Ship the MVP", recommended: true },
             { id: "bugs", label: "Fix bugs" },
           ],
         }],
@@ -4561,7 +4602,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
           phase: "worktree_prepare", status: "succeeded",
         });
         const payload = kind === "ask_user_questions"
-          ? { version: 1, questions: [{ id: "question", prompt: "Which option?", selectionMode: "single", options: [{ id: "first", label: "First" }] }] }
+          ? { version: 1, questions: [{ id: "question", prompt: "Which option?", selectionMode: "single", options: [{ id: "first", label: "First", recommended: true }] }] }
           : { version: 1, prompt: "Allow this action?", [kind]: { version: 1, actionRequestId: randomUUID(), invocationId: randomUUID(), toolName: "example.write",
                 toolDisplayName: "Write", connectionId: randomUUID(), applicationId: randomUUID(),
                 appDisplayName: "Example", risk: "write", previewMarkdown: "Write one row", argumentsSummaryJson: "{}",

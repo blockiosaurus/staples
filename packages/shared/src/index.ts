@@ -1,3 +1,9 @@
+export {
+  BOARD_ROUTE_ROOTS,
+  GLOBAL_ROUTE_ROOTS,
+  RESERVED_COMPANY_ROUTE_SEGMENTS,
+  isReservedCompanyRouteSegment,
+} from "./reserved-route-segments.js";
 export * from "./slack-app-manifest.js";
 export { composioAppSetupSchema, composioAppsRefreshSchema, composioAppsSyncSchema, composioAppAccountSchema, type ComposioAppSetupInput, type ComposioAppSetupResult, type ComposioAppAccountInput, type ComposioAppAccount, type ComposioAppSnapshot, type ComposioAppSyncState, type ComposioAppsResponse } from "./composio-app-setup.js";
 export { agentAdapterTypeSchema, optionalAgentAdapterTypeSchema } from "./adapter-type.js";
@@ -201,7 +207,34 @@ export type {
   AttentionWorkspaceRef,
 } from "./types/attention.js";
 export { ATTENTION_SOURCE_KINDS } from "./types/attention.js";
-export { questionSetToAskUserQuestionsPayload } from "./question-set.js";
+export type {
+  Briefing,
+  BriefingAction,
+  BriefingActionKind,
+  BriefingBudgetTarget,
+  BriefingItem,
+  BriefingSpend,
+  BriefingItemKind,
+  BriefingRecommendation,
+  BriefingRecommendationAnswer,
+  BriefingSection,
+  BriefingWeeklyUpdate,
+} from "./types/briefing.js";
+export {
+  BRIEFING_DONE_RECENTLY_LIMIT,
+  BRIEFING_DONE_RECENTLY_WINDOW_DAYS,
+  BRIEFING_AGENT_ACTIONS_WINDOW_HOURS,
+  BRIEFING_IN_PROGRESS_LIMIT,
+  BRIEFING_NEEDS_YOU_LIMIT,
+  BRIEFING_REASON_MAX,
+  BRIEFING_WEEKLY_UPDATE_EXCERPT_MAX,
+} from "./types/briefing.js";
+export {
+  askUserQuestionsPayloadToQuestionSet,
+  missingQuestionRecommendations,
+  QUESTION_RECOMMENDATION_REQUIRED_MESSAGE,
+  questionSetToAskUserQuestionsPayload,
+} from "./question-set.js";
 export type {
   DecisionQueue,
   DecisionQueueItem,
@@ -1180,6 +1213,7 @@ export type {
   IssueQueuedCommentSteeringDisposition,
   IssueCommentDerivedAuthorSource,
   IssueCommentMetadata,
+  AssistantPageContext,
   IssueCommentMetadataSection,
   IssueCommentMetadataRow,
   IssueCommentMetadataTextRow,
@@ -1214,6 +1248,13 @@ export type {
   ConnectionIntentPayload,
   ConnectionIntentResult,
   RequestConfirmationSecretProposalPayload,
+  RequestConfirmationProposedActionPayload,
+  ProposedActionContext,
+  PlanTemplateSummary,
+  PlanBudgetSummary,
+  RequestConfirmationProposedActionResult,
+  ProposedActionMethod,
+  ProposedActionCategory,
   RequestConfirmationSecretProposalResult,
   RequestCheckboxConfirmationOption,
   RequestCheckboxConfirmationPayload,
@@ -1327,6 +1368,9 @@ export type {
   UserProfileWindowStats,
   SidebarBadges,
   SidebarOrderPreference,
+  CompanySignals,
+  CompanyBrief,
+  UiPreferences,
   InboxDismissal,
   InboxDismissalKind,
   AccessUserProfile,
@@ -1738,6 +1782,39 @@ export {
   type UpsertSidebarOrderPreference,
 } from "./validators/sidebar-preferences.js";
 export {
+  surfaceIdSchema,
+  patchUiPreferencesSchema,
+  type PatchUiPreferences,
+} from "./validators/ui-preferences.js";
+export {
+  COMPANY_BRIEF_MAX_CHARS,
+  COMPANY_BRIEF_PATH,
+  COMPANY_BRIEF_WAKE_EXCERPT_CHARS,
+  updateCompanyBriefSchema,
+  type UpdateCompanyBrief,
+} from "./validators/company-brief.js";
+export {
+  applyPlanAgentSchema,
+  applyPlanSchema,
+  PLAN_TEMPLATE_ANSWERS_MAX_KEYS,
+  PLAN_TEMPLATE_REF_PATTERN,
+  planAgentCreationOrder,
+  planStructureErrors,
+  planTaskCreationOrder,
+  PlanStructureError,
+  type ApplyPlan,
+  type ApplyPlanAgent,
+  type ApplyPlanInput,
+  type ApplyPlanResult,
+  type ApplyPlanTask,
+} from "./validators/plan.js";
+export {
+  applyUiPreferencesPatch,
+  DEFAULT_UI_PREFERENCES,
+  MAX_SURFACE_ENTRIES,
+  uiPreferencesLimitError,
+} from "./ui-preferences.js";
+export {
   resourceMembershipStateSchema,
   updateDocumentResourceMembershipSchema,
   updateResourceMembershipSchema,
@@ -2004,6 +2081,7 @@ export {
   issueCommentMetadataRowSchema,
   issueCommentMetadataSectionSchema,
   issueCommentMetadataSchema,
+  assistantPageContextSchema,
   addIssueCommentSchema,
   issueThreadInteractionStatusSchema,
   issueThreadInteractionKindSchema,
@@ -2017,6 +2095,7 @@ export {
   suggestTasksResultSchema,
   askUserQuestionsQuestionOptionSchema,
   askUserQuestionsQuestionSchema,
+  paperclipQuestionSchema,
   paperclipQuestionSetPayloadSchema,
   askUserQuestionsPayloadSchema,
   askUserQuestionsAnswerSchema,
@@ -2027,6 +2106,15 @@ export {
   requestConfirmationPayloadSchema,
   requestConfirmationResumeFailureSchema,
   requestConfirmationResultSchema,
+  requestConfirmationProposedActionPayloadSchema,
+  proposedActionContextSchema,
+  requestConfirmationProposedActionResultSchema,
+  PROPOSED_ACTION_METHODS,
+  PROPOSED_ACTION_CATEGORIES,
+  PROPOSED_ACTION_BODY_MAX_BYTES,
+  PROPOSED_BRIEF_BODY_MAX_BYTES,
+  PROPOSED_PLAN_BODY_MAX_BYTES,
+  proposedActionBodyMaxBytes,
   requestCheckboxConfirmationOptionSchema,
   requestCheckboxConfirmationPayloadSchema,
   requestCheckboxConfirmationResultSchema,
@@ -2037,6 +2125,7 @@ export {
   requestItemVerdictsResultSchema,
   createIssueThreadInteractionSchema,
   acceptIssueThreadInteractionSchema,
+  claimProposedActionSchema,
   resolveConfirmationFromCommentSchema,
   type ResolveConfirmationFromComment,
   rejectIssueThreadInteractionSchema,
@@ -2221,6 +2310,9 @@ export {
   toolRuntimeSlotStatusSchema,
   toolTransportConfigSchema,
   toolAccessSelectorSchema,
+  toolNamePatternsSchema,
+  TOOL_NAME_PATTERNS_MAX,
+  TOOL_NAME_PATTERN_MAX_LENGTH,
   toolPolicyConditionsSchema,
   toolRateLimitRuleSchema,
   toolTrustRuleArgumentFiltersSchema,
@@ -2706,6 +2798,7 @@ export {
   FEATURE_TIERS,
   INSTANCE_FEATURE_CATALOG,
   INSTANCE_FEATURE_KEYS,
+  RETIRED_FEATURE_KEYS,
   buildFeatureCatalogArtifact,
   featureCatalogArtifactSchema,
   renderFeatureCatalogArtifact,
@@ -2860,12 +2953,26 @@ export * from "./customer-success.js";
 export type { GitHubAppOwner, GitHubAppRegistrationInput, GitHubAppCloudState, GitHubAppWizardState } from "./types/github-app-setup.js";
 export * from "./decision-models.js";
 export { updatePrimaryAgentSchema, type UpdatePrimaryAgent, type PrimaryAgentPreference } from "./primary-agent.js";
+export {
+  ASSISTANT_BUILT_IN_AGENT_KEY,
+  ASSISTANT_WEEKLY_UPDATE_ROUTINE_KEY,
+  ASSISTANT_WEEKLY_UPDATES_ISSUE_ORIGIN_KIND,
+  WEEKLY_UPDATE_CARD_MAX_AGE_DAYS,
+  WEEKLY_UPDATE_DISMISSAL_KEY_PREFIX,
+  WEEKLY_UPDATE_DOCUMENT_KEY_PREFIX,
+  isAssistantAgent,
+  weeklyUpdateDismissalKey,
+} from "./assistant-agent.js";
 
 export * from "./agent-avatar-upload.js";
 
 export type { DotBinding, DotInvitation, DotConnection, DotPairing } from "./dot-invitations.js";
 export { EXTERNAL_AGENT_TOOL_GUIDANCE, DOT_AGENT_TOOL_GUIDANCE } from "./external-agent-guidance.js";
 
-export { AGENT_LIFECYCLE_STATES, type AgentLifecycleState, type AgentLifecycleOperation } from "./types/agent-lifecycle.js";
+export { AGENT_LIFECYCLE_STATES, type AgentLifecycleState, type AgentLifecycleOperation, type AgentLifecycleHarnessTest } from "./types/agent-lifecycle.js";
 
 export type { AgentLifecycleRequest, AgentLifecycleResult } from "./types/agent-lifecycle.js";
+export * from "./types/agent-template.js";
+export * from "./validators/agent-template.js";
+export * from "./types/agent-autopilot.js";
+export * from "./validators/agent-autopilot.js";

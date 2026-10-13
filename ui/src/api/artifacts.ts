@@ -43,6 +43,8 @@ export interface ListArtifactsParams {
   groupIssueId?: string;
   limit?: number;
   cursor?: string;
+  /** Leave out the Assistant's weekly updates (Home shows them in their own card). */
+  excludeWeeklyUpdates?: boolean;
 }
 
 function buildArtifactsQuery(params?: ListArtifactsParams): string {
@@ -55,6 +57,7 @@ function buildArtifactsQuery(params?: ListArtifactsParams): string {
   if (params?.groupIssueId) search.set("groupIssueId", params.groupIssueId);
   if (params?.limit != null) search.set("limit", String(params.limit));
   if (params?.cursor) search.set("cursor", params.cursor);
+  if (params?.excludeWeeklyUpdates) search.set("excludeWeeklyUpdates", "true");
   const qs = search.toString();
   return qs ? `?${qs}` : "";
 }

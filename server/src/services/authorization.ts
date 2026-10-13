@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import { isDelegatedBoardSource } from "../lib/delegated-board-source.js";
 import type { Db } from "@paperclipai/db";
 import { withHumanDirectedWork } from "./human-directed-work.js";
 import { hasOwnerChatInstructionAuthority } from "./owner-chat-instruction-authority.js";
@@ -45,7 +46,7 @@ import {
   type TrustPresetResolution,
 } from "./trust-preset-resolver.js";
 import { logger } from "../middleware/logger.js";
-import { normalizeAgentPermissions } from "../lib/agent-permissions.js";
+import { isStaplesTemplatedAgent, normalizeAgentPermissions } from "../lib/agent-permissions.js";
 import { grantsForHumanRole, normalizeHumanRole } from "./company-member-roles.js";
 
 export type AuthorizationActor =
@@ -64,6 +65,8 @@ export type AuthorizationActor =
     keyScope?: AgentApiKeyScope | null;
     runId?: string | null;
     onBehalfOfUserId?: string | null;
+    /** Task privacy: no principal, so only company-visible tasks and projects are readable. */
+    companyVisibleOnly?: boolean;
     source?:
       | "local_implicit"
       | "session"
@@ -71,6 +74,7 @@ export type AuthorizationActor =
       | "agent_key"
       | "agent_jwt"
       | "mcp_oauth"
+      | "assistant_run"
       | "cloud_tenant"
       | "cloud_control"
       | "none";
@@ -263,6 +267,7 @@ type AgentAuthorizationRow = {
   status: string;
   reportsTo: string | null;
   permissions: Record<string, unknown> | null | undefined;
+  metadata?: Record<string, unknown> | null;
 };
 type ProjectAuthorizationRow = {
   id: string;
@@ -542,6 +547,7 @@ export function issuePrivacyMode(): "off" | "shadow" | "enforce" {
 }
 
 function issuePrivacyPrincipal(actor: AuthorizationActor) {
+  if (actor.companyVisibleOnly) return null;
   if (actor.type === "board" && actor.userId) return { type: "user" as const, id: actor.userId };
   if (actor.type === "agent" && actor.agentId) return { type: "agent" as const, id: actor.agentId };
   return null;
@@ -632,7 +638,9 @@ export async function canActorReadIssuePrivacy(db: Db | DbTransaction, actor: Au
 export async function issueReadSqlCondition(db: Db | DbTransaction, actor: AuthorizationActor): Promise<SQL<boolean>> {
   if (issuePrivacyMode() !== "enforce") return sql<boolean>`true`;
   if (actor.source === "local_implicit" || actor.isInstanceAdmin) return sql<boolean>`true`;
-  if (actor.type === "board" && !actor.ignoreInstanceAdmin && actor.source !== "cloud_tenant"
+  // Delegated channels (MCP connections, Assistant runs) never inherit the
+  // person's instance-admin read of every private task.
+  if (actor.type === "board" && !actor.ignoreInstanceAdmin && actor.source !== "cloud_tenant" && !isDelegatedBoardSource(actor.source)
     && await db.select({ id: instanceUserRoles.id }).from(instanceUserRoles)
       .where(and(eq(instanceUserRoles.userId, actor.userId ?? ""), eq(instanceUserRoles.role, "instance_admin")))
       .limit(1).then(rows => rows.length > 0)) return sql<boolean>`true`;
@@ -647,6 +655,7 @@ export async function projectReadSqlCondition(db: Db | DbTransaction, actor: Aut
     actor.type === "board"
     && !actor.ignoreInstanceAdmin
     && actor.source !== "cloud_tenant"
+    && !isDelegatedBoardSource(actor.source)
     && Boolean(await db
       .select({ id: instanceUserRoles.id })
       .from(instanceUserRoles)
@@ -866,7 +875,10 @@ export function authorizationService(db: Db | DbTransaction) {
     if (!grant) {
       if (
         input.principalType === "user"
-        && input.permissionKey.startsWith("tools:")
+        // Owners and admins without seeded grants (legacy companies, imports,
+        // tenant paths that skip ensureRoleDefaultGrants) keep tool access and
+        // agent configuration (Autopilot included) from their role.
+        && (input.permissionKey.startsWith("tools:") || input.permissionKey === "agents:configure")
         && (membership.membershipRole === "owner" || membership.membershipRole === "admin")
         && grantsForHumanRole(normalizeHumanRole(membership.membershipRole, "operator"))
           .some((defaultGrant) => defaultGrant.permissionKey === input.permissionKey)
@@ -924,6 +936,7 @@ export function authorizationService(db: Db | DbTransaction) {
         status: agents.status,
         reportsTo: agents.reportsTo,
         permissions: agents.permissions,
+        metadata: agents.metadata,
       })
       .from(agents)
       .where(eq(agents.id, agentId))
@@ -1865,7 +1878,7 @@ export function authorizationService(db: Db | DbTransaction) {
       // instance_admin row left behind by deployments that ran the
       // pre-hardening cloud_tenant path still elevates nothing.
       if (
-        !input.actor.ignoreInstanceAdmin && input.actor.source !== "mcp_oauth" &&
+        !input.actor.ignoreInstanceAdmin && !isDelegatedBoardSource(input.actor.source) &&
         (input.actor.isInstanceAdmin ||
           (input.actor.source !== "cloud_tenant" && await isInstanceAdmin(input.actor.userId)))
       ) {
@@ -2079,6 +2092,22 @@ export function authorizationService(db: Db | DbTransaction) {
         action: input.action,
         reason: "deny_company_boundary",
         explanation: "Actor agent was not found in the target company.",
+      });
+    }
+
+    // A Staples templated agent never changes agent configuration beyond its
+    // own non-protected settings: not another agent's (Autopilot, lifecycle,
+    // adapter, instructions), and not a change that needs a change grant
+    // (e.g. resuming itself). Its guards live in that configuration.
+    if (
+      (input.action === "agent_config:update" || input.action === "agent_instructions:update")
+      && isStaplesTemplatedAgent(actorAgent)
+      && (input.resource.type !== "agent" || input.resource.agentId !== actorAgentId || scopeBoolean(input.scope, "requiresChangeGrant"))
+    ) {
+      return deny({
+        action: input.action,
+        reason: "deny_missing_grant",
+        explanation: "An agent installed from a Staples template cannot change agent configuration.",
       });
     }
 

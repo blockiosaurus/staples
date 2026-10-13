@@ -18,7 +18,6 @@ import { accessApi } from "../api/access";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToastActions } from "../context/ToastContext";
-import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { queryKeys } from "../lib/queryKeys";
 import { copyTextToClipboard } from "../lib/clipboard";
 import { routineOverviewCopyText } from "../lib/routine-description-copy";
@@ -39,7 +38,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { RoutineOverview } from "../components/RoutineOverview";
 import { RoutineSectionHeading } from "../components/RoutineSectionHeading";
-import { RoutineSectionPicker, RoutineSubSidebar } from "../components/RoutineSubSidebar";
 import {
   isRoutineDetailView,
   resolveRoutineDetailDestination,
@@ -130,7 +128,6 @@ export function RoutineDetail() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { pushToast } = useToastActions();
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const hydratedRoutineIdRef = useRef<string | null>(null);
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
@@ -155,25 +152,17 @@ export function RoutineDetail() {
     env: null,
   });
 
-  const legacyOperateSection = !streamlinedUiEnabled && (sectionParam === "runs" || sectionParam === "activity")
-    ? sectionParam
-    : null;
-  const section: RoutineSectionKey = legacyOperateSection
-    ?? (isRoutineDetailView(sectionParam) ? sectionParam : "overview");
+  const section: RoutineSectionKey = isRoutineDetailView(sectionParam) ? sectionParam : "overview";
 
   const navigateToSection = useCallback(
     (next: RoutineSectionKey, options?: { replace?: boolean }) => {
       if (!routineId) return;
-      if (!streamlinedUiEnabled && (next === "runs" || next === "activity")) {
-        navigate(`/routines/${routineId}/${next}`, { replace: options?.replace ?? true });
-        return;
-      }
       navigate(
         resolveRoutineDetailDestination({ routineId, section: next }),
         { replace: options?.replace ?? true },
       );
     },
-    [navigate, routineId, streamlinedUiEnabled],
+    [navigate, routineId],
   );
 
   const { data: routine, isLoading, error } = useQuery({
@@ -659,8 +648,7 @@ export function RoutineDetail() {
   }
 
   const legacyTab = new URLSearchParams(window.location.search).get("tab");
-  const validLegacySection = !streamlinedUiEnabled && (sectionParam === "runs" || sectionParam === "activity");
-  if (routineId && (legacyTab || !sectionParam || (!isRoutineDetailView(sectionParam) && !validLegacySection))) {
+  if (routineId && (legacyTab || !sectionParam || !isRoutineDetailView(sectionParam))) {
     return (
       <Navigate
         to={resolveRoutineDetailDestination({ routineId, section: sectionParam, legacyTab })}
@@ -782,25 +770,7 @@ export function RoutineDetail() {
       {/* The global shell owns routine navigation. This surface keeps one
           content scroll owner and a compact action header. */}
       <div className="-m-4 flex h-full min-h-0 overflow-hidden md:-m-6">
-        {!streamlinedUiEnabled ? (
-          <RoutineSubSidebar
-            activeSection={section}
-            hrefFor={(next) => next === "runs" || next === "activity"
-              ? `/routines/${routine.id}/${next}`
-              : routineDetailHref(routine.id, next)}
-            isSectionDirty={isSectionDirty}
-            hasLiveRun={hasLiveRun}
-            onNavigate={navigateToSection}
-          />
-        ) : null}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {!streamlinedUiEnabled ? (
-          <RoutineSectionPicker
-            activeSection={section}
-            onNavigate={navigateToSection}
-            isSectionDirty={isSectionDirty}
-          />
-        ) : null}
         <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 border-b border-border bg-background px-4 py-2 md:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             {section === "overview" && overviewEditing ? (

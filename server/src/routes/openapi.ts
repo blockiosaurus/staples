@@ -1,5 +1,6 @@
 import { slackRegistrationSchema, slackSetupActionSchema, slackInstallAuthorizationSchema, slackRegistrationStateSchema, slackAppConfigurationSchema, slackAvatarStateSchema, slackAccountStateSchema } from "@paperclipai/shared";
 import { experimentalApiMetadata } from "./experimental-api-metadata.js";
+import { assistantSetupRequestSchema } from "../services/assistant-setup.js";
 import {
   experimentalApiPaths,
   experimentalApiQueries,
@@ -143,6 +144,8 @@ import {
   adjustCostSchema,
   // Sidebar
   upsertSidebarOrderPreferenceSchema,
+  patchUiPreferencesSchema,
+  updateCompanyBriefSchema,
   // Announcements
   announcementIdSchema,
   announcementSchema,
@@ -196,6 +199,9 @@ import {
   createIssueThreadInteractionSchema,
   createChildIssueSchema,
   acceptIssueThreadInteractionSchema,
+  claimProposedActionSchema,
+  applyPlanSchema,
+  updateAgentAutopilotSchema,
   resolveConfirmationFromCommentSchema,
   rejectIssueThreadInteractionSchema,
   respondIssueThreadInteractionSchema,
@@ -336,6 +342,7 @@ type OpenApiPathRegistration = {
   request?: {
     params?: z.ZodTypeAny;
     query?: z.ZodTypeAny;
+    headers?: z.ZodTypeAny;
     body?: {
       content: Record<string, { schema: unknown }>;
       required?: boolean;
@@ -597,7 +604,7 @@ function normalizeResponses(responses: Record<string, OpenApiResponse> = {}) {
 
 function parametersFromSchema(
   schema: z.ZodTypeAny,
-  location: "path" | "query",
+  location: "path" | "query" | "header",
 ) {
   const objectSchema = unwrapSchema(schema);
   if (zodTypeName(objectSchema) !== "object") return [];
@@ -641,6 +648,12 @@ class OpenAPIRegistry {
         normalizedOperation.parameters = [
           ...((normalizedOperation.parameters as unknown[]) ?? []),
           ...parametersFromSchema(request.query, "query"),
+        ];
+      }
+      if (request?.headers) {
+        normalizedOperation.parameters = [
+          ...((normalizedOperation.parameters as unknown[]) ?? []),
+          ...parametersFromSchema(request.headers, "header"),
         ];
       }
       if (request?.body) {
@@ -1368,6 +1381,10 @@ const browserUseOperations = [
 ] as const;
 
 const BOARD_ONLY_OPERATIONS = new Set([
+  "GET /api/companies/{companyId}/agent-templates",
+  "GET /api/companies/{companyId}/agent-templates/{slug}",
+  "GET /api/agents/{agentId}/autopilot",
+  "PUT /api/agents/{agentId}/autopilot/{capability}",
   "GET /api/companies/{companyId}/decision-model",
   "PUT /api/companies/{companyId}/decision-model",
   "POST /api/companies/{companyId}/decision-model/test",
@@ -1424,6 +1441,9 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "POST /api/bootstrap/claim",
   "GET /api/companies/{companyId}/resource-memberships/me",
   "GET /api/companies/{companyId}/primary-agent/me",
+  "GET /api/companies/{companyId}/assistant",
+  "GET /api/companies/{companyId}/assistant/adapters",
+  "POST /api/companies/{companyId}/assistant/setup",
   "PUT /api/companies/{companyId}/primary-agent/me",
   "PUT /api/companies/{companyId}/resource-memberships/me/agents/{agentId}",
   "PUT /api/companies/{companyId}/resource-memberships/me/documents/{documentId}",
@@ -1459,6 +1479,8 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "GET /api/issues/{issueId}/file-resources/list",
   "GET /api/issues/{issueId}/file-resources/resolve",
   "POST /api/issues/{id}/interactions/{interactionId}/accept",
+  "POST /api/issues/{id}/interactions/{interactionId}/claim-proposed-action",
+  "POST /api/companies/{companyId}/plans/apply",
   "POST /api/issues/{id}/interactions/{interactionId}/reject",
   "POST /api/issues/{id}/interactions/{interactionId}/respond",
   "POST /api/issues/{id}/interactions/{interactionId}/skip",
@@ -1711,6 +1733,12 @@ function operationKey(method: string, path: string) {
   return `${method.toUpperCase()} ${path}`;
 }
 
+/** Only the person's own interactive board session; never a board API key, delegated channel or agent. */
+const BOARD_SESSION_ONLY_OPERATIONS = new Set([
+  "POST /api/issues/{id}/interactions/{interactionId}/claim-proposed-action",
+  "POST /api/companies/{companyId}/plans/apply",
+]);
+
 function isVoiceSessionOperation(path: string) { return /^\/api\/companies\/\{companyId\}\/voice-(sessions|callbacks|phone|history)(?:\/|$)/.test(path); }
 
 function isBoardOnlyOperation(method: string, path: string) {
@@ -1735,8 +1763,8 @@ function resolveOperationAuthLevel(
   if (/^\/api\/companies\/\{companyId\}\/agents\/\{agentId\}\/dot-binding(?:\/event-test)?$/.test(path)) return "board";
   if (path === "/api/companies/{companyId}/dot-invitations") return "board";
   if (PUBLIC_OPERATIONS.has(key)) return "public";
-  if (key === "POST /api/companies/{companyId}/agent-commentary") return "agent_heartbeat";
-  if (key === "POST /api/mcp/project-tools" || key === "POST /api/companies/{companyId}/slack/tasks/{issueId}/tools") return "agent_run";
+  if (key === "POST /api/companies/{companyId}/agent-commentary" || key === "POST /api/mcp/paperclip-tools") return "agent_heartbeat";
+  if (key === "POST /api/mcp/project-tools" || key === "POST /api/mcp/assistant-tools" || key === "POST /api/companies/{companyId}/slack/tasks/{issueId}/tools") return "agent_run";
   if (RUNTIME_TOOLS_OPERATIONS.has(key)) return "runtime_tools";
   if (INSTANCE_ADMIN_OPERATIONS.has(key)) return "instance_admin";
   if (
@@ -1832,7 +1860,7 @@ function applyDocumentFixups(document: any): any {
                 ? { actor: "board_or_agent" }
                 : { actor: "public" };
 
-      if (isVoiceSessionOperation(path)) {
+      if (isVoiceSessionOperation(path) || BOARD_SESSION_ONLY_OPERATIONS.has(operationKey(method, path))) {
         operation.security = [{[BOARD_SESSION_AUTH_SCHEME]: []}];
         operation["x-paperclip-authorization"] = {actor: "board", sessionBound: true};
       }
@@ -1921,6 +1949,7 @@ registry.registerPath({
         // unavailable. Present on every response shape, including redacted ones.
         commit: z.string().nullable(),
         deploymentMode: z.string().optional(),
+        hostedInferenceAvailable: z.boolean().optional().describe("Whether the server holds an Anthropic key so the Assistant can run on Claude (hosted); the key itself is never exposed"),
         cloud: z
           .object({
             managed: z.literal(true),
@@ -5912,6 +5941,107 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/api/companies/{companyId}/signals",
+  tags: ["dashboard"],
+  summary: "Get company usage signals",
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/brief",
+  tags: ["companies"],
+  summary: "Get the company brief",
+  description: "The company brief (mission, glossary, key decisions) shared with every agent. Returns null when no brief exists. Readable by company members and the company's agents.",
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/companies/{companyId}/brief",
+  tags: ["companies"],
+  summary: "Create or revise the company brief",
+  description: "Board members except viewers. Pass baseRevisionId (the revision you edited) to get a 409 instead of overwriting someone else's change. Logged as company.brief_updated.",
+  request: { params: z.object({ companyId: z.string().uuid() }), body: jsonBody(updateCompanyBriefSchema) },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 409: r.conflict },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/agent-templates",
+  tags: ["agents"],
+  summary: "List hireable agent templates",
+  description: "The Hire an agent marketplace: card data for every Staples agent template (name, tagline, icon, marketplace category, the apps it needs, what it asks before doing, its recurring routines with cron and time zone, default monthly budget, whether it is read-only). Preview templates are hidden. Board members of the company only; agents cannot read it. Hiring goes through the Assistant's plans.",
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/agent-templates/{slug}",
+  tags: ["agents"],
+  summary: "Get a hireable agent template",
+  description: "One template's card data plus its description (markdown) and setup questions, with {{company.name}} and {{person.name}} resolved for this company and the requesting person. Board members of the company only. Unknown and preview templates are a 404.",
+  request: { params: z.object({ companyId: z.string().uuid(), slug: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/agents/{agentId}/autopilot",
+  tags: ["agents"],
+  summary: "Get a templated agent's Autopilot settings",
+  description: "Board users who may read the agent's configuration (agents cannot). One entry per outward category of the agent's Staples template (empty for untemplated and read-only agents): its label, the destructive action that always asks (display only), the company connection satisfying the category's capability, the mode (ask = ask first, the install default; auto = routine (write) actions run without asking, only while the marker is enabled and matches the connection shown), stale (a marker exists but no longer applies as shown) whether it can be toggled (false while no usable connection exists) and remembered (active agent-scoped trust rules, as {policyId, toolName}, that allow the category's outward tools without asking whatever the mode says; revoke via the tools trust-rules API). Another company's agent is a 404.",
+  request: { params: z.object({ agentId: z.string().uuid() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/agents/{agentId}/autopilot/{capability}",
+  tags: ["agents"],
+  summary: "Turn Autopilot on or off for one outward category",
+  description: "Board users who may update the agent's configuration (agent_config:update; viewers and agents cannot). auto creates or repairs (idempotently) one Autopilot marker for this agent, the connection satisfying the capability, write risk and the category's tool-name patterns. It lifts only the template's outward ask and the connection's seeded Ask first defaults for those routine (write) actions; blocks, admin ask-first rules, rate limits and the agent's tool access still apply. ask removes every marker for the capability. Destructive actions and the category's destructive tool names (e.g. closing issues) always ask and cannot be put on Autopilot. Logged as agent.autopilot_changed when something changed. Returns the updated category.",
+  request: {
+    params: z.object({ agentId: z.string().uuid(), capability: z.string() }),
+    body: jsonBody(updateAgentAutopilotSchema),
+  },
+  responses: {
+    200: r.ok(),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+    409: { description: "No usable company connection satisfies this category's capability yet (canToggle is false), so Autopilot cannot be turned on" },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/plans/apply",
+  tags: ["companies"],
+  summary: "Apply a starter plan",
+  description: "The person, in their own interactive board session (never an agent, the Assistant run, an MCP connection or a board API key; viewers are read-only), creates an optional brief, goal and project, new agents and up to 25 tasks in one step (at least one task unless an agent uses a templateRef). Usually run by the browser after the person confirms an Assistant plan proposal. References, cycles, roles (never ceo), adapters (local CLI adapters only), assignees (in this company, never the Assistant) and the brief base revision are checked before anything is created. Agents are hired through the agent-hire path (approvals apply; tasks for a hire awaiting approval are created unassigned in the backlog and linked to the approval); everything else is written in one transaction afterwards. If that fails after a hire, the response names the agents that were created. A retry with the same idempotency key (Idempotency-Key header or body idempotencyKey) reuses agents already hired and, once applied, returns the stored result with 200; the same key with a different plan is a 409. A templated agent (templateRef staples/<slug>, setup templateAnswers, templateVersion pinned at proposal) is installed from its Staples agent template at that pinned version: its skills are added to the company library, it is hired with the rendered instructions, guarded by server-seeded access rules (ask first for outward and destructive tools, or block every write for a read-only template), and given its routines (paused and unassigned while the hire awaits approval) and starter tasks, after a Connect task for each required service the company has not connected. The optional X-Staples-Timezone header (IANA zone) sets the time zone those routines run on (default UTC). Logged as plan.applied, with routine.created and tool_policy.created for template installs.",
+  request: {
+    params: z.object({ companyId: z.string().uuid() }),
+    headers: z.object({ "Idempotency-Key": z.string().optional(), "X-Staples-Timezone": z.string().optional() }),
+    body: jsonBody(applyPlanSchema),
+  },
+  responses: {
+    201: r.ok(),
+    200: { description: "Already applied with this idempotency key; the stored result, nothing created" },
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+    409: { description: "The company brief changed since the plan's base revision, a templated agent's pinned template version is no longer current, the idempotency key was used for a different plan, or the plan is being applied right now" },
+    422: { description: "The plan is invalid or not allowed, or a hire failed (code plan_partially_applied names agents already created)" },
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/api/companies/{companyId}/recovery-observability",
   tags: ["dashboard"],
   summary: "Get recovery observability report",
@@ -5956,6 +6086,103 @@ registry.registerPath({
     }),
   },
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+const briefingRecommendationSchema = z.object({
+  label: z.string(),
+  inline: z.boolean(),
+  answers: z
+    .array(
+      z.object({
+        questionId: z.string(),
+        optionIds: z.array(z.string()).optional(),
+        text: z.string().optional(),
+      }),
+    )
+    .optional(),
+  accept: z.literal(true).optional(),
+});
+
+const briefingActionSchema = z.object({
+  kind: z.enum(["retry_run", "resume_agent", "clear_agent_error", "raise_budget", "open_settings"]),
+  label: z.string(),
+  agentId: z.string().optional(),
+  runId: z.string().optional(),
+  budget: z.object({
+    incidentId: z.string(),
+    policyId: z.string(),
+    metric: z.string(),
+    scopeType: z.enum(["company", "agent", "project"]),
+    scopeId: z.string(),
+    limitCents: z.number().int(),
+    observedCents: z.number().int(),
+    suggestedCents: z.number().int(),
+    maxCents: z.number().int().nullable().describe("The most a person may raise it to (a hosted limit's operator ceiling); null when there is none"),
+  }).optional(),
+  href: z.string().optional().describe("open_settings: company-relative link"),
+});
+
+const briefingItemSchema = z.object({
+  kind: z.enum([
+    "approval",
+    "question",
+    "confirmation",
+    "blocked_task",
+    "budget_incident",
+    "review",
+    "failed_run",
+    "agent_error",
+    "active_task",
+    "live_run",
+    "queued_task",
+    "waiting_task",
+    "done_task",
+    "agent_actions",
+  ]),
+  id: z.string(),
+  title: z.string(),
+  subtitle: z.string().nullable().optional(),
+  href: z.string().describe("Company-relative link, e.g. /issues/TES-12"),
+  issueId: z.string().nullable().optional(),
+  recommendation: briefingRecommendationSchema.optional(),
+  reason: z.string().max(140).nullable().optional().describe("Needs you: why it needs the person, in one plain sentence"),
+  action: briefingActionSchema.optional(),
+  label: z.string().nullable().optional().describe('In progress: a short state label, e.g. "Up next"'),
+  createdAt: z.string().datetime(),
+});
+
+const briefingSchema = z.object({
+  needsYou: z.array(briefingItemSchema),
+  inProgress: z.array(briefingItemSchema),
+  doneRecently: z.array(briefingItemSchema),
+  counts: z.object({
+    needsYou: z.number().int(),
+    inProgress: z.number().int(),
+    doneRecently: z.number().int(),
+  }),
+  spend: z.object({
+    monthSpendCents: z.number().int(),
+    companyBudgetCents: z.number().int().nullable(),
+    hosted: z.object({ capCents: z.number().int(), spentCents: z.number().int() }).nullable(),
+  }).nullable(),
+  weeklyUpdate: z.object({
+    documentId: z.string().uuid(),
+    title: z.string(),
+    excerpt: z.string(),
+    href: z.string(),
+    updatedAt: z.string().datetime(),
+  }).nullable(),
+  generatedAt: z.string().datetime(),
+});
+registry.register("Briefing", briefingSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/briefing",
+  tags: ["inbox"],
+  summary: "Get the Home briefing: what needs the person, what is in progress, and what finished recently",
+  request: { params: z.object({ companyId: z.string() }) },
+  responses: { 200: r.ok(briefingSchema), 401: r.unauthorized, 403: r.forbidden },
 });
 
 // ─── Decisions ──────────────────────────────────────────────────────────────
@@ -6531,6 +6758,21 @@ registry.registerPath({
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized },
 });
 
+for (const method of ["get", "patch"] as const) {
+  registry.registerPath({
+    method,
+    path: "/api/companies/{companyId}/ui-preferences/me",
+    tags: ["sidebar"],
+    summary: method === "get" ? "Get my UI preferences for company" : "Patch my UI preferences for company",
+    description: "Per-person adaptive navigation preferences (pinned, hidden, revealed, seen, showEverything). Active company members, including viewers, may manage their own. Agent credentials cannot access it.",
+    request: {
+      params: z.object({ companyId: z.string() }),
+      ...(method === "patch" ? { body: jsonBody(patchUiPreferencesSchema) } : {}),
+    },
+    responses: { 200: r.ok(), ...(method === "patch" ? { 400: r.badRequest, 422: r.unprocessable } : {}), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+  });
+}
+
 const primaryAgentPreferenceResponse = z.object({
   companyId: z.string().uuid(),
   userId: z.string(),
@@ -6559,6 +6801,89 @@ for (const method of ["get", "put"] as const) {
     },
   });
 }
+
+const assistantAgentSummary = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  urlKey: z.string(),
+  adapterType: z.string(),
+  status: z.string(),
+});
+
+const assistantSetupStatusSchema = z.object({
+  state: z.enum(["ready", "starting", "needs_model", "error"]),
+  message: z.string().optional(),
+  reason: z.string().optional().describe("Fixed copy derived from the last failed harness test's check codes"),
+  adapterType: z.string(),
+});
+
+const assistantResponse = z.object({
+  agent: assistantAgentSummary,
+  conversationIssueId: z.string().uuid().nullable(),
+  setup: assistantSetupStatusSchema.describe("Whether the Assistant can answer yet; drives the inline setup card"),
+  canConfigure: z.boolean().describe("Whether the caller may connect a model (the same agent_config:update decision PATCH /agents/{id} needs)"),
+  hostedInferenceAvailable: z.boolean().describe("Whether the server can run the Assistant on Claude (hosted) with its own key; the key itself is never exposed"),
+});
+
+const assistantAdapterAvailabilitySchema = z.object({
+  adapterType: z.string(),
+  installed: z.boolean(),
+  available: z.boolean(),
+  engine: z.enum(["cli"]).nullable(),
+  signedIn: z.boolean().nullable(),
+  hint: z.string().optional(),
+  label: z.string().optional().describe("Display name, e.g. \"Claude (hosted)\""),
+  needsKey: z.boolean().optional().describe("claude_managed only: a person's own Anthropic API key is needed (no hosted inference)"),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/assistant",
+  tags: ["agents"],
+  summary: "Get the company Assistant",
+  description: "Board users only. Ensures the company's built-in Assistant exists (provisioning it without a hire approval when missing) and returns it with the caller's existing chat issue id, if any. The Assistant is excluded from agent lists, the org chart, and assignee pickers; this is how clients reach it.",
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: {
+    200: r.ok(assistantResponse),
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/assistant/adapters",
+  tags: ["agents"],
+  summary: "List the Assistant's runtime adapters on this host",
+  description: "Board users who may configure the Assistant (not viewers; requires the agent_config:update decision on the Assistant). Cheap host detection only: command lookup, the ACP Node prerequisite and host-local sign-in signals. No model calls.",
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: {
+    200: r.ok(z.object({ adapters: z.array(assistantAdapterAvailabilitySchema) })),
+    401: r.unauthorized,
+    403: r.forbidden,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/assistant/setup",
+  tags: ["agents"],
+  summary: "Connect a model for the company Assistant",
+  description: "Board users who may configure the Assistant (not viewers; requires the agent_config:update decision on the Assistant). Writes the adapter through the same checked path as PATCH /agents/{id} (adapter, env, command and AI-connection checks, lifecycle invalidation) and retries a setup that is still in progress. Logged as agent.updated.",
+  request: {
+    params: z.object({ companyId: z.string().uuid() }),
+    body: jsonBody(assistantSetupRequestSchema),
+  },
+  responses: {
+    200: r.ok(z.object({ agent: assistantAgentSummary, setup: assistantSetupStatusSchema })),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+    422: r.unprocessable,
+  },
+});
 
 // ─── Announcements ───────────────────────────────────────────────────────────
 
@@ -6666,7 +6991,7 @@ registry.registerPath({
           .trim()
           .min(1)
           .regex(
-            /^(approval|join|run|attention):.+$/,
+            /^(approval|join|run|attention|weekly-update):.+$/,
             "Unsupported inbox item key",
           ),
         kind: z.enum(["dismiss", "snooze"]).optional(),
@@ -6790,31 +7115,6 @@ registry.registerPath({
   summary:
     "Unarchive the Cloud-pinned primary company (idempotent); used by the Cloud control plane while restoring an archived stack",
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
-});
-
-// ─── Board chat (Conference Room Chat, experimental) ──────────────────────────
-
-registry.registerPath({
-  method: "post",
-  path: "/api/board/chat/stream",
-  tags: ["instance"],
-  summary:
-    "Stream a board-level chat response (requires enableConferenceRoomChat)",
-  request: {
-    body: jsonBody(
-      z.object({
-        companyId: z.string(),
-        message: z.string(),
-        taskId: z.string().optional(),
-      }),
-    ),
-  },
-  responses: {
-    200: r.ok(),
-    400: r.badRequest,
-    401: r.unauthorized,
-    403: r.forbidden,
-  },
 });
 
 // ─── Access / invites / members ───────────────────────────────────────────────
@@ -7857,6 +8157,27 @@ registry.registerPath({
   },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound,
     409: { description: "Stale or conflicting decision" }, 422: { description: "Invalid answer evidence or selection" } },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/issues/{id}/interactions/{interactionId}/claim-proposed-action",
+  tags: ["issues"],
+  summary: "Claim an Assistant-proposed action before executing it",
+  description: "The addressed person, in their own interactive board session, reserves a pending proposed action before their browser performs it. The stored call is re-validated against the governed allowlist, the echoed hash must match, and approval decisions are refused if the approval changed since the proposal. A fresh claim blocks a second tab.",
+  request: {
+    params: z.object({ id: z.string(), interactionId: z.string() }),
+    body: jsonBody(claimProposedActionSchema),
+  },
+  responses: {
+    200: r.ok(),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+    409: { description: "Already resolved, already claimed, or the approval changed since the proposal" },
+    422: { description: "The stored proposal can no longer run" },
+  },
 });
 
 registry.registerPath({
@@ -10687,6 +11008,34 @@ for (const route of [
 }
 
 // --- Connection intents ------------------------------------------------------
+
+registerCurrentRoute({
+  method: "post",
+  path: "/api/mcp/assistant-tools",
+  tags: ["agents"],
+  summary: "Call person-scoped Assistant tools through the Assistant run's MCP transport",
+  body: z.object({
+    jsonrpc: z.literal("2.0"),
+    id: z.union([z.string(), z.number()]).nullable().optional(),
+    method: z.string(),
+    params: z.record(z.string(), z.unknown()).optional(),
+  }),
+  responses: { 200: r.ok(), 202: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 409: r.conflict },
+});
+
+registerCurrentRoute({
+  method: "post",
+  path: "/api/mcp/paperclip-tools",
+  tags: ["agents"],
+  summary: "Call the Paperclip tool set (issues, comments, documents, approvals, questions) as the run's agent through its MCP transport",
+  body: z.object({
+    jsonrpc: z.literal("2.0"),
+    id: z.union([z.string(), z.number()]).nullable().optional(),
+    method: z.string(),
+    params: z.record(z.string(), z.unknown()).optional(),
+  }),
+  responses: { 200: r.ok(), 202: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
 
 registerCurrentRoute({
   method: "post",

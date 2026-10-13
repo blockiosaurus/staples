@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
+import { excludeAssistantAgents } from "@/lib/assistant-agent";
 import { cn } from "@/lib/utils";
 
 export interface AgentMultiSelectOption extends AvatarAgent {
@@ -13,6 +14,7 @@ export interface AgentMultiSelectOption extends AvatarAgent {
   name: string;
   title?: string | null;
   icon?: string | null;
+  metadata?: unknown;
 }
 
 export function AgentSelect({
@@ -113,7 +115,7 @@ export function AgentSelect({
 }
 
 export function AgentMultiSelect({
-  agents,
+  agents: agentsProp,
   selectedAgentIds,
   onChange,
   onSave,
@@ -134,6 +136,7 @@ export function AgentMultiSelect({
   emptyMessage = "No agents yet.",
   showSelectionPreview = true,
   onOpenChange,
+  excludeAssistant = false,
 }: {
   agents: AgentMultiSelectOption[];
   selectedAgentIds: Set<string>;
@@ -156,7 +159,13 @@ export function AgentMultiSelect({
   emptyMessage?: string;
   showSelectionPreview?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Set where the selection assigns work: the built-in Assistant is not a staff agent. */
+  excludeAssistant?: boolean;
 }) {
+  const agents = useMemo(
+    () => (excludeAssistant ? excludeAssistantAgents(agentsProp) : agentsProp),
+    [agentsProp, excludeAssistant],
+  );
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [draftAgentIds, setDraftAgentIds] = useState<Set<string>>(new Set(selectedAgentIds));

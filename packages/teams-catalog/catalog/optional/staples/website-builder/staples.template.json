@@ -1,0 +1,57 @@
+{
+  "version": "1.2.0",
+  "tagline": "Builds a simple website, shares previews and checks it every week",
+  "icon": "globe",
+  "marketplaceCategory": "engineering",
+  "requiredApps": [
+    {
+      "capability": "hosting",
+      "anyOf": ["vercel", "netlify", "webflow"],
+      "why": "Hosts your site. Previews are shared with you first; publishing to your live site waits for your approval."
+    }
+  ],
+  "setupQuestions": [
+    {
+      "id": "purpose",
+      "header": "What the site is for",
+      "prompt": "What should your website do for your business?",
+      "helpText": "For example: get people to book a call, show your menu and opening hours, or collect sign-ups for a launch.",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "Explain what we do and help visitors get in touch with us",
+      "textValidation": { "maxLength": 500 }
+    },
+    {
+      "id": "style",
+      "header": "Style",
+      "prompt": "What style should the site have?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        { "id": "clean", "label": "Clean", "description": "Simple, calm and easy to read. Lots of white space.", "recommended": true },
+        { "id": "bold", "label": "Bold", "description": "Big headlines, strong colours and confident wording." },
+        { "id": "playful", "label": "Playful", "description": "Friendly colours, rounded shapes and a light touch." }
+      ]
+    },
+    {
+      "id": "domain",
+      "header": "Web address",
+      "prompt": "Which web address should the site use?",
+      "helpText": "If you already own a domain, type it here. Connecting it is a step you do at your domain provider; the builder writes the steps for you.",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "use the free host address for now",
+      "textValidation": { "maxLength": 200 }
+    }
+  ],
+  "outwardActions": [
+    {
+      "capability": "hosting",
+      "label": "Publishing to your live site",
+      "destructiveLabel": "Deleting a site or deployment, or buying or moving a domain",
+      "toolPatterns": ["*deploy*", "*publish*", "*promote*", "*alias*", "*add_domain*", "*assign_domain*", "*set_domain*", "*update_domain*", "*create_domain*", "*domain_add*"],
+      "destructiveToolPatterns": ["*delete*", "*remove*", "*buy_domain*", "*transfer_domain*"]
+    }
+  ],
+  "defaultBudgetMonthlyCents": 3000
+}

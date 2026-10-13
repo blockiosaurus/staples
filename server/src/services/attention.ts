@@ -1831,6 +1831,8 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
               policyId: incident.policyId,
               scopeType: incident.scopeType,
               scopeId: incident.scopeId,
+              scopeName: incident.scopeName,
+              metric: incident.metric,
               thresholdType: incident.thresholdType,
               amountObserved: incident.amountObserved,
               amountLimit: incident.amountLimit,

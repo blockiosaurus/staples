@@ -175,9 +175,11 @@ describe("Codex structured question adapter", () => {
       origin: { adapter: "codex", method: "tool/requestUserInput" },
     };
 
-    expect(input.questions[0]?.options?.[0]?.label).toBe(
-      "Production (recommended)",
-    );
+    // The native "(recommended)" suffix becomes Paperclip's recommended flag.
+    expect(input.questions[0]?.options?.[0]).toMatchObject({
+      label: "Production",
+      recommended: true,
+    });
     expect(runtimeRequestResponseWithContext(request, {
       action: "submit",
       response: {
@@ -188,6 +190,47 @@ describe("Codex structured question adapter", () => {
       },
     }, responseContext)).toEqual({
       answers: { environment: { answers: ["prod-us-east-1"] } },
+    });
+  });
+
+  it("maps a trailing (recommended) label to the flag and answers with the native label", () => {
+    const responseContext = createCodexQuestionResponseContext();
+    const input = normalizeCodexQuestionSetWithContext("item/tool/requestUserInput", {
+      questions: [{
+        id: "environment",
+        question: "Where?",
+        options: [
+          { label: "Staging (Recommended)" },
+          { label: "Production" },
+          { label: "Recommended (recommended) later" },
+        ],
+      }],
+    }, responseContext)!;
+    expect(input.questions[0]?.options).toEqual([
+      { id: "option-1", label: "Staging", recommended: true },
+      { id: "option-2", label: "Production" },
+      { id: "option-3", label: "Recommended (recommended) later" },
+    ]);
+    const request: HarnessRuntimeRequest = {
+      requestId: "request-recommended-label",
+      requestKind: "user_input",
+      method: "item/tool/requestUserInput",
+      turnId: "turn-1",
+      itemId: "item-1",
+      status: "pending",
+      prompt: "Codex requests user input.",
+      details: {},
+      input,
+      origin: { adapter: "codex", method: "item/tool/requestUserInput" },
+    };
+    expect(runtimeRequestResponseWithContext(request, {
+      action: "submit",
+      response: {
+        schema: "paperclip.question_response.v1",
+        answers: { environment: { selectedOptionIds: ["option-1"] } },
+      },
+    }, responseContext)).toEqual({
+      answers: { environment: { answers: ["Staging (Recommended)"] } },
     });
   });
 

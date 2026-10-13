@@ -125,9 +125,13 @@ export async function createCostEventInTransaction(db: Db, companyId: string, da
     if (row.companyId !== companyId) throw unprocessable(`${label} does not belong to company`);
   }
   let subscriptionId: string | null = null;
+  // Server-derived: the run executor marks a run that used the operator's
+  // hosted-inference key; only its events count toward hosted_billed_cents.
+  let hostedInference = false;
   if (values.heartbeatRunId) {
     const [run] = await db.select({ agentId: heartbeatRuns.agentId, context: heartbeatRuns.contextSnapshot }).from(heartbeatRuns).where(eq(heartbeatRuns.id, values.heartbeatRunId));
     if (run.agentId !== values.agentId) throw unprocessable("Heartbeat run does not belong to agent");
+    hostedInference = run.context?.hostedInference === true;
     const attribution = run.context?.aiConnection as { subscriptionId?: unknown; provider?: unknown } | undefined;
     if (SUBSCRIPTION_BILLING_TYPES.includes(values.billingType as typeof SUBSCRIPTION_BILLING_TYPES[number]) && attribution?.provider === values.provider && typeof attribution.subscriptionId === "string" && isUuidLike(attribution.subscriptionId)) {
       const [account] = await db.select({ id: aiSubscriptions.id }).from(aiSubscriptions).where(and(eq(aiSubscriptions.id, attribution.subscriptionId), eq(aiSubscriptions.companyId, companyId), eq(aiSubscriptions.provider, values.provider)));
@@ -136,7 +140,7 @@ export async function createCostEventInTransaction(db: Db, companyId: string, da
   }
   // Server-derived attribution stays outside the immutable receipt fingerprint;
   // replaying a receipt must not depend on later account metadata changes.
-  const [event] = await db.insert(costEvents).values({ ...values, subscriptionId, costCents: sql`${values.costCents}::numeric`, reportedCostCents: values.costCents, id: data.id, companyId, receiptHash }).returning();
+  const [event] = await db.insert(costEvents).values({ ...values, subscriptionId, hostedInference, costCents: sql`${values.costCents}::numeric`, reportedCostCents: values.costCents, id: data.id, companyId, receiptHash }).returning();
   await updateMonthlySpendProjections(db, companyId, event.agentId, values.costCents, event.occurredAt);
   // Separately reported charges linked to an already-accounted run contribute
   // to lifetime totals too. Before acknowledgement, accountRunCost includes

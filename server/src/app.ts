@@ -18,13 +18,16 @@ import { createDotRunnerMcpTools } from "./services/dot-runner-broker.js";
 import { agentProfileAvatarRoutes } from "./routes/agent-profile-avatar.js";
 import { dotRunnerRoutes } from "./routes/dot-runner.js";
 import { createPublicMcpTransfers } from "./services/public-mcp/file-transfers.js";
-import { createMcpApiDispatch, createPublicMcpExecutor } from "./services/public-mcp/capabilities.js";
+import { createMcpApiDispatch, createPublicMcpExecutor, injectApiRequest } from "./services/public-mcp/capabilities.js";
 import { createPublicMcpEvents, type PublicMcpEvents } from "./services/public-mcp/events.js";
 import { publicMcpIngressRoutes, publicMcpManagementRoutes } from "./routes/public-mcp.js";
 import { agentAvatarRoutes } from "./routes/agent-avatars.js";
 import { decisionModelRoutes } from "./routes/decision-models.js";
 import { aiConnectionRoutes } from "./routes/ai-connections.js";
 import { projectToolRoutes } from "./routes/project-tools.js";
+import { paperclipToolRoutes } from "./routes/paperclip-tools.js";
+import { assistantToolRoutes } from "./routes/assistant-tools.js";
+import { createAssistantTools } from "./services/assistant-tools.js";
 import { emailChannelService } from "./services/email-channels.js";
 import { emailRoutes, emailWebhookRoutes } from "./routes/email.js";
 import { toolActionDeliveryService } from "./services/tool-action-delivery.js";
@@ -97,7 +100,6 @@ import { environmentRoutes } from "./routes/environments.js";
 import { executionWorkspaceRoutes } from "./routes/execution-workspaces.js";
 import { goalRoutes } from "./routes/goals.js";
 import { onboardingSeedRoutes } from "./routes/onboarding-seed.js";
-import { boardChatRoutes } from "./routes/board-chat.js";
 import { approvalRoutes } from "./routes/approvals.js";
 import { secretRoutes } from "./routes/secrets.js";
 import { toolAccessRoutes } from "./routes/tool-access.js";
@@ -110,7 +112,13 @@ import { costRoutes } from "./routes/costs.js";
 import { agentCommentaryRoutes } from "./routes/agent-commentary.js";
 import { activityRoutes } from "./routes/activity.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
+import { companySignalsRoutes } from "./routes/company-signals.js";
+import { companyBriefRoutes } from "./routes/company-brief.js";
+import { planRoutes } from "./routes/plans.js";
+import { agentAutopilotRoutes } from "./routes/agent-autopilot.js";
+import { agentTemplateRoutes } from "./routes/agent-templates.js";
 import { attentionRoutes } from "./routes/attention.js";
+import { briefingRoutes } from "./routes/briefing.js";
 import { decisionTrainingRoutes } from "./routes/decision-training.js";
 import { decisionRoutes } from "./routes/decisions.js";
 import { decisionQueueRoutes } from "./routes/decision-queues.js";
@@ -118,9 +126,11 @@ import type { DecisionServiceOptions } from "./services/decisions.js";
 import { userProfileRoutes } from "./routes/user-profiles.js";
 import { sidebarBadgeRoutes } from "./routes/sidebar-badges.js";
 import { sidebarPreferenceRoutes } from "./routes/sidebar-preferences.js";
+import { uiPreferencesRoutes } from "./routes/ui-preferences.js";
 import { announcementRoutes } from "./routes/announcements.js";
 import { serverVersion } from "./version.js";
 import { primaryAgentRoutes } from "./routes/primary-agent.js";
+import { assistantRoutes } from "./routes/assistant.js";
 import { resourceMembershipRoutes } from "./routes/resource-memberships.js";
 import { inboxDismissalRoutes } from "./routes/inbox-dismissals.js";
 import { instanceSettingsRoutes } from "./routes/instance-settings.js";
@@ -811,9 +821,23 @@ export async function createApp(
       },
     }),
   );
+  // Plans hire through the agent-hire route in-process, as the person.
+  api.use(planRoutes(db, {
+    hireAgent: (actor, companyId, body, origin) => injectApiRequest(api, actor, "POST", `/companies/${companyId}/agent-hires`, body, { trustedOrigin: origin }),
+    pluginWorkerManager: workerManager,
+  }));
+  api.use(agentAutopilotRoutes(db));
+  api.use(agentTemplateRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
   api.use(agentProfileAvatarRoutes(db, opts.storageService));
   api.use(projectToolRoutes(db));
+  api.use(paperclipToolRoutes(db, api));
+  // In-process dispatch through this same router: each tool call runs as the
+  // run's person with full route authorization, validation and audit.
+  api.use(assistantToolRoutes(db, createAssistantTools(db, {
+    dispatch: createMcpApiDispatch(api),
+    origin: mcpConfig?.origin ?? opts.authPublicBaseUrl ?? process.env.PAPERCLIP_PUBLIC_URL ?? "",
+  })));
   api.use(projectRoutes(db));
   api.use(caseRoutes(db, opts.storageService));
   api.use(issueTreeControlRoutes(db, { pluginWorkerManager: workerManager }));
@@ -835,7 +859,6 @@ export async function createApp(
   api.use(emailRoutes(db, emailChannels));
   api.use(goalRoutes(db));
   api.use(onboardingSeedRoutes(db));
-  api.use(boardChatRoutes(db, { deploymentMode: opts.deploymentMode }));
   api.use(voiceSessionRoutes(db, chatChannels.voice));
   api.use(approvalRoutes(db, { pluginWorkerManager: workerManager }));
   api.use(secretRoutes(db));
@@ -856,16 +879,21 @@ export async function createApp(
   api.use(costRoutes(db, { pluginWorkerManager: workerManager }));
   api.use(activityRoutes(db));
   api.use(dashboardRoutes(db));
+  api.use(companySignalsRoutes(db));
+  api.use(companyBriefRoutes(db));
   api.use(attentionRoutes(db));
+  api.use(briefingRoutes(db));
   api.use(decisionTrainingRoutes(db));
   api.use(decisionRoutes(db, opts.decisionServiceOptions));
   api.use(decisionQueueRoutes(db));
   api.use(userProfileRoutes(db));
   api.use(sidebarBadgeRoutes(db));
   api.use(sidebarPreferenceRoutes(db));
+  api.use(uiPreferencesRoutes(db));
   api.use(announcementRoutes(db, { ...opts.announcements, version: opts.hostVersion ?? serverVersion }));
   api.use(resourceMembershipRoutes(db));
   api.use(primaryAgentRoutes(db));
+  api.use(assistantRoutes(db));
   api.use(inboxDismissalRoutes(db));
   api.use(instanceSettingsRoutes(db, workerManager, opts.prepareIdleDatabaseBackup));
   if (opts.databaseBackupService) {

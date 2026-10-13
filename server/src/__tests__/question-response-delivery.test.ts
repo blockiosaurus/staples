@@ -14,6 +14,8 @@ import {
   agentWakeupRequests,
   agents,
   companies,
+  authUsers,
+  companyMemberships,
   createDb,
   goals,
   heartbeatRuns,
@@ -80,6 +82,8 @@ describeEmbeddedPostgres("question response delivery", () => {
     await db.delete(issues);
     await db.delete(goals);
     await db.delete(agents);
+    await db.delete(companyMemberships);
+    await db.delete(authUsers);
     await db.delete(companies);
   });
 
@@ -95,6 +99,7 @@ describeEmbeddedPostgres("question response delivery", () => {
       successorStatus?: "queued" | "running";
       sourceCommentBody?: string;
       attachSourceCommentToInteraction?: boolean;
+      conversation?: boolean;
     } = {},
   ) {
     const companyId = randomUUID();
@@ -120,6 +125,12 @@ describeEmbeddedPostgres("question response delivery", () => {
       runtimeConfig: {},
       permissions: {},
     });
+    if (args.conversation) {
+      await db.insert(authUsers).values({ id: "board-user", name: "Person", email: `${companyId}@example.test`, emailVerified: true, createdAt: new Date(), updatedAt: new Date() });
+      await db.insert(companyMemberships).values({
+        companyId, principalType: "user", principalId: "board-user", status: "active", membershipRole: "member",
+      });
+    }
     await db.insert(goals).values({
       id: goalId,
       companyId,
@@ -135,6 +146,9 @@ describeEmbeddedPostgres("question response delivery", () => {
       status: "in_progress",
       priority: "medium",
       assigneeAgentId: agentId,
+      ...(args.conversation
+        ? { conversationAgentId: agentId, conversationUserId: "board-user", conversationState: "active" }
+        : {}),
     });
     await db.insert(heartbeatRuns).values({
       id: sourceRunId,
@@ -206,7 +220,7 @@ describeEmbeddedPostgres("question response delivery", () => {
               selectionMode: "single",
               required: true,
               options: [
-                { id: "node", label: "Node.js" },
+                { id: "node", label: "Node.js", recommended: true },
                 { id: "bun", label: "Bun" },
               ],
             },
@@ -216,7 +230,7 @@ describeEmbeddedPostgres("question response delivery", () => {
               selectionMode: "multi",
               allowOther: true,
               options: [
-                { id: "health", label: "Health check" },
+                { id: "health", label: "Health check", recommended: true },
                 { id: "logs", label: "Request logs" },
               ],
             },
@@ -239,7 +253,7 @@ describeEmbeddedPostgres("question response delivery", () => {
                 required: true,
                 answerMode: "single_select",
                 options: [
-                  { id: "node", label: "Node.js" },
+                  { id: "node", label: "Node.js", recommended: true },
                   { id: "bun", label: "Bun" },
                 ],
               },
@@ -250,7 +264,7 @@ describeEmbeddedPostgres("question response delivery", () => {
                 required: false,
                 answerMode: "multi_select",
                 options: [
-                  { id: "health", label: "Health check" },
+                  { id: "health", label: "Health check", recommended: true },
                   { id: "logs", label: "Request logs" },
                 ],
                 customAnswer: { enabled: true, label: "Other" },
@@ -567,6 +581,16 @@ describeEmbeddedPostgres("question response delivery", () => {
       errorCount: 0,
       lastErrorCode: "native_question_session_unavailable",
     });
+  });
+
+  it("wakes the conversation agent when an answered card sits on a conversation issue", async () => {
+    const seeded = await seed({ conversation: true });
+    const wakeup = vi.fn().mockResolvedValue(null);
+    await questionResponseDeliveryService(db, { heartbeat: { wakeup } as never, steer: vi.fn() }).deliver(seeded.interaction.id);
+    expect(wakeup).toHaveBeenCalledTimes(1);
+    expect(wakeup).toHaveBeenCalledWith(seeded.agentId, expect.objectContaining({
+      payload: expect.objectContaining({ issueId: seeded.issueId, interactionId: seeded.interaction.id, interactionStatus: "answered" }),
+    }));
   });
 
   it("coalesces into a queued successor without creating another wake", async () => {

@@ -28,9 +28,13 @@ declare global {
         keyId?: string;
         keyScope?: AgentApiKeyScope;
         runId?: string;
+        /** Set only on the board actor synthesized for a person-scoped Assistant run (source "assistant_run"). */
+        assistantRunId?: string;
+        /** Task privacy: read as no one in particular, so only company-visible tasks and projects (a weekly update run). */
+        companyVisibleOnly?: boolean;
         onBehalfOfUserId?: string | null;
         identityContextId?: string | null;
-        source?: "local_implicit" | "session" | "board_key" | "agent_key" | "agent_jwt" | "mcp_oauth" | "cloud_tenant" | "cloud_control" | "none";
+        source?: "local_implicit" | "session" | "board_key" | "agent_key" | "agent_jwt" | "mcp_oauth" | "assistant_run" | "cloud_tenant" | "cloud_control" | "none";
       };
     }
   }

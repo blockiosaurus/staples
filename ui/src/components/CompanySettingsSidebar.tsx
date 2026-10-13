@@ -93,7 +93,7 @@ export function CompanySettingsSidebar() {
         className="flex h-(--sz-60px) shrink-0 items-center px-3"
       >
         <div data-slot="settings-back-group" className={`${primarySidebarStyles.group} w-full`}>
-          <SidebarNavItem to="/dashboard" label="Back to app" icon={ArrowLeft} />
+          <SidebarNavItem to="/home" label="Back to app" icon={ArrowLeft} />
         </div>
       </div>
       <nav

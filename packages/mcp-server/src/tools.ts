@@ -26,6 +26,7 @@ export interface ToolDefinition {
   schema: z.ZodObject;
   execute: (input: Record<string, unknown>) => Promise<{
     content: Array<{ type: "text"; text: string }>;
+    isError?: boolean;
   }>;
 }
 
@@ -203,7 +204,9 @@ const createApprovalToolSchema = z.object({
 
 const apiRequestSchema = z.object({
   method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
-  path: z.string().min(1),
+  path: z.string().min(1)
+    .refine((path) => path.startsWith("/") && !path.startsWith("//"), "path must start with / and be relative to /api (not //)")
+    .refine((path) => !path.includes("://") && !path.includes("\\"), "path must be an /api path, not a URL"),
   jsonBody: z.string().optional(),
 });
 
@@ -564,7 +567,7 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
     ),
     makeTool(
       "paperclipAskUserQuestions",
-      "Create an ask_user_questions interaction on an issue",
+      "Create an ask_user_questions interaction on an issue. Every question needs your recommended answer: mark exactly one option `recommended: true` for a single-choice question, or at least one for multiple choice. For a text question, put your suggested answer in `initialText`. A choice question without a recommendation is rejected with 422 (code question_recommendation_required, listing the question ids).",
       createAskUserQuestionsToolSchema,
       async ({ issueId, ...body }) =>
         client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/interactions`, {

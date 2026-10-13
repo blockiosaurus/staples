@@ -119,7 +119,9 @@ export async function completeAgentConfiguration(txDb: Db, existing: AgentConfig
     );
   }
 
-  if (normalizedPatch.budgetMonthlyCents !== undefined) {
+  // Only a changed budget (or one a person sends) writes the agent's policy.
+  if (normalizedPatch.budgetMonthlyCents !== undefined
+    && (normalizedPatch.budgetMonthlyCents !== existing.budgetMonthlyCents || options?.recordRevision?.createdByUserId)) {
     await budgetServiceInTransaction(txDb, publications).upsertPolicy(existing.companyId, {
       scopeType: "agent", scopeId: id, amount: normalizedPatch.budgetMonthlyCents,
       isActive: normalizedPatch.budgetMonthlyCents > 0, windowKind: "calendar_month_utc",

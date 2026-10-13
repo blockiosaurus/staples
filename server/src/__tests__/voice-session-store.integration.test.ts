@@ -451,7 +451,7 @@ const support = await getEmbeddedPostgresTestSupport();
     await db.insert(issueThreadInteractions).values({ id, companyId: f.companyId, issueId: f.issueId, kind: "ask_user_questions",
       createdByAgentId: f.agentId, addresseeUserId: f.callerId, effectiveResolverPolicy: "addressee_only",
       payload: { version: 1, questions: [{ id: "color", prompt: "Which color?", selectionMode: "single", required: true,
-        allowOther: false, options: [{ id: "cobalt", label: "Cobalt" }] }] } });
+        allowOther: false, options: [{ id: "cobalt", label: "Cobalt", recommended: true }] }] } });
     const publication = await f.publication();
     await db.update(chatPublications).set({ payload: { text: "Which color?", interactionId: id, progressState: "waiting_for_input" } }).where(eq(chatPublications.id, publication.id));
     await f.store.enqueuePublication(f.companyId, publication.id);
@@ -534,7 +534,7 @@ const support = await getEmbeddedPostgresTestSupport();
   }
   it("notifies phone questions once and waits for authorized retrieval before later answers", async () => {
     const f = await pushFixture(), interactionId = randomUUID();
-    await db.insert(issueThreadInteractions).values({id: interactionId, companyId: f.companyId, issueId: f.issueId, kind: "ask_user_questions", status: "pending", addresseeUserId: f.callerId, effectiveResolverPolicy: "addressee_only", payload: {version: 1, questions: [{id: "color", prompt: "Which color?", selectionMode: "single", required: true, options: [{id: "cobalt", label: "Cobalt"}]}]}});
+    await db.insert(issueThreadInteractions).values({id: interactionId, companyId: f.companyId, issueId: f.issueId, kind: "ask_user_questions", status: "pending", addresseeUserId: f.callerId, effectiveResolverPolicy: "addressee_only", payload: {version: 1, questions: [{id: "color", prompt: "Which color?", selectionMode: "single", required: true, options: [{id: "cobalt", label: "Cobalt", recommended: true}]}]}});
     await db.update(chatPublications).set({payload: {text: "Which color?", interactionId}}).where(eq(chatPublications.id, f.publication.id));
     const [later] = await db.insert(chatPublications).values({companyId: f.companyId, endpointId: f.endpointId, conversationId: f.conversationId, issueId: f.issueId, idempotencyKey: randomUUID(), state: "published", payload: {text: "Approved later answer"}}).returning();
     await f.store.enqueuePublication(f.companyId, later.id);
@@ -923,7 +923,7 @@ const support = await getEmbeddedPostgresTestSupport();
     for (const actor of [{agentId: f.agentId}, {systemId: "native-status-committer"}]) {
       await expect(issueThreadInteractionService(db).create({companyId: f.companyId, id: taskId}, {
         kind: "ask_user_questions", continuationPolicy: "wake_assignee", payload: {version: 1,
-          questions: [{id: "topic", prompt: "Which topic?", selectionMode: "single", required: true, options: [{id: "public", label: "Public inquiry"}]}]},
+          questions: [{id: "topic", prompt: "Which topic?", selectionMode: "single", required: true, options: [{id: "public", label: "Public inquiry", recommended: true}]}]},
       }, actor)).rejects.toMatchObject({status: 422, details: {code: "voice_guest_use_task_comment"}});
     }
     expect(await db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.issueId, taskId))).toHaveLength(0);

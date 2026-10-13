@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommandPalette } from "./CommandPalette";
 import { queryKeys } from "../lib/queryKeys";
+import { makeSurfacesFixture, type SurfacesFixture } from "../staples/surfaces/testing";
 
 function act(callback: () => void | Promise<void>) {
   let result: void | Promise<void> | undefined;
@@ -45,6 +46,12 @@ const mockProjectsApi = vi.hoisted(() => ({
 
 const mockInstanceSettingsApi = vi.hoisted(() => ({
   getExperimental: vi.fn(),
+}));
+
+const surfacesState = vi.hoisted(() => ({ current: null as unknown as SurfacesFixture }));
+
+vi.mock("../staples/surfaces/useSurfaces", () => ({
+  useSurfaces: () => surfacesState.current,
 }));
 
 const mockAuthApi = vi.hoisted(() => ({
@@ -103,7 +110,7 @@ vi.mock("./Identity", () => ({
 vi.mock("@/components/ui/command", () => ({
   CommandDialog: ({ open, children }: { open: boolean; children: ReactNode }) => (open ? <div>{children}</div> : null),
   CommandEmpty: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  CommandGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CommandGroup: ({ children, heading }: { children: ReactNode; heading?: string }) => <div data-group={heading}>{children}</div>,
   CommandInput: ({
     value,
     onValueChange,
@@ -204,6 +211,7 @@ describe("CommandPalette", () => {
     mockProjectsApi.list.mockReset();
     mockInstanceSettingsApi.getExperimental.mockReset();
     mockAuthApi.getSession.mockReset();
+    surfacesState.current = makeSurfacesFixture();
     navigateState.navigate.mockReset();
     locationState.location.pathname = "/";
     locationState.location.search = "";
@@ -243,6 +251,149 @@ describe("CommandPalette", () => {
         includeRoutineExecutions: true,
       });
     });
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("omits the built-in Assistant from the Agents group", async () => {
+    mockAgentsApi.list.mockResolvedValue([
+      { id: "agent-a", name: "Alpha", role: "engineer", urlKey: "alpha", status: "idle", metadata: null },
+      {
+        id: "assistant-1",
+        name: "Assistant",
+        role: "general",
+        urlKey: "assistant",
+        status: "idle",
+        metadata: { paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } },
+      },
+    ]);
+    const { root } = renderWithQueryClient(<CommandPalette />, container);
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+
+    // Let the agents query resolve and render.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Alpha"))).toBe(true);
+    const agentsGroup = container.querySelector('[data-group="Agents"]');
+    expect(agentsGroup).not.toBeNull();
+    expect([...agentsGroup!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Assistant"))).toBe(false);
+    // The Assistant is reached as a page (nav.assistant), not as a staff agent.
+    const pagesGroup = container.querySelector('[data-group="Pages"]');
+    expect([...pagesGroup!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Assistant"))).toBe(true);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("lists Routines under Pages when it is not in the sidebar yet, with a muted suffix", async () => {
+    surfacesState.current = makeSurfacesFixture({ signals: { routines: 0 } });
+    expect(surfacesState.current.visible.map((s) => s.surface.id)).not.toContain("nav.routines");
+    const { root } = renderWithQueryClient(<CommandPalette />, container);
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+
+    const routinesItem = [...container.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Routines"));
+    expect(routinesItem).toBeDefined();
+    expect(routinesItem!.textContent).toContain("not in sidebar");
+    expect(routinesItem!.textContent).not.toContain("hidden");
+    expect(routinesItem!.querySelector("span.text-muted-foreground")?.textContent).toBe(" · not in sidebar");
+    const homeItem = [...container.querySelectorAll("button")].find((b) => b.textContent === "Home");
+    expect(homeItem).toBeDefined();
+    // Dashboard grows in at three agents; until then it is reachable from Pages only.
+    const dashboardItem = [...container.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Dashboard"));
+    expect(dashboardItem?.textContent).toContain("not in sidebar");
+
+    act(() => {
+      routinesItem!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(navigateState.navigate).toHaveBeenCalledWith("/routines");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("marks only person-hidden surfaces as hidden", async () => {
+    surfacesState.current = makeSurfacesFixture({ signals: { projects: 3 }, preferences: { hidden: ["nav.projects"] } });
+    const { root } = renderWithQueryClient(<CommandPalette />, container);
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+
+    const item = (label: string) => [...container.querySelectorAll("button")].find((b) => b.textContent?.startsWith(label));
+    expect(item("Projects")?.querySelector("span.text-muted-foreground")?.textContent).toBe(" · hidden");
+    expect(item("Goals")?.querySelector("span.text-muted-foreground")?.textContent).toBe(" · not in sidebar");
+    expect(item("Tasks")?.querySelector("span.text-muted-foreground")).toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("offers My work when Combined Inbox + Task List is on", async () => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableCombinedInboxTasks: true });
+    surfacesState.current = makeSurfacesFixture({ flags: { enableCombinedInboxTasks: true } });
+    const { root } = renderWithQueryClient(<CommandPalette />, container, (queryClient) => {
+      queryClient.setQueryData(queryKeys.instance.experimentalSettings, { enableCombinedInboxTasks: true });
+    });
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+
+    let myWork: HTMLButtonElement | undefined;
+    await waitForAssertion(() => {
+      myWork = [...container.querySelectorAll("button")].find((b) => b.textContent === "My work");
+      expect(myWork).toBeDefined();
+    });
+    act(() => {
+      myWork!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(navigateState.navigate).toHaveBeenCalledWith("/issues?view=mine");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("omits My work while Combined Inbox + Task List is off", async () => {
+    const { root } = renderWithQueryClient(<CommandPalette />, container);
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+    await waitForAssertion(() => {
+      expect(mockInstanceSettingsApi.getExperimental).toHaveBeenCalled();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent === "My work")).toBe(false);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("omits unavailable surfaces from Pages and drops the hardcoded Goals/Costs entries", async () => {
+    surfacesState.current = makeSurfacesFixture({ flags: { enableDecisions: false } });
+    const { root } = renderWithQueryClient(<CommandPalette />, container);
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+
+    const labels = [...container.querySelectorAll("button")].map((b) => b.textContent ?? "");
+    expect(labels.some((l) => l.startsWith("Decisions"))).toBe(false);
+    expect(labels.filter((l) => l.startsWith("Goals"))).toHaveLength(1);
+    expect(labels.filter((l) => l.startsWith("Costs"))).toHaveLength(1);
+    expect(labels.some((l) => l === "Activity")).toBe(false);
 
     act(() => {
       root.unmount();

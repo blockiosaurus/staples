@@ -277,7 +277,8 @@ describe("CloudAccessGate", () => {
 
     expect(mockAccessApi.claimBootstrapAdmin).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("You're the instance admin");
-    expect(container.textContent).toContain("Continue to dashboard");
+    expect(container.textContent).toContain("Continue");
+    expect(container.textContent).not.toContain("Continue to dashboard");
 
     unmountRoot(root);
   });

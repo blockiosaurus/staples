@@ -500,8 +500,10 @@ function readLiveRunAssistantSnippet(
   return null;
 }
 
-function buildRunEventRuntimeProgress(input: {
+export function buildRunEventRuntimeProgress(input: {
   eventType: string;
+  /** System-stream events are run plumbing (session ids, setup notes), never person-facing status. */
+  stream?: "system" | "stdout" | "stderr";
   message: string | null;
   payload: Record<string, unknown> | null;
   at: Date;
@@ -520,15 +522,16 @@ function buildRunEventRuntimeProgress(input: {
     input.eventType,
     input.message,
   );
-  const fallbackMessage =
-    readLiveRunProgressString(
-      input.message,
-      MAX_HEARTBEAT_RUN_RUNTIME_ASSISTANT_SNIPPET_CHARS,
-    ) ??
-    sanitizeLiveRunProgressText(
-      input.eventType.replace(/[._-]+/g, " "),
-      MAX_HEARTBEAT_RUN_RUNTIME_ASSISTANT_SNIPPET_CHARS,
-    );
+  const fallbackMessage = input.stream === "system"
+    ? null
+    : (readLiveRunProgressString(
+        input.message,
+        MAX_HEARTBEAT_RUN_RUNTIME_ASSISTANT_SNIPPET_CHARS,
+      ) ??
+      sanitizeLiveRunProgressText(
+        input.eventType.replace(/[._-]+/g, " "),
+        MAX_HEARTBEAT_RUN_RUNTIME_ASSISTANT_SNIPPET_CHARS,
+      ));
   const message = currentToolName
     ? `Using ${currentToolName}`
     : (lastAssistantSnippet ?? fallbackMessage);
@@ -2062,6 +2065,7 @@ export function createHeartbeatLifecycle(db: Db, dependencies: HeartbeatLifecycl
     const issueId = readRuntimeStatusIssueIdCandidate(run) ?? null;
     const progress = buildRunEventRuntimeProgress({
       eventType: event.eventType,
+      stream: event.stream,
       message: sanitizedMessage ?? null,
       payload: sanitizedPayload ?? null,
       at: eventAt,

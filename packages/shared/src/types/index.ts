@@ -56,6 +56,28 @@ export type {
 } from "./attention.js";
 export { ATTENTION_SOURCE_KINDS } from "./attention.js";
 export type {
+  Briefing,
+  BriefingAction,
+  BriefingActionKind,
+  BriefingBudgetTarget,
+  BriefingItem,
+  BriefingSpend,
+  BriefingItemKind,
+  BriefingRecommendation,
+  BriefingRecommendationAnswer,
+  BriefingSection,
+  BriefingWeeklyUpdate,
+} from "./briefing.js";
+export {
+  BRIEFING_DONE_RECENTLY_LIMIT,
+  BRIEFING_DONE_RECENTLY_WINDOW_DAYS,
+  BRIEFING_AGENT_ACTIONS_WINDOW_HOURS,
+  BRIEFING_IN_PROGRESS_LIMIT,
+  BRIEFING_NEEDS_YOU_LIMIT,
+  BRIEFING_REASON_MAX,
+  BRIEFING_WEEKLY_UPDATE_EXCERPT_MAX,
+} from "./briefing.js";
+export type {
   DecisionQueue,
   DecisionQueueItem,
   DecisionQueueSeedRule,
@@ -736,6 +758,7 @@ export type {
   IssueQueuedCommentSteeringDisposition,
   IssueCommentDerivedAuthorSource,
   IssueCommentMetadata,
+  AssistantPageContext,
   IssueCommentMetadataSection,
   IssueCommentMetadataRow,
   IssueCommentMetadataTextRow,
@@ -770,6 +793,13 @@ export type {
   ConnectionIntentPayload,
   ConnectionIntentResult,
   RequestConfirmationSecretProposalPayload,
+  RequestConfirmationProposedActionPayload,
+  ProposedActionContext,
+  PlanTemplateSummary,
+  PlanBudgetSummary,
+  RequestConfirmationProposedActionResult,
+  ProposedActionMethod,
+  ProposedActionCategory,
   RequestConfirmationSecretProposalResult,
   RequestCheckboxConfirmationOption,
   RequestCheckboxConfirmationPayload,
@@ -953,6 +983,9 @@ export type {
 } from "./user-profile.js";
 export type { SidebarBadges } from "./sidebar-badges.js";
 export type { SidebarOrderPreference } from "./sidebar-preferences.js";
+export type { CompanySignals } from "./company-signals.js";
+export type { CompanyBrief } from "./company-brief.js";
+export type { UiPreferences } from "./ui-preferences.js";
 export type {
   ResourceMembershipResourceType,
   ResourceMembershipState,
@@ -1101,3 +1134,5 @@ export type { AgentInstructionCandidate } from "./agent.js";
 export * from "./skill-source.js";
 
 export * from "./agent-lifecycle.js";
+export * from "./agent-template.js";
+export * from "./agent-autopilot.js";

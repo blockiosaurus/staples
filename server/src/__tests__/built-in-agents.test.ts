@@ -1,4 +1,12 @@
 import { createAgentLifecycle, configureAgentLifecycle } from "../services/agent-lifecycle.js";
+import { agentHarnessVerificationService, HOSTED_PROVISIONING_MAX_WAITS } from "../services/agent-harness-verification.js";
+import { assistantSetupStatus, readAssistantLifecycle } from "../services/assistant-setup.js";
+import { requireServerAdapter } from "../adapters/index.js";
+import { isConversationAdapter } from "../services/conversation-continuation.js";
+import {
+  ensureHostedAssistantBudget, hostedCapAfterRaise, hostedInferenceAllowedFor, planBudgetSummary, raiseHostedCompanyCapForHires,
+} from "../services/hosted-inference-access.js";
+import { budgetService, remainingHardStopCentsForRun } from "../services/budgets.js";
 import fs from "node:fs/promises";
 import { fileHash } from "../services/agent-file-store.js";
 import { stockHash } from "../services/managed-resource-drift.js";
@@ -6,8 +14,8 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { and, eq, sql } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { and, eq, ne, sql } from "drizzle-orm";
 import {
   activityLog,
   heartbeatRuns,
@@ -16,12 +24,14 @@ import {
   agentConfigRevisions,
   agents,
   approvals,
+  budgetIncidents,
   budgetPolicies,
   builtInManagedResources,
   companies,
   companyMemberships,
   companySkillVersions,
   companySkills,
+  costEvents,
   createDb,
   issueThreadInteractions,
   issues,
@@ -41,13 +51,26 @@ import { approvalService } from "../services/approvals.ts";
 import {
   builtInAgentService as createBuiltInAgentService,
   deriveBuiltInAgentStatus,
+  listAdapterModelsWithin,
   listBuiltInAgentDefinitions,
   readBuiltInTextWithFallback,
   reconcileBuiltInAgentsOnStartup,
   validateBuiltInAgentDefinitions,
 } from "../services/built-in-agents.ts";
 import { readBuiltInAgentMarker, withBuiltInAgentMarker } from "../lib/built-in-agent-metadata.ts";
+import { companySkillService } from "../services/company-skills.ts";
 import { issueThreadInteractionService } from "../services/issue-thread-interactions.ts";
+import { issueService } from "../services/issues.ts";
+import { ASSISTANT_RUNTIME_ADAPTER_TYPES, PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "../services/assistant-identity.ts";
+
+const modelLookup = vi.hoisted(() => ({ override: null as null | (() => Promise<Array<{ id: string; label: string }>>) }));
+vi.mock("../adapters/registry.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../adapters/registry.js")>();
+  return {
+    ...original,
+    listAdapterModels: (type: string) => (modelLookup.override ? modelLookup.override() : original.listAdapterModels(type)),
+  };
+});
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -157,7 +180,15 @@ describeEmbeddedPostgres("built-in agents", () => {
     lifecycleWorker = configureAgentLifecycle(db, { requiredPluginIds: async () => [], runPlugin: async () => "complete", runHost: async () => "complete" });
   }, 20_000);
 
+  // Hosted inference follows the server's STAPLES_HOSTED_ANTHROPIC_API_KEY: keep it off
+  // unless a test opts in (with a dummy value), whatever the host shell has.
+  beforeEach(() => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "");
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE", "");
+  });
+
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await lifecycleWorker.sweep();
     await db.delete(routineTriggers);
     await db.delete(routines);
@@ -170,7 +201,10 @@ describeEmbeddedPostgres("built-in agents", () => {
     await db.delete(companyMemberships);
     await db.delete(agentConfigRevisions);
     await db.delete(activityLog);
+    await db.delete(costEvents);
+    await db.delete(budgetIncidents);
     await db.delete(approvals);
+    await db.delete(heartbeatRuns);
     await db.delete(agents);
     await db.delete(budgetPolicies);
     await db.delete(companies);
@@ -206,7 +240,21 @@ describeEmbeddedPostgres("built-in agents", () => {
 
   it("validates the static registry and rejects invalid definitions", () => {
     const definitions = listBuiltInAgentDefinitions();
-    expect(definitions.map((definition) => definition.key).sort()).toEqual(["briefs", "learning", "reflection-coach", "summarizer"]);
+    expect(definitions.map((definition) => definition.key).sort()).toEqual([
+      "assistant", "briefs", "learning", "reflection-coach", "summarizer",
+    ]);
+    expect(definitions.find((definition) => definition.key === "assistant")).toMatchObject({
+      displayName: "Assistant",
+      defaultRole: "general",
+      defaultTitle: "Assistant",
+      defaultAdapterType: "claude_local",
+      // Only adapters whose default engine delivers the run-scoped MCP tools.
+      allowedAdapterTypes: ["claude_local", "codex_local", "gemini_local", "kimi_local", "claude_managed"],
+      defaultStatus: "idle",
+      defaultManager: null,
+      defaultBudgetMonthlyCents: 0,
+      bundle: { instructions: { entryFile: "AGENTS.md" } },
+    });
     const summarizer = definitions.find((definition) => definition.key === "summarizer");
     expect(summarizer).toMatchObject({
       defaultAdapterType: "claude_local",
@@ -253,6 +301,780 @@ describeEmbeddedPostgres("built-in agents", () => {
         defaultAdapterType: "claude_local",
       },
     ])).toThrow("defaultAdapterType must be allowed");
+  });
+
+  async function assistantRows(companyId: string) {
+    const rows = await db.select().from(agents).where(eq(agents.companyId, companyId));
+    return rows.filter((row) => row.status !== "terminated" && readBuiltInAgentMarker(row.metadata)?.key === "assistant");
+  }
+
+  it("auto-provisions exactly one Assistant without a hire approval even when board approval is required", async () => {
+    const companyId = await seedCompany({ requireApproval: true });
+    const service = createBuiltInAgentService(db);
+
+    await service.autoProvisionBundledAgents(companyId);
+    await service.autoProvisionBundledAgents(companyId);
+    await reconcileBuiltInAgentsOnStartup(db);
+
+    const rows = await assistantRows(companyId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      name: "Assistant",
+      role: "general",
+      title: "Assistant",
+      status: "idle",
+      adapterType: "claude_local",
+      reportsTo: null,
+      budgetMonthlyCents: 0,
+    });
+    const approvalRows = await db.select().from(approvals).where(eq(approvals.companyId, companyId));
+    expect(approvalRows).toHaveLength(0);
+    // Only the Assistant is auto-provisioned; other bundles stay opt-in.
+    const builtInKeys = (await db.select().from(agents).where(eq(agents.companyId, companyId)))
+      .map((row) => readBuiltInAgentMarker(row.metadata)?.key)
+      .filter(Boolean);
+    expect(builtInKeys).toEqual(["assistant"]);
+
+    const state = await builtInAgentService(db).get(companyId, "assistant");
+    expect(state.resources.map((resource) => [resource.resourceKind, resource.stockStatus])).toEqual([
+      ["instructions", "stock_current"],
+      ["routine", "stock_current"],
+    ]);
+    // Its only routine is the weekly update, assigned to it.
+    const companyRoutines = await db.select().from(routines).where(eq(routines.companyId, companyId));
+    expect(companyRoutines.map((routine) => [routine.title, routine.originId, routine.assigneeAgentId])).toEqual([
+      ["Weekly update", "assistant:weekly-update", state.agentId],
+    ]);
+    // The Assistant never appears in the org chart.
+    expect(await agentService(db).orgForCompany(companyId)).toEqual([]);
+  });
+
+  it("provisions the Assistant directly through provision() even when board approval is required", async () => {
+    const companyId = await seedCompany({ requireApproval: true });
+    const result = await createBuiltInAgentService(db).provision(companyId, "assistant");
+    expect(result.approval).toBeNull();
+    // No hire approval: the agent goes straight into setup (never pending_approval).
+    // Setup is driven by the scheduled lifecycle worker, so wait for it instead of racing it.
+    expect(result.state.agent?.status).not.toBe("pending_approval");
+    await lifecycleWorker.process(result.state.agent!.id);
+    await vi.waitFor(async () => {
+      const [row] = await db.select().from(agents).where(eq(agents.id, result.state.agent!.id));
+      expect(row!.status).toBe("idle");
+    });
+    expect(await db.select().from(approvals).where(eq(approvals.companyId, companyId))).toHaveLength(0);
+  });
+
+  const ASSISTANT_SKILL_KEYS = [
+    "staples-interview", "staples-company-brief", "staples-plan", "staples-questionnaire", "staples-wayfinder", "staples-weekly-update",
+  ].map((name) => `paperclipai/paperclip/${name}`);
+  const desiredSkillKeys = (adapterConfig: unknown) =>
+    readPaperclipSkillSyncPreference((adapterConfig ?? {}) as Record<string, unknown>).desiredSkillEntries.map((entry) => entry.key);
+
+  it("imports the Staples planning and weekly update skills into every company library as markdown-only bundled skills", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const library = await companySkillService(db).list(companyId);
+    for (const key of ASSISTANT_SKILL_KEYS) {
+      const skill = library.find((entry) => entry.key === key);
+      expect(skill, key).toBeDefined();
+      expect(skill).toMatchObject({ trustLevel: "markdown_only" });
+    }
+    // The notices file is not a skill.
+    expect(library.some((entry) => entry.key.toLowerCase().includes("third_party") || entry.key.toLowerCase().includes("third-party"))).toBe(false);
+  });
+
+  it("gives the Assistant the Staples planning and weekly update skills on ensure without dropping its other skills, and not staff agents", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const service = createBuiltInAgentService(db);
+    const ensured = await service.ensure(companyId, "assistant");
+    expect(desiredSkillKeys(ensured.agent!.adapterConfig)).toEqual(expect.arrayContaining(ASSISTANT_SKILL_KEYS));
+
+    // A person's extra skill survives reconcile, and keys are not duplicated.
+    const [row] = await db.select().from(agents).where(eq(agents.id, ensured.agentId!));
+    const config = row.adapterConfig as Record<string, unknown>;
+    const sync = config.paperclipSkillSync as { desiredSkills: unknown[] };
+    await db.update(agents).set({
+      adapterConfig: { ...config, paperclipSkillSync: { ...sync, desiredSkills: [...sync.desiredSkills, "paperclipai/paperclip/para-memory-files"] } },
+    }).where(eq(agents.id, row.id));
+    const again = await service.ensure(companyId, "assistant");
+    const keys = desiredSkillKeys(again.agent!.adapterConfig);
+    expect(keys).toEqual(expect.arrayContaining([...ASSISTANT_SKILL_KEYS, "paperclipai/paperclip/para-memory-files"]));
+    expect(new Set(keys).size).toBe(keys.length);
+
+    const staff = await createAgentLifecycle(db).requestHire(companyId, {
+      name: "Staff", role: "general", status: "idle", adapterType: "claude_local", adapterConfig: { model: "claude-sonnet-4-6" }, runtimeConfig: {}, permissions: {},
+    });
+    await service.autoProvisionBundledAgents(companyId);
+    const [staffRow] = await db.select().from(agents).where(eq(agents.id, staff.id));
+    for (const key of ASSISTANT_SKILL_KEYS) expect(desiredSkillKeys(staffRow.adapterConfig)).not.toContain(key);
+  });
+
+  it("copies a fully configured company agent's adapter type and model onto the Assistant", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    await createAgentLifecycle(db).requestHire(companyId, {
+      name: "CEO",
+      role: "ceo",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: { model: "gpt-5.4", apiKey: "do-not-copy" },
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(ensured.adapterType).toBe("codex_local");
+    expect(ensured.adapterConfig).not.toHaveProperty("apiKey");
+    // Re-ensuring an existing Assistant never rewrites its adapter.
+    const again = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(again.id).toBe(ensured.id);
+    expect(again.adapterType).toBe("codex_local");
+    expect(await assistantRows(companyId)).toHaveLength(1);
+  });
+
+  it("keeps the Assistant's runtime adapters separate from the adapters it may propose for hires", () => {
+    expect([...ASSISTANT_RUNTIME_ADAPTER_TYPES]).toEqual(["claude_local", "codex_local", "gemini_local", "kimi_local", "claude_managed"]);
+    // Every runtime adapter takes conversation turns (retry continues the conversation).
+    for (const adapterType of ASSISTANT_RUNTIME_ADAPTER_TYPES) expect(isConversationAdapter(adapterType)).toBe(true);
+    expect([...PROPOSABLE_HIRE_ADAPTER_TYPES]).toEqual([
+      "claude_local", "codex_local", "cursor", "gemini_local", "grok_local", "kimi_local", "opencode_local", "pi_local",
+    ]);
+  });
+
+  const hire = (companyId: string, adapterType: string, model: string, name = "Staff") => createAgentLifecycle(db).requestHire(companyId, {
+    name, role: "general", status: "idle", adapterType, adapterConfig: { model }, runtimeConfig: {}, permissions: {},
+  });
+
+  it("re-inherits the first fully configured staff agent's adapter onto an Assistant that has never run", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const service = createBuiltInAgentService(db);
+    const before = await service.ensureAssistant(companyId);
+    expect(before.adapterType).toBe("claude_local");
+    await hire(companyId, "codex_local", "gpt-5.4");
+    const [after] = await db.select().from(agents).where(eq(agents.id, before.id));
+    expect(after).toMatchObject({ adapterType: "codex_local", adapterConfig: { model: "gpt-5.4" } });
+  });
+
+  it("re-inherits through the configuration path while the Assistant is still being verified", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const before = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    // Verification failed (e.g. no model connected): the Assistant waits in verifying with an error.
+    await db.update(agents).set({ lifecycleState: "verifying", lifecycleError: "The lifecycle step failed. Retry the operation." })
+      .where(eq(agents.id, before.id));
+    const [pending] = await db.select().from(agents).where(eq(agents.id, before.id));
+    await hire(companyId, "codex_local", "gpt-5.4");
+    // The configuration path invalidates the in-flight verification (new version,
+    // error cleared, fresh operation) and re-inheritance schedules the lifecycle,
+    // so the new adapter is the one verified. The test worker's host step
+    // completes at once, so the scheduled run takes the Assistant to ready; wait
+    // for it rather than racing it.
+    await lifecycleWorker.process(before.id);
+    let after!: typeof agents.$inferSelect;
+    await vi.waitFor(async () => {
+      [after] = await db.select().from(agents).where(eq(agents.id, before.id));
+      expect(after.lifecycleState).toBe("ready");
+    });
+    expect(after).toMatchObject({
+      adapterType: "codex_local",
+      adapterConfig: { model: "gpt-5.4" },
+      lifecycleState: "ready",
+      lifecycleError: null,
+    });
+    // At least the invalidation's bump; the worker's own transitions may add more.
+    expect(after.lifecycleVersion).toBeGreaterThan(pending!.lifecycleVersion);
+    const revisions = await db.select().from(agentConfigRevisions).where(eq(agentConfigRevisions.agentId, before.id));
+    expect(revisions.some((revision) => revision.source === "assistant_reinherit")).toBe(true);
+  });
+
+  it("does not re-inherit once the Assistant has run, to a non-runtime adapter, or over a person's own configuration", async () => {
+    const ran = await seedCompany({ requireApproval: false });
+    const ranAssistant = await createBuiltInAgentService(db).ensureAssistant(ran);
+    await db.insert(heartbeatRuns).values({ companyId: ran, agentId: ranAssistant.id, status: "succeeded", contextSnapshot: {} });
+    await hire(ran, "codex_local", "gpt-5.4");
+    expect((await db.select().from(agents).where(eq(agents.id, ranAssistant.id)))[0]).toMatchObject({ adapterType: "claude_local" });
+
+    const nonRuntime = await seedCompany({ requireApproval: false });
+    const nonRuntimeAssistant = await createBuiltInAgentService(db).ensureAssistant(nonRuntime);
+    await hire(nonRuntime, "opencode_local", "openai/gpt-5");
+    expect((await db.select().from(agents).where(eq(agents.id, nonRuntimeAssistant.id)))[0]).toMatchObject({ adapterType: "claude_local" });
+
+    const customized = await seedCompany({ requireApproval: false });
+    const customizedAssistant = await createBuiltInAgentService(db).ensureAssistant(customized);
+    await db.update(agents).set({ adapterConfig: { model: "claude-sonnet-4-6", effort: "high" } }).where(eq(agents.id, customizedAssistant.id));
+    await hire(customized, "codex_local", "gpt-5.4");
+    expect((await db.select().from(agents).where(eq(agents.id, customizedAssistant.id)))[0])
+      .toMatchObject({ adapterType: "claude_local", adapterConfig: { model: "claude-sonnet-4-6", effort: "high" } });
+  });
+
+  it("skips re-inheritance (no write) when the model lookup times out, without blocking the hire", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const before = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    modelLookup.override = () => new Promise(() => {});
+    try {
+      const hired = await hire(companyId, "codex_local", "gpt-5.4");
+      expect(hired.id).toBeTruthy();
+    } finally {
+      modelLookup.override = null;
+    }
+    const [after] = await db.select().from(agents).where(eq(agents.id, before.id));
+    expect(after).toMatchObject({ adapterType: "claude_local" });
+    expect(after!.adapterConfig).not.toHaveProperty("model", "gpt-5.4");
+  }, 20_000);
+
+  it("re-checks the never-ran condition under a row lock before writing", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const before = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    // The Assistant runs while the (slow) model lookup is in flight.
+    modelLookup.override = async () => {
+      await db.insert(heartbeatRuns).values({ companyId, agentId: before.id, status: "succeeded", contextSnapshot: {} });
+      return [{ id: "gpt-5.4", label: "GPT" }];
+    };
+    try {
+      await hire(companyId, "codex_local", "gpt-5.4");
+    } finally {
+      modelLookup.override = null;
+    }
+    const [after] = await db.select().from(agents).where(eq(agents.id, before.id));
+    expect(after).toMatchObject({ adapterType: "claude_local" });
+  });
+
+  it("gives up on a slow adapter model lookup and reports a timeout", async () => {
+    const started = Date.now();
+    expect(await listAdapterModelsWithin("codex_local", 20, () => new Promise(() => {}))).toBe("timeout");
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(await listAdapterModelsWithin("codex_local", 1_000, async () => [{ id: "m", label: "M" }])).toEqual([{ id: "m", label: "M" }]);
+    expect(await listAdapterModelsWithin("codex_local", 1_000, async () => { throw new Error("boom"); })).toEqual([]);
+  });
+
+  it("never adopts a stray marked agent as the Assistant; only ensure removes the marker", async () => {
+    const companyId = await seedCompany();
+    const strayId = randomUUID();
+    await db.insert(agents).values({
+      id: strayId, companyId, name: "Stray", role: "general", status: "idle", adapterType: "process", adapterConfig: {},
+      metadata: withBuiltInAgentMarker({ note: "kept" }, { key: "assistant", featureKeys: ["assistant"] }),
+    });
+    const service = createBuiltInAgentService(db);
+    // Read paths never adopt and never mutate.
+    expect((await service.get(companyId, "assistant")).agentId).toBeNull();
+    expect((await service.list(companyId)).find((entry) => entry.definition.key === "assistant")?.agentId).toBeNull();
+    const [untouched] = await db.select().from(agents).where(eq(agents.id, strayId));
+    expect(readBuiltInAgentMarker(untouched!.metadata)?.key).toBe("assistant");
+
+    const ensured = await service.ensureAssistant(companyId);
+    expect(ensured.id).not.toBe(strayId);
+    expect(await resolveCompanyAssistantAgentId(db, companyId)).toBe(ensured.id);
+    const [binding] = await db.select().from(builtInManagedResources).where(and(
+      eq(builtInManagedResources.companyId, companyId), eq(builtInManagedResources.bundleKey, "assistant"),
+      eq(builtInManagedResources.resourceKind, "instructions"),
+    ));
+    expect(binding?.resourceId).toBe(ensured.id);
+    const [stray] = await db.select().from(agents).where(eq(agents.id, strayId));
+    expect(readBuiltInAgentMarker(stray!.metadata)).toBeNull();
+    expect(stray!.metadata).toMatchObject({ note: "kept" });
+    expect(await isProvisionedAssistant(db, { id: strayId, companyId })).toBe(false);
+    expect((await service.ensureAssistant(companyId)).id).toBe(ensured.id);
+    expect(await assistantRows(companyId)).toHaveLength(1);
+  });
+
+  it("clears a partial Assistant marker that would block provisioning", async () => {
+    const companyId = await seedCompany();
+    const strayId = randomUUID();
+    await db.insert(agents).values({ id: strayId, companyId, name: "Partial", role: "general", status: "idle", adapterType: "process", adapterConfig: {},
+      metadata: { paperclipBuiltInAgent: { key: "assistant" } } });
+    const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(ensured.id).not.toBe(strayId);
+    const [stray] = await db.select().from(agents).where(eq(agents.id, strayId));
+    expect(stray!.metadata).not.toHaveProperty("paperclipBuiltInAgent");
+  });
+
+  it("records Assistant provenance atomically with the agent insert", async () => {
+    const companyId = await seedCompany();
+    await expect(createAgentLifecycle(db).requestHire(companyId, {
+      name: "Rolled back", role: "general", status: "idle", adapterType: "process", adapterConfig: {}, runtimeConfig: {}, permissions: {},
+    }, { onCreatedInTransaction: async () => { throw new Error("provenance write failed"); } })).rejects.toThrow("provenance write failed");
+    expect(await db.select().from(agents).where(eq(agents.companyId, companyId))).toHaveLength(0);
+
+    const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    const provenance = await db.select().from(activityLog).where(and(
+      eq(activityLog.companyId, companyId), eq(activityLog.action, "built_in_agent.provisioned"), eq(activityLog.entityId, ensured.id),
+    ));
+    expect(provenance).toHaveLength(1);
+    expect(provenance[0]).toMatchObject({ actorType: "system", actorId: "built-in-agents" });
+  });
+
+  it("keeps a just-provisioned Assistant under concurrent ensure, get and list", async () => {
+    const companyId = await seedCompany();
+    const service = createBuiltInAgentService(db);
+    const results = await Promise.all([
+      service.ensureAssistant(companyId), service.ensureAssistant(companyId),
+      service.get(companyId, "assistant"), service.list(companyId), service.ensureAssistant(companyId),
+    ]);
+    const rows = await assistantRows(companyId);
+    expect(rows).toHaveLength(1);
+    expect(results[0].id).toBe(rows[0]!.id);
+    expect(results[1].id).toBe(rows[0]!.id);
+    expect(results[4].id).toBe(rows[0]!.id);
+    expect(await resolveCompanyAssistantAgentId(db, companyId)).toBe(rows[0]!.id);
+    expect(await db.select().from(activityLog).where(and(
+      eq(activityLog.companyId, companyId), eq(activityLog.action, "built_in_agent.stray_marker_removed"),
+    ))).toHaveLength(0);
+
+    // A row committed together with its provenance (the provisioning shape) is
+    // adopted by read paths and ensure alike, never stripped.
+    const other = await seedCompany();
+    const provisionedId = randomUUID();
+    await db.transaction(async (tx) => {
+      await tx.insert(agents).values({ id: provisionedId, companyId: other, name: "Assistant", role: "general", status: "idle", adapterType: "process", adapterConfig: {},
+        metadata: withBuiltInAgentMarker({}, { key: "assistant", featureKeys: ["assistant"] }) });
+      await tx.insert(activityLog).values({ companyId: other, actorType: "system", actorId: "built-in-agents", action: "built_in_agent.provisioned", entityType: "agent", entityId: provisionedId, details: {} });
+    });
+    const [got, ensuredOther] = await Promise.all([service.get(other, "assistant"), service.ensureAssistant(other)]);
+    expect(got.agentId).toBe(provisionedId);
+    expect(ensuredOther.id).toBe(provisionedId);
+    const [kept] = await db.select().from(agents).where(eq(agents.id, provisionedId));
+    expect(readBuiltInAgentMarker(kept!.metadata)?.key).toBe("assistant");
+  });
+
+  const DUMMY_SERVER_KEY = "sk-ant-test-dummy-hosted-0000";
+  const managedTestResult = (checks: Array<{ code: string; level: "info" | "warn" | "error" }>) => ({
+    adapterType: "claude_managed", status: checks.some((check) => check.level === "error") ? "fail" as const : "pass" as const,
+    testedAt: new Date().toISOString(), checks: checks.map((check) => ({ ...check, message: check.code })),
+  });
+  async function withHarnessVerification<T>(run: () => Promise<T>) {
+    await lifecycleWorker.stop();
+    const { verify } = agentHarnessVerificationService(db, {} as never);
+    lifecycleWorker = configureAgentLifecycle(db, { requiredPluginIds: async () => [], runPlugin: async () => "complete",
+      runHost: async (agent) => (agent.lifecycleState === "verifying" ? verify(agent) : "complete") });
+    try {
+      return await run();
+    } finally {
+      await lifecycleWorker.stop();
+      lifecycleWorker = configureAgentLifecycle(db, { requiredPluginIds: async () => [], runPlugin: async () => "complete", runHost: async () => "complete" });
+    }
+  }
+
+  it("provisions a new Assistant on Claude (hosted) over sibling inheritance, verified by the adapter's environment test", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    await hire(companyId, "codex_local", "gpt-5.4", "CEO");
+    const adapter = requireServerAdapter("claude_managed");
+    const testEnvironment = vi.spyOn(adapter, "testEnvironment").mockResolvedValue(managedTestResult([
+      { code: "claude_managed_api_key_present", level: "info" },
+      { code: "claude_managed_auth_ok", level: "info" },
+    ]));
+    try {
+      await withHarnessVerification(async () => {
+        const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+        expect(assistant.adapterType).toBe("claude_managed");
+        expect(assistant.adapterConfig).toMatchObject({ model: "claude-opus-5-5" });
+        // The server key is never copied into the agent.
+        expect(assistant.adapterConfig).not.toHaveProperty("env");
+        expect(JSON.stringify(assistant)).not.toContain(DUMMY_SERVER_KEY);
+        await lifecycleWorker.process(assistant.id);
+        const lifecycle = await readAssistantLifecycle(db, assistant.id);
+        expect(lifecycle?.lifecycleState).toBe("ready");
+        expect(assistantSetupStatus(lifecycle!)).toEqual({ state: "ready", adapterType: "claude_managed" });
+        // The server, not agent config, allows the server key for the provisioned Assistant.
+        expect(testEnvironment).toHaveBeenCalledWith(expect.objectContaining({ adapterType: "claude_managed", hostedInferenceAllowed: true }));
+      });
+    } finally {
+      testEnvironment.mockRestore();
+    }
+  });
+
+  it("caps a hosted Assistant with an active hard-stop monthly budget", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(assistant.budgetMonthlyCents).toBe(2000);
+    const [policy] = await db.select().from(budgetPolicies).where(and(eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, assistant.id)));
+    expect(policy).toMatchObject({ amount: 2000, hardStopEnabled: true, isActive: true, windowKind: "calendar_month_utc" });
+
+    vi.stubEnv("STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS", "500");
+    const other = await seedCompany({ requireApproval: false });
+    expect((await createBuiltInAgentService(db).ensureAssistant(other)).budgetMonthlyCents).toBe(500);
+
+    // An explicit 0 means no cap: no active policy.
+    vi.stubEnv("STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS", "0");
+    const uncapped = await seedCompany({ requireApproval: false });
+    const uncappedAssistant = await createBuiltInAgentService(db).ensureAssistant(uncapped);
+    expect(uncappedAssistant.budgetMonthlyCents).toBe(0);
+    expect(await db.select().from(budgetPolicies).where(eq(budgetPolicies.scopeId, uncappedAssistant.id))).toHaveLength(0);
+
+    // Without hosted inference the Assistant keeps no budget (unchanged).
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "");
+    const local = await seedCompany({ requireApproval: false });
+    expect((await createBuiltInAgentService(db).ensureAssistant(local)).budgetMonthlyCents).toBe(0);
+  });
+
+  it("lets any claude_managed agent without its own key use the server key, once its agent and company caps are ensured", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_AGENT_BUDGET_CENTS", "750");
+    const companyId = await seedCompany({ requireApproval: false });
+    const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    const staff = await hire(companyId, "claude_managed", "claude-opus-5-5");
+    const local = await hire(companyId, "claude_local", "claude-sonnet-4-5");
+    const policyFor = async (scopeType: "agent" | "company", scopeId: string) => (await db.select().from(budgetPolicies)
+      .where(and(eq(budgetPolicies.scopeType, scopeType), eq(budgetPolicies.scopeId, scopeId))))[0];
+    expect(await hostedInferenceAllowedFor(db, assistant)).toBe(true);
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
+    expect(await hostedInferenceAllowedFor(db, local)).toBe(false);
+    // The Assistant keeps its own cap; other agents get STAPLES_HOSTED_AGENT_BUDGET_CENTS; the company gets the default $50.
+    expect(await policyFor("agent", assistant.id)).toMatchObject({ amount: 2000, isActive: true, hardStopEnabled: true });
+    expect(await policyFor("agent", staff.id)).toMatchObject({ amount: 750, isActive: true, hardStopEnabled: true });
+    expect(await policyFor("agent", local.id)).toBeUndefined();
+    expect(await policyFor("company", companyId)).toMatchObject({ amount: 5000, isActive: true, hardStopEnabled: true });
+    // The retired all-agents switch changes nothing.
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE_ALL_AGENTS", "off");
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE", "off");
+    expect(await hostedInferenceAllowedFor(db, assistant)).toBe(false);
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(false);
+  });
+
+  it("ensures a separate hosted company cap: a person's company budget is untouched, an existing hosted cap is never lowered, and an explicit 0 leaves it uncapped", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const staff = await hire(companyId, "claude_managed", "claude-opus-5-5");
+    await db.insert(budgetPolicies).values({ companyId, scopeType: "company", scopeId: companyId, metric: "billed_cents", windowKind: "calendar_month_utc",
+      amount: 900, hardStopEnabled: false, isActive: false });
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
+    const companyPolicy = async (id: string, metric: string) => (await db.select().from(budgetPolicies)
+      .where(and(eq(budgetPolicies.scopeType, "company"), eq(budgetPolicies.scopeId, id), eq(budgetPolicies.metric, metric))))[0];
+    expect(await companyPolicy(companyId, "billed_cents")).toMatchObject({ amount: 900, isActive: false, hardStopEnabled: false });
+    expect(await companyPolicy(companyId, "hosted_billed_cents")).toMatchObject({ amount: 5000, isActive: true, hardStopEnabled: true });
+    // The person's company budget amount is not overwritten by the hosted cap.
+    const [company] = await db.select().from(companies).where(eq(companies.id, companyId));
+    expect(company!.budgetMonthlyCents).not.toBe(5000);
+    // Recorded as a system action, not a person's.
+    const upserts = await db.select().from(activityLog).where(and(eq(activityLog.companyId, companyId), eq(activityLog.action, "budget.policy_upserted")));
+    expect(upserts.length).toBeGreaterThan(0);
+    for (const row of upserts) expect(row).toMatchObject({ actorType: "system", actorId: "hosted_inference" });
+
+    // A lower existing hosted cap is kept (never raised), a higher one is never lowered; a disabled one is re-activated at its amount.
+    for (const amount of [3000, 7000]) {
+      await db.update(budgetPolicies).set({ amount, isActive: true, hardStopEnabled: true })
+        .where(and(eq(budgetPolicies.scopeId, companyId), eq(budgetPolicies.metric, "hosted_billed_cents")));
+      expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
+      expect(await companyPolicy(companyId, "hosted_billed_cents")).toMatchObject({ amount, isActive: true });
+    }
+    await db.update(budgetPolicies).set({ amount: 900, isActive: false, hardStopEnabled: false })
+      .where(and(eq(budgetPolicies.scopeId, companyId), eq(budgetPolicies.metric, "hosted_billed_cents")));
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
+    expect(await companyPolicy(companyId, "hosted_billed_cents")).toMatchObject({ amount: 900, isActive: true, hardStopEnabled: true });
+
+    vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_CENTS", "0");
+    const uncapped = await seedCompany({ requireApproval: false });
+    const other = await hire(uncapped, "claude_managed", "claude-opus-5-5");
+    expect(await hostedInferenceAllowedFor(db, other)).toBe(true);
+    expect(await companyPolicy(uncapped, "hosted_billed_cents")).toBeUndefined();
+  });
+
+  it("raises the hosted cap to the need, never lowers it, and stops at the ceiling", () => {
+    expect(hostedCapAfterRaise({ currentCents: 5000, neededCents: 4000, ceilingCents: 20000 })).toBe(5000);
+    expect(hostedCapAfterRaise({ currentCents: 5000, neededCents: 11000, ceilingCents: 20000 })).toBe(11000);
+    expect(hostedCapAfterRaise({ currentCents: 5000, neededCents: 29000, ceilingCents: 20000 })).toBe(20000);
+    expect(hostedCapAfterRaise({ currentCents: 25000, neededCents: 29000, ceilingCents: 20000 })).toBe(25000);
+    expect(hostedCapAfterRaise({ currentCents: 5000, neededCents: 11000, ceilingCents: 0 })).toBe(5000);
+  });
+
+  it("sums a plan's hires against the hosted cap on the card: hosted hires only, the Assistant counted, uncapped left alone", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    await createBuiltInAgentService(db).ensureAssistant(companyId);
+    const hosted = (clientKey: string, budgetMonthlyCents?: number) => ({
+      clientKey, name: clientKey, role: "general", adapterType: "claude_managed", ...(budgetMonthlyCents === undefined ? {} : { budgetMonthlyCents }),
+    });
+    const local = { clientKey: "local", name: "Local", role: "general", adapterType: "claude_local", budgetMonthlyCents: 1500 };
+    // 3 x $30 plus the Assistant's $20 needs $110 against the default $50.
+    expect(await planBudgetSummary(db, companyId, { agents: [hosted("a", 3000), hosted("b", 3000), hosted("c", 3000)] })).toEqual({
+      hiresMonthlyCents: 9000, budgetedHireCount: 3, hostedCapCents: 5000, hostedNeededCents: 11000, hostedCapAfterCents: 11000, ceilingCents: 20000,
+    });
+    // A hosted hire without a budget counts the hosted default; a local hire counts toward the total but not the hosted need.
+    expect(await planBudgetSummary(db, companyId, { agents: [hosted("a"), local] })).toMatchObject({
+      hiresMonthlyCents: 3500, hostedNeededCents: 4000, hostedCapAfterCents: 5000,
+    });
+    // Over the ceiling: raised only to the ceiling.
+    expect(await planBudgetSummary(db, companyId, { agents: [hosted("a", 9000), hosted("b", 9000), hosted("c", 9000)] }))
+      .toMatchObject({ hostedNeededCents: 29000, hostedCapAfterCents: 20000 });
+    // Local hires only: no hosted line.
+    expect(await planBudgetSummary(db, companyId, { agents: [local] })).toMatchObject({ hiresMonthlyCents: 1500, hostedCapCents: null, hostedCapAfterCents: null });
+    expect(await planBudgetSummary(db, companyId, { agents: [] })).toBeNull();
+    // An explicitly uncapped company is never raised: the card says nothing about the hosted limit.
+    vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_CENTS", "0");
+    expect(await planBudgetSummary(db, companyId, { agents: [hosted("a", 3000)] })).toMatchObject({ hostedCapCents: null, hostedNeededCents: null });
+  });
+
+  it("raises the hosted company cap after hosted hires: raise only, up to the ceiling, logged as a system action", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(await hostedInferenceAllowedFor(db, assistant)).toBe(true);
+    // A person sets an agent's budget (billed_cents) or, on the board, its hosted limit.
+    const personBudget = (agentId: string, amount: number, metric: "billed_cents" | "hosted_billed_cents" = "billed_cents") => budgetService(db).upsertPolicy(companyId,
+      { scopeType: "agent", scopeId: agentId, metric, amount, windowKind: "calendar_month_utc" }, "board-user");
+    const staffed = async (name: string, cents: number) => {
+      const agent = await hire(companyId, "claude_managed", "claude-opus-5-5", name);
+      await personBudget(agent.id, cents, "hosted_billed_cents");
+      // A large person-set billed_cents budget is not the hosted limit and never counts.
+      await personBudget(agent.id, 90_000);
+      return agent;
+    };
+    // A local agent's budget never counts toward the hosted cap.
+    const local = await hire(companyId, "claude_local", "claude-sonnet-4-5", "Local");
+    await personBudget(local.id, 50_000);
+    // An agent's own budget field (agent-writable) never counts either.
+    const selfSet = await hire(companyId, "claude_managed", "claude-opus-5-5", "Self");
+    await db.update(agents).set({ budgetMonthlyCents: 1_000_000 }).where(eq(agents.id, selfSet.id));
+    for (const name of ["A", "B", "C"]) await staffed(name, 3000);
+    const hostedCap = async () => (await db.select().from(budgetPolicies)
+      .where(and(eq(budgetPolicies.scopeId, companyId), eq(budgetPolicies.metric, "hosted_billed_cents"))))[0];
+    // The Assistant's $20, 3 x $30 and the self-set agent at the $20 default.
+    expect(await raiseHostedCompanyCapForHires(db, companyId)).toEqual({ fromCents: 5000, toCents: 13000, neededCents: 13000, ceilingCents: 20000, limited: false });
+    expect(await hostedCap()).toMatchObject({ amount: 13000, isActive: true, hardStopEnabled: true });
+    const upserts = await db.select().from(activityLog).where(and(eq(activityLog.companyId, companyId), eq(activityLog.action, "budget.policy_upserted")));
+    const capUpserts = upserts.filter((row) => (row.details as Record<string, unknown>)?.metric === "hosted_billed_cents" && (row.details as Record<string, unknown>)?.scopeType === "company");
+    expect(capUpserts.some((row) => (row.details as Record<string, unknown>)?.amount === 13000)).toBe(true);
+    for (const row of capUpserts) expect(row).toMatchObject({ actorType: "system", actorId: "hosted_inference" });
+    // Already fits: nothing to say, nothing written.
+    expect(await raiseHostedCompanyCapForHires(db, companyId)).toBeNull();
+    // A higher cap (set by a person) is never lowered.
+    await db.update(budgetPolicies).set({ amount: 15000 }).where(and(eq(budgetPolicies.scopeId, companyId), eq(budgetPolicies.metric, "hosted_billed_cents")));
+    expect(await raiseHostedCompanyCapForHires(db, companyId)).toBeNull();
+    expect(await hostedCap()).toMatchObject({ amount: 15000 });
+    // More than the ceiling: raised to the ceiling, and said so.
+    await staffed("D", 9000);
+    await staffed("E", 9000);
+    expect(await raiseHostedCompanyCapForHires(db, companyId)).toEqual({ fromCents: 15000, toCents: 20000, neededCents: 31000, ceilingCents: 20000, limited: true });
+    expect(await hostedCap()).toMatchObject({ amount: 20000 });
+    // An operator ceiling may be set; a cap above it stays.
+    vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS", "10000");
+    expect(await raiseHostedCompanyCapForHires(db, companyId)).toMatchObject({ fromCents: 20000, toCents: 20000, limited: true });
+    expect(await hostedCap()).toMatchObject({ amount: 20000 });
+    // Explicitly uncapped: never raised or changed.
+    vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_CENTS", "0");
+    expect(await raiseHostedCompanyCapForHires(db, companyId)).toBeNull();
+    expect(await hostedCap()).toMatchObject({ amount: 20000 });
+  });
+
+  it("counts only hosted spend toward the hosted company cap: local spend never pauses anything", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const local = await hire(companyId, "claude_local", "claude-sonnet-4-5", "Local");
+    const staff = await hire(companyId, "claude_managed", "claude-opus-5-5", "Hosted");
+    const spend = async (agentId: string, cents: number, hosted: boolean) => {
+      const [event] = await db.insert(costEvents).values({ companyId, agentId, provider: "anthropic", biller: "anthropic", billingType: "metered_api",
+        model: "claude", costCents: cents, occurredAt: new Date(), hostedInference: hosted }).returning();
+      await budgetService(db).evaluateCostEvent(event!);
+    };
+    // More than $50 of non-hosted (local) spend this month.
+    await spend(local.id, 6000, false);
+    expect(await hostedInferenceAllowedFor(db, staff)).toBe(true);
+    const [hostedCap] = await db.select().from(budgetPolicies).where(and(eq(budgetPolicies.scopeId, companyId), eq(budgetPolicies.metric, "hosted_billed_cents")));
+    expect(hostedCap).toMatchObject({ amount: 5000, isActive: true, hardStopEnabled: true });
+    const companyStatus = async () => (await db.select().from(companies).where(eq(companies.id, companyId)))[0]!.status;
+    expect(await companyStatus()).toBe("active");
+    expect(await budgetService(db).getInvocationBlock(companyId, local.id)).toBeNull();
+    expect(await budgetService(db).getInvocationBlock(companyId, staff.id)).toBeNull();
+    // The session limit for the hosted agent ignores the local spend: min(agent $20, hosted company $50).
+    expect(await remainingHardStopCentsForRun(db, { companyId, agentId: staff.id, projectId: null, hostedInference: true })).toBe(2000);
+    expect(await remainingHardStopCentsForRun(db, { companyId, agentId: local.id, projectId: null, hostedInference: false })).toBeNull();
+
+    // Hosted spend past the hosted cap blocks only hosted-key runs; the company and local agents keep working.
+    await db.update(budgetPolicies).set({ amount: 100000 }).where(and(eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, staff.id)));
+    await spend(staff.id, 4000, true);
+    expect(await remainingHardStopCentsForRun(db, { companyId, agentId: staff.id, projectId: null, hostedInference: true })).toBe(1000);
+    await spend(staff.id, 1500, true);
+    expect(await companyStatus()).toBe("active");
+    expect(await budgetService(db).getInvocationBlock(companyId, local.id)).toBeNull();
+    expect(await budgetService(db).getInvocationBlock(companyId, staff.id))
+      .toMatchObject({ scopeType: "company", code: "hosted_limit_reached", reason: expect.stringContaining("hosted inference") });
+    expect((await db.select().from(agents).where(eq(agents.id, local.id)))[0]!.status).not.toBe("paused");
+  });
+
+  const hostedPolicy = async (agentId: string) => (await db.select().from(budgetPolicies)
+    .where(and(eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, agentId))))[0];
+
+  it("enforces the hosted Assistant's hard-stop budget at the point of use", async () => {
+    // A plain ANTHROPIC_API_KEY in the server env does not turn hosted inference on.
+    vi.stubEnv("ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const local = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(local.adapterType).toBe("claude_local");
+    expect(await hostedPolicy(local.id)).toBeUndefined();
+
+    // Switched to Claude (hosted) after provisioning (as the setup card does): no policy yet.
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    await db.update(agents).set({ adapterType: "claude_managed", adapterConfig: { model: "claude-opus-5-5" } }).where(eq(agents.id, local.id));
+    const [switched] = await db.select().from(agents).where(eq(agents.id, local.id));
+    expect(await hostedInferenceAllowedFor(db, switched!)).toBe(true);
+    expect(await hostedPolicy(local.id)).toMatchObject({ amount: 2000, hardStopEnabled: true, isActive: true });
+
+    // Deleted or disabled by hand: the next use recreates / re-activates it.
+    await db.delete(budgetPolicies).where(eq(budgetPolicies.scopeId, local.id));
+    expect(await hostedInferenceAllowedFor(db, switched!)).toBe(true);
+    expect(await hostedPolicy(local.id)).toMatchObject({ amount: 2000, isActive: true });
+    await db.update(budgetPolicies).set({ isActive: false, hardStopEnabled: false }).where(eq(budgetPolicies.scopeId, local.id));
+    await ensureHostedAssistantBudget(db, switched!);
+    expect(await hostedPolicy(local.id)).toMatchObject({ isActive: true, hardStopEnabled: true });
+
+    // If the budget cannot be ensured, the server key is withheld.
+    expect(await hostedInferenceAllowedFor(db, switched!, process.env, { ensureBudget: async () => { throw new Error("db down"); } })).toBe(false);
+
+    // With its own key the server key is not needed (and no budget is forced).
+    await db.delete(budgetPolicies).where(eq(budgetPolicies.scopeId, local.id));
+    expect(await hostedInferenceAllowedFor(db, { ...switched!, adapterConfig: { model: "claude-opus-5-5", env: { ANTHROPIC_API_KEY: { type: "secret_ref", secretId: randomUUID() } } } })).toBe(false);
+    expect(await hostedPolicy(local.id)).toBeUndefined();
+  });
+
+  it("re-defaulting an existing Assistant onto hosted inference through ensure() gives it the budget", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    await db.delete(budgetPolicies).where(eq(budgetPolicies.scopeId, assistant.id));
+    // An incomplete config on a non-runtime adapter is re-defaulted by ensure().
+    await db.update(agents).set({ adapterType: "process", adapterConfig: {} }).where(eq(agents.id, assistant.id));
+    const ensured = await createBuiltInAgentService(db).ensure(companyId, "assistant");
+    expect(ensured.agent?.adapterType).toBe("claude_managed");
+    expect(await hostedPolicy(assistant.id)).toMatchObject({ amount: 2000, hardStopEnabled: true, isActive: true });
+  });
+
+  it("surfaces a hosted Assistant stuck waiting on its provisioning record, then fails it", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    await lifecycleWorker.process(assistant.id);
+    // The provisioning record never got written (e.g. bundle reconciliation keeps failing).
+    await db.delete(builtInManagedResources).where(eq(builtInManagedResources.companyId, companyId));
+    await db.update(agents).set({ lifecycleState: "verifying", lifecycleError: null,
+      lifecycleOperation: { id: "op-wait", hostComplete: false, completedPluginIds: [], attempts: 1 } }).where(eq(agents.id, assistant.id));
+    const [row] = await db.select().from(agents).where(eq(agents.id, assistant.id));
+    const { verify } = agentHarnessVerificationService(db, {} as never);
+    expect(await verify(row as never)).toBe("pending");
+    let lifecycle = await readAssistantLifecycle(db, assistant.id);
+    expect(assistantSetupStatus(lifecycle!)).toEqual({ state: "starting", adapterType: "claude_managed", message: "Finishing Assistant setup…" });
+    for (let index = 1; index < HOSTED_PROVISIONING_MAX_WAITS; index += 1) expect(await verify(row as never)).toBe("pending");
+    await expect(verify(row as never)).rejects.toMatchObject({ code: "harness_test_failed" });
+    await db.update(agents).set({ lifecycleError: "The lifecycle step failed. Retry the operation." }).where(eq(agents.id, assistant.id));
+    lifecycle = await readAssistantLifecycle(db, assistant.id);
+    expect(assistantSetupStatus(lifecycle!)).toEqual({ state: "error", adapterType: "claude_managed",
+      message: "The Assistant's setup didn't finish. Try again.", reason: "The Assistant's setup didn't finish. Try again." });
+  });
+
+  it("reports needs_model when Claude (hosted) has no usable key", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const adapter = requireServerAdapter("claude_managed");
+    const testEnvironment = vi.spyOn(adapter, "testEnvironment").mockResolvedValue(managedTestResult([
+      { code: "claude_managed_api_key_present", level: "info" },
+      { code: "claude_managed_auth_invalid", level: "error" },
+    ]));
+    try {
+      await withHarnessVerification(async () => {
+        const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+        await lifecycleWorker.process(assistant.id);
+        const lifecycle = await readAssistantLifecycle(db, assistant.id);
+        expect(assistantSetupStatus(lifecycle!)).toEqual({
+          state: "needs_model", adapterType: "claude_managed", reason: "That Anthropic API key was rejected.",
+        });
+      });
+    } finally {
+      testEnvironment.mockRestore();
+    }
+  });
+
+  it("keeps an existing Assistant's adapter when hosted inference becomes available", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const service = createBuiltInAgentService(db);
+    const before = await service.ensureAssistant(companyId);
+    expect(before.adapterType).toBe("claude_local");
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const again = await service.ensureAssistant(companyId);
+    expect(again.adapterType).toBe("claude_local");
+    await service.ensure(companyId, "assistant");
+    const [row] = await db.select().from(agents).where(eq(agents.id, before.id));
+    expect(row.adapterType).toBe("claude_local");
+    // A staff hire still re-inherits a never-run Assistant onto the staff adapter, never onto hosted.
+    await hire(companyId, "codex_local", "gpt-5.4");
+    const [after] = await db.select().from(agents).where(eq(agents.id, before.id));
+    expect(after.adapterType).toBe("codex_local");
+  });
+
+  it("does not move a hosted Assistant onto a staff agent's adapter", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const service = createBuiltInAgentService(db);
+    const assistant = await service.ensureAssistant(companyId);
+    expect(assistant.adapterType).toBe("claude_managed");
+    await hire(companyId, "codex_local", "gpt-5.4");
+    const [after] = await db.select().from(agents).where(eq(agents.id, assistant.id));
+    expect(after).toMatchObject({ adapterType: "claude_managed", adapterConfig: { model: "claude-opus-5-5" } });
+  });
+
+  it("ignores hosted inference when opted out", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    vi.stubEnv("STAPLES_HOSTED_INFERENCE", "off");
+    const companyId = await seedCompany({ requireApproval: false });
+    const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(ensured.adapterType).toBe("claude_local");
+  });
+
+  it("falls back to claude_local when no company agent has a complete adapter config", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    await createAgentLifecycle(db).requestHire(companyId, {
+      name: "Builder",
+      role: "engineer",
+      status: "idle",
+      adapterType: "opencode_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const ensured = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    expect(ensured.adapterType).toBe("claude_local");
+  });
+
+  it("rejects assigning regular issues to the Assistant but allows its conversation issue", async () => {
+    const companyId = await seedCompany({ requireApproval: false });
+    const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
+    await lifecycleWorker.process(assistant.id);
+    const regularAgent = await createAgentLifecycle(db).requestHire(companyId, {
+      name: "Coder",
+      role: "engineer",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await lifecycleWorker.process(regularAgent.id);
+    const issuesSvc = issueService(db);
+
+    await expect(issuesSvc.create(companyId, {
+      title: "Regular task",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: assistant.id,
+    })).rejects.toMatchObject({ status: 400, message: "The Assistant can't be assigned tasks" });
+
+    const regular = await issuesSvc.create(companyId, {
+      title: "Regular task",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: regularAgent.id,
+    });
+    await expect(issuesSvc.update(regular.id, { assigneeAgentId: assistant.id }))
+      .rejects.toMatchObject({ status: 400, message: "The Assistant can't be assigned tasks" });
+
+    const conversation = await issuesSvc.create(companyId, {
+      title: "Chat with Assistant",
+      assigneeAgentId: assistant.id,
+      conversationAgentId: assistant.id,
+      conversationUserId: "user-1",
+      conversationState: "waiting",
+      status: "in_review",
+      createdByUserId: "user-1",
+    });
+    expect(conversation.assigneeAgentId).toBe(assistant.id);
   });
 
   it("lazily provisions one agent per company/key and updates the same row on setup", async () => {
@@ -679,7 +1501,7 @@ describeEmbeddedPostgres("built-in agents", () => {
       "paperclipai/bundled/paperclip-operations/reflection-coach",
     );
 
-    const [routine] = await db.select().from(routines).where(eq(routines.companyId, companyId));
+    const [routine] = await db.select().from(routines).where(and(eq(routines.companyId, companyId), ne(routines.originId, "assistant:weekly-update")));
     expect(routine).toMatchObject({
       title: "Review recent agent trajectories for coaching proposals",
       status: "paused",
@@ -1026,6 +1848,33 @@ describeEmbeddedPostgres("built-in agents", () => {
     });
   });
 
+  it("rejects malformed or partial built-in markers on create and update", async () => {
+    const companyId = await seedCompany();
+    const builtIn = await builtInAgentService(db).ensure(companyId, "briefs");
+    const hire = (metadata: Record<string, unknown>) => createAgentLifecycle(db).requestHire(companyId, {
+      name: `Spoof ${randomUUID().slice(0, 6)}`, role: "engineer", status: "idle", adapterType: "codex_local",
+      adapterConfig: { model: "gpt-5.4" }, runtimeConfig: {}, permissions: {}, metadata,
+    });
+    const forged = [
+      { paperclipBuiltInAgent: { key: "assistant" } },
+      { paperclipBuiltInAgent: { key: "assistant", featureKeys: "assistant" } },
+      { paperclipBuiltInAgent: "assistant" },
+      { paperclipBuiltInAgent: null },
+    ];
+    for (const metadata of forged) {
+      await expect(hire(metadata)).rejects.toMatchObject({ status: 409, details: { code: "built_in_agent_marker_readonly" } });
+    }
+    const normal = await hire({ note: "plain" });
+    for (const metadata of forged) {
+      await expect(agentService(db).update(normal.id, { metadata }))
+        .rejects.toMatchObject({ status: 409, details: { code: "built_in_agent_marker_readonly" } });
+    }
+    // A stored marker may only be resubmitted byte-identically.
+    await expect(agentService(db).update(builtIn.agentId!, {
+      metadata: { paperclipBuiltInAgent: { key: "briefs", featureKeys: ["briefs"], extra: true } },
+    })).rejects.toMatchObject({ status: 409, details: { code: "built_in_agent_marker_readonly" } });
+  });
+
   it("repairs display/default drift for marked rows during startup reconciliation", async () => {
     const companyId = await seedCompany();
     const agentId = randomUUID();
@@ -1295,7 +2144,7 @@ describeEmbeddedPostgres("built-in agents", () => {
     });
     expect(readPaperclipSkillSyncPreference(state.agent!.adapterConfig).desiredSkills).toContain(skill!.key);
 
-    const [routine] = await db.select().from(routines).where(eq(routines.companyId, companyId));
+    const [routine] = await db.select().from(routines).where(and(eq(routines.companyId, companyId), ne(routines.originId, "assistant:weekly-update")));
     expect(routine).toMatchObject({
       title: "Review recent agent trajectories for coaching proposals",
       status: "paused",
@@ -1489,7 +2338,7 @@ describeEmbeddedPostgres("built-in agents", () => {
       stockStatus: "stock_current",
       scheduleEnabled: true,
     });
-    const [enabledRoutine] = await db.select().from(routines).where(eq(routines.companyId, companyId));
+    const [enabledRoutine] = await db.select().from(routines).where(and(eq(routines.companyId, companyId), ne(routines.originId, "assistant:weekly-update")));
     const [enabledTrigger] = await db.select().from(routineTriggers).where(eq(routineTriggers.routineId, enabledRoutine!.id));
     expect(enabledRoutine).toMatchObject({ status: "active" });
     expect(enabledTrigger).toMatchObject({ enabled: true });
@@ -1761,7 +2610,7 @@ describeEmbeddedPostgres("built-in agents", () => {
       resetAvailable: true,
     });
     expect((await instructionsSvc.readFile(drifted.agent!, "AGENTS.md")).content).toContain("Do not overwrite me.");
-    const [preservedRoutine] = await db.select().from(routines).where(eq(routines.companyId, companyId));
+    const [preservedRoutine] = await db.select().from(routines).where(and(eq(routines.companyId, companyId), ne(routines.originId, "assistant:weekly-update")));
     expect(preservedRoutine?.title).toBe("DRIFTED BY TEST - do not clobber");
 
     const reset = await builtInAgentService(db).reset(companyId, "reflection-coach", {
@@ -1780,7 +2629,7 @@ describeEmbeddedPostgres("built-in agents", () => {
       resetAvailable: false,
     });
     expect((await instructionsSvc.readFile(reset.agent!, "AGENTS.md")).content).toContain("You are Reflection Coach");
-    const [resetRoutine] = await db.select().from(routines).where(eq(routines.companyId, companyId));
+    const [resetRoutine] = await db.select().from(routines).where(and(eq(routines.companyId, companyId), ne(routines.originId, "assistant:weekly-update")));
     expect(resetRoutine?.title).toBe("Review recent agent trajectories for coaching proposals");
   });
 });

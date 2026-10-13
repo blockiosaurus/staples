@@ -61,6 +61,8 @@ export interface CodexEngineSelection {
   engine: CodexExecutionEngine;
   explicit: boolean;
   unavailableReason?: string;
+  /** Set when the engine is unavailable because Node is too old (not for any other reason). */
+  unavailableCause?: "node_version";
 }
 
 type CodexEngineResolutionInput =
@@ -91,8 +93,9 @@ export async function resolveCodexExecutionEngineForRun(
   const selection = normalizeEngine(input.config.engine);
   // Engine availability must never change the agent's execution or permission contract.
   if (selection.engine === "cli") return selection;
-  const unavailable = (reason: string): CodexEngineSelection => ({
+  const unavailable = (reason: string, cause?: "node_version"): CodexEngineSelection => ({
     ...selection,
+    ...(cause ? { unavailableCause: cause } : {}),
     unavailableReason: `${reason} Repair the ACP setup, or explicitly set engine=cli to use the CLI engine.`,
   });
   const target = readAdapterExecutionTarget({
@@ -109,7 +112,7 @@ export async function resolveCodexExecutionEngineForRun(
   }
 
   const reason = await codexAcpUnavailableReason(input);
-  return reason ? unavailable(reason) : selection;
+  return reason ? unavailable(reason, reason === nodeVersionUnsupportedReason() ? "node_version" : undefined) : selection;
 }
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {
@@ -475,6 +478,10 @@ async function resolveCodexAcpCommandForTarget(
   return resolveCodexAcpCommand(config);
 }
 
+function nodeVersionUnsupportedReason(): string {
+  return `Node ${process.version} (${process.execPath}) does not satisfy Codex ACP's Node >=${MIN_ACP_NODE_VERSION} prerequisite.`;
+}
+
 async function codexAcpUnavailableReason(
   input: CodexEngineResolutionInput,
 ): Promise<string | null> {
@@ -489,7 +496,7 @@ async function codexAcpUnavailableReason(
     return "Codex ACP supports sandbox remote targets only; this run targets a non-sandbox remote environment.";
   }
   if (!nodeVersionMeetsCodexAcpMinimum()) {
-    return `Node ${process.version} (${process.execPath}) does not satisfy Codex ACP's Node >=${MIN_ACP_NODE_VERSION} prerequisite.`;
+    return nodeVersionUnsupportedReason();
   }
   const command = await resolveCodexAcpCommandForTarget(input.config, target);
   if (!(await commandIsResolvable(command, input))) {

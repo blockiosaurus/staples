@@ -2,6 +2,7 @@ import { SetupWizardSidebarOutlet } from "./SetupWizard";
 import { ChatSetupSidebarProvider } from "@/context/ChatSetupSidebarContext";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import { Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { Sidebar } from "./Sidebar";
 import { CompanySettingsSidebar } from "./CompanySettingsSidebar";
@@ -28,7 +29,11 @@ import { DevRestartBanner } from "./DevRestartBanner";
 import { StandaloneBrowserControls } from "./StandaloneBrowserControls";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { AgentConversationsSidebar } from "./AgentConversationsSidebar";
-import { useAgentChatEnabled } from "../hooks/useAgentChatEnabled";
+import { SurfaceTracker } from "../staples/surfaces/SurfaceTracker";
+import { AssistantProvider, useAssistantShell } from "../staples/assistant/AssistantProvider";
+import { AssistantDock } from "../staples/assistant/AssistantDock";
+import { StageZeroShell } from "../staples/assistant/StageZeroShell";
+import { useCompanySignals } from "../hooks/useCompanySignals";
 import { SidebarShell } from "./SidebarShell";
 import { SecondarySidebar } from "./SecondarySidebar";
 import { ContextualSidebarFrame } from "./ContextualSidebarFrame";
@@ -38,7 +43,6 @@ import { usePanel } from "../context/PanelContext";
 import { useCompany } from "../context/CompanyContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
-import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { useCompanyPageMemory } from "../hooks/useCompanyPageMemory";
 import { useMobileNavVisibility } from "../hooks/useMobileNavVisibility";
 import { healthApi } from "../api/health";
@@ -61,6 +65,8 @@ import {
 } from "../lib/shell-navigation";
 import { cn } from "../lib/utils";
 import { NotFoundPage } from "../pages/NotFound";
+import { UnprefixedBoardRedirect } from "./UnprefixedBoardRedirect";
+import { isBoardPathWithoutPrefix } from "@/lib/company-routes";
 import { PluginSlotMount, resolveRouteSidebarSlot, usePluginSlots } from "../plugins/slots";
 
 function getCompanyRouteSegment(pathname: string, companyPrefix: string | undefined): string | null {
@@ -81,7 +87,22 @@ const RESERVED_APP_SUBPATHS = new Set([
   "app",
 ]);
 
+/**
+ * Company route roots that render in the normal shell even in stage 0:
+ * settings, brief and organization (`company`, `companies`), profiles (`u`),
+ * and the pages the Assistant sends people to.
+ */
+const STAGE_ZERO_EXEMPT_ROOTS = new Set(["company", "companies", "u", "agents", "apps", "issues", "approvals"]);
+
 export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
+  return (
+    <AssistantProvider>
+      <LayoutShell sidebarSections={sidebarSections} />
+    </AssistantProvider>
+  );
+}
+
+function LayoutShell({ sidebarSections }: { sidebarSections?: ReactNode }) {
   const {
     sidebarOpen,
     setSidebarOpen,
@@ -90,9 +111,8 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
     peeking,
     setPeeking,
     isMobile,
-    setForceCollapsed,
   } = useSidebar();
-  const { openNewIssue, openOnboarding } = useDialogActions();
+  const { openNewIssue } = useDialogActions();
   const { togglePanelVisible } = usePanel();
   // Optional: Layout also renders in harnesses without a ToastProvider.
   const pushToast = useOptionalToastActions()?.pushToast ?? null;
@@ -118,15 +138,15 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const navigationType = useNavigationType();
-  const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const shellRoute = classifyShellRoute(location.pathname, companyPrefix);
   const isCompanySettingsRoute = shellRoute.builtInContextualSurface === "settings";
   const companyPathSegments = shellRoute.companySegments;
   const isTaskDetailRoute = shellRoute.isTaskDetail;
-  const { enabled: agentChatEnabled } = useAgentChatEnabled();
-  const isAgentChatRoute = agentChatEnabled && companyPathSegments[0]?.toLowerCase() === "chats";
+  const isAgentChatRoute = companyPathSegments[0]?.toLowerCase() === "chats";
+  const isAssistantRoute = companyPathSegments[0]?.toLowerCase() === "assistant";
   // Chat keeps its header beside the agent sidebar, including before an agent is selected.
-  const useStreamlinedTaskDetailShell = streamlinedUiEnabled && (isTaskDetailRoute || isAgentChatRoute);
+  // The full-page Assistant is the same conversation surface, so it gets the same shell.
+  const useStreamlinedTaskDetailShell = isTaskDetailRoute || isAgentChatRoute || isAssistantRoute;
   const isToolsRoute = companyPathSegments[0]?.toLowerCase() === "tools";
   const isAppsRoute = companyPathSegments[0]?.toLowerCase() === "apps";
   const appDetailConnectionId =
@@ -137,7 +157,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
     isAppsRoute && companyPathSegments[1]?.toLowerCase() === "app" && companyPathSegments[2]
       ? companyPathSegments[2]
       : null;
-  const onboardingTriggered = useRef(false);
+  const startTriggered = useRef(false);
   const previousPathname = useRef<string | null>(null);
   const mainContentRef = useRef<HTMLElement | null>(null);
   const scrollMemory = useRef(new NavigationScrollMemory());
@@ -175,12 +195,10 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   );
   // Most contextual routes replace the global navigation inside the same
   // sidebar shell. Skills, Apps, Agent details, and Routine details are the
-  // exceptions in Streamlined UI: their local navigation is a second rail
+  // exceptions: their local navigation is a second rail
   // beside the persistent company nav.
   const sharedSecondarySidebar = isCompanySettingsRoute ? (
     <CompanySettingsSidebar />
-  ) : !streamlinedUiEnabled && shellRoute.builtInContextualSurface === "skills" ? (
-    <SkillsContextualSidebar />
   ) : appDetailConnectionId ? (
     <AppDetailSidebar kind="connection" connectionId={appDetailConnectionId} />
   ) : appDetailApplicationId ? (
@@ -188,36 +206,27 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   ) : isAppsRoute || isToolsRoute ? (
     <AppsSidebar />
   ) : routeSidebarSlot ? (
-    streamlinedUiEnabled ? (
-      <ContextualSidebarFrame
-        surface={`plugin:${routeSidebarSlot.id}`}
-        title={routeSidebarSlot.displayName}
-      >
-        <PluginSlotMount
-          slot={routeSidebarSlot}
-          context={sidebarContext}
-          className="min-h-0 flex-1"
-          missingBehavior="placeholder"
-        />
-      </ContextualSidebarFrame>
-    ) : (
+    <ContextualSidebarFrame
+      surface={`plugin:${routeSidebarSlot.id}`}
+      title={routeSidebarSlot.displayName}
+    >
       <PluginSlotMount
         slot={routeSidebarSlot}
         context={sidebarContext}
-        className="h-full w-full"
+        className="min-h-0 flex-1"
         missingBehavior="placeholder"
       />
-    )
+    </ContextualSidebarFrame>
   ) : null;
   const secondarySidebar = isAgentChatRoute ? <AgentConversationsSidebar /> : shellRoute.builtInContextualSurface === "agent" && agentId ? (
     <AgentContextualSidebar agentRef={agentId} />
-  ) : streamlinedUiEnabled && shellRoute.builtInContextualSurface === "routine" && routineId ? (
+  ) : shellRoute.builtInContextualSurface === "routine" && routineId ? (
     <SetupWizardSidebarOutlet><RoutineContextualSidebar routineId={routineId} /></SetupWizardSidebarOutlet>
-  ) : streamlinedUiEnabled && shellRoute.builtInContextualSurface === "skills" ? (
+  ) : shellRoute.builtInContextualSurface === "skills" ? (
     <SkillsContextualSidebar />
   ) : sharedSecondarySidebar;
   const hasSecondarySidebar = secondarySidebar != null;
-  const keepsPrimarySidebar = streamlinedUiEnabled && hasSecondarySidebar && (
+  const keepsPrimarySidebar = hasSecondarySidebar && (
     isAgentChatRoute
     || shellRoute.builtInContextualSurface === "skills"
     || shellRoute.builtInContextualSurface === "agent"
@@ -225,9 +234,8 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
     || isAppsRoute
     || isToolsRoute
   );
-  const replacesPrimarySidebar = streamlinedUiEnabled && hasSecondarySidebar && !keepsPrimarySidebar;
-  const showsAdjacentSecondarySidebar = hasSecondarySidebar && (!streamlinedUiEnabled || keepsPrimarySidebar);
-  const contextualSurface: ContextualSidebarSurface | null = !streamlinedUiEnabled || !hasSecondarySidebar
+  const replacesPrimarySidebar = hasSecondarySidebar && !keepsPrimarySidebar;
+  const contextualSurface: ContextualSidebarSurface | null = !hasSecondarySidebar
     ? null
     : routeSidebarSlot && !shellRoute.builtInContextualSurface
       ? `plugin:${routeSidebarSlot.id}`
@@ -236,6 +244,32 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
     pathname: string;
     surface: ContextualSidebarSurface | null;
   } | null>(null);
+  // Stage 0: no staff agents yet, so the Assistant is the whole app. Settings,
+  // brief, organization and profile pages stay reachable in the normal shell,
+  // as do the pages the Assistant links to (agents, connectors, tasks and
+  // approvals), so its advice never points at a page that cannot open.
+  // While signals load, show a neutral spinner rather than flashing the sidebar.
+  const { signals, loaded: signalsLoaded, failed: signalsFailed } = useCompanySignals(selectedCompanyId);
+  const stageZeroRoot = companyPathSegments[0]?.toLowerCase();
+  const stageZeroExempt = !companyPrefix || hasUnknownCompanyPrefix
+    || STAGE_ZERO_EXEMPT_ROOTS.has(stageZeroRoot ?? "");
+  const decidedShell: "stage_zero" | "normal" | null = !selectedCompanyId || stageZeroExempt || signalsFailed
+    ? "normal"
+    : !signalsLoaded
+      ? null
+      : signals?.agents === 0 ? "stage_zero" : "normal";
+  // While another company's signals load, keep whichever shell is showing; only
+  // block (spinner) when nothing is known yet.
+  const lastShell = useRef<"stage_zero" | "normal" | null>(null);
+  if (decidedShell) lastShell.current = decidedShell;
+  const shownShell = decidedShell ?? lastShell.current;
+  const stageZeroShell: "pending" | "stage_zero" | null = stageZeroExempt
+    ? null
+    : shownShell === null ? "pending" : shownShell === "stage_zero" ? "stage_zero" : null;
+  // Stage 0 -> stage 1 happens in place: when the first staff agent arrives
+  // while the person is on the Assistant, they stay there (the plan card records
+  // its outcome and the Assistant's follow-up shows) and the stage-1 sidebar,
+  // with Home first, appears around it. The company index lands on Home.
   const { data: health } = useQuery({
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),
@@ -246,11 +280,6 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
     },
     refetchIntervalInBackground: false,
   });
-
-  useLayoutEffect(() => {
-    setForceCollapsed(!streamlinedUiEnabled && hasSecondarySidebar);
-    return () => setForceCollapsed(false);
-  }, [hasSecondarySidebar, setForceCollapsed, streamlinedUiEnabled]);
 
   useEffect(() => {
     const previous = previousShellRoute.current;
@@ -271,16 +300,19 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   }, [companyPrefix, contextualSurface, location.pathname]);
 
   useEffect(() => {
-    if (companiesLoading || onboardingTriggered.current) return;
+    if (companiesLoading || startTriggered.current) return;
+    // Deployment mode and Cloud-managed state decide whether /start can work at
+    // all; until health is in, "no company" could still be a managed stack.
+    if (!health) return;
     if (health?.deploymentMode === "authenticated") return;
     // Cloud provisions the single company for a stack, and POST /companies is a
-    // 403 floor there — auto-opening the wizard could only dead-end.
+    // 403 floor there — sending the user to /start could only dead-end.
     if (health?.cloud) return;
     if (companies.length === 0) {
-      onboardingTriggered.current = true;
-      openOnboarding();
+      startTriggered.current = true;
+      navigate("/start", { replace: true });
     }
-  }, [companies, companiesLoading, openOnboarding, health?.cloud, health?.deploymentMode]);
+  }, [companies, companiesLoading, navigate, health]);
 
   useEffect(() => {
     if (!companyPrefix || companiesLoading || companies.length === 0) return;
@@ -318,7 +350,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
         dedupeKey: `archived-company-bounce:${matchedCompany.id}`,
       });
       setSelectedCompanyId(bounce.id, { source: "route_sync" });
-      navigate(`/${bounce.issuePrefix}/dashboard`, { replace: true });
+      navigate(`/${bounce.issuePrefix}/home`, { replace: true });
       return;
     }
 
@@ -453,7 +485,9 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
 
   useCompanyPageMemory();
 
+  const assistantShell = useAssistantShell();
   useKeyboardShortcuts({
+    onToggleAssistant: assistantShell?.toggleDock,
     onNewIssue: () => openNewIssue(),
     onSearch: openSearch,
     onToggleSidebar: toggleSidebar,
@@ -574,8 +608,31 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
     }
   }, [location.key, location.pathname, location.state, navigationType]);
 
+  if (stageZeroShell === "pending") {
+    return (
+      <div
+        data-testid="layout-signals-loading"
+        role="status"
+        aria-label="Loading"
+        className="flex h-dvh items-center justify-center bg-background text-muted-foreground"
+      >
+        <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+      </div>
+    );
+  }
+  if (stageZeroShell === "stage_zero") {
+    return (
+      <ChatSetupSidebarProvider>
+        <StageZeroShell deploymentMode={health?.deploymentMode} />
+        <ToastViewport />
+        <PluginAppShellOverlays localTrusted={health?.deploymentMode === "local_trusted"} />
+      </ChatSetupSidebarProvider>
+    );
+  }
+
   return (
     <ChatSetupSidebarProvider>
+      <SurfaceTracker />
       <div
       className={cn(
         "bg-background text-foreground pt-(--sz-safe-top)",
@@ -650,12 +707,6 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
           </SidebarShell>
         )}
 
-        {!isMobile && showsAdjacentSecondarySidebar && !keepsPrimarySidebar ? (
-          <SecondarySidebar className="w-60 shrink-0">
-            {secondarySidebar}
-          </SecondarySidebar>
-        ) : null}
-
         <div className={cn("flex min-w-0 flex-col", isMobile ? "w-full" : "h-full flex-1")}>
           <div
             className={cn(
@@ -721,17 +772,21 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
                 // changes (e.g. switching skill-detail tabs) don't widen/shift
                 // when the vertical scrollbar appears or disappears (PAP-10907).
                 isMobile
-                  ? isTaskDetailRoute
+                  ? isTaskDetailRoute || isAssistantRoute
                     ? "overflow-visible pb-(--tc-composer-visible-nav-offset)"
                     : "overflow-visible pb-(--sz-calc-14)"
                   : "overflow-auto [scrollbar-gutter:stable]",
               )}
             >
               {hasUnknownCompanyPrefix ? (
-                <NotFoundPage
-                  scope="invalid_company_prefix"
-                  requestedPrefix={companyPrefix ?? selectedCompany?.issuePrefix}
-                />
+                isBoardPathWithoutPrefix(location.pathname) ? (
+                  <UnprefixedBoardRedirect />
+                ) : (
+                  <NotFoundPage
+                    scope="invalid_company_prefix"
+                    requestedPrefix={companyPrefix ?? selectedCompany?.issuePrefix}
+                  />
+                )
               ) : (
                 <RouteErrorBoundary>
                   <Outlet />
@@ -740,6 +795,9 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
               </main>
             </div>
             <PropertiesPanel taskDetailLayout={!isMobile && useStreamlinedTaskDetailShell} />
+            {/* Its own host, not the single-slot PanelContext: the dock sits
+                beside whatever the page put in the properties panel. */}
+            <AssistantDock />
           </div>
         </div>
       </div>

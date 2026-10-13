@@ -47,6 +47,38 @@ describe("LiveUpdatesProvider issue invalidation", () => {
     client.clear();
   });
 
+  it("routes company signals refresh on activity through the throttle", () => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const refreshSignals = vi.fn();
+    __liveUpdatesTestUtils.invalidateActivityQueries(client, "company-1", {
+      entityType: "issue", entityId: "issue-1", action: "issue.updated", actorType: "system",
+    }, { userId: "user-1", agentId: null }, { refreshSignals });
+    expect(refreshSignals).toHaveBeenCalledWith("company-1");
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.signals("company-1") });
+    client.clear();
+  });
+
+  it("does not refresh company signals on agent status changes", () => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const refreshSignals = vi.fn();
+    __liveUpdatesTestUtils.handleLiveEvent(
+      client,
+      "company-1",
+      "/PAP/dashboard",
+      { type: "agent.status", companyId: "company-1", payload: { agentId: "agent-1", status: "running" } } as never,
+      () => null,
+      { cooldownHits: new Map(), suppressUntil: 0, observedRunOutcomes: new Set() },
+      { userId: "user-1", agentId: null },
+      refreshSignals,
+    );
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.agents.list("company-1") });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.signals("company-1") });
+    expect(refreshSignals).not.toHaveBeenCalled();
+    client.clear();
+  });
+
   it("refreshes the source task activity when a company skill is created", () => {
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries");
@@ -238,6 +270,89 @@ describe("LiveUpdatesProvider issue invalidation", () => {
     });
   });
 
+  it.each([
+    ["a plan is applied", { type: "activity.logged", payload: { action: "plan.applied", entityType: "company", entityId: "company-1", actorType: "user", actorId: "user-1" } }],
+    ["an interaction is answered", { type: "activity.logged", payload: { action: "issue.thread_interaction_answered", entityType: "issue", entityId: "issue-1", actorType: "user", actorId: "user-1" } }],
+    ["a run is queued", { type: "heartbeat.run.queued", payload: { runId: "run-1", agentId: "agent-1", status: "queued" } }],
+    ["a run starts", { type: "heartbeat.run.status", payload: { runId: "run-1", agentId: "agent-1", status: "running" } }],
+    ["a run finishes", { type: "heartbeat.run.status", payload: { runId: "run-1", agentId: "agent-1", status: "succeeded" } }],
+  ])("refreshes the Home briefing when %s", (_label, event) => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    __liveUpdatesTestUtils.handleLiveEvent(
+      client,
+      "company-1",
+      "/PAP/home",
+      { ...event, companyId: "company-1" } as never,
+      () => null,
+      { cooldownHits: new Map(), suppressUntil: 0, observedRunOutcomes: new Set() },
+      { userId: "user-1", agentId: null },
+      () => {},
+    );
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.briefing("company-1") });
+    // Another company's event never touches this company's briefing.
+    invalidate.mockClear();
+    __liveUpdatesTestUtils.handleLiveEvent(
+      client,
+      "company-1",
+      "/PAP/home",
+      { ...event, companyId: "company-2" } as never,
+      () => null,
+      { cooldownHits: new Map(), suppressUntil: 0, observedRunOutcomes: new Set() },
+      { userId: "user-1", agentId: null },
+      () => {},
+    );
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.briefing("company-1") });
+    client.clear();
+  });
+
+  it("collapses a burst of briefing-relevant events into one briefing refresh", () => {
+    vi.useFakeTimers();
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const throttle = __liveUpdatesTestUtils.createBriefingRefreshThrottle(client, 2_000);
+    const gate = { cooldownHits: new Map(), suppressUntil: 0, observedRunOutcomes: new Set<string>() };
+    const events = [
+      { type: "heartbeat.run.queued", payload: { runId: "run-1", agentId: "agent-1", status: "queued" } },
+      { type: "heartbeat.run.status", payload: { runId: "run-1", agentId: "agent-1", status: "running" } },
+      { type: "agent.status", payload: { agentId: "agent-1", status: "running" } },
+      { type: "activity.logged", payload: { action: "plan.applied", entityType: "company", entityId: "company-1", actorType: "user", actorId: "user-1" } },
+      { type: "activity.logged", payload: { action: "issue.updated", entityType: "issue", entityId: "issue-1", actorType: "agent", actorId: "agent-1" } },
+    ];
+    const briefingCalls = () => invalidate.mock.calls
+      .filter(([filters]) => JSON.stringify(filters?.queryKey) === JSON.stringify(queryKeys.briefing("company-1"))).length;
+    try {
+      for (const event of events) {
+        __liveUpdatesTestUtils.handleLiveEvent(
+          client, "company-1", "/PAP/home", { ...event, companyId: "company-1" } as never, () => null, gate,
+          { userId: "user-1", agentId: null }, () => {}, throttle.request,
+        );
+      }
+      expect(briefingCalls()).toBe(0);
+      vi.advanceTimersByTime(2_000);
+      expect(briefingCalls()).toBe(1);
+      const homeArtifactCalls = () => invalidate.mock.calls
+        .filter(([filters]) => JSON.stringify(filters?.queryKey) === JSON.stringify(queryKeys.artifacts.home("company-1"))).length;
+      expect(homeArtifactCalls()).toBe(1);
+      // An in-flight briefing/artifacts read must not be aborted by the refresh.
+      for (const key of [queryKeys.briefing("company-1"), queryKeys.artifacts.home("company-1")]) {
+        const call = invalidate.mock.calls.find(([filters]) => JSON.stringify(filters?.queryKey) === JSON.stringify(key));
+        expect(call?.[1]).toEqual({ cancelRefetch: false });
+      }
+      // A later event opens a new window.
+      __liveUpdatesTestUtils.handleLiveEvent(
+        client, "company-1", "/PAP/home", { ...events[1], companyId: "company-1" } as never, () => null, gate,
+        { userId: "user-1", agentId: null }, () => {}, throttle.request,
+      );
+      vi.advanceTimersByTime(2_000);
+      expect(briefingCalls()).toBe(2);
+    } finally {
+      throttle.dispose();
+      client.clear();
+      vi.useRealTimers();
+    }
+  });
+
   it("refreshes the selected run detail after lifecycle events", () => {
     const invalidations: unknown[] = [];
     const queryClient = {
@@ -355,6 +470,22 @@ describe("LiveUpdatesProvider issue invalidation", () => {
       lastAssistantSnippet: "Checking workspace",
       lastEventAt: "2026-04-06T12:00:09.000Z",
     });
+  });
+
+  it("keeps system-stream run event messages out of the chat status line", () => {
+    const patch = __liveUpdatesTestUtils.readRunLiveStatusPatchFromPayload(
+      {
+        runId: "run-1",
+        agentId: "agent-1",
+        issueId: "issue-1",
+        stream: "system",
+        message: "Started Managed Agents session sesn_123",
+      },
+      "2026-04-06T12:00:09.000Z",
+      "heartbeat.run.event",
+    );
+    expect(patch).not.toHaveProperty("message");
+    expect(patch).toMatchObject({ runId: "run-1", lastEventAt: "2026-04-06T12:00:09.000Z" });
   });
 
   it("does not clear run tool context from null heartbeat event fields", () => {
@@ -1669,5 +1800,45 @@ describe("activity toast attribution", () => {
     const toast = build(new QueryClient(), "company", { ...payload, actorType: "system", actorName: undefined }, { userId: "user-1", agentId: null });
     expect(toast?.title).toBe("System created Task task-1");
     expect(toast?.actor).toBeUndefined();
+  });
+});
+
+describe("signals refresh throttle", () => {
+  it("refreshes immediately, coalesces bursts into one trailing refresh per 10s window, per company", () => {
+    vi.useFakeTimers();
+    try {
+      const client = new QueryClient();
+      const invalidate = vi.spyOn(client, "invalidateQueries");
+      const signalCalls = (companyId: string) =>
+        invalidate.mock.calls.filter(([arg]) => JSON.stringify(arg) === JSON.stringify({ queryKey: queryKeys.signals(companyId) })).length;
+      const throttle = __liveUpdatesTestUtils.createSignalsRefreshThrottle(client);
+
+      throttle.request("company-1");
+      expect(signalCalls("company-1")).toBe(1); // leading
+      for (let i = 0; i < 20; i += 1) throttle.request("company-1");
+      throttle.request("company-2");
+      expect(signalCalls("company-1")).toBe(1);
+      expect(signalCalls("company-2")).toBe(1); // independent key
+
+      vi.advanceTimersByTime(9_999);
+      expect(signalCalls("company-1")).toBe(1);
+      vi.advanceTimersByTime(1);
+      expect(signalCalls("company-1")).toBe(2); // one trailing refresh for the burst
+      expect(signalCalls("company-2")).toBe(1); // no trailing without a second request
+
+      vi.advanceTimersByTime(10_000);
+      expect(signalCalls("company-1")).toBe(2); // quiet window: nothing more
+      vi.advanceTimersByTime(10_000);
+      throttle.request("company-1");
+      expect(signalCalls("company-1")).toBe(3); // leading again after the window closes
+
+      throttle.request("company-1");
+      throttle.dispose();
+      vi.advanceTimersByTime(20_000);
+      expect(signalCalls("company-1")).toBe(3); // disposed: pending trailing dropped
+      client.clear();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

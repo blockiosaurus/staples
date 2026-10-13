@@ -110,7 +110,11 @@ const support = await getEmbeddedPostgresTestSupport();
       const work = worker(createLifecycleDriver(db, {} as never).runHost);
       await work.process(agent.id);
       expect(probe).toHaveBeenCalled();
-      expect(await current(agent.id)).toMatchObject({ lifecycleState: "verifying", lifecycleError: "The lifecycle step failed. Retry the operation." });
+      const after = await current(agent.id);
+      expect(after).toMatchObject({ lifecycleState: "verifying", lifecycleError: "The model didn't pass its connection test. Check the model connection, then retry." });
+      // The failed checks (codes and levels only) are kept for the setup state.
+      expect(after.lifecycleOperation?.lastHarnessTest).toEqual({ version: after.lifecycleVersion, adapterType,
+        checks: [{ code: `${adapterType.split("_")[0]}_hello_probe_auth_required`, level: "warn" }] });
     } finally { probe.mockRestore(); }
   });
 

@@ -24,6 +24,7 @@ import {
   TaskChatComposerTakeoverControls,
   useTaskChatComposerTakeoverActions,
 } from "./TaskChatComposerTakeoverContext";
+import { AcceptRecommendationsButton } from "./AcceptRecommendationsButton";
 import { TaskChatRichInput } from "./TaskChatRichInput";
 import { matchSafeQuestionValidationPattern } from "./question-validation-pattern";
 
@@ -110,6 +111,25 @@ function answerError(
       return `Enter a value no greater than ${validation.maximum}.`;
   }
   return null;
+}
+
+/** The asker's recommended answer, or null when the question carries none. */
+function recommendedAnswer(question: Question): Answer | null {
+  if (question.answerMode === "text") {
+    return question.initialText !== undefined && question.initialText.trim()
+      ? { text: question.initialText }
+      : null;
+  }
+  const selectedOptionIds = (question.options ?? [])
+    .filter((option) => option.recommended === true)
+    .map((option) => option.id);
+  if (selectedOptionIds.length === 0) return null;
+  return {
+    selectedOptionIds:
+      question.answerMode === "single_select"
+        ? selectedOptionIds.slice(0, 1)
+        : selectedOptionIds,
+  };
 }
 
 function SelectOption({
@@ -249,13 +269,20 @@ function QuestionFormForRequest({
   onCancel,
 }: QuestionFormProps) {
   const takeoverActions = useTaskChatComposerTakeoverActions();
-  // A provider default is an editable draft only. An existing response or
-  // saved draft, including an explicitly cleared value, always wins. State
-  // initialization runs once so request refreshes cannot replace user edits.
+  // A provider default or recommended option is an editable draft only. An
+  // existing response or saved draft, including an explicitly cleared value,
+  // always wins. State initialization runs once so request refreshes cannot
+  // replace user edits.
   const startingAnswers = initialResponse?.answers ?? Object.fromEntries(
-    questionSet.questions
-      .filter((question) => question.answerMode === "text" && question.initialText !== undefined)
-      .map((question) => [question.id, { text: question.initialText! }]),
+    questionSet.questions.flatMap((question) => {
+      if (question.answerMode === "text") {
+        return question.initialText !== undefined
+          ? [[question.id, { text: question.initialText }]]
+          : [];
+      }
+      const recommended = recommendedAnswer(question);
+      return recommended ? [[question.id, recommended]] : [];
+    }),
   );
   const initialDraft = draftKey
     ? loadStructuredDraft<{
@@ -324,6 +351,17 @@ function QuestionFormForRequest({
   );
   const allValid = Object.values(validationErrors).every(
     (value) => value == null,
+  );
+  const hasRecommendation = questionSet.questions.some(
+    (candidate) => recommendedAnswer(candidate) != null,
+  );
+  // A required question with no recommendation must already be answered for
+  // "Accept all" to send a complete form.
+  const missingRecommendation = questionSet.questions.some(
+    (candidate) =>
+      candidate.required &&
+      recommendedAnswer(candidate) == null &&
+      !answerHasValue(answers[candidate.id]),
   );
   if (!question)
     return (
@@ -423,6 +461,34 @@ function QuestionFormForRequest({
     } finally {
       setWorking(null);
     }
+  }
+
+  /**
+   * Fill each unanswered question with its recommendation and submit. Any
+   * answer the person gave (a changed selection, edited text, a custom
+   * answer) is kept; untouched questions already hold their recommendation
+   * from initialization.
+   */
+  function acceptRecommendations() {
+    if (missingRecommendation) return;
+    const accepted: Record<string, Answer> = { ...answers };
+    const filled: string[] = [];
+    for (const candidate of questionSet.questions) {
+      const recommended = recommendedAnswer(candidate);
+      if (recommended && !answerHasValue(answers[candidate.id])) {
+        accepted[candidate.id] = recommended;
+        filled.push(candidate.id);
+      }
+    }
+    setAnswers(accepted);
+    if (filled.length > 0) {
+      // An empty custom field left open would block the filled answer.
+      setCustomActive((current) => ({
+        ...current,
+        ...Object.fromEntries(filled.map((questionId) => [questionId, false])),
+      }));
+    }
+    void submit(accepted);
   }
 
   async function cancel() {
@@ -706,9 +772,17 @@ function QuestionFormForRequest({
             Skip
           </Button>
         ) : null}
+        {hasRecommendation ? (
+          <AcceptRecommendationsButton
+            disabled={busy}
+            missingRecommendation={missingRecommendation}
+            onClick={acceptRecommendations}
+          />
+        ) : null}
         <Button
           type="button"
           size="sm"
+          variant={hasRecommendation ? "outline" : "default"}
           disabled={busy || (isLastPage ? !allValid : currentError != null)}
           onClick={progressOrSubmit}
         >

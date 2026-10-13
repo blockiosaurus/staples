@@ -177,17 +177,22 @@ describe("parseManagedConfigEnv", () => {
     ).toThrow(/unknown feature key "worktreeRunExecutionActivatedAt"/);
   });
 
-  it("throws on a feature key the catalog does not mark tier \"managed\"", () => {
-    // `enableStreamlinedLeftNavigation` is a real schema flag, but its catalog
-    // tier is `preference` (tenant-controllable) — a managed-config document
-    // targeting it has incompatible catalog semantics and must fail closed.
-    expect(() =>
-      parseManagedConfigEnv(
-        envWith(validDoc({ features: { enableStreamlinedLeftNavigation: true } })),
-      ),
-    ).toThrow(
-      /"features" key "enableStreamlinedLeftNavigation" has tier "preference".*only tier "managed" keys/,
+  it("accepts and ignores retired streamlined feature keys", () => {
+    const parsed = parseManagedConfigEnv(
+      envWith(validDoc({ features: { enableStreamlinedUi: false, enableStreamlinedLeftNavigation: false } })),
     );
+    expect(parsed?.features).toEqual({});
+  });
+
+  it("accepts and ignores the retired conference room chat feature key", () => {
+    const parsed = parseManagedConfigEnv(envWith(validDoc({ features: { enableConferenceRoomChat: true } })));
+    expect(parsed?.features).toEqual({});
+  });
+
+  it("throws on a feature key the catalog does not mark tier \"managed\"", () => {
+    // `enableDecisions` is a real schema flag, but its catalog tier is
+    // `preference` (tenant-controllable) — a managed-config document
+    // targeting it has incompatible catalog semantics and must fail closed.
     expect(() =>
       parseManagedConfigEnv(envWith(validDoc({ features: { enableDecisions: false } }))),
     ).toThrow(/has tier "preference"/);

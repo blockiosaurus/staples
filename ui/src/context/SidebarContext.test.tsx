@@ -74,7 +74,6 @@ describe("SidebarContext", () => {
     active = renderProvider();
 
     expect(capturedValue?.collapsed).toBe(false);
-    expect(capturedValue?.collapseLocked).toBe(false);
     expect(capturedValue?.peeking).toBe(false);
   });
 
@@ -83,11 +82,9 @@ describe("SidebarContext", () => {
 
     act(() => capturedValue?.setCollapsed(true));
     act(() => capturedValue?.toggleCollapsed());
-    act(() => capturedValue?.setForceCollapsed(true));
     act(() => capturedValue?.setPeeking(true));
 
     expect(capturedValue?.collapsed).toBe(false);
-    expect(capturedValue?.collapseLocked).toBe(false);
     expect(capturedValue?.peeking).toBe(false);
   });
 

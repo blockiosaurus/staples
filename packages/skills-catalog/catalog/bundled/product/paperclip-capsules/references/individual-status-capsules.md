@@ -7,7 +7,7 @@ Use this reference for product UI, onboarding, org surfaces, and heartbeat statu
 1. `ui/src/components/AgentCapsule.tsx` - React API, states, sizes, accessibility, gradient wrapping.
 2. `ui/src/index.css` - animation timings, reduced-motion behavior, agent gradient token values.
 3. `ui/src/lib/status-colors.ts` - heartbeat status color/motion mapping.
-4. `ui/src/components/OnboardingWizard.tsx` and `ui/src/pages/DesignGuide.tsx` - accepted usage examples.
+4. `ui/src/pages/DesignGuide.tsx` - accepted usage examples. (The onboarding wizard that also used capsules is retired: new companies start at `/start` and are set up in a conversation with the Assistant, which uses no capsules.)
 5. Website brand guide files under `paperclip-website/src/components/brand/sections/*` - marketing rules and the 12-preset website palette.
 
 ## Individual Agent Capsule
@@ -26,7 +26,7 @@ Implementation rules:
 
 - Keep the same DOM node through lifecycle flows when the story is "this agent comes to life".
 - Use stacked layers with opacity transitions for dashed-to-solid; CSS cannot animate `border-style`.
-- Online default pulse is green. The blue pulse is a specific onboarding wizard variant, not the default app-wide live state.
+- Online default pulse is green. The blue pulse is an opt-in variant (made for the retired onboarding wizard), not the default app-wide live state.
 - Product sizes are `sm` 24x60, `md` 34x84, `lg` 46x116. Custom sizes should keep height at least twice width.
 - The capsule radius is full stadium/pill radius.
 - Accessibility label should describe the represented agent or state.
@@ -108,6 +108,6 @@ Website guide geometry for the heartbeat pill is 8x16 with radius 4. Larger bran
 
 - Using capsule gradients for generic badges or buttons.
 - Using a full gradient agent capsule where a small status capsule is required.
-- Treating the onboarding blue glow as the default online state.
+- Treating the blue glow variant as the default online state.
 - Merging the 10 app gradients, 12 website gradients, 12 video gradients, and 45 hero-bank gradients into one palette.
 - Animating status or lifecycle motion without reduced-motion fallbacks.

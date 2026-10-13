@@ -197,7 +197,9 @@ export async function projectNativeRuntimeRequest(input: {
       payload: toInteractionPayload(questionSet, request.requestId),
     },
     { agentId: input.binding.agentId, runId: input.binding.runId },
-    { supersedePendingSiblingInteractions: false },
+    // Provider-harness questions (e.g. Codex request_user_input) are authored
+    // outside Paperclip's question contract and carry no recommendation.
+    { supersedePendingSiblingInteractions: false, allowQuestionsWithoutRecommendation: true },
   ) as AskUserQuestionsInteraction;
   if (!existing) {
     await logActivity(input.db, {

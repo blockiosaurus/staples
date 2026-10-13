@@ -1,6 +1,7 @@
 import { approvalResolutionRecords, resolvableApprovalStatuses as resolvableStatuses } from "../lib/approval-records.js";
 import { budgetService } from "./budgets.js";
 import { notifyHireApproved } from "./hire-hook.js";
+import { logger } from "../middleware/logger.js";
 
 import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
@@ -178,6 +179,12 @@ export function approvalService(db: Db) {
     if (result?.hireApprovedAgentId && result.approval) {
       await reconcileApprovedBuiltInAgent(result.approval.companyId, result.approval.payload, db);
       await budgetService(db).deliverPendingEnforcement(result.approval.companyId);
+      // An approved hire on the hosted key now counts toward the company's hosted cap.
+      const { isProgrammingError, raiseHostedCompanyCapForApprovedHire } = await import("./hosted-inference-access.js");
+      await raiseHostedCompanyCapForApprovedHire(db, { id: result.hireApprovedAgentId, companyId: result.approval.companyId }).catch((error) => {
+        if (isProgrammingError(error)) throw error;
+        logger.warn({ err: error, companyId: result.approval?.companyId, agentId: result.hireApprovedAgentId }, "Could not raise the hosted cap for an approved hire");
+      });
       void notifyHireApproved(db, { companyId: result.approval.companyId, agentId: result.hireApprovedAgentId,
         source: "approval", sourceId: result.approval.id, approvedAt: result.approval.decidedAt ?? new Date() }).catch(() => {});
     }

@@ -1422,6 +1422,7 @@ export type ToolAccessReasonCode =
   | "deny_archived_application"
   | "deny_missing_tool"
   | "deny_policy_block"
+  | "deny_template_read_only"
   | "deny_run_context_mismatch"
   | "deny_missing_agent"
   | "rate_limited";
@@ -1456,6 +1457,12 @@ export interface ToolAccessSelector {
   catalogEntryIds?: string[];
   toolName?: string;
   toolNames?: string[];
+  /**
+   * Case-insensitive globs over the tool name or upstream tool name; `*` is
+   * the only wildcard. Matches when any pattern matches. Unlike toolName(s),
+   * which are exact.
+   */
+  toolNamePatterns?: string[];
   riskLevel?: ToolRiskLevel;
   riskLevels?: ToolRiskLevel[];
 }

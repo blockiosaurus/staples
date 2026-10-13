@@ -1,4 +1,6 @@
 import { parseNativeSessionGoalControl } from "./scheduling.js";
+import { hostedInferenceAllowedFor } from "../hosted-inference-access.js";
+import { remainingHardStopCentsForRun } from "../budgets.js";
 import { isHeartbeatRunTerminalStatus } from "./run-lifecycle.js";
 import {
   PAPERCLIP_WAKE_PAYLOAD_KEY,
@@ -58,6 +60,8 @@ import {
 import { PROVIDER_TRACE_MAX_BYTES } from "../provider-trace-store.js";
 import type { AdapterExecutionResult } from "../../adapters/index.js";
 import { createLocalAgentJwt } from "../../agent-auth-jwt.js";
+import { assistantRuntimeMcpServer } from "./assistant-mcp-server.js";
+import { paperclipRuntimeMcpServer } from "./paperclip-mcp-server.js";
 import { parseObject, asNumber } from "../../adapters/utils.js";
 import { NativeRunnerOwnershipUnverifiedError } from "../native-runtime/native-runner-ownership.js";
 import {
@@ -771,6 +775,45 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
         runtimeMcpServers.unshift({ name: "Paperclip projects", url: `${paperclipApiBaseUrl()}/api/mcp/project-tools`,
           token: authToken, connectionId: "paperclip-project-tools" });
       }
+      const assistantServer = await assistantRuntimeMcpServer(db, {
+        agent, authToken, apiBaseUrl: configuredPaperclipApiBaseUrl() ? paperclipApiBaseUrl() : null, runId: run.id,
+      });
+      if (assistantServer) runtimeMcpServers.unshift(assistantServer);
+      const paperclipServer = paperclipRuntimeMcpServer({
+        adapterType: agent.adapterType, authToken, apiBaseUrl: configuredPaperclipApiBaseUrl() ? paperclipApiBaseUrl() : null,
+      });
+      if (paperclipServer) runtimeMcpServers.push(paperclipServer);
+      else if (agent.adapterType === "claude_managed") {
+        logger.warn({ companyId: agent.companyId, agentId: agent.id, runId: run.id },
+          "Hosted run started without the Paperclip tools: no run JWT or no configured API base URL");
+      }
+      // Server-owned: any claude_managed agent without its own key may use the
+      // operator's hosted-inference key, once its hard-stop caps are ensured.
+      const hostedInferenceAllowed = await hostedInferenceAllowedFor(db, agent);
+      // Mark the run so its cost events count toward the hosted company cap
+      // (hosted_billed_cents). Server-owned: a value carried in from a wake
+      // context is overwritten, so it cannot be spoofed either way.
+      if (hostedInferenceAllowed || context.hostedInference !== undefined) {
+        context.hostedInference = hostedInferenceAllowed;
+        adapterContext.hostedInference = hostedInferenceAllowed;
+        await db.update(heartbeatRuns).set({
+          contextSnapshot: sql`coalesce(${heartbeatRuns.contextSnapshot}, '{}'::jsonb) || ${JSON.stringify({ hostedInference: hostedInferenceAllowed })}::jsonb`,
+        }).where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.companyId, agent.companyId)));
+      }
+      // Per-session spending limit: the smallest remaining hard-stop amount of
+      // the run's applicable budget policies. Server-owned: never taken from
+      // the wake context.
+      delete adapterContext.paperclipBudgetRemainingUsd;
+      try {
+        const remainingCents = await remainingHardStopCentsForRun(db, {
+          companyId: agent.companyId, agentId: agent.id, projectId: issueRef?.projectId ?? null, hostedInference: hostedInferenceAllowed,
+        });
+        // Admission already refused an exhausted scope; never send "no cap" for one.
+        if (remainingCents !== null) adapterContext.paperclipBudgetRemainingUsd = Math.max(remainingCents, 1) / 100;
+      } catch (error) {
+        logger.warn({ err: error, companyId: agent.companyId, agentId: agent.id, runId: run.id },
+          "Could not compute the remaining budget for the run's spending limit");
+      }
       const runtimeMcp = createAdapterRuntimeMcpAccess(runtimeMcpServers);
       if (runtimeTools && runtimeToolDelivery === "invocation_context") {
         adapterContext.paperclipRuntimeTools = runtimeTools;
@@ -793,6 +836,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
             return withAdapterExecutionPhase(executionPhaseContext, "adapter_execution", () => adapter.execute({
               getFreshSessionHandoff,
               agentIdentity,
+              hostedInferenceAllowed,
               runId: run.id,
               agent,
               runtime: runtimeForAdapter,

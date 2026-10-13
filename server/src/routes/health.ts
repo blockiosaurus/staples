@@ -1,4 +1,5 @@
 import { supportsLocalAiLogin } from "../services/local-ai-login-policy.js";
+import { hostedInference } from "../services/hosted-inference.js";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
@@ -411,6 +412,7 @@ export function healthRoutes(
         deploymentMode: opts.deploymentMode,
         deploymentExposure: opts.deploymentExposure,
         localAiLoginSupported: supportsLocalAiLogin(opts),
+        hostedInferenceAvailable: hostedInference().available,
         commit,
         bootstrapStatus,
         bootstrapInviteActive,
@@ -434,7 +436,8 @@ export function healthRoutes(
       commit,
       deploymentMode: opts.deploymentMode,
       deploymentExposure: opts.deploymentExposure,
-        localAiLoginSupported: supportsLocalAiLogin(opts),
+      localAiLoginSupported: supportsLocalAiLogin(opts),
+      hostedInferenceAvailable: hostedInference().available,
       authReady: opts.authReady,
       bootstrapStatus,
       bootstrapInviteActive,

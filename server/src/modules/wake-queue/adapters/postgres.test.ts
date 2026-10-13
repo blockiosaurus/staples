@@ -1,4 +1,3 @@
-import { instanceSettingsService } from "../../../services/instance-settings.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -245,9 +244,7 @@ describeEmbeddedPostgres("wake-queue postgres adapter", () => {
     expect(checked).toBe(true);
   });
 
-  it.each([false, true])("rechecks disabled chat mode before interrupted queue promotion (conversation=%s)", async (conversation) => {
-    const settings = instanceSettingsService(db);
-    const original = (await settings.getExperimental()).enableAgentChat;
+  it.each([false, true])("promotes interrupted queue input with Agent Chat always on (conversation=%s)", async (conversation) => {
     const companyId = await seedCompany();
     const agentId = await seedAgent({ companyId });
     const issueId = await seedIssue({ companyId, assigneeAgentId: agentId });
@@ -269,25 +266,9 @@ describeEmbeddedPostgres("wake-queue postgres adapter", () => {
       issueLock: createPostgresWakeQueueAdapter(db, stubDeps),
       recovery: { escalateStrandedAssignedIssue: async () => {}, escalateStrandedRecoveryIssueInPlace: async () => {} },
     });
-    try {
-      await settings.updateExperimental({ enableAgentChat: false });
-      const result = await release({ companyId, runId, now: new Date() });
-      if (conversation) {
-        expect(result.outcome.kind).toBe("released");
-        expect(result.postCommitEffects).toEqual([]);
-        const [issue] = await db.select().from(issues).where(eq(issues.id, issueId));
-        expect(issue).toMatchObject({ executionRunId: null, checkoutRunId: null });
-        const [pending] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeId));
-        expect(pending).toMatchObject({ status: "deferred_issue_execution", runId: null });
-        expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.companyId, companyId))).toHaveLength(1);
-        await settings.updateExperimental({ enableAgentChat: true });
-        expect((await release({ companyId, runId, now: new Date() })).outcome.kind).toBe("promoted");
-      } else {
-        expect(result.outcome.kind).toBe("promoted");
-      }
-    } finally {
-      await settings.updateExperimental({ enableAgentChat: original });
-    }
+    // The retired enableAgentChat flag stays at its stored default (false) and must not gate promotion.
+    const result = await release({ companyId, runId, now: new Date() });
+    expect(result.outcome.kind).toBe("promoted");
   });
 
   for (const hasDeferredMessage of [false, true]) {

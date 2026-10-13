@@ -560,6 +560,31 @@ describeEmbeddedPostgres("tool gateway service", () => {
     expect(await db.select().from(toolCallEvents).where(eq(toolCallEvents.reasonCode, "approved_action_executed"))).toHaveLength(0);
   });
 
+  it("does not offer Always allow on an approval asked by an agent template's destructive guard", async () => {
+    // Remembering it would always be refused (422). The tool is rated write
+    // (so no formal board approval) and matched by the guard's destructive
+    // tool-name pattern.
+    const { company, agent, run } = await createRunFixture(db);
+    const { connection, catalogEntry } = await createRemoteMcpToolFixture(db, company.id);
+    await db.update(toolCatalogEntries).set({ riskLevel: "write", isReadOnly: false }).where(eq(toolCatalogEntries.id, catalogEntry.id));
+    const [guard] = await db.insert(toolPolicies).values({
+      companyId: company.id, name: "Template: ask before deleting", policyType: "require_approval", priority: 5,
+      selectors: { agentId: agent.id, riskLevels: ["destructive", "high", "critical"] },
+      config: { source: "agent_template", templateRule: "destructive", templateRef: "staples/coding-agent", destructiveToolPatterns: ["*needs*input*"] },
+    }).returning();
+    await db.insert(toolPolicies).values({ companyId: company.id, name: "Allow the connection", policyType: "allow", priority: 10, selectors: { connectionId: connection.id } });
+    const gateway = createTestToolGatewayService(db);
+    const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+    const tool = (await gateway.listToolsForSession(session.token)).find(t => t.connectionId === connection.id)!;
+    await expect(gateway.executeTool({ sessionToken: session.token, tool: tool.name, parameters: {} })).rejects.toMatchObject({ reasonCode: "approval_required" });
+    const [invocation] = await db.select().from(toolInvocations);
+    expect(invocation.matchedPolicyIds).toEqual([guard.id]);
+    const [interaction] = await db.select().from(issueThreadInteractions);
+    expect((interaction.payload as { toolAction: Record<string, unknown> }).toolAction).toMatchObject({ risk: "write" });
+    expect(await db.select().from(approvals)).toHaveLength(0);
+    expect((interaction.payload as { toolAction: Record<string, unknown> }).toolAction).not.toHaveProperty("rememberActionScope");
+  });
+
   it("remembers a read action atomically, allows changed arguments, and preserves explicit denials and definition review", async () => {
     const { company, agent, issue, run } = await createRunFixture(db);
     const [project] = await db.insert(projects).values({ companyId: company.id, name: "Reviewed project" }).returning();
@@ -582,6 +607,11 @@ describeEmbeddedPostgres("tool gateway service", () => {
     expect(requests).toHaveLength(1);
     const [interaction] = await db.select().from(issueThreadInteractions);
     expect(interaction.payload).toMatchObject({ supersedeOnUserComment: false, toolAction: { risk: "read", rememberActionScope: expect.any(String) } });
+    // The provider's own name rides along for display matching (e.g. a template's outward category).
+    expect(tool.name).not.toBe(catalogEntry.toolName);
+    expect((interaction.payload as { toolAction: Record<string, unknown> }).toolAction).toMatchObject({
+      toolName: tool.name, upstreamToolName: catalogEntry.toolName,
+    });
     const approve = () => gateway.approveActionRequest({ companyId: company.id, actionRequestId: requests[0].id, rememberAction: true, actor: { userId: "reviewer" } });
     await Promise.all([approve(), approve()]);
     expect(calls).toBe(1);

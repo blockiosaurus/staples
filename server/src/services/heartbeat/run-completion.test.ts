@@ -1,11 +1,13 @@
 import type { Db } from "@paperclipai/db";
-import { agents, agentWakeupRequests, companies, costEvents, createDb, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, heartbeatRuns, issues, nativeRunFinalizations } from "@paperclipai/db";
+import { activityLog, agents, agentWakeupRequests, companies, costEvents, createDb, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, heartbeatRuns, issueComments, issues, nativeRunFinalizations, routines } from "@paperclipai/db";
 import { eq, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
 import * as usageReceipts from "../usage-receipts.js";
 import { createAgentIdentityRedactor } from "../agent-identity-redaction.js";
 import { UnresolvedWorkspaceBaseRefError } from "../workspace-runtime.js";
+import { conflict } from "../../errors.js";
 import { createHeartbeatLifecycle, type HeartbeatLifecycleDependencies } from "./run-lifecycle.js";
 import { createHeartbeatRunPreparation, ConfigurationIncompleteFailure } from "./run-preparation.js";
 import { createHeartbeatRunState, getAdapterSessionCodec } from "./run-state.js";
@@ -256,6 +258,90 @@ describe.skipIf(!support.supported)("heartbeat run completion boundary", () => {
     expect(f.deps.releaseIssueExecutionAndPromote).toHaveBeenCalledWith(expect.objectContaining({ id: f.run.id }), { suppressImmediateRecovery: true });
   });
 
+  describe("the Assistant's weekly update task", () => {
+    /** A run on an open task of the weekly update routine (origin assistant:weekly-update). */
+    async function weeklyFixture(patch: Partial<typeof heartbeatRuns.$inferInsert> = {}) {
+      const f = await fixture(patch);
+      const [routine] = await db.insert(routines).values({
+        companyId: f.run.companyId, title: "Weekly update", assigneeAgentId: f.agent.id,
+        originKind: "built_in_agent_bundle", originId: "assistant:weekly-update",
+      }).returning();
+      const [task] = await db.insert(issues).values({
+        companyId: f.run.companyId, title: "Weekly update", status: "in_progress", assigneeAgentId: f.agent.id,
+        originKind: "routine_execution", originId: routine.id,
+      }).returning();
+      const native = f.run.runtimeMode === "native" ? { nativeIssueId: task.id } : {};
+      await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: task.id }, ...native }).where(eq(heartbeatRuns.id, f.run.id));
+      f.input.run = { ...f.input.run, contextSnapshot: { issueId: task.id }, ...native };
+      const status = async () => (await db.select().from(issues).where(eq(issues.id, task.id)))[0]!.status;
+      const notes = async () => (await db.select().from(issueComments).where(eq(issueComments.issueId, task.id))).map((note) => note.body);
+      return { ...f, routine, task, status, notes };
+    }
+
+    it("closes the task when the run succeeded without saving", async () => {
+      const f = await weeklyFixture();
+      await f.completion.completeRun(f.input);
+      expect(await f.status()).toBe("cancelled");
+      expect(await f.notes()).toEqual(["No update this week."]);
+    });
+
+    it("keeps the task open while a scheduled retry owns it, and the retry can still save", async () => {
+      const f = await weeklyFixture();
+      // A provider blip: the transient-failure path schedules a bounded retry.
+      Object.assign(f.input.adapterResult, { exitCode: 1, errorMessage: "provider quota", errorCode: "provider_quota" });
+      let retryRunId = "";
+      const scheduleRetry = async (run: { id: string; companyId: string; agentId: string }) => {
+        retryRunId = randomUUID();
+        await db.insert(heartbeatRuns).values({ id: retryRunId,
+          companyId: run.companyId, agentId: run.agentId, status: "scheduled_retry", runtimeMode: "legacy",
+          retryOfRunId: run.id, contextSnapshot: { issueId: f.task.id },
+        });
+      };
+      f.deps.scheduleInteractionContinuationInfrastructureRetryIfEligible.mockImplementation(async (run) => { await scheduleRetry(run); return null; });
+      f.deps.scheduleBoundedRetryForRun.mockImplementation((async (run: { id: string; companyId: string; agentId: string }) => { await scheduleRetry(run); }) as never);
+      await f.completion.completeRun(f.input);
+      expect((await read(f.run.id)).status).toBe("failed");
+      expect(await f.status()).toBe("in_progress");
+      expect(await f.notes()).toEqual([]);
+
+      const { saveWeeklyUpdate } = await import("../assistant-weekly-update.js");
+      await saveWeeklyUpdate(db, { companyId: f.run.companyId, agentId: f.agent.id, runId: retryRunId, body: "Shipped it.", executionIssueId: f.task.id });
+      expect(await f.status()).toBe("done");
+    });
+
+    it("closes the task once retries are exhausted (nothing scheduled)", async () => {
+      const f = await weeklyFixture();
+      Object.assign(f.input.adapterResult, { exitCode: 1, errorMessage: "provider quota", errorCode: "provider_quota" });
+      f.deps.scheduleBoundedRetryForRun.mockResolvedValue({ outcome: "retry_exhausted" } as never);
+      await f.completion.completeRun(f.input);
+      expect((await read(f.run.id)).status).toBe("failed");
+      expect(await f.status()).toBe("cancelled");
+    });
+
+    it("closes the task as done, not 'No update', when an update was saved but the task was left open", async () => {
+      const f = await weeklyFixture();
+      await db.insert(activityLog).values({
+        companyId: f.run.companyId, actorType: "agent", actorId: f.agent.id, action: "issue.document_created",
+        entityType: "issue", entityId: randomUUID(), details: { source: "assistant_weekly_update", executionIssueId: f.task.id },
+      });
+      await f.completion.completeRun(f.input);
+      expect(await f.status()).toBe("done");
+      expect(await f.notes()).toEqual([]);
+    });
+
+    it("leaves the task to native recovery until a terminal failure, then closes it", async () => {
+      const owned = await weeklyFixture({ runtimeMode: "native" });
+      await owned.completion.failRun(owned.failure(new Error("transport ended")));
+      expect(await owned.status()).toBe("in_progress");
+
+      await db.execute(sql`truncate table companies restart identity cascade`);
+      const terminal = await weeklyFixture({ runtimeMode: "native", status: "failed", errorCode: "native_result_missing" });
+      await db.insert(nativeRunFinalizations).values({ runId: terminal.run.id, companyId: terminal.run.companyId, issueId: terminal.task.id, phase: "terminal_failure", failureCode: "native_result_missing" });
+      await terminal.completion.failRun(terminal.failure(new Error("transport ended")));
+      expect(await terminal.status()).toBe("cancelled");
+    });
+  });
+
   it("records a setup configuration gap without inventing provider work or applying comment policy", async () => {
     const f = await fixture();
     await f.completion.failRunSetup(f.setup(new ConfigurationIncompleteFailure("missing credential", { configurationIncomplete: { reason: "missing_binding" } })));
@@ -263,6 +349,21 @@ describe.skipIf(!support.supported)("heartbeat run completion boundary", () => {
     expect(f.deps.finalizeIssueCommentPolicy).not.toHaveBeenCalled();
     expect(f.deps.releaseIssueExecutionAndPromote).toHaveBeenCalledOnce();
     expect(f.deps.finalizeAgentStatus).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["hosted_limit_reached", "This agent reached its monthly hosted inference limit (Claude hosted on the Staples server's key)."],
+    ["budget_reached", "Agent is paused because its budget hard-stop was reached."],
+  ])("keeps the %s code when budget admission refuses the run", async (code, message) => {
+    const f = await fixture();
+    await f.completion.failRunSetup(f.setup(conflict(message, { code })));
+    expect(await read(f.run.id)).toMatchObject({ status: "failed", errorCode: code });
+  });
+
+  it("does not take a code from an unrelated conflict", async () => {
+    const f = await fixture();
+    await f.completion.failRunSetup(f.setup(conflict("Provider dispatch has already reserved this run", { code: "something_else" })));
+    expect(await read(f.run.id)).toMatchObject({ status: "failed", errorCode: "setup_failed" });
   });
 
   it("retains the default branch needed to repair an unresolved workspace base ref", async () => {

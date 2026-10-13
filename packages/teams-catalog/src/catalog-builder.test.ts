@@ -201,6 +201,123 @@ describe("teams catalog manifest", () => {
     );
   });
 
+  it("carries a Staples template sidecar and cron schedules into the manifest", async () => {
+    const packageDir = await createCatalogPackage();
+    const sidecar = { version: "1.0.0", tagline: "Keeps the inbox tidy", icon: "mail" };
+    await writeTeam(packageDir, "optional", "staples", "inbox-helper", {
+      frontmatter: [
+        "name: Inbox helper",
+        "description: Keeps the inbox tidy.",
+        "schema: agentcompanies/v1",
+        "manager: agents/helper/AGENTS.md",
+      ],
+      files: {
+        "staples.template.json": JSON.stringify(sidecar),
+        "agents/helper/AGENTS.md": "---\nname: Helper\nslug: helper\n---\n\nHelp.\n",
+        "projects/inbox/PROJECT.md": "---\nname: Inbox\nslug: inbox\n---\n\nInbox.\n",
+        "projects/inbox/tasks/sweep/TASK.md": [
+          "---",
+          "name: Morning sweep",
+          "slug: sweep",
+          "assignee: helper",
+          "project: inbox",
+          "recurring: true",
+          "schedule: 0 9 * * 1-5",
+          "timezone: person",
+          "---",
+          "",
+          "Sweep.",
+        ].join("\n"),
+      },
+    });
+
+    const result = await buildCatalogManifest({ packageDir, generatedAt: "2026-06-03T00:00:00.000Z", catalogSkills });
+
+    expect(result.errors).toEqual([]);
+    expect(result.manifest.teams[0]).toMatchObject({
+      key: "paperclipai/optional/staples/inbox-helper",
+      staplesTemplate: sidecar,
+      counts: { routines: 1 },
+    });
+  });
+
+  it("rejects bad template sidecars and task schedules", async () => {
+    const packageDir = await createCatalogPackage();
+    await writeTeam(packageDir, "optional", "staples", "no-sidecar", {
+      frontmatter: [
+        "name: No sidecar",
+        "description: Missing the sidecar.",
+        "schema: agentcompanies/v1",
+        "manager: agents/helper/AGENTS.md",
+      ],
+      files: {
+        "agents/helper/AGENTS.md": "---\nname: Helper\nslug: helper\n---\n\nHelp.\n",
+        "tasks/unscheduled/TASK.md": "---\nname: Unscheduled\nslug: unscheduled\nrecurring: true\n---\n\nX.\n",
+        "tasks/bad-cron/TASK.md": "---\nname: Bad\nslug: bad-cron\nrecurring: true\nschedule: 61 * * * *\ntimezone: Mars/Olympus\n---\n\nX.\n",
+      },
+    });
+    await writeTeam(packageDir, "optional", "content", "stray-sidecar", {
+      frontmatter: [
+        "name: Stray",
+        "description: Sidecar outside staples.",
+        "schema: agentcompanies/v1",
+        "manager: agents/helper/AGENTS.md",
+      ],
+      files: {
+        "staples.template.json": "{}",
+        "agents/helper/AGENTS.md": "---\nname: Helper\nslug: helper\n---\n\nHelp.\n",
+      },
+    });
+    await writeTeam(packageDir, "optional", "staples", "bad-schedule-map", {
+      frontmatter: [
+        "name: Bad schedule map",
+        "description: scheduleByAnswer errors.",
+        "schema: agentcompanies/v1",
+        "manager: agents/helper/AGENTS.md",
+      ],
+      files: {
+        "staples.template.json": JSON.stringify({
+          scheduleByAnswer: {
+            "one-off": { questionId: "day", cron: { monday: "0 9 * * 1" } },
+            "missing-task": { questionId: "day", cron: { monday: "0 9 * * 1" } },
+            weekly: { questionId: "day", cron: { monday: "0 9 * * 7" } },
+          },
+        }),
+        "agents/helper/AGENTS.md": "---\nname: Helper\nslug: helper\n---\n\nHelp.\n",
+        "tasks/one-off/TASK.md": "---\nname: One off\nslug: one-off\n---\n\nX.\n",
+        "tasks/weekly/TASK.md": "---\nname: Weekly\nslug: weekly\nrecurring: true\nschedule: \"0 9 * * 1\"\n---\n\nX.\n",
+      },
+    });
+    await writeTeam(packageDir, "optional", "staples", "broken-json", {
+      frontmatter: [
+        "name: Broken",
+        "description: Broken sidecar JSON.",
+        "schema: agentcompanies/v1",
+        "manager: agents/helper/AGENTS.md",
+      ],
+      files: {
+        "staples.template.json": "{not json",
+        "agents/helper/AGENTS.md": "---\nname: Helper\nslug: helper\n---\n\nHelp.\n",
+      },
+    });
+
+    const result = await buildCatalogManifest({ packageDir, generatedAt: "2026-06-03T00:00:00.000Z", catalogSkills });
+
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("no-sidecar is a Staples agent template and must include staples.template.json"),
+        expect.stringContaining("tasks/unscheduled/TASK.md is recurring and must declare a cron schedule"),
+        expect.stringContaining("schedule \"61 * * * *\" is not a valid 5-field cron expression"),
+        expect.stringContaining("tasks/bad-cron/TASK.md timezone must be \"person\" or an IANA time zone"),
+        expect.stringContaining("stray-sidecar/staples.template.json is only allowed under catalog/optional/staples"),
+        expect.stringContaining("broken-json/staples.template.json is not valid JSON"),
+        expect.stringContaining('scheduleByAnswer "one-off" points at a task that is not recurring'),
+        expect.stringContaining('scheduleByAnswer "missing-task" does not match a task slug'),
+        expect.stringContaining('scheduleByAnswer "weekly" option "monday" cron is not a valid 5-field cron expression'),
+      ]),
+    );
+  });
+
   it("detects stale generated manifests", async () => {
     const packageDir = await createCatalogPackage();
     await writeTeam(packageDir, "bundled", "software-development", "review", {

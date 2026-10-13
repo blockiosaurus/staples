@@ -851,13 +851,33 @@ export const toolPolicyConditionsSchema = z.object({
   { message: "Tool policy conditions must include at least one supported condition group" },
 );
 
+/** Most tool-name globs one selector may hold, and the longest glob. */
+export const TOOL_NAME_PATTERNS_MAX = 50;
+export const TOOL_NAME_PATTERN_MAX_LENGTH = 120;
+
+/** Case-insensitive whole-name globs; `*` is the only wildcard and each needs a literal character. */
+export const toolNamePatternsSchema = z.array(
+  z.string().trim().min(1).max(TOOL_NAME_PATTERN_MAX_LENGTH).regex(/[^*]/, "A tool-name pattern needs at least one character besides *"),
+).max(TOOL_NAME_PATTERNS_MAX);
+
+/** Free-form policy selectors, with `toolNamePatterns` checked when present. */
+const toolPolicySelectorsSchema = z.record(z.string(), z.unknown()).superRefine((selectors, ctx) => {
+  if (!Object.prototype.hasOwnProperty.call(selectors, "toolNamePatterns")) return;
+  const parsed = toolNamePatternsSchema.safeParse(selectors.toolNamePatterns);
+  if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      ctx.addIssue({ code: "custom", path: ["toolNamePatterns", ...issue.path], message: issue.message });
+    }
+  }
+});
+
 export const createToolPolicySchema = z.object({
   name: z.string().trim().min(1).max(160),
   description: z.string().max(4000).optional().nullable(),
   policyType: toolPolicyTypeSchema,
   priority: z.number().int().min(0).max(10000).default(100),
   enabled: z.boolean().default(true),
-  selectors: z.record(z.string(), z.unknown()).default({}),
+  selectors: toolPolicySelectorsSchema.default({}),
   conditions: toolPolicyConditionsSchema.optional().nullable(),
   config: z.record(z.string(), z.unknown()).optional().nullable(),
 });
@@ -952,6 +972,7 @@ export const toolAccessSelectorSchema = z.object({
   catalogEntryIds: z.array(z.string().guid()).optional(),
   toolName: z.string().trim().min(1).max(240).optional(),
   toolNames: z.array(z.string().trim().min(1).max(240)).optional(),
+  toolNamePatterns: toolNamePatternsSchema.optional(),
   riskLevel: toolRiskLevelSchema.optional(),
   riskLevels: z.array(toolRiskLevelSchema).optional(),
 });

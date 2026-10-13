@@ -3,6 +3,7 @@ import { ExternalLink, MessageSquarePlus } from "lucide-react";
 import { chatEndpointsApi, type ChatProvider } from "@/api/chatEndpoints";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
+import { agentChannelEndpoints } from "@/pages/agent-detail-navigation";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link } from "@/lib/router";
 import { useChatConnectorsEnabled, chatProviderVisible } from "@/hooks/useChatConnectorsEnabled";
@@ -31,9 +32,8 @@ export function AgentChannelsPanel({
     queryFn: () => chatEndpointsApi.list(companyId),
     enabled: Boolean(companyId),
   });
-  const endpoints = (query.data ?? []).filter(
-    (endpoint) =>
-      endpoint.assignedAgentId === agentId && endpoint.status !== "archived" && chatProviderVisible(endpoint.provider, enabled, githubEnabled),
+  const endpoints = agentChannelEndpoints(query.data ?? [], agentId, (provider) =>
+    chatProviderVisible(provider, enabled, githubEnabled),
   );
   return (
     <section className="max-w-3xl space-y-5">

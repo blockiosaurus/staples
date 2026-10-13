@@ -13,7 +13,8 @@ import type {
   RunnerAcceptanceProfile,
 } from "./types.js";
 
-const excludedBuiltInAdapterTypes = new Set(["paperclip_runner", "pi_local"]);
+// claude_managed: hosted PoC adapter; qualified by its own fake-server suite and live smoke test.
+const excludedBuiltInAdapterTypes = new Set(["paperclip_runner", "pi_local", "claude_managed"]);
 
 const directBuiltInAdapterTypes = [
   "acpx_local",

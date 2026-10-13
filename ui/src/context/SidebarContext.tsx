@@ -19,14 +19,9 @@ interface SidebarContextValue {
   collapsed: boolean;
   setCollapsed: (next: boolean) => void;
   toggleCollapsed: () => void;
-  // Retained compatibility value; always false now that the rail is retired.
-  collapseLocked: boolean;
   // Retained compatibility value; the retired rail can no longer peek.
   peeking: boolean;
   setPeeking: (next: boolean) => void;
-  // Legacy requests remain observable without affecting the global nav.
-  forceCollapsed: boolean;
-  setForceCollapsed: (next: boolean) => void;
   // Route-requested collapse retained for integration compatibility.
   routeRequestsCollapsed: boolean;
   setRouteRequestsCollapsed: (next: boolean) => void;
@@ -41,7 +36,6 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= MOBILE_BREAKPOINT);
 
   const [routeRequestsCollapsed, setRouteRequestsCollapsed] = useState(false);
-  const [forceCollapsed, setForceCollapsed] = useState(false);
 
   useEffect(() => {
     const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
@@ -56,7 +50,6 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
   // The icon rail has been retired. Keep the old API inert so routes and
   // plugins compiled against it cannot collapse the global navigation.
   const collapsed = false;
-  const collapseLocked = false;
   const peeking = false;
   const setCollapsed = useCallback((_next: boolean) => {}, []);
   const toggleCollapsed = useCallback(() => {}, []);
@@ -73,11 +66,8 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
       collapsed,
       setCollapsed,
       toggleCollapsed,
-      collapseLocked,
       peeking,
       setPeeking,
-      forceCollapsed,
-      setForceCollapsed,
       routeRequestsCollapsed,
       setRouteRequestsCollapsed,
     }),
@@ -89,11 +79,8 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
       collapsed,
       setCollapsed,
       toggleCollapsed,
-      collapseLocked,
       peeking,
       setPeeking,
-      forceCollapsed,
-      setForceCollapsed,
       routeRequestsCollapsed,
       setRouteRequestsCollapsed,
     ],

@@ -237,6 +237,12 @@ describe("AgentToolsTab", () => {
           enabled: true,
           selectors: { agentId: "someone-else" },
         }),
+        makePolicy({
+          id: "pol-3",
+          name: "Coder: ask before deleting",
+          selectors: { agentId: "agent-1", riskLevels: ["destructive"] },
+          config: { source: "agent_template", templateRule: "destructive" },
+        }),
       ],
     });
     mockToolsApi.listCatalog.mockResolvedValue({ catalog: [allowed, denied] });
@@ -256,6 +262,10 @@ describe("AgentToolsTab", () => {
     expect(text).toContain("#1 Require approval for writes");
     // The policy that targets a different agent must NOT appear.
     expect(text).not.toContain("Block other agent");
+    // Server-owned rows are read-only and say who manages them; ordinary rows carry no note.
+    const notes = [...container.querySelectorAll('[data-testid="policy-managed-note"]')].map((node) => node.textContent);
+    expect(notes).toEqual(["Managed by Coder's template"]);
+    expect(container.querySelector("button[aria-label*='Delete' i]")).toBeNull();
     // Unavailable tool surfaced from the full tool list minus allowed.
     expect(text).toContain("github.delete_repo");
   });

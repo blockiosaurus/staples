@@ -57,9 +57,6 @@ function formatActivationTimestamp(iso: string): string {
   return parsed.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-// PAP-11233: keep Conference Room code intact, but hide the user-facing opt-in for now.
-const SHOW_CONFERENCE_ROOM_EXPERIMENTAL_SETTING = false;
-
 function ManagedByCloudBadge() {
   return (
     <Badge variant="outline" className="text-muted-foreground">
@@ -211,8 +208,6 @@ export function InstanceExperimentalSettings() {
     experimentalQuery.data?.enableIsolatedWorkspacesByDefault === true;
   // Streamlined left navigation is now the standard sidebar (PAP-12472); the
   // experimental opt-out was retired, so it no longer surfaces a toggle here.
-  const enableStreamlinedUi = experimentalQuery.data?.enableStreamlinedUi !== false;
-  const enableConferenceRoomChat = experimentalQuery.data?.enableConferenceRoomChat === true;
   const enableClassicTaskInterface = experimentalQuery.data?.enableClassicTaskInterface === true;
   const enableIssuePlanDecompositions =
     experimentalQuery.data?.enableIssuePlanDecompositions === true;
@@ -228,7 +223,6 @@ export function InstanceExperimentalSettings() {
   const statusCardsBlockedByManagedSummaries = summariesManaged && !enableSummaries;
   const summariesRequiredByManagedStatusCards = statusCardsManaged && enableStatusCards;
   const enableDecisions = experimentalQuery.data?.enableDecisions === true;
-  const enableGoalsSidebarLink = experimentalQuery.data?.enableGoalsSidebarLink === true;
   const enableCases = experimentalQuery.data?.enableCases === true;
   const enableServerInfoDebugView = experimentalQuery.data?.enableServerInfoDebugView === true;
   const enablePaperclipDeveloperMode =
@@ -249,7 +243,7 @@ export function InstanceExperimentalSettings() {
     "enableSmokeLab",
     "enableIssuePlanDecompositions",
   ] satisfies InstanceFeatureKey[]).some(isVisible);
-  const showLegacySection = isVisible("enableClassicTaskInterface") || isVisible("enableGoalsSidebarLink");
+  const showLegacySection = isVisible("enableClassicTaskInterface");
   return (
     <div className="max-w-6xl space-y-6">
       <div className="space-y-2">
@@ -293,18 +287,6 @@ export function InstanceExperimentalSettings() {
             Optional product features that are still being evaluated.
           </p>
         </div>
-
-        <ExperimentalToggleCard
-          title="Agent Chat"
-          description="Talk to each agent in one ongoing conversation. Clarify goals and create tasks for execution. Chat leads the Work group and opens an agent rail beside the nav, and each chat's side panel shows the agent's tasks and artifacts as cards."
-          footnote="Turning this off preserves conversations and lets active runs finish, but prevents new messages."
-          checked={experimentalQuery.data?.enableAgentChat ?? false}
-          onCheckedChange={(checked) => toggleMutation.mutate({ enableAgentChat: checked })}
-          disabled={toggleMutation.isPending}
-          settingKey="enableAgentChat"
-          managed={managedKeys.enableAgentChat}
-          ariaLabel="Toggle agent chat experimental setting"
-        />
 
         <ExperimentalToggleCard
           title="Assistant connections (MCP)"
@@ -375,19 +357,6 @@ export function InstanceExperimentalSettings() {
           managed={managedKeys.enableCombinedInboxTasks}
           ariaLabel="Toggle combined inbox and task list experimental setting"
         />
-
-        {SHOW_CONFERENCE_ROOM_EXPERIMENTAL_SETTING ? (
-          <ExperimentalToggleCard
-            title="Conference Room Chat"
-            description="Adds a Conference Room — one chat where you and your whole team work together — plus the live activity feed and the redesigned onboarding. Also restyles task threads as chat bubbles. Turn off anytime to restore the classic UI."
-            checked={enableConferenceRoomChat}
-            onCheckedChange={(checked) => toggleMutation.mutate({ enableConferenceRoomChat: checked })}
-            disabled={toggleMutation.isPending}
-            settingKey="enableConferenceRoomChat"
-            managed={managedKeys.enableConferenceRoomChat}
-            ariaLabel="Toggle conference room chat experimental setting"
-          />
-        ) : null}
 
         <ExperimentalToggleCard
           title="Decisions"
@@ -535,18 +504,6 @@ export function InstanceExperimentalSettings() {
           settingKey="enableStatusCards"
           managed={managedKeys.enableStatusCards}
           ariaLabel="Toggle status cards experimental setting"
-        />
-
-        <ExperimentalToggleCard
-          title="Streamlined UI"
-          description="Use the simplified main sidebar, shared Tasks and Inbox presentation, focused task detail layout, and contextual navigation across Agents, Routines, Skills, and Settings."
-          footnote="Turning this off restores the legacy shell and navigation. Task and page data are unchanged."
-          checked={enableStreamlinedUi}
-          onCheckedChange={(checked) => toggleMutation.mutate({ enableStreamlinedUi: checked })}
-          disabled={toggleMutation.isPending}
-          settingKey="enableStreamlinedUi"
-          managed={managedKeys.enableStreamlinedUi}
-          ariaLabel="Toggle Streamlined UI experimental setting"
         />
 
         <ExperimentalToggleCard
@@ -750,19 +707,6 @@ export function InstanceExperimentalSettings() {
             settingKey="enableClassicTaskInterface"
             managed={managedKeys.enableClassicTaskInterface}
             ariaLabel="Toggle classic task interface experimental setting"
-          />
-
-          <ExperimentalToggleCard
-            title="Goals Sidebar Link"
-            description="Restore the Goals item in the main sidebar while the goals surface is being evaluated."
-            checked={enableGoalsSidebarLink}
-            onCheckedChange={(checked) =>
-              toggleMutation.mutate({ enableGoalsSidebarLink: checked })
-            }
-            disabled={toggleMutation.isPending}
-            settingKey="enableGoalsSidebarLink"
-            managed={managedKeys.enableGoalsSidebarLink}
-            ariaLabel="Toggle goals sidebar link experimental setting"
           />
         </section>
       ) : null}

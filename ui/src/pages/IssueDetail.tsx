@@ -54,7 +54,7 @@ import {
   useSharedPollingQuery,
 } from "@/hooks/useSharedPolling";
 import { ApiError } from "../api/client";
-import { issuesApi } from "../api/issues";
+import { issuesApi, type ProposedActionAcceptResult } from "../api/issues";
 import { CommentSubmissionUnknownError } from "../lib/comment-submit-result";
 import { approvalsApi } from "../api/approvals";
 import { activityApi, type RunForIssue } from "../api/activity";
@@ -190,10 +190,9 @@ import {
   type IssueChatComposerHandle,
   type IssueChatRunFinalizationAction,
 } from "../components/IssueChatThread";
-import { TaskChatThread } from "../components/TaskChatThread";
+import { TaskChatThread, type TaskChatThreadProps } from "../components/TaskChatThread";
 import type { TaskChatIssueBrief } from "../components/task-chat/TaskChatDescriptionBubble";
 import { useClassicTaskInterfaceEnabled } from "../hooks/useClassicTaskInterfaceEnabled";
-import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { workModeMetaFor } from "../lib/work-mode-meta";
 import { IssueContinuationHandoff } from "../components/IssueContinuationHandoff";
 import { IssueAttachmentsSection } from "../components/IssueAttachmentsSection";
@@ -251,6 +250,8 @@ import {
 import { FileViewerSheet } from "../components/FileViewerSheet";
 import { ArtifactFileChip } from "../components/ArtifactFileChip";
 import { ScrollToBottom } from "../components/ScrollToBottom";
+import { EmbeddedSurfaceContext, useEmbeddedSurface } from "../context/EmbeddedSurfaceContext";
+import { useAssistantShell } from "../staples/assistant/AssistantProvider";
 import { StatusIcon } from "../components/StatusIcon";
 import { PriorityIcon } from "../components/PriorityIcon";
 import { SHOW_TASK_PRIORITY_UI } from "../lib/ui-flags";
@@ -353,6 +354,7 @@ import {
   type AskUserQuestionsInteraction,
   type ActivityEvent,
   type Agent,
+  type AssistantPageContext,
   type FeedbackVote,
   type Issue,
   type IssueRecoveryAction,
@@ -953,17 +955,13 @@ function useTaskDetailInterfaceMode(conversationMode = false) {
     enabled: classicTaskInterfacePreferenceEnabled,
     loaded: classicTaskInterfaceLoaded,
   } = useClassicTaskInterfaceEnabled();
-  const { enabled: streamlinedUiEnabled, loaded: streamlinedUiLoaded } =
-    useStreamlinedUiEnabled();
   const classicTaskInterfaceEnabled = classicTaskInterfacePreferenceEnabled && !conversationMode;
   const taskChatShellEnabled = !classicTaskInterfaceEnabled;
 
   return {
     classicTaskInterfaceEnabled,
     taskChatShellEnabled,
-    streamlinedTaskDetailEnabled: streamlinedUiEnabled && taskChatShellEnabled,
-    streamlinedUiEnabled,
-    loaded: classicTaskInterfaceLoaded && streamlinedUiLoaded,
+    loaded: classicTaskInterfaceLoaded,
   };
 }
 
@@ -1253,6 +1251,13 @@ type IssueDetailChatTabProps = {
    * messages. Ignored by the classic thread (flag: enableClassicTaskInterface).
    */
   threadHeader?: ReactNode;
+  /** Chat-style thread only: replaces the empty-thread message (see TaskChatThread). */
+  emptyState?: TaskChatThreadProps["emptyState"];
+  /** Chat-style thread only: rendered instead of the composer. */
+  composerReplacement?: ReactNode;
+  /** Chat-style thread only: a draft handed in from outside (see TaskChatThread). */
+  externalDraftRequest?: TaskChatThreadProps["externalDraftRequest"];
+  onDraftRequestConsumed?: TaskChatThreadProps["onDraftRequestConsumed"];
   /**
    * The task description rendered as the requester's first chat bubble in the
    * chat-style thread (PAP-375). Ignored by the classic thread.
@@ -1313,6 +1318,7 @@ type IssueDetailChatTabProps = {
     selectedClientKeys?: string[],
     selectedOptionIds?: string[],
     rememberAction?: boolean,
+    proposedActionResult?: ProposedActionAcceptResult,
   ) => Promise<void>;
   onRejectInteraction: (
     interaction: ActionableIssueThreadInteraction,
@@ -1393,6 +1399,10 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   composerRef,
   composerAccessory,
   threadHeader,
+  emptyState,
+  composerReplacement,
+  externalDraftRequest,
+  onDraftRequestConsumed,
   issueBrief,
   footer,
   feedbackVotes,
@@ -1448,14 +1458,19 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
 }: IssueDetailChatTabProps) {
   // Preserve master's Classic Task Interface seam: Streamlined UI changes the
   // TaskChatThread presentation but never swaps it for IssueChatThread.
-  const { classicTaskInterfaceEnabled, streamlinedTaskDetailEnabled } =
-    useTaskDetailInterfaceMode(!!conversationMode);
+  const { classicTaskInterfaceEnabled } = useTaskDetailInterfaceMode(!!conversationMode);
   const ThreadComponent = classicTaskInterfaceEnabled
     ? IssueChatThread
     : TaskChatThread;
   const queryClient = useQueryClient();
   const issueQueryRef = queryIssueId ?? issueId;
-  const scrollLocation = useLocation();
+  const routerScrollLocation = useLocation();
+  const embeddedSurface = useEmbeddedSurface();
+  // The Assistant dock's thread has no history entry of its own: always start
+  // at latest and never react to the host page's hash.
+  const scrollLocation = embeddedSurface
+    ? { ...routerScrollLocation, key: "embedded-surface", hash: "", state: null }
+    : routerScrollLocation;
   const scrollNavigationType = useNavigationType();
   const { pushToast } = useToastActions();
   const {
@@ -2424,13 +2439,13 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
         <TaskChatScrollNavigation.Provider
           value={{
             ...taskChatScrollEntry(scrollLocation),
-            restore: scrollNavigationType === "POP",
+            restore: !embeddedSurface && scrollNavigationType === "POP",
           }}
         >
           <EmailThreadProvider companyId={companyId} issueId={issueId}>
           <ThreadComponent
             key={conversationMode ? draftKey : issueId}
-            {...(!classicTaskInterfaceEnabled ? { creationActivity: resolvedActivity } : {})}
+            {...(!classicTaskInterfaceEnabled ? { creationActivity: resolvedActivity, emptyState, composerReplacement, externalDraftRequest, onDraftRequestConsumed } : {})}
             onOpenSkill={onOpenSkill}
             browsers={browsers}
             onOpenBrowser={onOpenBrowser}
@@ -2978,9 +2993,31 @@ function IssueDetailActivityTab({
 export function IssueDetail({ tasksTab }: { tasksTab?: TaskSidePanelProps["tasksTab"] }) { return <TaskDetailSurface tasksTab={tasksTab} />; }
 
 /** One controller and surface for both task URLs and agent conversations. */
-export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskSidePanelProps["tasksTab"]; conversation?: {
+export interface TaskDetailConversation {
   agent: Agent; issue: Issue | null; ensureIssue: () => Promise<Issue>;
-} }) {
+  /**
+   * Metadata attached to each chat message sent from this surface (the
+   * Assistant's page context). Called once per send; other chats omit it.
+   */
+  commentMetadata?: () => { pageContext?: AssistantPageContext } | undefined;
+  /**
+   * Rendered inside another page (the Assistant dock): skip page-level
+   * keyboard shortcuts, document click routing and scroll resets that belong
+   * to the host page.
+   */
+  embedded?: boolean;
+  /** Called after a chat message was accepted by the server. */
+  onCommentSent?: () => void;
+  /** Each increase focuses the composer (the Assistant dock opening). */
+  focusComposerRequest?: number;
+  /** Shown while the conversation has no messages; `composer.fill` replaces the draft. */
+  emptyState?: TaskChatThreadProps["emptyState"];
+  /** Shown instead of the composer (e.g. the Assistant still needs a model). */
+  composerReplacement?: ReactNode;
+}
+
+export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskSidePanelProps["tasksTab"]; conversation?: TaskDetailConversation }) {
+  const embedded = conversation?.embedded === true;
   const { issueId: routeIssueId, companyPrefix } = useParams<{ issueId: string; companyPrefix: string }>();
   const issueId = conversation ? conversation.issue?.id : routeIssueId;
   const [draftWorkMode, setDraftWorkMode] = useState<IssueWorkMode>("standard");
@@ -2993,8 +3030,6 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   const {
     classicTaskInterfaceEnabled,
     taskChatShellEnabled,
-    streamlinedTaskDetailEnabled,
-    streamlinedUiEnabled,
     loaded: taskInterfaceSettingsLoaded,
   } = useTaskDetailInterfaceMode(!!conversation);
   // Chat-style: the page wrapper spans the full center pane so the thread's
@@ -3021,9 +3056,17 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const navigationType = useNavigationType();
-  const location = useLocation();
+  const routerLocation = useLocation();
+  // Embedded (Assistant dock): the host page's hash is not ours to react to.
+  const location = useMemo(
+    () => (embedded && routerLocation.hash ? { ...routerLocation, hash: "" } : routerLocation),
+    [embedded, routerLocation],
+  );
   const { pushToast } = useToastActions();
-  const { isMobile } = useSidebar();
+  // Embedded surfaces always use the element-scroller (desktop) layout, also
+  // inside the mobile sheet: no window scrolling, no mobile properties sheet.
+  const { isMobile: viewportMobile } = useSidebar();
+  const isMobile = viewportMobile && !embedded;
   const [moreOpen, setMoreOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
@@ -3070,6 +3113,12 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   >(() => new Map());
   const [pendingCommentComposerFocusKey, setPendingCommentComposerFocusKey] =
     useState(0);
+  const focusComposerRequest = conversation?.focusComposerRequest ?? 0;
+  useEffect(() => {
+    if (focusComposerRequest <= 0) return;
+    setDetailTab("chat");
+    setPendingCommentComposerFocusKey((current) => current + 1);
+  }, [focusComposerRequest]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
   const lastScrollIssueIdRef = useRef<string | undefined>(undefined);
@@ -3083,7 +3132,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   );
   const relationIssueLinkState = useMemo(() => {
     const sourceState = resolvedIssueDetailState ?? location.state;
-    if (!streamlinedTaskDetailEnabled) return sourceState;
+    if (!taskChatShellEnabled) return sourceState;
     if (typeof sourceState !== "object" || sourceState === null)
       return sourceState;
     return {
@@ -3093,7 +3142,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       // but do not let that one-row archive affordance leak to the relation.
       issueDetailInboxQuickArchiveArmed: false,
     };
-  }, [location.state, resolvedIssueDetailState, streamlinedTaskDetailEnabled]);
+  }, [location.state, resolvedIssueDetailState, taskChatShellEnabled]);
   const preferInboxHistoryBack = useMemo(
     () =>
       readIssueDetailLocationState(null, location.state)?.issueDetailSource ===
@@ -3127,6 +3176,21 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     if (issueId) void prefetchIssueThread(queryClient, issueId);
   }, [issueId, queryClient]);
   const issue = queriedIssue ?? conversation?.issue ?? draftIssue;
+  // A page-level surface showing the Assistant's conversation keeps the
+  // Assistant dock from opening a second copy of it.
+  const assistantShell = useAssistantShell();
+  const claimConversationPage = assistantShell?.claimConversationPage;
+  const pageConversationAgentId = embedded ? null : issue?.conversationAgentId ?? conversation?.agent.id ?? null;
+  useEffect(() => {
+    if (!pageConversationAgentId || !claimConversationPage) return;
+    return claimConversationPage(pageConversationAgentId);
+  }, [pageConversationAgentId, claimConversationPage]);
+  // "Ask Assistant" drafts go to whichever surface shows the Assistant's conversation.
+  const assistantDraftRequest =
+    assistantShell?.assistantAgentId
+    && (issue?.conversationAgentId ?? conversation?.agent.id) === assistantShell.assistantAgentId
+      ? assistantShell.pendingAsk
+      : null;
   const resolveWritableIssueId = async () => {
     if (!conversation) return issueId!;
     const resolved = await conversation.ensureIssue();
@@ -3365,7 +3429,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       createdFromIssueId: issue!.id,
       includeRoutineExecutions: true,
     }),
-    enabled: streamlinedTaskDetailEnabled && !!resolvedCompanyId && !!issue?.id && !tasksTab,
+    enabled: taskChatShellEnabled && !!resolvedCompanyId && !!issue?.id && !tasksTab,
   });
 
   const {
@@ -3454,9 +3518,9 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
   useEffect(() => {
-    if (!streamlinedUiEnabled || !issue || !sessionResolved) return;
+    if (!issue || !sessionResolved) return;
     recordRecentTask(issue, currentUserId);
-  }, [issue, currentUserId, sessionResolved, streamlinedUiEnabled]);
+  }, [issue, currentUserId, sessionResolved]);
   const { data: boardAccess } = useQuery({
     queryKey: queryKeys.access.currentBoardAccess,
     queryFn: () => accessApi.getCurrentBoardAccess(),
@@ -3651,7 +3715,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   }, [issue?.id, rawChildIssues]);
   const resolvedTasksTab = useMemo(() => {
     if (tasksTab) return tasksTab;
-    if (!streamlinedTaskDetailEnabled) return undefined;
+    if (!taskChatShellEnabled) return undefined;
     const createdTasks = createdTasksQuery.data ?? EMPTY_ISSUES;
     const hasError = createdTasksQuery.isError || childIssuesError;
     return {
@@ -3685,7 +3749,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     issue?.createdFrom,
     resolvedIssueDetailState,
     location.state,
-    streamlinedTaskDetailEnabled,
+    taskChatShellEnabled,
     childIssues,
     childIssuesLoading,
     childIssuesError,
@@ -3970,7 +4034,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
 
   const clearCommentHashIfCurrent = useCallback(
     (commentId: string) => {
-      if (typeof window === "undefined") return;
+      if (typeof window === "undefined" || embedded) return;
       if (window.location.hash !== `#comment-${commentId}`) return;
       window.history.replaceState(
         null,
@@ -3978,7 +4042,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         `${location.pathname}${location.search}`,
       );
     },
-    [location.pathname, location.search],
+    [embedded, location.pathname, location.search],
   );
 
   const upsertCommentInCache = useCallback(
@@ -4192,7 +4256,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       const issueRefs = new Set<string>([issueId!, nextIssue.id]);
       if (nextIssue.identifier) issueRefs.add(nextIssue.identifier);
       mergeIssueResponseIntoCaches(issueRefs, nextIssue);
-      if (streamlinedUiEnabled && sessionResolved) {
+      if (sessionResolved) {
         recordRecentTask(nextIssue, currentUserId);
       }
       queryClient.invalidateQueries({
@@ -4531,50 +4595,6 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     [updateChildIssue.mutate],
   );
 
-  const subTasksTree = useMemo(
-    () =>
-      taskChatShellEnabled &&
-      !streamlinedTaskDetailEnabled &&
-      issue &&
-      showRichSubIssuesSection ? (
-        <IssuesList
-          issues={childIssues}
-          isLoading={childIssuesLoading}
-          agents={agents}
-          projects={projects}
-          liveIssueIds={liveIssueIds}
-          projectId={issue.projectId ?? undefined}
-          viewStateKey={`paperclip:issue-detail:${issue.id}:subissues-view`}
-          issueLinkState={resolvedIssueDetailState ?? location.state}
-          searchFilters={{ descendantOf: issue.id, includeBlockedBy: true }}
-          searchWithinLoadedIssues
-          baseCreateIssueDefaults={buildSubIssueDefaultsForViewer(
-            issue,
-            currentUserId,
-          )}
-          createIssueLabel="Sub-task"
-          defaultSortField="workflow"
-          showProgressSummary
-          parentIssueIdForCostSummary={issue.id}
-          onUpdateIssue={handleChildIssueUpdate}
-        />
-      ) : null,
-    [
-      taskChatShellEnabled,
-      streamlinedTaskDetailEnabled,
-      issue,
-      showRichSubIssuesSection,
-      childIssues,
-      childIssuesLoading,
-      agents,
-      projects,
-      liveIssueIds,
-      resolvedIssueDetailState,
-      location.state,
-      currentUserId,
-      handleChildIssueUpdate,
-    ],
-  );
 
   const cancelIssueMonitor = useMutation({
     mutationKey: ["cancel-issue-monitor", issueId],
@@ -4680,7 +4700,14 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       body: string; reopen?: boolean; interrupt?: boolean; attachmentIds?: string[]; clientRequestId?: string;
     }) => {
       if (issue?.conversationAgentId) clearLegacyChatMessageRequests(`${issue.companyId}:${currentUserId}:${issue.conversationAgentId}`);
-      return issuesApi.addComment(await resolveWritableIssueId(), body, reopen, interrupt, attachmentIds, clientRequestId ?? crypto.randomUUID());
+      const pageContext = conversation?.commentMetadata?.()?.pageContext;
+      const args = [await resolveWritableIssueId(), body, reopen, interrupt, attachmentIds, clientRequestId ?? crypto.randomUUID()] as const;
+      // Only Assistant surfaces pass commentMetadata; every other send keeps the plain call.
+      const comment = await (pageContext
+        ? issuesApi.addComment(...args, { metadata: { pageContext } })
+        : issuesApi.addComment(...args));
+      conversation?.onCommentSent?.();
+      return comment;
     },
     onMutate: async ({ body, reopen, interrupt }) => {
       // Start cache cancellation immediately but do not put it in front of the
@@ -4795,7 +4822,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           ),
         );
       }
-      if (streamlinedUiEnabled && issue && sessionResolved) {
+      if (issue && sessionResolved) {
         recordRecentTask(
           issue,
           currentUserId,
@@ -4853,16 +4880,19 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       selectedClientKeys,
       selectedOptionIds,
       rememberAction,
+      proposedActionResult,
     }: {
       interaction: ActionableIssueThreadInteraction;
       selectedClientKeys?: string[];
       selectedOptionIds?: string[];
       rememberAction?: boolean;
+      proposedActionResult?: ProposedActionAcceptResult;
     }) =>
       issuesApi.acceptInteraction(issueId!, interaction.id, {
         selectedClientKeys,
         selectedOptionIds,
         rememberAction,
+        proposedActionResult,
       }),
     onSuccess: (interaction) => {
       upsertInteractionInCache(interaction);
@@ -5598,7 +5628,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   ]);
 
   useEffect(() => {
-    if (!streamlinedTaskDetailEnabled || !taskChatShellEnabled || !issue?.id) {
+    if (!taskChatShellEnabled || !issue?.id) {
       setBreadcrumbPanelControl(null);
       return;
     }
@@ -5613,44 +5643,15 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     issue?.id,
     panelVisible,
     setBreadcrumbPanelControl,
-    streamlinedTaskDetailEnabled,
     suppressPanelUntilPlan,
     taskChatShellEnabled,
     toggleTaskSidePanel,
   ]);
 
   useEffect(() => {
-    const showTaskPanelLauncher =
-      taskChatShellEnabled &&
-      !streamlinedTaskDetailEnabled &&
-      !isMobile &&
-      Boolean(issue?.id) &&
-      (!panelVisible || suppressPanelUntilPlan);
-
-    setBreadcrumbToolbar(
-      showTaskPanelLauncher ? (
-        <TooltipProvider>
-          <SidePanelToggleButton
-            open={false}
-            onToggle={openTaskSidePanel}
-            shortcut="]"
-            className="shrink-0"
-          />
-        </TooltipProvider>
-      ) : null,
-    );
-
+    setBreadcrumbToolbar(null);
     return () => setBreadcrumbToolbar(null);
-  }, [
-    isMobile,
-    issue?.id,
-    openTaskSidePanel,
-    panelVisible,
-    setBreadcrumbToolbar,
-    streamlinedTaskDetailEnabled,
-    suppressPanelUntilPlan,
-    taskChatShellEnabled,
-  ]);
+  }, [setBreadcrumbToolbar]);
 
   const isFromInbox = resolvedIssueDetailState?.issueDetailSource === "inbox";
 
@@ -5660,6 +5661,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     const previousIssueId = lastScrollIssueIdRef.current;
     lastScrollIssueIdRef.current = issueId;
     if (
+      embedded ||
       !shouldScrollIssueDetailToTopOnNavigation({
         previousIssueId,
         nextIssueId: issueId,
@@ -5670,7 +5672,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     const main = document.getElementById("main-content");
     if (main) main.scrollTop = 0;
-  }, [issueId, navigationType]);
+  }, [embedded, issueId, navigationType]);
 
   // Resolve external UUID links and wrong-prefix task links from the loaded
   // task's company, not the organization that happened to be selected first.
@@ -5820,7 +5822,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     const sharedProps = {
       issue: panelIssue,
       childIssues: panelChildIssues,
-      issueLinkState: streamlinedTaskDetailEnabled
+      issueLinkState: taskChatShellEnabled
         ? relationIssueLinkState
         : undefined,
       onAddSubIssue: openNewSubIssue,
@@ -5858,8 +5860,8 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
             {...sharedProps}
             accountScope={currentUserId ?? "anonymous"}
             fileTabsEnabled={fileViewerEnabled}
-            streamlinedTabs={streamlinedTaskDetailEnabled}
-            showSubtasksTab={streamlinedTaskDetailEnabled}
+            streamlinedTabs={taskChatShellEnabled}
+            showSubtasksTab={taskChatShellEnabled}
             tasksTab={resolvedTasksTab}
             artifactsOpenRequestId={!isMobile && !artifactsOpenRequest?.handled && artifactsOpenRequest?.issueId === panelIssue.id
               ? artifactsOpenRequest.requestId : undefined}
@@ -5893,7 +5895,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     panelIssue,
     suppressPanelUntilPlan,
     relationIssueLinkState,
-    streamlinedTaskDetailEnabled,
+    taskChatShellEnabled,
     resolvedHasActiveRun,
     checkIssueMonitorNow.isPending,
     checkIssueMonitorNow.mutate,
@@ -5903,7 +5905,6 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     externalObjectsState.isError,
     externalObjectsState.refetch,
     documentDeepLink,
-    taskChatShellEnabled,
     currentUserId,
     fileViewerEnabled,
     resolvedTasksTab,
@@ -5917,7 +5918,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   const canQuickArchiveFromInbox = !issue?.hiddenAt;
 
   useEffect(() => {
-    if (!issue?.id || !canQuickArchiveFromInbox) return;
+    if (embedded || !issue?.id || !canQuickArchiveFromInbox) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       const action = resolveInboxQuickArchiveKeyAction({
         armed: canQuickArchiveFromInbox,
@@ -5942,7 +5943,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [archiveFromInbox, canQuickArchiveFromInbox, issue?.id]);
+  }, [archiveFromInbox, canQuickArchiveFromInbox, issue?.id, embedded]);
 
   useEffect(() => {
     const clearArmTimeout = () => {
@@ -6022,6 +6023,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       }
     };
 
+    if (embedded) return;
     document.addEventListener("pointerdown", handlePointerDown, true);
     document.addEventListener("focusin", handleFocusIn, true);
     document.addEventListener("keydown", handleKeyDown, true);
@@ -6032,6 +6034,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       document.removeEventListener("keydown", handleKeyDown, true);
     };
   }, [
+    embedded,
     fileViewerEnabled,
     navigate,
     sourceBreadcrumb.href,
@@ -6164,10 +6167,12 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       }
     };
 
+    if (embedded) return;
     document.addEventListener("click", handleDocumentClick, true);
     return () =>
       document.removeEventListener("click", handleDocumentClick, true);
   }, [
+    embedded,
     issue?.id,
     issue?.identifier,
     issueId,
@@ -6228,7 +6233,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   }, [detailTab, pendingCommentComposerFocusKey]);
 
   useEffect(() => {
-    if (!fileViewerEnabled) return;
+    if (embedded || !fileViewerEnabled) return;
     const handleOpenFileViewer = () => {
       setFileViewerPromptOpen(true);
     };
@@ -6242,7 +6247,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         handleOpenFileViewer as EventListener,
       );
     };
-  }, [fileViewerEnabled]);
+  }, [embedded, fileViewerEnabled]);
 
   const promotedOutputAttachmentIds = useMemo(
     () => getPromotedOutputAttachmentIds(workProducts),
@@ -6330,7 +6335,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     setMobileToolbar(
       <InboxMobileToolbar
         backHref={backHref}
-        preferHistoryBack={streamlinedUiEnabled ? preferInboxHistoryBack : true}
+        preferHistoryBack={preferInboxHistoryBack}
         issueId={issue?.id}
         issueHidden={issueHidden}
         archivePending={archivePending}
@@ -6346,7 +6351,6 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     showInboxToolbar,
     backHref,
     preferInboxHistoryBack,
-    streamlinedUiEnabled,
     issue?.id,
     issueHidden,
     archivePending,
@@ -6508,12 +6512,14 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       selectedClientKeys?: string[],
       selectedOptionIds?: string[],
       rememberAction?: boolean,
+      proposedActionResult?: ProposedActionAcceptResult,
     ) => {
       await acceptInteraction.mutateAsync({
         interaction,
         selectedClientKeys,
         selectedOptionIds,
         rememberAction,
+        proposedActionResult,
       });
     },
     [acceptInteraction],
@@ -7048,7 +7054,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   // stays near the viewport bottom. Flag OFF renders the same nodes in the
   // page flow, in their original order relative to the alert banners.
   const ancestorsNav =
-    !streamlinedTaskDetailEnabled && ancestors.length > 0 ? (
+    !taskChatShellEnabled && ancestors.length > 0 ? (
       <nav
         className={cn(
           "flex items-center gap-1 text-xs text-muted-foreground flex-wrap",
@@ -7084,7 +7090,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   // Creation provenance ("Created from PAP-168 by Paperclip QA"). Distinct from
   // the parent chain above; the streamlined Tasks tab renders it instead.
   const createdFromNote =
-    !streamlinedTaskDetailEnabled && issue.createdFrom ? (
+    !taskChatShellEnabled && issue.createdFrom ? (
       <IssueCreatedFromNote
         createdFrom={issue.createdFrom}
         issueLinkState={resolvedIssueDetailState ?? location.state}
@@ -7105,11 +7111,11 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     <div
       data-testid="issue-detail-header"
       className={cn(
-        streamlinedTaskDetailEnabled ? "relative space-y-2" : "space-y-3",
+        taskChatShellEnabled ? "relative space-y-2" : "space-y-3",
         shellSectionClass,
       )}
     >
-      {streamlinedTaskDetailEnabled ? (
+      {taskChatShellEnabled ? (
         <div className="flex min-w-0 items-start gap-2 md:items-center md:pr-8">
           <div className="hidden md:block">{issueStatusControl}</div>
           <div
@@ -7135,18 +7141,18 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       <div
         className={cn(
           "flex min-w-0 flex-wrap items-center gap-2",
-          streamlinedTaskDetailEnabled && "gap-x-3 gap-y-2 md:gap-x-6 md:pl-7",
+          taskChatShellEnabled && "gap-x-3 gap-y-2 md:gap-x-6 md:pl-7",
         )}
       >
-        {streamlinedTaskDetailEnabled ? (
+        {taskChatShellEnabled ? (
           <div className="md:hidden">{issueStatusControl}</div>
         ) : null}
-        {streamlinedTaskDetailEnabled ? (
+        {taskChatShellEnabled ? (
           <span className="shrink-0 font-mono text-sm text-muted-foreground md:hidden">
             {issue.identifier ?? issue.id.slice(0, 8)}
           </span>
         ) : null}
-        {!streamlinedTaskDetailEnabled ? issueStatusControl : null}
+        {!taskChatShellEnabled ? issueStatusControl : null}
         {/* PAP-411: priority UI hidden behind SHOW_TASK_PRIORITY_UI. */}
         {SHOW_TASK_PRIORITY_UI && (
           <PriorityIcon
@@ -7154,7 +7160,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
             onChange={(priority) => updateIssue.mutate({ priority })}
           />
         )}
-        {!streamlinedTaskDetailEnabled ? (
+        {!taskChatShellEnabled ? (
           <span className="shrink-0 font-mono text-sm text-muted-foreground">
             {issue.identifier ?? issue.id.slice(0, 8)}
           </span>
@@ -7267,7 +7273,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           userLabelMap={userLabelMap}
         />
 
-        {!streamlinedTaskDetailEnabled && (issue.labels ?? []).length > 0 && (
+        {!taskChatShellEnabled && (issue.labels ?? []).length > 0 && (
           <div className="hidden sm:flex items-center gap-1">
             {(issue.labels ?? []).slice(0, 4).map((label) => (
               <Badge
@@ -7291,7 +7297,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           </div>
         )}
 
-        {!streamlinedTaskDetailEnabled && !(isMobile && isFromInbox) && (
+        {!taskChatShellEnabled && !(isMobile && isFromInbox) && (
           <div className="ml-auto flex items-center gap-0.5 md:hidden shrink-0">
             <Button
               variant="ghost"
@@ -7317,7 +7323,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         )}
 
         <div className="hidden md:flex items-center md:ml-auto shrink-0">
-          {!streamlinedTaskDetailEnabled && canArchiveFromInbox && (
+          {!taskChatShellEnabled && canArchiveFromInbox && (
             <Button
               variant="ghost"
               size="icon-xs"
@@ -7343,7 +7349,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
               <FileCode2 className="h-4 w-4" />
             </Button>
           ) : null}
-          {!streamlinedTaskDetailEnabled ? (
+          {!taskChatShellEnabled ? (
             <Button
               variant="ghost"
               size="icon-xs"
@@ -7357,8 +7363,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
               )}
             </Button>
           ) : null}
-          {!streamlinedTaskDetailEnabled &&
-          !taskChatShellEnabled &&
+          {!taskChatShellEnabled &&
           (!panelVisible || suppressPanelUntilPlan) ? (
             <TooltipProvider>
               <SidePanelToggleButton
@@ -7372,7 +7377,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           <div
             data-slot="task-title-actions"
             className={cn(
-              streamlinedTaskDetailEnabled &&
+              taskChatShellEnabled &&
                 "absolute right-0 top-0 flex h-7 items-center",
             )}
           >
@@ -7403,7 +7408,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-52 p-1" align="end">
-                {streamlinedTaskDetailEnabled ? (
+                {taskChatShellEnabled ? (
                   <>
                     <button
                       className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent/50"
@@ -7509,22 +7514,14 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         </div>
       </div>
 
-      {!streamlinedTaskDetailEnabled ? (
+      {!taskChatShellEnabled ? (
         <InlineEditor
           value={issue.title}
           onSave={(title) => updateIssue.mutateAsync({ title })}
           as="h2"
-          className={
-            taskChatShellEnabled
-              ? "text-base font-semibold"
-              : "text-xl font-bold"
-          }
+          className="text-xl font-bold"
         />
       ) : null}
-
-      {taskChatShellEnabled && !streamlinedTaskDetailEnabled
-        ? subTasksTree
-        : null}
 
       <IssueMonitorBanner
         key={issue.id}
@@ -7618,6 +7615,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   ) : undefined;
 
   return (
+    <EmbeddedSurfaceContext.Provider value={embedded}>
     <FileViewerProvider issueId={conversation && !conversation.issue ? "" : issue.id} enabled={fileViewerEnabled}>
       <TextAttachmentContext.Provider value={taskChatShellEnabled ? handleOpenTextAttachment : null}><IssueGalleryContext.Provider value={openIssueGallery}>
         <div
@@ -7943,12 +7941,8 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
               className={
                 taskChatShellEnabled
                   ? isMobile
-                    ? streamlinedTaskDetailEnabled
-                      ? undefined
-                      : "-mx-4"
-                    : streamlinedTaskDetailEnabled
-                      ? "flex min-h-0 flex-col"
-                      : "-mx-4 -mt-4 md:-mx-6 md:-mt-6 flex min-h-0 flex-col"
+                    ? undefined
+                    : "flex min-h-0 flex-col"
                   : undefined
               }
             >
@@ -8089,6 +8083,10 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                   onLoadOlderComments={loadOlderComments}
                   onRefreshLatestComments={refetchLatestComments}
                   composerRef={commentComposerRef}
+                  emptyState={conversation?.emptyState}
+                  composerReplacement={conversation?.composerReplacement}
+                  externalDraftRequest={assistantDraftRequest}
+                  onDraftRequestConsumed={assistantShell?.consumeAsk}
                   composerAccessory={
                     hasVisibleMonitorSurface(issue) ? (
                       <IssueMonitorComposerStrip
@@ -8132,7 +8130,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                     } : undefined,
                     resumeHref: !activePauseHold.isRoot ? createIssueDetailPath(activePauseHoldRoot?.identifier ?? activePauseHold.rootIssueId) : undefined,
                   } : null}
-                  composerDisabledReason={issue.conversationAgentId && !instanceExperimentalSettings?.enableAgentChat ? "Agent Chat is disabled in Experimental settings." : treeControlStateError ? "Couldn’t check whether this task is paused. Refresh to try again." : null}
+                  composerDisabledReason={treeControlStateError ? "Couldn’t check whether this task is paused. Refresh to try again." : null}
                   composerHint={composerHint}
                   queuedCommentReason={queuedCommentReason}
                   onVote={handleCommentVote}
@@ -8386,7 +8384,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                     accountScope={currentUserId ?? "anonymous"}
                     childIssues={childIssues}
                     issueLinkState={
-                      streamlinedTaskDetailEnabled
+                      taskChatShellEnabled
                         ? relationIssueLinkState
                         : undefined
                     }
@@ -8418,8 +8416,8 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                     onCheckMonitorNow={() => checkIssueMonitorNow.mutate()}
                     checkingMonitorNow={checkIssueMonitorNow.isPending}
                     fileTabsEnabled={fileViewerEnabled}
-                    streamlinedTabs={streamlinedTaskDetailEnabled}
-                    showSubtasksTab={streamlinedTaskDetailEnabled}
+                    streamlinedTabs={taskChatShellEnabled}
+                    showSubtasksTab={taskChatShellEnabled}
                     tasksTab={resolvedTasksTab}
                     artifactsOpenRequestId={isMobile && !artifactsOpenRequest?.handled && artifactsOpenRequest?.issueId === issue.id
                       ? artifactsOpenRequest.requestId : undefined}
@@ -8452,7 +8450,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                         issue={issue}
                         childIssues={childIssues}
                         issueLinkState={
-                          streamlinedTaskDetailEnabled
+                          taskChatShellEnabled
                             ? relationIssueLinkState
                             : undefined
                         }
@@ -8503,10 +8501,11 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
               useSidePanel={taskChatShellEnabled}
             />
           ) : null}
-          <ScrollToBottom />
+          {embedded ? null : <ScrollToBottom />}
         </div>
       </IssueGalleryContext.Provider></TextAttachmentContext.Provider>
     </FileViewerProvider>
+    </EmbeddedSurfaceContext.Provider>
   );
 }
 

@@ -1,6 +1,6 @@
 import { Router, type Request } from "express";
 import type { Db } from "@paperclipai/db";
-import { builtInAgentEmptyMutationSchema, builtInAgentProvisionSchema, builtInAgentResetSchema } from "@paperclipai/shared";
+import { ASSISTANT_BUILT_IN_AGENT_KEY, builtInAgentEmptyMutationSchema, builtInAgentProvisionSchema, builtInAgentResetSchema } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
 import { forbidden, notFound } from "../errors.js";
 import { accessService, instanceSettingsService, logActivity } from "../services/index.js";
@@ -40,20 +40,24 @@ function redactBuiltInAgentListState(state: BuiltInAgentState): BuiltInAgentStat
           entryFile: state.definition.bundle.instructions.entryFile,
           files: Object.keys(state.definition.bundle.instructions.files),
         },
-        skill: {
-          skillKey: state.definition.bundle.skill.skillKey,
-          displayName: state.definition.bundle.skill.displayName,
-          slug: state.definition.bundle.skill.slug,
-          canonicalKey: state.definition.bundle.skill.canonicalKey,
-          files: Object.keys(state.definition.bundle.skill.files),
-        },
-        routine: {
-          routineKey: state.definition.bundle.routine.routineKey,
-          title: state.definition.bundle.routine.title,
-          status: state.definition.bundle.routine.status,
-          triggerCount: state.definition.bundle.routine.triggers.length,
-          scheduleLabel: formatScheduleLabel(state.definition.bundle.routine.triggers[0]),
-        },
+        skill: state.definition.bundle.skill
+          ? {
+            skillKey: state.definition.bundle.skill.skillKey,
+            displayName: state.definition.bundle.skill.displayName,
+            slug: state.definition.bundle.skill.slug,
+            canonicalKey: state.definition.bundle.skill.canonicalKey,
+            files: Object.keys(state.definition.bundle.skill.files),
+          }
+          : undefined,
+        routine: state.definition.bundle.routine
+          ? {
+            routineKey: state.definition.bundle.routine.routineKey,
+            title: state.definition.bundle.routine.title,
+            status: state.definition.bundle.routine.status,
+            triggerCount: state.definition.bundle.routine.triggers.length,
+            scheduleLabel: formatScheduleLabel(state.definition.bundle.routine.triggers[0]),
+          }
+          : undefined,
       }
       : undefined,
   } as BuiltInAgentState["definition"];
@@ -150,7 +154,11 @@ export function builtInAgentRoutes(db: Db) {
     assertCompanyAccess(req, companyId);
     await assertBuiltInAgentsEnabled();
     const states = await svc.list(companyId);
-    res.json(states.map(redactBuiltInAgentListState));
+    // The Assistant is a per-person chat surface, not a configurable staff
+    // built-in, so it stays out of the built-in agents panel.
+    res.json(states
+      .filter((state) => state.definition.key !== ASSISTANT_BUILT_IN_AGENT_KEY)
+      .map(redactBuiltInAgentListState));
   });
 
   router.get("/companies/:companyId/built-in-agents/:key/status", async (req, res) => {

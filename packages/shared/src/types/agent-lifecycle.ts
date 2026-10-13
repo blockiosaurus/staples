@@ -15,6 +15,17 @@ export interface AgentLifecycleOperation {
   retryAt?: string;
   attempts: number;
   responsibleUserId?: string | null;
+  /**
+   * The latest failed harness test for this lifecycle version (check codes and
+   * levels only; messages can carry provider details). Cleared when it passes.
+   */
+  lastHarnessTest?: AgentLifecycleHarnessTest;
+}
+
+export interface AgentLifecycleHarnessTest {
+  version: number;
+  adapterType: string;
+  checks: Array<{ code: string; level: string }>;
 }
 
 export interface AgentLifecycleRequest {

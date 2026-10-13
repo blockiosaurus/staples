@@ -54,8 +54,6 @@ const TASK_WATCHDOGS_TOGGLE_SELECTOR =
   'button[aria-label="Toggle task watchdogs experimental setting"]';
 const CLASSIC_TASK_INTERFACE_TOGGLE_SELECTOR =
   'button[aria-label="Toggle classic task interface experimental setting"]';
-const GOALS_SIDEBAR_LINK_TOGGLE_SELECTOR =
-  'button[aria-label="Toggle goals sidebar link experimental setting"]';
 const DECISIONS_TOGGLE_SELECTOR =
   'button[aria-label="Toggle decisions experimental setting"]';
 const SERVER_INFO_TOGGLE_SELECTOR =
@@ -338,30 +336,11 @@ describe("InstanceExperimentalSettings — Conference Room Chat card (PAP-11233)
     expect(mockInstanceSettingsApi.updateExperimental).not.toHaveBeenCalled();
   });
 
-  it("renders and patches the Streamlined UI experimental toggle on and off", async () => {
+  it("does not render a Streamlined UI toggle because the streamlined shell is the only shell", async () => {
     await renderPage();
 
-    expect(container.textContent).toContain("Streamlined UI");
-    expect(container.textContent).toContain(
-      "Use the simplified main sidebar, shared Tasks and Inbox presentation, focused task detail layout, and contextual navigation across Agents, Routines, Skills, and Settings.",
-    );
-
-    const toggle = container.querySelector<HTMLButtonElement>(STREAMLINED_TOGGLE_SELECTOR);
-    expect(toggle?.getAttribute("aria-checked")).toBe("true");
-
-    await act(() => toggle?.click());
-    await flushReact();
-    expect(mockInstanceSettingsApi.updateExperimental).toHaveBeenLastCalledWith({
-      enableStreamlinedUi: false,
-    });
-    expect(toggle?.getAttribute("aria-checked")).toBe("false");
-
-    await act(() => toggle?.click());
-    await flushReact();
-    expect(mockInstanceSettingsApi.updateExperimental).toHaveBeenLastCalledWith({
-      enableStreamlinedUi: true,
-    });
-    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    expect(container.textContent).not.toContain("Streamlined UI");
+    expect(container.querySelector(STREAMLINED_TOGGLE_SELECTOR)).toBeNull();
   });
 
   it("does not render a Task Watchdogs toggle because watchdogs are always enabled", async () => {
@@ -468,28 +447,6 @@ describe("InstanceExperimentalSettings — Conference Room Chat card (PAP-11233)
 
     expect(mockInstanceSettingsApi.updateExperimental).toHaveBeenCalledWith({
       enableDecisions: true,
-    });
-    expect(toggle?.getAttribute("aria-checked")).toBe("true");
-  });
-
-  it("renders and patches the Goals Sidebar Link experimental toggle", async () => {
-    await renderPage();
-
-    expect(container.textContent).toContain("Goals Sidebar Link");
-    expect(container.textContent).toContain(
-      "Restore the Goals item in the main sidebar while the goals surface is being evaluated.",
-    );
-
-    const toggle = container.querySelector<HTMLButtonElement>(GOALS_SIDEBAR_LINK_TOGGLE_SELECTOR);
-    expect(toggle?.getAttribute("aria-checked")).toBe("false");
-
-    await act(async () => {
-      toggle?.click();
-    });
-    await flushReact();
-
-    expect(mockInstanceSettingsApi.updateExperimental).toHaveBeenCalledWith({
-      enableGoalsSidebarLink: true,
     });
     expect(toggle?.getAttribute("aria-checked")).toBe("true");
   });
@@ -1042,7 +999,7 @@ describe("InstanceExperimentalSettings — card ordering and headings (PAP-393)"
     expect(sections.at(-2)?.textContent).toContain("Task Plan Decomposition");
     expect(sections.at(-1)?.textContent).toContain("These features are going to be removed.");
     expect(sections.at(-1)?.textContent).toContain("Classic Task Interface");
-    expect(sections.at(-1)?.textContent).toContain("Goals Sidebar Link");
+    expect(sections.at(-1)?.textContent).not.toContain("Goals Sidebar Link");
   });
 
   it("alphabetizes cards by their displayed title within each section", async () => {
@@ -1051,7 +1008,7 @@ describe("InstanceExperimentalSettings — card ordering and headings (PAP-393)"
 
     for (const section of container.querySelectorAll("section")) {
       const titles = [...section.querySelectorAll("h3")].map((heading) => heading.textContent ?? "");
-      expect(titles.length).toBeGreaterThan(1);
+      expect(titles.length).toBeGreaterThan(0);
       expect(titles).toEqual([...titles].sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" })));
     }
   });
@@ -1171,10 +1128,10 @@ describe("InstanceExperimentalSettings — operator-hidden cards", () => {
   });
 
   it("retains a section when one of its controls is visible", async () => {
-    const visible = new Set(["enablePaperclipDeveloperMode", "enableGoalsSidebarLink"]);
+    const visible = new Set(["enablePaperclipDeveloperMode", "enableClassicTaskInterface"]);
     await renderPage(INSTANCE_FEATURE_KEYS.filter((key) => !visible.has(key)).map((key) => `instance.experimental.${key}`));
     expect(container.querySelector('[aria-labelledby="developer-mode-heading"] h3')?.textContent).toBe("Paperclip Developer Mode");
-    expect(container.querySelector('[aria-labelledby="legacy-heading"] h3')?.textContent).toBe("Goals Sidebar Link");
+    expect(container.querySelector('[aria-labelledby="legacy-heading"] h3')?.textContent).toBe("Classic Task Interface");
   });
 
   it("shows every toggle when nothing is hidden", async () => {

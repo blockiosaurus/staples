@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@paperclipai/teams-catalog",
   "packageVersion": "0.1.0",
-  "generatedAt": "2026-10-02T21:51:05.380Z",
+  "generatedAt": "2026-10-13T15:52:35.048Z",
   "teams": [
     {
       "id": "paperclipai:bundled:company-defaults:core-exec-team",
@@ -462,6 +462,1980 @@
       "trustLevel": "markdown_only",
       "compatibility": "compatible",
       "contentHash": "sha256:06822cec5f2b6910cb37ba0ebd5e04ed5c7e34f77225564ddddc2470779cdaa6"
+    },
+    {
+      "id": "paperclipai:optional:staples:bookkeeper",
+      "key": "paperclipai/optional/staples/bookkeeper",
+      "kind": "optional",
+      "category": "staples",
+      "slug": "bookkeeper",
+      "name": "Bookkeeper",
+      "description": "Reads your Stripe payments (and optionally Xero) to send a plain weekly summary of revenue and spending, monthly close notes, and early warnings about anything unusual. Strictly read-only.",
+      "path": "catalog/optional/staples/bookkeeper",
+      "entrypoint": "TEAM.md",
+      "schema": "agentcompanies/v1",
+      "defaultInstall": false,
+      "recommendedForCompanyTypes": [
+        "small-business",
+        "ecommerce",
+        "solo-founder"
+      ],
+      "tags": [
+        "finance",
+        "bookkeeping",
+        "revenue",
+        "reporting"
+      ],
+      "counts": {
+        "agents": 1,
+        "projects": 1,
+        "tasks": 1,
+        "routines": 2,
+        "localSkills": 2,
+        "catalogSkills": 0,
+        "externalSkillSources": 0
+      },
+      "rootAgentSlugs": [
+        "bookkeeper"
+      ],
+      "agentSlugs": [
+        "bookkeeper"
+      ],
+      "projectSlugs": [
+        "books"
+      ],
+      "requiredSkills": [
+        {
+          "type": "local",
+          "ref": "month-close-notes",
+          "agentSlugs": [
+            "bookkeeper"
+          ],
+          "resolved": true,
+          "localPath": "skills/month-close-notes/SKILL.md"
+        },
+        {
+          "type": "local",
+          "ref": "revenue-spend-summary",
+          "agentSlugs": [
+            "bookkeeper"
+          ],
+          "resolved": true,
+          "localPath": "skills/revenue-spend-summary/SKILL.md"
+        }
+      ],
+      "envInputs": [],
+      "sourceRefs": [],
+      "files": [
+        {
+          "path": "TEAM.md",
+          "kind": "team",
+          "sizeBytes": 1671,
+          "sha256": "13f5cf2ff5ea23268d2388345f7c914481a1e2a5fb57c3a6a2333294aef1c1a4"
+        },
+        {
+          "path": "agents/bookkeeper/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 7122,
+          "sha256": "cdf4b3bb6dc215123b36f6b4eb21f9a5046e666676f07b81b3d8bf9a6798a06c"
+        },
+        {
+          "path": "projects/books/PROJECT.md",
+          "kind": "project",
+          "sizeBytes": 249,
+          "sha256": "44869bb5346394d6fd71b96e609f2441771657511e35993060fae7ce63c8ff67"
+        },
+        {
+          "path": "projects/books/tasks/last-30-days-summary/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1396,
+          "sha256": "c24892925b538ecf0ce43f6b83ea003f7f99b4b4b5c748d18ee301de8570243e"
+        },
+        {
+          "path": "projects/books/tasks/monthly-close-notes/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1168,
+          "sha256": "59148ad12ce73dd639fcd4736fa79c28f4ad521d696069979eb67101fe2f0352"
+        },
+        {
+          "path": "projects/books/tasks/weekly-revenue-and-spend-summary/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1277,
+          "sha256": "b930e5da0677b7297bd7b3bb1d8bb1ddfce483feb5085127d73ec2e4a9370177"
+        },
+        {
+          "path": "skills/month-close-notes/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2115,
+          "sha256": "29e485d84b9998fd9b3f3403b577936ff8aa9e1b2a552623cd4061dd8c559cf8"
+        },
+        {
+          "path": "skills/revenue-spend-summary/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3153,
+          "sha256": "502cf7be941c91c1620bd798a4cd53aaa05430142ed9cbeb9fd950ef38834624"
+        },
+        {
+          "path": "staples.template.json",
+          "kind": "other",
+          "sizeBytes": 1755,
+          "sha256": "1e94a0b2f7737e161b4ac79e612cca4eac3e7afd966e8c3bfd577896b4002f91"
+        }
+      ],
+      "trustLevel": "assets",
+      "compatibility": "compatible",
+      "contentHash": "sha256:4fde165a90522e7eca32a0c414ae8cb897a994175478b2882c058e0060cc1c4b",
+      "staplesTemplate": {
+        "version": "1.2.0",
+        "tagline": "Read-only weekly summaries of your revenue and spending",
+        "icon": "calculator",
+        "marketplaceCategory": "finance",
+        "requiredApps": [
+          {
+            "capability": "payments",
+            "anyOf": [
+              "stripe"
+            ],
+            "why": "Reads your payments, refunds and payouts to report revenue. The bookkeeper only reads; it never charges, refunds or moves money."
+          },
+          {
+            "capability": "accounting",
+            "anyOf": [
+              "xero"
+            ],
+            "why": "Reads your invoices, bills and bank transactions for a fuller picture of spending. The bookkeeper only reads.",
+            "optional": true
+          }
+        ],
+        "setupQuestions": [
+          {
+            "id": "reportDay",
+            "header": "Report day",
+            "prompt": "Which day should the weekly summary arrive?",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "monday",
+                "label": "Monday",
+                "description": "Start the week knowing how the last one went.",
+                "recommended": true
+              },
+              {
+                "id": "friday",
+                "label": "Friday",
+                "description": "Close the week with the numbers."
+              }
+            ]
+          },
+          {
+            "id": "currency",
+            "header": "Currency",
+            "prompt": "Which currency should totals be reported in?",
+            "helpText": "Use a three-letter code such as USD, EUR or GBP. Amounts in other currencies are shown as they are, with a note.",
+            "required": true,
+            "answerMode": "text",
+            "initialText": "USD",
+            "textValidation": {
+              "maxLength": 20
+            }
+          }
+        ],
+        "outwardActions": [],
+        "readOnly": true,
+        "defaultBudgetMonthlyCents": 1500,
+        "scheduleByAnswer": {
+          "weekly-revenue-and-spend-summary": {
+            "questionId": "reportDay",
+            "cron": {
+              "monday": "0 9 * * 1",
+              "friday": "0 9 * * 5"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "paperclipai:optional:staples:coding-agent",
+      "key": "paperclipai/optional/staples/coding-agent",
+      "kind": "optional",
+      "category": "staples",
+      "slug": "coding-agent",
+      "name": "Coding agent",
+      "description": "Works on your GitHub repository — sorts new issues every weekday, fixes bugs, opens pull requests with tests for you to review, and checks dependencies and project health every week.",
+      "path": "catalog/optional/staples/coding-agent",
+      "entrypoint": "TEAM.md",
+      "schema": "agentcompanies/v1",
+      "defaultInstall": false,
+      "recommendedForCompanyTypes": [
+        "startup",
+        "solo-founder",
+        "agency"
+      ],
+      "tags": [
+        "engineering",
+        "github",
+        "code",
+        "pull-requests"
+      ],
+      "counts": {
+        "agents": 1,
+        "projects": 1,
+        "tasks": 1,
+        "routines": 2,
+        "localSkills": 2,
+        "catalogSkills": 3,
+        "externalSkillSources": 0
+      },
+      "rootAgentSlugs": [
+        "coding-agent"
+      ],
+      "agentSlugs": [
+        "coding-agent"
+      ],
+      "projectSlugs": [
+        "code"
+      ],
+      "requiredSkills": [
+        {
+          "type": "catalog",
+          "ref": "github-pr-workflow",
+          "agentSlugs": [
+            "coding-agent"
+          ],
+          "resolved": true,
+          "catalogSkillId": "paperclipai:bundled:software-development:github-pr-workflow",
+          "catalogSkillKey": "paperclipai/bundled/software-development/github-pr-workflow"
+        },
+        {
+          "type": "catalog",
+          "ref": "issue-triage",
+          "agentSlugs": [
+            "coding-agent"
+          ],
+          "resolved": true,
+          "catalogSkillId": "paperclipai:bundled:paperclip-operations:issue-triage",
+          "catalogSkillKey": "paperclipai/bundled/paperclip-operations/issue-triage"
+        },
+        {
+          "type": "catalog",
+          "ref": "qa-acceptance",
+          "agentSlugs": [
+            "coding-agent"
+          ],
+          "resolved": true,
+          "catalogSkillId": "paperclipai:bundled:quality:qa-acceptance",
+          "catalogSkillKey": "paperclipai/bundled/quality/qa-acceptance"
+        },
+        {
+          "type": "local",
+          "ref": "github-issue-sorting",
+          "agentSlugs": [
+            "coding-agent"
+          ],
+          "resolved": true,
+          "localPath": "skills/github-issue-sorting/SKILL.md"
+        },
+        {
+          "type": "local",
+          "ref": "repo-health-check",
+          "agentSlugs": [
+            "coding-agent"
+          ],
+          "resolved": true,
+          "localPath": "skills/repo-health-check/SKILL.md"
+        }
+      ],
+      "envInputs": [],
+      "sourceRefs": [],
+      "files": [
+        {
+          "path": "TEAM.md",
+          "kind": "team",
+          "sizeBytes": 1748,
+          "sha256": "ccb3ce77aefe5dfef4d26162891dc2f084e16bd2d5d07cb9889a7abdaaa1069b"
+        },
+        {
+          "path": "agents/coding-agent/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 8415,
+          "sha256": "3a25618be4e4e5a4063ecff0e20c95f19cef427e5354f02461c7d51a78647998"
+        },
+        {
+          "path": "projects/code/PROJECT.md",
+          "kind": "project",
+          "sizeBytes": 247,
+          "sha256": "49ca8f653efdbdc903f5ab19b37747165e62f86504ec8574ae4401f6c27e760c"
+        },
+        {
+          "path": "projects/code/tasks/architecture-note/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1526,
+          "sha256": "c35a468f097ffe8696a97e09ff2782d80bda9e879b31577e149d09450aec673e"
+        },
+        {
+          "path": "projects/code/tasks/daily-issue-triage/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1589,
+          "sha256": "b7f96c81a670f50a92e05d231da43ddb12ddac417c0f6775e552eecf1728dbe5"
+        },
+        {
+          "path": "projects/code/tasks/weekly-dependency-and-health-check/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1346,
+          "sha256": "9bb98367668c5c6b024630e1ffd29e69996d2d0f0dd355c7bea1386a99677be5"
+        },
+        {
+          "path": "skills/github-issue-sorting/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3268,
+          "sha256": "27df56f15f41ea084668d2b08e782764988a71405f853ec571e97da656d85730"
+        },
+        {
+          "path": "skills/repo-health-check/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2750,
+          "sha256": "636c7cb0da5648db7813bc423ae05972171f5a52b9a0ea28be402301ee9636f1"
+        },
+        {
+          "path": "staples.template.json",
+          "kind": "other",
+          "sizeBytes": 2232,
+          "sha256": "e12e315a4fbe7dda745eb8db067470584a1df71902d1d23ccb8273f58d2af6a6"
+        }
+      ],
+      "trustLevel": "assets",
+      "compatibility": "compatible",
+      "contentHash": "sha256:c403806b7c3103e141f9e229a598c8022507ddc7c5b114d1ac2e5fda043347af",
+      "staplesTemplate": {
+        "version": "1.2.0",
+        "tagline": "Triages GitHub issues, fixes bugs and opens pull requests for review",
+        "icon": "code",
+        "marketplaceCategory": "engineering",
+        "requiredApps": [
+          {
+            "capability": "code",
+            "anyOf": [
+              "github"
+            ],
+            "why": "Reads your repository and issues, and opens pull requests. Merging, pushing to your main branch, deleting branches and closing issues wait for your approval."
+          }
+        ],
+        "setupQuestions": [
+          {
+            "id": "repository",
+            "header": "Repository",
+            "prompt": "Which GitHub repository should the coding agent work on?",
+            "helpText": "Type it as owner/name, for example acme/website. If you leave the suggestion, the agent lists your repositories and asks you to pick one.",
+            "required": true,
+            "answerMode": "text",
+            "initialText": "Our main repository (ask me which one)",
+            "textValidation": {
+              "maxLength": 200
+            }
+          },
+          {
+            "id": "branchPolicy",
+            "header": "Branch policy",
+            "prompt": "How should changes reach your main branch?",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "pull_requests",
+                "label": "Open pull requests, never push to main",
+                "description": "Every change is a pull request you review and merge.",
+                "recommended": true
+              },
+              {
+                "id": "small_fixes",
+                "label": "Push small fixes to main",
+                "description": "Typos, comments and one-line fixes go to main once you say yes to each one. Everything else is a pull request."
+              }
+            ]
+          },
+          {
+            "id": "testCommand",
+            "header": "Test command",
+            "prompt": "How are the tests run?",
+            "helpText": "For example: npm test, pnpm test, pytest, go test ./...",
+            "required": true,
+            "answerMode": "text",
+            "initialText": "detect from the repo",
+            "textValidation": {
+              "maxLength": 200
+            }
+          }
+        ],
+        "outwardActions": [
+          {
+            "capability": "code",
+            "label": "Merging and pushing to the default branch",
+            "destructiveLabel": "Deleting branches or closing issues",
+            "toolPatterns": [
+              "*merge*",
+              "*push*",
+              "*create_or_update_file*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*",
+              "*close*",
+              "*update_issue*"
+            ]
+          }
+        ],
+        "defaultBudgetMonthlyCents": 6000
+      }
+    },
+    {
+      "id": "paperclipai:optional:staples:content-creator",
+      "key": "paperclipai/optional/staples/content-creator",
+      "kind": "optional",
+      "category": "staples",
+      "slug": "content-creator",
+      "name": "Content creator",
+      "description": "Plans and writes social posts and blog articles in your voice, on a steady schedule, and publishes them only after you approve.",
+      "path": "catalog/optional/staples/content-creator",
+      "entrypoint": "TEAM.md",
+      "schema": "agentcompanies/v1",
+      "defaultInstall": false,
+      "recommendedForCompanyTypes": [
+        "small-business",
+        "startup",
+        "agency"
+      ],
+      "tags": [
+        "content",
+        "social-media",
+        "blog",
+        "marketing"
+      ],
+      "counts": {
+        "agents": 1,
+        "projects": 1,
+        "tasks": 1,
+        "routines": 2,
+        "localSkills": 2,
+        "catalogSkills": 0,
+        "externalSkillSources": 0
+      },
+      "rootAgentSlugs": [
+        "content-creator"
+      ],
+      "agentSlugs": [
+        "content-creator"
+      ],
+      "projectSlugs": [
+        "content"
+      ],
+      "requiredSkills": [
+        {
+          "type": "local",
+          "ref": "content-calendar-planning",
+          "agentSlugs": [
+            "content-creator"
+          ],
+          "resolved": true,
+          "localPath": "skills/content-calendar-planning/SKILL.md"
+        },
+        {
+          "type": "local",
+          "ref": "post-writing",
+          "agentSlugs": [
+            "content-creator"
+          ],
+          "resolved": true,
+          "localPath": "skills/post-writing/SKILL.md"
+        }
+      ],
+      "envInputs": [],
+      "sourceRefs": [],
+      "files": [
+        {
+          "path": "TEAM.md",
+          "kind": "team",
+          "sizeBytes": 1507,
+          "sha256": "f70980474fa006739f4a386be2a84eef2974d27359562107dd2c31cca6f4b13c"
+        },
+        {
+          "path": "agents/content-creator/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 6476,
+          "sha256": "8f2a7296f6bf551f9ef831c13b5d8f252422d5fe00fc2bbb75d8b9ef7e72617d"
+        },
+        {
+          "path": "projects/content/PROJECT.md",
+          "kind": "project",
+          "sizeBytes": 194,
+          "sha256": "5168239349a04932e13d00e1673536013b529e548a4606cc18929328b4aaab21"
+        },
+        {
+          "path": "projects/content/tasks/draft-content-calendar/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1232,
+          "sha256": "9d0370d6c026951e3022f026be99157c6326346347fd3b8f84d195e160bab7db"
+        },
+        {
+          "path": "projects/content/tasks/publish-todays-posts/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1204,
+          "sha256": "f2226e6816993d78c65e3a5721dbf9f33e182442a7d9e620a6f0f64ae5da1334"
+        },
+        {
+          "path": "projects/content/tasks/weekly-content-plan/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1633,
+          "sha256": "5f959df4fd78e5f7f9009ec2c7f6a6d48652cc8e236c93eb896620f7c94325e8"
+        },
+        {
+          "path": "skills/content-calendar-planning/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3134,
+          "sha256": "a91c72f7430f1ee7949775ce62ccc12a9e8a54db76bdaa80bed7e044a1094880"
+        },
+        {
+          "path": "skills/post-writing/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3084,
+          "sha256": "4209536250f705b4bbaac9ebbf7215bbb6912d0175b5134fc7fcfe72614bb0b5"
+        },
+        {
+          "path": "staples.template.json",
+          "kind": "other",
+          "sizeBytes": 2648,
+          "sha256": "d030c795f28871206b76f1005ac95be0cf2cf4c057e402ae52a573521fef3deb"
+        }
+      ],
+      "trustLevel": "assets",
+      "compatibility": "compatible",
+      "contentHash": "sha256:a054c5b449977d4da68da8fd4a45556df0bf6790b2a3a63aec130257da099c77",
+      "staplesTemplate": {
+        "version": "1.2.0",
+        "tagline": "Plans, writes and publishes your posts on a steady schedule",
+        "icon": "pen-line",
+        "marketplaceCategory": "content",
+        "requiredApps": [
+          {
+            "capability": "social",
+            "anyOf": [
+              "linkedin",
+              "x"
+            ],
+            "why": "Publishes your social posts. Without it, posts are drafted for you to copy and post yourself.",
+            "optional": true
+          },
+          {
+            "capability": "cms",
+            "anyOf": [
+              "webflow"
+            ],
+            "why": "Publishes blog articles to your website. Without it, articles are drafted for you to publish yourself.",
+            "optional": true
+          }
+        ],
+        "setupQuestions": [
+          {
+            "id": "audience",
+            "header": "Audience",
+            "prompt": "Who are your posts for?",
+            "helpText": "Describe the people you want to reach, in your own words.",
+            "required": true,
+            "answerMode": "text",
+            "initialText": "People who could become our customers, and the customers we already have",
+            "textValidation": {
+              "maxLength": 500
+            }
+          },
+          {
+            "id": "tone",
+            "header": "Tone",
+            "prompt": "How should your posts sound?",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "friendly",
+                "label": "Friendly",
+                "description": "Warm and approachable, like talking to a regular customer.",
+                "recommended": true
+              },
+              {
+                "id": "professional",
+                "label": "Professional",
+                "description": "Clear and polished, like a trusted adviser."
+              },
+              {
+                "id": "playful",
+                "label": "Playful",
+                "description": "Light and fun, with a bit of humour."
+              }
+            ]
+          },
+          {
+            "id": "cadence",
+            "header": "How often",
+            "prompt": "How often should you post?",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "twice_weekly",
+                "label": "2 posts a week",
+                "description": "Steady and easy to keep up.",
+                "recommended": true
+              },
+              {
+                "id": "weekly",
+                "label": "1 post a week",
+                "description": "A light, regular presence."
+              },
+              {
+                "id": "daily",
+                "label": "Every weekday",
+                "description": "Five posts a week, for fast-moving audiences."
+              }
+            ]
+          }
+        ],
+        "outwardActions": [
+          {
+            "capability": "social",
+            "label": "Publishing posts",
+            "destructiveLabel": "Deleting posts",
+            "toolPatterns": [
+              "*post*",
+              "*publish*",
+              "*share*",
+              "*tweet*",
+              "*schedule*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*"
+            ]
+          },
+          {
+            "capability": "cms",
+            "label": "Publishing to your site",
+            "destructiveLabel": "Deleting site content",
+            "toolPatterns": [
+              "*publish*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*"
+            ]
+          }
+        ],
+        "defaultBudgetMonthlyCents": 2500
+      }
+    },
+    {
+      "id": "paperclipai:optional:staples:email-secretary",
+      "key": "paperclipai/optional/staples/email-secretary",
+      "kind": "optional",
+      "category": "staples",
+      "slug": "email-secretary",
+      "name": "Email secretary",
+      "description": "Sorts your inbox every morning, drafts replies in your voice, flags what is urgent, and sends you a short end-of-day digest.",
+      "path": "catalog/optional/staples/email-secretary",
+      "entrypoint": "TEAM.md",
+      "schema": "agentcompanies/v1",
+      "defaultInstall": false,
+      "recommendedForCompanyTypes": [
+        "small-business",
+        "solo-founder",
+        "agency"
+      ],
+      "tags": [
+        "email",
+        "inbox",
+        "assistant",
+        "communication"
+      ],
+      "counts": {
+        "agents": 1,
+        "projects": 1,
+        "tasks": 1,
+        "routines": 2,
+        "localSkills": 2,
+        "catalogSkills": 0,
+        "externalSkillSources": 0
+      },
+      "rootAgentSlugs": [
+        "email-secretary"
+      ],
+      "agentSlugs": [
+        "email-secretary"
+      ],
+      "projectSlugs": [
+        "inbox"
+      ],
+      "requiredSkills": [
+        {
+          "type": "local",
+          "ref": "inbox-digest",
+          "agentSlugs": [
+            "email-secretary"
+          ],
+          "resolved": true,
+          "localPath": "skills/inbox-digest/SKILL.md"
+        },
+        {
+          "type": "local",
+          "ref": "inbox-triage",
+          "agentSlugs": [
+            "email-secretary"
+          ],
+          "resolved": true,
+          "localPath": "skills/inbox-triage/SKILL.md"
+        }
+      ],
+      "envInputs": [],
+      "sourceRefs": [],
+      "files": [
+        {
+          "path": "TEAM.md",
+          "kind": "team",
+          "sizeBytes": 1888,
+          "sha256": "9bbbe1614f7b81e212305da73531d9f4d5688cbc22678007af2374065d71ff4e"
+        },
+        {
+          "path": "agents/email-secretary/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 6626,
+          "sha256": "33a641d7f21c660b44e3175ded42565d97baae10ad01bca823049032a5d91392"
+        },
+        {
+          "path": "projects/inbox/PROJECT.md",
+          "kind": "project",
+          "sizeBytes": 198,
+          "sha256": "48011236969d20d7b6f03e43a36e1877e5390133802ad36ac605f3106ad293c2"
+        },
+        {
+          "path": "projects/inbox/tasks/daily-digest/TASK.md",
+          "kind": "task",
+          "sizeBytes": 814,
+          "sha256": "aab8ce7c113dbb41d963d39fe6f55c7d29dc20c9fc77dadaf23436d3f4e1c4c0"
+        },
+        {
+          "path": "projects/inbox/tasks/learn-my-inbox/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1699,
+          "sha256": "65a718dfac57ca5b03f4088e9d73cd1429826414536f6f255afee84abcf36da1"
+        },
+        {
+          "path": "projects/inbox/tasks/morning-inbox-sweep/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1056,
+          "sha256": "7b47fb3047cd1bbeacaaf3f96d132a6c06b2bf68f224a712b1292dbbaa67f6c7"
+        },
+        {
+          "path": "skills/inbox-digest/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2209,
+          "sha256": "1ce61436ea8eca4e0e31f6f9c4b7f3b289035c9a1498db42ce9ec512e4e9387d"
+        },
+        {
+          "path": "skills/inbox-triage/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3446,
+          "sha256": "0d7e45cee2b02a862a0c8aa60d3cf04087632943050e85467d04a85d84674516"
+        },
+        {
+          "path": "staples.template.json",
+          "kind": "other",
+          "sizeBytes": 2932,
+          "sha256": "aac0a8f2dc22bfb7b9a4375f1f875ad7f19ca47c1d769091df24b5bd18444222"
+        }
+      ],
+      "trustLevel": "assets",
+      "compatibility": "compatible",
+      "contentHash": "sha256:6aabd4b9ff9398c4b9924f171ebc0f8fbee73f0b47a8c2d1092fea0a304daf52",
+      "staplesTemplate": {
+        "version": "1.2.0",
+        "tagline": "Sorts your inbox, drafts replies and sends a daily digest",
+        "icon": "mail",
+        "marketplaceCategory": "communication",
+        "requiredApps": [
+          {
+            "capability": "email",
+            "anyOf": [
+              "agentmail",
+              "gmail"
+            ],
+            "why": "Reads your email and prepares replies. With Gmail, replies are saved as drafts for you to send; with AgentMail, they can be sent after you approve."
+          },
+          {
+            "capability": "calendar",
+            "anyOf": [
+              "google-calendar"
+            ],
+            "why": "Checks when you are free if an email asks for a meeting.",
+            "optional": true
+          }
+        ],
+        "setupQuestions": [
+          {
+            "id": "callMe",
+            "header": "Your name",
+            "prompt": "What should your secretary call you?",
+            "helpText": "Used in your digests and to sign drafted replies.",
+            "required": true,
+            "answerMode": "text",
+            "initialText": "{{person.name}}",
+            "textValidation": {
+              "maxLength": 100
+            }
+          },
+          {
+            "id": "sweepTime",
+            "header": "Morning sweep",
+            "prompt": "When should the morning inbox sweep run?",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "8am",
+                "label": "8am on weekdays",
+                "description": "Ready when most working days start.",
+                "recommended": true
+              },
+              {
+                "id": "7am",
+                "label": "7am on weekdays",
+                "description": "For early starts."
+              },
+              {
+                "id": "9am",
+                "label": "9am on weekdays",
+                "description": "Catches the early-morning email too."
+              }
+            ]
+          },
+          {
+            "id": "urgent",
+            "header": "Urgent",
+            "prompt": "What counts as urgent for you?",
+            "helpText": "Urgent email is flagged to you straight away instead of waiting for the digest.",
+            "required": true,
+            "answerMode": "text",
+            "initialText": "customers, money, deadlines",
+            "textValidation": {
+              "maxLength": 500
+            }
+          }
+        ],
+        "outwardActions": [
+          {
+            "capability": "email",
+            "label": "Sending email",
+            "destructiveLabel": "Deleting email",
+            "toolPatterns": [
+              "*send*",
+              "*reply*",
+              "*forward*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*",
+              "*trash*"
+            ]
+          },
+          {
+            "capability": "calendar",
+            "label": "Accepting meetings or changing your calendar",
+            "destructiveLabel": "Deleting calendar events",
+            "toolPatterns": [
+              "*create_event*",
+              "*update_event*",
+              "*patch_event*",
+              "*move_event*",
+              "*insert_event*",
+              "*quick_add*",
+              "*respond*",
+              "*accept*",
+              "*decline*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*"
+            ]
+          }
+        ],
+        "defaultBudgetMonthlyCents": 3000,
+        "scheduleByAnswer": {
+          "morning-inbox-sweep": {
+            "questionId": "sweepTime",
+            "cron": {
+              "8am": "0 8 * * 1-5",
+              "7am": "0 7 * * 1-5",
+              "9am": "0 9 * * 1-5"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "paperclipai:optional:staples:newsletter",
+      "key": "paperclipai/optional/staples/newsletter",
+      "kind": "optional",
+      "category": "staples",
+      "slug": "newsletter",
+      "name": "Newsletter editor",
+      "description": "Researches, writes and schedules your email newsletter on a steady cadence, through Beehiiv, Resend or Klaviyo, after you approve each issue.",
+      "path": "catalog/optional/staples/newsletter",
+      "entrypoint": "TEAM.md",
+      "schema": "agentcompanies/v1",
+      "defaultInstall": false,
+      "recommendedForCompanyTypes": [
+        "small-business",
+        "creator",
+        "startup"
+      ],
+      "tags": [
+        "newsletter",
+        "email-marketing",
+        "content",
+        "routines"
+      ],
+      "counts": {
+        "agents": 1,
+        "projects": 1,
+        "tasks": 1,
+        "routines": 2,
+        "localSkills": 2,
+        "catalogSkills": 0,
+        "externalSkillSources": 0
+      },
+      "rootAgentSlugs": [
+        "newsletter-editor"
+      ],
+      "agentSlugs": [
+        "newsletter-editor"
+      ],
+      "projectSlugs": [
+        "newsletter"
+      ],
+      "requiredSkills": [
+        {
+          "type": "local",
+          "ref": "newsletter-issue",
+          "agentSlugs": [
+            "newsletter-editor"
+          ],
+          "resolved": true,
+          "localPath": "skills/newsletter-issue/SKILL.md"
+        },
+        {
+          "type": "local",
+          "ref": "newsletter-sending",
+          "agentSlugs": [
+            "newsletter-editor"
+          ],
+          "resolved": true,
+          "localPath": "skills/newsletter-sending/SKILL.md"
+        }
+      ],
+      "envInputs": [],
+      "sourceRefs": [],
+      "files": [
+        {
+          "path": "TEAM.md",
+          "kind": "team",
+          "sizeBytes": 1410,
+          "sha256": "1916c032a2f233090b510b7323e1c39ed1f9410d18ccb48aa8f6852b5dfda163"
+        },
+        {
+          "path": "agents/newsletter-editor/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 6333,
+          "sha256": "739e3453724f93ded6500109465b04476b63f08e5a66699e4829c29fcccdc5f5"
+        },
+        {
+          "path": "projects/newsletter/PROJECT.md",
+          "kind": "project",
+          "sizeBytes": 201,
+          "sha256": "9c5b7e6023d8c6d86e1328852dee6817254bf0d128f7d28978eb3ab5600b525c"
+        },
+        {
+          "path": "projects/newsletter/tasks/draft-the-issue/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1078,
+          "sha256": "55ec8678823d92dabac87f30613ba884d972bb8bc5c439440979f248c49a5694"
+        },
+        {
+          "path": "projects/newsletter/tasks/plan-the-newsletter/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1431,
+          "sha256": "6d277c1ade5c50f6b2ee64f781b29a7f046542f1114b36681297cc28540d4589"
+        },
+        {
+          "path": "projects/newsletter/tasks/schedule-the-issue/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1439,
+          "sha256": "a34e57033c0ebaf17d07f014d6ba804d3fd4d1432427d94df36225f9f88c63bd"
+        },
+        {
+          "path": "skills/newsletter-issue/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3420,
+          "sha256": "87e16296bd29cdc17003377b1d1df017cfcc0651662f7d9b00873f414400f666"
+        },
+        {
+          "path": "skills/newsletter-sending/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2885,
+          "sha256": "bc1a463b6064f51d23f620f2cae42d6e617b40d61aa29cf7e152f3b952b0d4d0"
+        },
+        {
+          "path": "staples.template.json",
+          "kind": "other",
+          "sizeBytes": 2569,
+          "sha256": "f4c2b42552bae5e51a4df56bab6220f86dc51c8583fbee658779306ab2eede2a"
+        }
+      ],
+      "trustLevel": "assets",
+      "compatibility": "compatible",
+      "contentHash": "sha256:2d1aba7faed48de49cb921a3314211d24675dc367d5ddb712eea4592d28e3b7d",
+      "staplesTemplate": {
+        "version": "1.2.0",
+        "tagline": "Researches, writes and schedules your newsletter on time",
+        "icon": "newspaper",
+        "marketplaceCategory": "content",
+        "requiredApps": [
+          {
+            "capability": "newsletter",
+            "anyOf": [
+              "beehiiv",
+              "resend",
+              "klaviyo"
+            ],
+            "why": "Holds your subscriber list and sends each issue."
+          }
+        ],
+        "setupQuestions": [
+          {
+            "id": "topic",
+            "header": "Topic",
+            "prompt": "What is your newsletter about?",
+            "helpText": "Say what subscribers should get from each issue.",
+            "required": true,
+            "answerMode": "text",
+            "initialText": "News, tips and offers from our business for our customers",
+            "textValidation": {
+              "maxLength": 500
+            }
+          },
+          {
+            "id": "cadence",
+            "header": "How often",
+            "prompt": "How often should an issue go out?",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "weekly",
+                "label": "Weekly",
+                "description": "Keeps you top of mind.",
+                "recommended": true
+              },
+              {
+                "id": "biweekly",
+                "label": "Every two weeks",
+                "description": "Less work, still regular."
+              },
+              {
+                "id": "monthly",
+                "label": "Monthly",
+                "description": "A fuller round-up once a month."
+              }
+            ]
+          },
+          {
+            "id": "sendDay",
+            "header": "Send day",
+            "prompt": "Which day should issues go out?",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "tuesday",
+                "label": "Tuesday",
+                "description": "A common day for good open rates.",
+                "recommended": true
+              },
+              {
+                "id": "thursday",
+                "label": "Thursday",
+                "description": "Lands before the weekend."
+              }
+            ]
+          }
+        ],
+        "outwardActions": [
+          {
+            "capability": "newsletter",
+            "label": "Sending to your list",
+            "destructiveLabel": "Deleting issues, lists or campaigns",
+            "toolPatterns": [
+              "*send*",
+              "*schedule*",
+              "*publish*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*"
+            ]
+          }
+        ],
+        "defaultBudgetMonthlyCents": 2000,
+        "scheduleByAnswer": {
+          "draft-the-issue": {
+            "questionId": "sendDay",
+            "cron": {
+              "tuesday": "0 9 * * 0",
+              "thursday": "0 9 * * 2"
+            }
+          },
+          "schedule-the-issue": {
+            "questionId": "sendDay",
+            "cron": {
+              "tuesday": "0 9 * * 2",
+              "thursday": "0 9 * * 4"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "paperclipai:optional:staples:researcher",
+      "key": "paperclipai/optional/staples/researcher",
+      "kind": "optional",
+      "category": "staples",
+      "slug": "researcher",
+      "name": "Researcher",
+      "description": "Watches your market and sends a short weekly brief on competitors, customers and trends, with sources and what it means for you.",
+      "path": "catalog/optional/staples/researcher",
+      "entrypoint": "TEAM.md",
+      "schema": "agentcompanies/v1",
+      "defaultInstall": false,
+      "recommendedForCompanyTypes": [
+        "small-business",
+        "startup",
+        "agency"
+      ],
+      "tags": [
+        "research",
+        "market",
+        "competitors",
+        "weekly-brief"
+      ],
+      "counts": {
+        "agents": 1,
+        "projects": 1,
+        "tasks": 1,
+        "routines": 1,
+        "localSkills": 2,
+        "catalogSkills": 0,
+        "externalSkillSources": 0
+      },
+      "rootAgentSlugs": [
+        "researcher"
+      ],
+      "agentSlugs": [
+        "researcher"
+      ],
+      "projectSlugs": [
+        "research"
+      ],
+      "requiredSkills": [
+        {
+          "type": "local",
+          "ref": "market-brief",
+          "agentSlugs": [
+            "researcher"
+          ],
+          "resolved": true,
+          "localPath": "skills/market-brief/SKILL.md"
+        },
+        {
+          "type": "local",
+          "ref": "research-sources",
+          "agentSlugs": [
+            "researcher"
+          ],
+          "resolved": true,
+          "localPath": "skills/research-sources/SKILL.md"
+        }
+      ],
+      "envInputs": [],
+      "sourceRefs": [],
+      "files": [
+        {
+          "path": "TEAM.md",
+          "kind": "team",
+          "sizeBytes": 1325,
+          "sha256": "331e8e496c5423d9170ab937d12a8c43a4ebacfc73e55e860c820cea24e8df85"
+        },
+        {
+          "path": "agents/researcher/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 5886,
+          "sha256": "fa086a56a6033c7dd5787f94dbe1f303ce02adcc1e3be8141364ea3827702a94"
+        },
+        {
+          "path": "projects/research/PROJECT.md",
+          "kind": "project",
+          "sizeBytes": 210,
+          "sha256": "a07bdaf1142e08a6e9867b845b04f0432de97307d7be7ebad940b5859a9ce3d5"
+        },
+        {
+          "path": "projects/research/tasks/learn-the-business/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1408,
+          "sha256": "70faaef088fb1b673b51b6577819f2b00695e1278c314d6139d59a26c649027b"
+        },
+        {
+          "path": "projects/research/tasks/weekly-market-brief/TASK.md",
+          "kind": "task",
+          "sizeBytes": 916,
+          "sha256": "3a37c67f777243605f947bb305cf78af7c64a9b7aa2fe82be353f7a1c5ba00e4"
+        },
+        {
+          "path": "skills/market-brief/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 4139,
+          "sha256": "83f2e4391c0ef1337493afaa3bccd0597cc1859510915d2fead94555e9c9509e"
+        },
+        {
+          "path": "skills/research-sources/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2819,
+          "sha256": "98f582fb593f24b6abe20bfbdb03019275ef5681f433853b74c89d364989dae8"
+        },
+        {
+          "path": "staples.template.json",
+          "kind": "other",
+          "sizeBytes": 2026,
+          "sha256": "e2ce5291426310635b1572974e32994c87ae64298e746b4c89ffea465086b4cc"
+        }
+      ],
+      "trustLevel": "assets",
+      "compatibility": "compatible",
+      "contentHash": "sha256:5a149e0084d9fba9c867046fe86f216539774c0b58ca6e98179bfb94bd29e597",
+      "staplesTemplate": {
+        "version": "1.2.0",
+        "tagline": "A weekly brief on your market, competitors and customers",
+        "icon": "search",
+        "marketplaceCategory": "research",
+        "requiredApps": [],
+        "setupQuestions": [
+          {
+            "id": "focus",
+            "header": "Focus",
+            "prompt": "What should the researcher keep an eye on?",
+            "helpText": "Your Company Brief already describes the business. Name the topics, competitors or customer groups that matter most right now.",
+            "required": true,
+            "answerMode": "text",
+            "initialText": "Our market: competitors, what customers want, and trends that could affect our business",
+            "textValidation": {
+              "maxLength": 500
+            }
+          },
+          {
+            "id": "reportDay",
+            "header": "Report day",
+            "prompt": "Which day should the weekly brief arrive?",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "monday",
+                "label": "Monday",
+                "description": "Start the week knowing what changed.",
+                "recommended": true
+              },
+              {
+                "id": "friday",
+                "label": "Friday",
+                "description": "Look back on the week before the weekend."
+              }
+            ]
+          },
+          {
+            "id": "depth",
+            "header": "Depth",
+            "prompt": "How detailed should each brief be?",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "brief",
+                "label": "Brief",
+                "description": "A five-minute read: the top few items and what they mean.",
+                "recommended": true
+              },
+              {
+                "id": "deep_dive",
+                "label": "Deep dive",
+                "description": "A fuller analysis with more background and more sources."
+              }
+            ]
+          }
+        ],
+        "outwardActions": [],
+        "defaultBudgetMonthlyCents": 2000,
+        "scheduleByAnswer": {
+          "weekly-market-brief": {
+            "questionId": "reportDay",
+            "cron": {
+              "monday": "0 9 * * 1",
+              "friday": "0 9 * * 5"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "paperclipai:optional:staples:social-media-manager",
+      "key": "paperclipai/optional/staples/social-media-manager",
+      "kind": "optional",
+      "category": "staples",
+      "slug": "social-media-manager",
+      "name": "Social media manager",
+      "description": "Plans a week of social posts every Monday, publishes each one on its day after you approve it, and checks comments and mentions every afternoon.",
+      "path": "catalog/optional/staples/social-media-manager",
+      "entrypoint": "TEAM.md",
+      "schema": "agentcompanies/v1",
+      "defaultInstall": false,
+      "recommendedForCompanyTypes": [
+        "small-business",
+        "startup",
+        "agency"
+      ],
+      "tags": [
+        "social-media",
+        "linkedin",
+        "marketing",
+        "content"
+      ],
+      "counts": {
+        "agents": 1,
+        "projects": 1,
+        "tasks": 1,
+        "routines": 2,
+        "localSkills": 2,
+        "catalogSkills": 0,
+        "externalSkillSources": 0
+      },
+      "rootAgentSlugs": [
+        "social-media-manager"
+      ],
+      "agentSlugs": [
+        "social-media-manager"
+      ],
+      "projectSlugs": [
+        "social"
+      ],
+      "requiredSkills": [
+        {
+          "type": "local",
+          "ref": "social-engagement",
+          "agentSlugs": [
+            "social-media-manager"
+          ],
+          "resolved": true,
+          "localPath": "skills/social-engagement/SKILL.md"
+        },
+        {
+          "type": "local",
+          "ref": "social-post-plan",
+          "agentSlugs": [
+            "social-media-manager"
+          ],
+          "resolved": true,
+          "localPath": "skills/social-post-plan/SKILL.md"
+        }
+      ],
+      "envInputs": [],
+      "sourceRefs": [],
+      "files": [
+        {
+          "path": "TEAM.md",
+          "kind": "team",
+          "sizeBytes": 1582,
+          "sha256": "004f0a627cc4e58e3f10cb82542bf22d6e116a8d72e4fc5bb6e3b5516008192c"
+        },
+        {
+          "path": "agents/social-media-manager/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 7198,
+          "sha256": "a9be8ddffdb82b8b739966183d9990cea4ac3231b552da4fbdfbaec72cc0a597"
+        },
+        {
+          "path": "projects/social/PROJECT.md",
+          "kind": "project",
+          "sizeBytes": 234,
+          "sha256": "a16791492861cbb335dbfa14d35cae5f794496619f59f1834cd42c7eed36c9d4"
+        },
+        {
+          "path": "projects/social/tasks/audit-profiles/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1572,
+          "sha256": "990c4d878f1fd9a722374060bad2799a2bc475e7364ece118984cc55ec406832"
+        },
+        {
+          "path": "projects/social/tasks/engagement-check/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1723,
+          "sha256": "f6cc4b5774717a2c7753c981a41c2a75a10ebf15933f22d794a7ec3eeb2efa4b"
+        },
+        {
+          "path": "projects/social/tasks/weekly-post-plan/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1818,
+          "sha256": "9a2bcebb6932fe4f503e534c630836fc04e26e010f2a222724f394976d7aae07"
+        },
+        {
+          "path": "skills/social-engagement/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2941,
+          "sha256": "b4e60fd6cd5335d20f14d9b63712b8ef6da3a7eabb2b3ccfe0ff5709cf0922e7"
+        },
+        {
+          "path": "skills/social-post-plan/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3384,
+          "sha256": "588f0e478a7d933f62ad398be84f5f95e3e1425ff96a646b0baa4edc90cc4ad7"
+        },
+        {
+          "path": "staples.template.json",
+          "kind": "other",
+          "sizeBytes": 2488,
+          "sha256": "5e0469614c37995ae8342d012f3fcae9cb15b872fa30d1c1c18e7327ddec5e96"
+        }
+      ],
+      "trustLevel": "assets",
+      "compatibility": "compatible",
+      "contentHash": "sha256:798437c6c6b01430a0484b8d0a55a7c22e69102169448e1c141bc4bf04b31493",
+      "staplesTemplate": {
+        "version": "1.2.0",
+        "tagline": "Plans your social posts each week and keeps an eye on replies",
+        "icon": "share-2",
+        "marketplaceCategory": "content",
+        "preview": true,
+        "requiredApps": [
+          {
+            "capability": "social",
+            "anyOf": [
+              "linkedin",
+              "x"
+            ],
+            "why": "Publishes your posts and reads comments and mentions. Every post waits for your approval unless you turn on autopilot for posting."
+          }
+        ],
+        "setupQuestions": [
+          {
+            "id": "platforms",
+            "header": "Platforms",
+            "prompt": "Where should your social media manager post?",
+            "helpText": "You can add the other one later.",
+            "required": true,
+            "answerMode": "multi_select",
+            "options": [
+              {
+                "id": "linkedin",
+                "label": "LinkedIn",
+                "description": "Best for reaching other businesses and professionals.",
+                "recommended": true
+              },
+              {
+                "id": "x",
+                "label": "X",
+                "description": "Short, frequent posts and quick conversations."
+              }
+            ]
+          },
+          {
+            "id": "voice",
+            "header": "Voice",
+            "prompt": "How should your posts sound?",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "friendly",
+                "label": "Friendly",
+                "description": "Warm and approachable, like talking to a regular customer.",
+                "recommended": true
+              },
+              {
+                "id": "expert",
+                "label": "Expert",
+                "description": "Knowledgeable and useful, sharing what you know."
+              },
+              {
+                "id": "bold",
+                "label": "Bold",
+                "description": "Confident and direct, with strong opinions."
+              }
+            ]
+          },
+          {
+            "id": "postsPerWeek",
+            "header": "Posts per week",
+            "prompt": "How many posts a week?",
+            "helpText": "Counted across all your platforms.",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "3",
+                "label": "3 posts a week",
+                "description": "Steady and easy to keep up.",
+                "recommended": true
+              },
+              {
+                "id": "5",
+                "label": "5 posts a week",
+                "description": "One every weekday."
+              },
+              {
+                "id": "7",
+                "label": "7 posts a week",
+                "description": "One every day if your platform can schedule posts; otherwise some weekdays get two."
+              }
+            ]
+          }
+        ],
+        "outwardActions": [
+          {
+            "capability": "social",
+            "label": "Posting",
+            "destructiveLabel": "Deleting posts",
+            "toolPatterns": [
+              "*post*",
+              "*publish*",
+              "*share*",
+              "*tweet*",
+              "*schedule*",
+              "*reply*",
+              "*comment*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*",
+              "*remove*"
+            ]
+          }
+        ],
+        "defaultBudgetMonthlyCents": 2500
+      }
+    },
+    {
+      "id": "paperclipai:optional:staples:support-triage",
+      "key": "paperclipai/optional/staples/support-triage",
+      "kind": "optional",
+      "category": "staples",
+      "slug": "support-triage",
+      "name": "Support triage",
+      "description": "Checks your support inbox every two hours on weekdays, sorts customer messages, drafts friendly answers, and passes anything tricky to the right person.",
+      "path": "catalog/optional/staples/support-triage",
+      "entrypoint": "TEAM.md",
+      "schema": "agentcompanies/v1",
+      "defaultInstall": false,
+      "recommendedForCompanyTypes": [
+        "small-business",
+        "ecommerce",
+        "startup"
+      ],
+      "tags": [
+        "support",
+        "customer-service",
+        "inbox",
+        "communication"
+      ],
+      "counts": {
+        "agents": 1,
+        "projects": 1,
+        "tasks": 1,
+        "routines": 1,
+        "localSkills": 2,
+        "catalogSkills": 0,
+        "externalSkillSources": 0
+      },
+      "rootAgentSlugs": [
+        "support-triage"
+      ],
+      "agentSlugs": [
+        "support-triage"
+      ],
+      "projectSlugs": [
+        "support"
+      ],
+      "requiredSkills": [
+        {
+          "type": "local",
+          "ref": "support-faq",
+          "agentSlugs": [
+            "support-triage"
+          ],
+          "resolved": true,
+          "localPath": "skills/support-faq/SKILL.md"
+        },
+        {
+          "type": "local",
+          "ref": "support-reply",
+          "agentSlugs": [
+            "support-triage"
+          ],
+          "resolved": true,
+          "localPath": "skills/support-reply/SKILL.md"
+        }
+      ],
+      "envInputs": [],
+      "sourceRefs": [],
+      "files": [
+        {
+          "path": "TEAM.md",
+          "kind": "team",
+          "sizeBytes": 2088,
+          "sha256": "6e58c961b1de28ea3fd28902606cf617f106a8bc444c6e76dcb7cd45670c3a8f"
+        },
+        {
+          "path": "agents/support-triage/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 7033,
+          "sha256": "c607bec6b75327a91d261055eaffdd087a89abf8f99ccfcd9f8588835e8a6245"
+        },
+        {
+          "path": "projects/support/PROJECT.md",
+          "kind": "project",
+          "sizeBytes": 232,
+          "sha256": "b253db32fdfaa6014cd4482d1fec3e558d6972350da56c09a8176abda5a8a232"
+        },
+        {
+          "path": "projects/support/tasks/build-the-faq/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1490,
+          "sha256": "972275a48387c0740b37ce3f76a61eebde45dfce301580c3c6a848338b4de6e0"
+        },
+        {
+          "path": "projects/support/tasks/support-triage-sweep/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1503,
+          "sha256": "271a92ee91257255072f6780a9f2420cd2b98856a2d362bbcc4925ff3a878f20"
+        },
+        {
+          "path": "skills/support-faq/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2879,
+          "sha256": "a912b746a375ad1f612ee1a68a8e112da249dd8ff3f9d9afc5ebfefafd80a0c1"
+        },
+        {
+          "path": "skills/support-reply/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3720,
+          "sha256": "772fe6dd4002e96680fd6b66c75a5a3761c3839060791267979296a7f78c161e"
+        },
+        {
+          "path": "staples.template.json",
+          "kind": "other",
+          "sizeBytes": 2254,
+          "sha256": "ba719ac02856489abd5c5fc623915bb5d89a77402c0bca5d4f8942bc70ce35c5"
+        }
+      ],
+      "trustLevel": "assets",
+      "compatibility": "compatible",
+      "contentHash": "sha256:dc2bbd39ab1731a6364fcde9a134a506d2b154f5e1982d0b63ff58864f2769d8",
+      "staplesTemplate": {
+        "version": "1.2.0",
+        "tagline": "Sorts customer messages, drafts answers and escalates problems",
+        "icon": "life-buoy",
+        "marketplaceCategory": "communication",
+        "requiredApps": [
+          {
+            "capability": "inbox",
+            "anyOf": [
+              "agentmail",
+              "gmail",
+              "slack"
+            ],
+            "why": "Where customer messages arrive. With Gmail, replies are saved as drafts for you to send; with AgentMail or Slack, they can be sent after you approve."
+          }
+        ],
+        "setupQuestions": [
+          {
+            "id": "product",
+            "header": "What you offer",
+            "prompt": "In a few sentences, what do customers buy from you and what do they usually ask about?",
+            "helpText": "Your Company Brief covers the basics. Add the things customers ask about most: delivery, returns, opening hours, how to use the product.",
+            "required": true,
+            "answerMode": "text",
+            "initialText": "Our products and services as described in our Company Brief. Customers mostly ask about orders, delivery, returns and how things work.",
+            "textValidation": {
+              "maxLength": 500
+            }
+          },
+          {
+            "id": "escalation",
+            "header": "Escalation",
+            "prompt": "Who should handle refunds, complaints and questions the assistant cannot answer?",
+            "helpText": "Name the person. They get a task with a summary and a suggested reply.",
+            "required": true,
+            "answerMode": "text",
+            "initialText": "{{person.name}}",
+            "textValidation": {
+              "maxLength": 200
+            }
+          },
+          {
+            "id": "tone",
+            "header": "Tone",
+            "prompt": "How should replies to customers sound?",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "warm",
+                "label": "Warm",
+                "description": "Friendly and reassuring, like a helpful shop assistant.",
+                "recommended": true
+              },
+              {
+                "id": "concise",
+                "label": "Concise",
+                "description": "Polite, short and straight to the answer."
+              }
+            ]
+          }
+        ],
+        "outwardActions": [
+          {
+            "capability": "inbox",
+            "label": "Replying to customers",
+            "destructiveLabel": "Deleting or archiving messages",
+            "toolPatterns": [
+              "*send*",
+              "*reply*",
+              "*forward*",
+              "*post*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*",
+              "*trash*",
+              "*archive*"
+            ]
+          }
+        ],
+        "defaultBudgetMonthlyCents": 4000
+      }
+    },
+    {
+      "id": "paperclipai:optional:staples:website-builder",
+      "key": "paperclipai/optional/staples/website-builder",
+      "kind": "optional",
+      "category": "staples",
+      "slug": "website-builder",
+      "name": "Website builder",
+      "description": "Builds a simple, good-looking website for your business, shares a preview link for you to review, and checks the live site every week.",
+      "path": "catalog/optional/staples/website-builder",
+      "entrypoint": "TEAM.md",
+      "schema": "agentcompanies/v1",
+      "defaultInstall": false,
+      "recommendedForCompanyTypes": [
+        "small-business",
+        "solo-founder",
+        "startup"
+      ],
+      "tags": [
+        "website",
+        "landing-page",
+        "web",
+        "hosting"
+      ],
+      "counts": {
+        "agents": 1,
+        "projects": 1,
+        "tasks": 1,
+        "routines": 1,
+        "localSkills": 2,
+        "catalogSkills": 0,
+        "externalSkillSources": 0
+      },
+      "rootAgentSlugs": [
+        "website-builder"
+      ],
+      "agentSlugs": [
+        "website-builder"
+      ],
+      "projectSlugs": [
+        "website"
+      ],
+      "requiredSkills": [
+        {
+          "type": "local",
+          "ref": "landing-page-build",
+          "agentSlugs": [
+            "website-builder"
+          ],
+          "resolved": true,
+          "localPath": "skills/landing-page-build/SKILL.md"
+        },
+        {
+          "type": "local",
+          "ref": "site-health-check",
+          "agentSlugs": [
+            "website-builder"
+          ],
+          "resolved": true,
+          "localPath": "skills/site-health-check/SKILL.md"
+        }
+      ],
+      "envInputs": [],
+      "sourceRefs": [],
+      "files": [
+        {
+          "path": "TEAM.md",
+          "kind": "team",
+          "sizeBytes": 1528,
+          "sha256": "2a4034d8eccb6c635fa9d681dec4b936c7a0e18a8cbfbf676b4f424c84ed00cf"
+        },
+        {
+          "path": "agents/website-builder/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 6825,
+          "sha256": "7c5fc95380af5561027c40fbe50dc6af2d2520ac9bb72ca59a61b34e49f982d1"
+        },
+        {
+          "path": "projects/website/PROJECT.md",
+          "kind": "project",
+          "sizeBytes": 230,
+          "sha256": "50844aadc51a61e94b7dff1758af39b69ff13e2fde6b152e2c2022c699115e7f"
+        },
+        {
+          "path": "projects/website/tasks/build-landing-page/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1852,
+          "sha256": "8411d14db19252e9179d91f9d6b886e88ff4adf074bf2962a6498d785093e092"
+        },
+        {
+          "path": "projects/website/tasks/weekly-site-check/TASK.md",
+          "kind": "task",
+          "sizeBytes": 1405,
+          "sha256": "3b2be780a27958f3cd11226e3a57c06a0770edf811079b39f03441c7b7637566"
+        },
+        {
+          "path": "skills/landing-page-build/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 3406,
+          "sha256": "4b752b9f1872b0a82c90af2c03672617fbc63030613497f70dbb5a07352739c8"
+        },
+        {
+          "path": "skills/site-health-check/SKILL.md",
+          "kind": "skill",
+          "sizeBytes": 2363,
+          "sha256": "73433c392e75a68e69cba385295d409bec2e13bc62ed73c294251647c1270eb7"
+        },
+        {
+          "path": "staples.template.json",
+          "kind": "other",
+          "sizeBytes": 2401,
+          "sha256": "2e791c6f3f1b03d519e7acdacdf2b685adad2a2eb1bafaafb48bb5f030c0c0be"
+        }
+      ],
+      "trustLevel": "assets",
+      "compatibility": "compatible",
+      "contentHash": "sha256:1d22f20bf71133e364a8031a8a542c007fad3d01dd0b8e7ef02d30ba9b04342b",
+      "staplesTemplate": {
+        "version": "1.2.0",
+        "tagline": "Builds a simple website, shares previews and checks it every week",
+        "icon": "globe",
+        "marketplaceCategory": "engineering",
+        "requiredApps": [
+          {
+            "capability": "hosting",
+            "anyOf": [
+              "vercel",
+              "netlify",
+              "webflow"
+            ],
+            "why": "Hosts your site. Previews are shared with you first; publishing to your live site waits for your approval."
+          }
+        ],
+        "setupQuestions": [
+          {
+            "id": "purpose",
+            "header": "What the site is for",
+            "prompt": "What should your website do for your business?",
+            "helpText": "For example: get people to book a call, show your menu and opening hours, or collect sign-ups for a launch.",
+            "required": true,
+            "answerMode": "text",
+            "initialText": "Explain what we do and help visitors get in touch with us",
+            "textValidation": {
+              "maxLength": 500
+            }
+          },
+          {
+            "id": "style",
+            "header": "Style",
+            "prompt": "What style should the site have?",
+            "required": true,
+            "answerMode": "single_select",
+            "options": [
+              {
+                "id": "clean",
+                "label": "Clean",
+                "description": "Simple, calm and easy to read. Lots of white space.",
+                "recommended": true
+              },
+              {
+                "id": "bold",
+                "label": "Bold",
+                "description": "Big headlines, strong colours and confident wording."
+              },
+              {
+                "id": "playful",
+                "label": "Playful",
+                "description": "Friendly colours, rounded shapes and a light touch."
+              }
+            ]
+          },
+          {
+            "id": "domain",
+            "header": "Web address",
+            "prompt": "Which web address should the site use?",
+            "helpText": "If you already own a domain, type it here. Connecting it is a step you do at your domain provider; the builder writes the steps for you.",
+            "required": true,
+            "answerMode": "text",
+            "initialText": "use the free host address for now",
+            "textValidation": {
+              "maxLength": 200
+            }
+          }
+        ],
+        "outwardActions": [
+          {
+            "capability": "hosting",
+            "label": "Publishing to your live site",
+            "destructiveLabel": "Deleting a site or deployment, or buying or moving a domain",
+            "toolPatterns": [
+              "*deploy*",
+              "*publish*",
+              "*promote*",
+              "*alias*",
+              "*add_domain*",
+              "*assign_domain*",
+              "*set_domain*",
+              "*update_domain*",
+              "*create_domain*",
+              "*domain_add*"
+            ],
+            "destructiveToolPatterns": [
+              "*delete*",
+              "*remove*",
+              "*buy_domain*",
+              "*transfer_domain*"
+            ]
+          }
+        ],
+        "defaultBudgetMonthlyCents": 3000
+      }
     }
   ]
 }

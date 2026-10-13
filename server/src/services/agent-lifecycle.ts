@@ -1,5 +1,7 @@
 import { logger } from "../middleware/logger.js";
-import type { Db } from "@paperclipai/db";
+import { readBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
+import { agents, type Db } from "@paperclipai/db";
+import { eq } from "drizzle-orm";
 import * as lifecycle from "../modules/agent-lifecycle/index.js";
 import { withAccountingTransaction } from "./accounting-transaction.js";
 import { budgetServiceInTransaction, deliverBudgetEnforcement, policyBlocks, type BudgetServiceHooks } from "./budgets.js";
@@ -26,9 +28,10 @@ export function createAgentLifecycleEffects(hooks: BudgetServiceHooks = {}): lif
     transaction: withAccountingTransaction,
     deleteDependencies: deleteAgentDependencies,
     policyBlocks,
-    setAgentBudget: (db, publications, companyId, agentId, amount, userId, isActive) =>
+    setAgentBudget: (db, publications, companyId, agentId, amount, userId, isActive, metric) =>
       budgetServiceInTransaction(db, publications).upsertPolicy(companyId, {
         scopeType: "agent", scopeId: agentId, amount, isActive, windowKind: "calendar_month_utc",
+        ...(metric === "hosted_billed_cents" ? { metric, hardStopEnabled: true } : {}),
       }, userId),
     enforceBudget: (db, companyId, agentId) => deliverBudgetEnforcement(db, hooks, companyId, agentId),
     recordCreation: (db, companyId, agentId) => recordResourceCreationEvent(db, companyId, "agent", agentId),
@@ -43,8 +46,62 @@ export function createAgentLifecycleEffects(hooks: BudgetServiceHooks = {}): lif
   };
 }
 
+/**
+ * A newly active staff agent may be the company's first working adapter; an
+ * Assistant that has never run then moves onto it. Best effort: a hire never
+ * fails because of the Assistant.
+ */
+async function reinheritAssistantAfterHire(db: Db, agent: { id: string; companyId: string; adapterType: string; adapterConfig: unknown; metadata: unknown; status: string } | null | undefined) {
+  if (!agent || readBuiltInAgentMarker(agent.metadata)) return;
+  try {
+    // Imported lazily: the built-in service itself hires through this module.
+    const { builtInAgentService } = await import("./built-in-agents.js");
+    await builtInAgentService(db).reinheritAssistantAdapter(agent.companyId, agent);
+  } catch (error) {
+    logger.warn({ err: error, companyId: agent.companyId, agentId: agent.id }, "Assistant adapter re-inheritance after hire failed");
+  }
+}
+
+/** A templated agent's routines were created paused while its hire waited: start them now. */
+async function activateTemplateRoutines(db: Db, agentId: string, userId: string | null) {
+  const actingUserId = userId && userId !== "board" ? userId : null;
+  try {
+    // Imported lazily: plan templates depend on services that hire through this module.
+    const { activateTemplateRoutinesAfterHire } = await import("./plan-templates.js");
+    await activateTemplateRoutinesAfterHire(db, agentId, actingUserId);
+  } catch (error) {
+    logger.warn({ err: error, agentId }, "template routine activation after hire approval failed");
+    try {
+      const [agent] = await db.select({ companyId: agents.companyId }).from(agents).where(eq(agents.id, agentId));
+      if (agent) {
+        const { logTemplateRoutineActivationFailure } = await import("./plan-templates.js");
+        await logTemplateRoutineActivationFailure(db, { companyId: agent.companyId, agentId, userId: actingUserId, error });
+      }
+    } catch (logError) {
+      logger.warn({ err: logError, agentId }, "could not record a template routine activation failure");
+    }
+  }
+}
+
 export function createAgentLifecycle(db: Db, hooks: BudgetServiceHooks = {}) {
-  return lifecycle.createAgentLifecycle(db, createAgentLifecycleEffects(hooks));
+  const base = lifecycle.createAgentLifecycle(db, createAgentLifecycleEffects(hooks));
+  return {
+    ...base,
+    async requestHire(...args: Parameters<typeof base.requestHire>) {
+      const agent = await base.requestHire(...args);
+      await reinheritAssistantAfterHire(db, agent as Parameters<typeof reinheritAssistantAfterHire>[1]);
+      return agent;
+    },
+    async approveHire(...args: Parameters<typeof base.approveHire>) {
+      const result = await base.approveHire(...args);
+      if (result?.hireApprovedAgentId) {
+        const [approved] = await db.select().from(agents).where(eq(agents.id, result.hireApprovedAgentId));
+        await reinheritAssistantAfterHire(db, approved);
+        await activateTemplateRoutines(db, result.hireApprovedAgentId, typeof args[1] === "string" ? args[1] : null);
+      }
+      return result;
+    },
+  };
 }
 
 function trackedDriver(driver: lifecycle.LifecycleDriver): lifecycle.LifecycleDriver {

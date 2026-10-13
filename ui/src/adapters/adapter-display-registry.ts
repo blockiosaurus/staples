@@ -134,6 +134,11 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     icon: Bot,
     experimental: true,
   },
+  claude_managed: {
+    label: "Claude (hosted)",
+    description: "Runs in Anthropic's cloud sandbox. Uses your Anthropic API key; billed per use.",
+    icon: Sparkles,
+  },
   cursor_cloud: {
     label: "Cursor Cloud",
     description: "Managed remote Cursor agent",

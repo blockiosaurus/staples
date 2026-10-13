@@ -65,8 +65,12 @@ export function createLifecycleWorker(store: LifecycleStore, driver: LifecycleDr
           async () => { await driver.onReady?.(changed); }).catch(() => {});
         }
         if (changed && !isLifecycleWorkPending(changed.lifecycleState)) return;
-      } catch {
-        if (!await runStep("defer", () => store.defer(agent, owner, "The lifecycle step failed. Retry the operation.", new Date()))) continue;
+      } catch (error) {
+        // Known, safe copy only: provider errors can carry credentials or private data.
+        const message = (error as { code?: unknown } | null)?.code === "harness_test_failed"
+          ? "The model didn't pass its connection test. Check the model connection, then retry."
+          : "The lifecycle step failed. Retry the operation.";
+        if (!await runStep("defer", () => store.defer(agent, owner, message, new Date()))) continue;
         return;
       } finally {
         clearInterval(renewal);

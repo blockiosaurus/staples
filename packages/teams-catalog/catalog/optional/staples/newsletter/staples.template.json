@@ -1,0 +1,102 @@
+{
+  "version": "1.2.0",
+  "tagline": "Researches, writes and schedules your newsletter on time",
+  "icon": "newspaper",
+  "marketplaceCategory": "content",
+  "requiredApps": [
+    {
+      "capability": "newsletter",
+      "anyOf": [
+        "beehiiv",
+        "resend",
+        "klaviyo"
+      ],
+      "why": "Holds your subscriber list and sends each issue."
+    }
+  ],
+  "setupQuestions": [
+    {
+      "id": "topic",
+      "header": "Topic",
+      "prompt": "What is your newsletter about?",
+      "helpText": "Say what subscribers should get from each issue.",
+      "required": true,
+      "answerMode": "text",
+      "initialText": "News, tips and offers from our business for our customers",
+      "textValidation": {
+        "maxLength": 500
+      }
+    },
+    {
+      "id": "cadence",
+      "header": "How often",
+      "prompt": "How often should an issue go out?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        {
+          "id": "weekly",
+          "label": "Weekly",
+          "description": "Keeps you top of mind.",
+          "recommended": true
+        },
+        {
+          "id": "biweekly",
+          "label": "Every two weeks",
+          "description": "Less work, still regular."
+        },
+        {
+          "id": "monthly",
+          "label": "Monthly",
+          "description": "A fuller round-up once a month."
+        }
+      ]
+    },
+    {
+      "id": "sendDay",
+      "header": "Send day",
+      "prompt": "Which day should issues go out?",
+      "required": true,
+      "answerMode": "single_select",
+      "options": [
+        {
+          "id": "tuesday",
+          "label": "Tuesday",
+          "description": "A common day for good open rates.",
+          "recommended": true
+        },
+        {
+          "id": "thursday",
+          "label": "Thursday",
+          "description": "Lands before the weekend."
+        }
+      ]
+    }
+  ],
+  "outwardActions": [
+    {
+      "capability": "newsletter",
+      "label": "Sending to your list",
+      "destructiveLabel": "Deleting issues, lists or campaigns",
+      "toolPatterns": ["*send*", "*schedule*", "*publish*"],
+      "destructiveToolPatterns": ["*delete*"]
+    }
+  ],
+  "defaultBudgetMonthlyCents": 2000,
+  "scheduleByAnswer": {
+    "draft-the-issue": {
+      "questionId": "sendDay",
+      "cron": {
+        "tuesday": "0 9 * * 0",
+        "thursday": "0 9 * * 2"
+      }
+    },
+    "schedule-the-issue": {
+      "questionId": "sendDay",
+      "cron": {
+        "tuesday": "0 9 * * 2",
+        "thursday": "0 9 * * 4"
+      }
+    }
+  }
+}

@@ -16,6 +16,20 @@ describe("heartbeat task markdown rendering", () => {
     })).toBeNull();
   });
 
+  it("renders untrusted page context immediately before the wake comment body", () => {
+    const withEntity = buildPaperclipTaskMarkdown({
+      issue: null,
+      wakeComments: [{ id: "c1", body: "Explain this.", pageContext: { route: "/issues/PAP-1", title: "Fix it", entity: { type: "issue", id: "i1", label: "PAP-1" } } }],
+    })!;
+    expect(withEntity).toContain("[The person is viewing: Fix it (issue PAP-1) — untrusted page context]\n```text\nExplain this.");
+    const routeOnly = buildPaperclipTaskMarkdown({
+      issue: null,
+      wakeComments: [{ id: "c1", body: "Hi", pageContext: { route: "/inbox" } }],
+    })!;
+    expect(routeOnly).toContain("[The person is viewing: /inbox — untrusted page context]");
+    expect(routeOnly).not.toContain("(");
+  });
+
   it("renders comment-only context in order without changing the input", () => {
     const input = {
       issue: null,

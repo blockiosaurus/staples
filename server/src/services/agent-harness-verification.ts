@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { agents, companies, type Db } from "@paperclipai/db";
 import type { AdapterEnvironmentTestResult } from "@paperclipai/adapter-utils";
 import { ADAPTER_AUTH_MISSING_CHECK_CODE, aiRuntimeConnectionBindingSchema } from "@paperclipai/shared";
@@ -9,6 +9,8 @@ import { aiConnectionRouterService } from "./ai-connection-router.js";
 import { withManagedAiProbe, stripAiAuthBindings } from "./ai-connection-runtime.js";
 import { environmentService } from "./environments.js";
 import { secretService } from "./secrets.js";
+import { ASSISTANT_PROVISIONING_INCOMPLETE_CHECK_CODE, hasAnthropicKeyBinding } from "./assistant-setup.js";
+import { hostedAssistantProvisioningPending, hostedInferenceAllowedFor } from "./hosted-inference-access.js";
 import { dotRunnerBroker } from "./dot-runner-broker.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 import type { LifecycleAgent } from "../modules/agent-lifecycle/index.js";
@@ -19,7 +21,43 @@ export function assertHarnessTestPassed(result: AdapterEnvironmentTestResult) {
   const authenticationFailed = result.checks.some(check =>
     check.code === ADAPTER_AUTH_MISSING_CHECK_CODE || /_hello_probe_auth_required$/.test(check.code));
   const incomplete = !verified && (result.status === "warn" || result.checks.some(check => check.code.includes("hello_probe")));
-  if (result.status === "fail" || authenticationFailed || incomplete) throw Object.assign(new Error("The harness test failed"), { code: "harness_test_failed" });
+  if (result.status === "fail" || authenticationFailed || incomplete) {
+    // Codes and levels only: check messages can carry provider details.
+    throw Object.assign(new Error("The harness test failed"), {
+      code: "harness_test_failed",
+      checks: result.checks.map(check => ({ code: check.code, level: check.level })),
+    });
+  }
+}
+
+/**
+ * Keeps the latest failed harness test on the lifecycle operation (for the
+ * Assistant's setup state), or clears it once the test passes. Scoped to the
+ * lifecycle version the test ran for; best effort.
+ */
+async function recordHarnessTest(db: Db, agent: { id: string; lifecycleVersion: number; adapterType: string }, checks: Array<{ code: string; level: string }> | null) {
+  const value = checks
+    ? sql`coalesce(${agents.lifecycleOperation}, '{}'::jsonb) || jsonb_build_object('lastHarnessTest', ${JSON.stringify({ version: agent.lifecycleVersion, adapterType: agent.adapterType, checks })}::jsonb)`
+    : sql`${agents.lifecycleOperation} - 'lastHarnessTest'`;
+  await db.update(agents).set({ lifecycleOperation: value })
+    .where(and(eq(agents.id, agent.id), eq(agents.lifecycleVersion, agent.lifecycleVersion), isNotNull(agents.lifecycleOperation)))
+    .catch(() => {});
+}
+
+/** Lifecycle sweeps (about 5s apart) a new hosted Assistant may wait for its provisioning record. */
+export const HOSTED_PROVISIONING_MAX_WAITS = 24;
+
+function readProvisioningWaits(operation: unknown): number {
+  const value = (operation as { hostedProvisioningWaits?: unknown } | null | undefined)?.hostedProvisioningWaits;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+/** Counts waits on the lifecycle operation (the setup card shows "Finishing Assistant setup…"). Best effort. */
+async function recordProvisioningWait(db: Db, agent: { id: string; lifecycleVersion: number }, waits: number) {
+  await db.update(agents).set({
+    lifecycleOperation: sql`coalesce(${agents.lifecycleOperation}, '{}'::jsonb) || jsonb_build_object('hostedProvisioningWaits', ${waits}::int)`,
+  }).where(and(eq(agents.id, agent.id), eq(agents.lifecycleVersion, agent.lifecycleVersion), isNotNull(agents.lifecycleOperation)))
+    .catch(() => {});
 }
 
 export function agentHarnessVerificationService(db: Db, manager: PluginWorkerManager) {
@@ -58,16 +96,37 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
         { ...context, consumerType: "environment", consumerId: environmentId });
       config = { ...config, env: { ...resolved.env, ...parseObject(config.env) } };
     }
+    if (!hasAnthropicKeyBinding(agent.adapterConfig) && await hostedAssistantProvisioningPending(db, agent)) {
+      // Waiting on the provisioning record (which decides the Assistant's own
+      // hosted cap): say so, and give up (a setup error the person can retry)
+      // instead of verifying silently forever.
+      const waits = readProvisioningWaits(agent.lifecycleOperation) + 1;
+      if (waits > HOSTED_PROVISIONING_MAX_WAITS) {
+        const checks = [{ code: ASSISTANT_PROVISIONING_INCOMPLETE_CHECK_CODE, level: "error" }];
+        await recordHarnessTest(db, agent, checks);
+        throw Object.assign(new Error("The Assistant's setup did not finish"), { code: "harness_test_failed", checks });
+      }
+      await recordProvisioningWait(db, agent, waits);
+      return "pending";
+    }
+    const hostedInferenceAllowed = await hostedInferenceAllowedFor(db, agent);
     const target = await tests.resolveAdapterTestExecutionContext({ agentId: agent.id, companyId: agent.companyId, adapterType: agent.adapterType, environmentId });
     let status: "released" | "failed" = "failed";
     try {
       if (target.fallbackChecks.length) throw Object.assign(new Error("The test environment is unavailable"), { code: "test_environment_unavailable" });
       const input = { companyId: agent.companyId, adapterType: agent.adapterType, config,
-        executionTarget: target.executionTarget, environmentName: target.environmentName };
+        executionTarget: target.executionTarget, environmentName: target.environmentName,
+        hostedInferenceAllowed };
       const result = binding ? await withManagedAiProbe(db, { ...input, agentId: agent.id, responsibleUserId, binding },
         managed => tests.testManagedEnvironment(agent.adapterType, { ...input, config: managed.config }, binding!, managed, agent.id))
         : await requireServerAdapter(agent.adapterType).testEnvironment(input);
-      assertHarnessTestPassed(result);
+      try {
+        assertHarnessTestPassed(result);
+      } catch (error) {
+        await recordHarnessTest(db, agent, (error as { checks?: Array<{ code: string; level: string }> }).checks ?? []);
+        throw error;
+      }
+      await recordHarnessTest(db, agent, null);
       status = "released";
       return "complete";
     } finally { await target.release(status); }

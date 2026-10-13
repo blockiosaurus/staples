@@ -102,6 +102,7 @@ const ACTIVITY_ROW_VERBS: Record<string, string> = {
   "company.archived": "archived",
   "company.reactivated": "reactivated",
   "company.budget_updated": "updated budget for",
+  "ui_preferences.updated": "updated sidebar navigation for",
   "audit.exported": "exported the agent audit log for",
   "tool_app.connected": "connected",
   "tool_app.oauth_connected": "connected credentials for",

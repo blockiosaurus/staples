@@ -1,4 +1,4 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useId, type ReactNode } from "react";
 import { NavLink } from "@/lib/router";
 import { SIDEBAR_SCROLL_RESET_STATE } from "../lib/navigation-scroll";
 import { cn, SIDEBAR_RAIL_HIDDEN_LABEL } from "../lib/utils";
@@ -65,6 +65,8 @@ interface SidebarNavItemProps {
   trailingLabel?: string;
   /** Rendered inside the right-aligned status cluster, before the live dot. */
   liveAccessory?: ReactNode;
+  /** Accessible description for the row (e.g. why a newly revealed surface appeared). */
+  hint?: string;
 }
 
 export function SidebarNavItem({
@@ -86,6 +88,7 @@ export function SidebarNavItem({
   trailing,
   trailingLabel,
   liveAccessory,
+  hint,
 }: SidebarNavItemProps) {
   const { isMobile, setSidebarOpen, collapsed, peeking } = useSidebar();
   // A contextual takeover forces full labels even when the saved global app
@@ -109,9 +112,13 @@ export function SidebarNavItem({
       : alert
         ? "attention needed"
         : undefined;
-  const railAriaLabel = !rail || (!railStatusText && !trailingLabel)
+  // The visible "new" text badge is hidden in the rail, so announce it here.
+  const railNew = textBadge === "new";
+  const railAriaLabel = !rail || (!railStatusText && !trailingLabel && !railNew)
     ? undefined
-    : `${label}${railStatusText ? `, ${railStatusText}` : ""}${trailingLabel ? `, ${trailingLabel}` : ""}`;
+    : `${label}${railStatusText ? `, ${railStatusText}` : ""}${trailingLabel ? `, ${trailingLabel}` : ""}${railNew ? ", new" : ""}`;
+  const hintId = useId();
+  const describedBy = hint ? hintId : undefined;
 
   const link = (
     <NavLink
@@ -119,6 +126,7 @@ export function SidebarNavItem({
       state={SIDEBAR_SCROLL_RESET_STATE}
       end={end}
       aria-label={railAriaLabel}
+      aria-describedby={describedBy}
       onClick={() => { if (isMobile) setSidebarOpen(false); }}
       className={({ isActive }) =>
         cn(
@@ -212,7 +220,21 @@ export function SidebarNavItem({
     </NavLink>
   );
 
-  if (!rail) return link;
+  // Kept outside the link so it describes the row without joining its name.
+  const hintNode = hint ? (
+    <span id={hintId} className="sr-only">
+      {hint}
+    </span>
+  ) : null;
+
+  if (!rail) {
+    return hintNode ? (
+      <>
+        {link}
+        {hintNode}
+      </>
+    ) : link;
+  }
 
   // The tooltip wraps a plain block element rather than the NavLink directly:
   // Radix `asChild` (Slot) drops React Router's *function* className, which would
@@ -223,7 +245,10 @@ export function SidebarNavItem({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div>{link}</div>
+        <div>
+          {link}
+          {hintNode}
+        </div>
       </TooltipTrigger>
       <TooltipContent side="right">{label}</TooltipContent>
     </Tooltip>

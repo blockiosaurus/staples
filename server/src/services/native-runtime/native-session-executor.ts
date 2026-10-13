@@ -944,6 +944,9 @@ export async function materializeRuntimeQuestionFallback(input: {
       runId: input.binding.runId,
       systemId: "native-runtime-question-handoff",
     },
+    // The durable copy of a provider-harness question keeps its authored
+    // presentation; provider question tools carry no recommendation.
+    { allowQuestionsWithoutRecommendation: true },
   );
   return { fallback, interaction };
 }

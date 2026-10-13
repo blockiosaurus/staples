@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 
 const surfaces = [
   ["01 Components", "crown-indicator", "Primary indicator", "Identity and crown presentation only; absent primary, loading, long names."],
-  ["02 Sidebar", "idle-primary", "Agents sidebar", "Pinned idle primary, active colleagues, independent stars, collapsed section, mobile drawer, classic shell."],
+  ["02 Sidebar", "idle-primary", "Agents sidebar", "Pinned idle primary, active colleagues, independent stars, collapsed section, mobile drawer."],
   ["03 Agents", "specialist-profile", "Agent list and profile", "Set as my primary on the individual page; crown beside the primary’s name, first-created agent, paused and unavailable states."],
   ["04 New task", "primary-fallback", "New-task composer", "Primary fallback, recent specialist, explicit assignment, restored draft, mobile."],
   ["05 Chat", "primary-fallback", "Chat", "Full production Chat page and navigation; recent conversation, primary fallback, chooser, paused state, mobile."],
@@ -44,7 +44,7 @@ function ReviewGuide() {
       <section className="max-w-3xl space-y-3 text-sm text-muted-foreground">
         <h2 className="text-xl font-semibold text-foreground">Review boundary</h2>
         <p>The pages, menus, avatars, composer, and app shell are production components. Preferences, first-creation results, fallback routing, and server responses are isolated Storybook simulations. Reload resets a story; no real agents run and no company data changes.</p>
-        <p>The live app has retired the collapsed icon rail. Coverage uses the supported collapsible Agents section and mobile drawer instead. In the streamlined shell, the proposed Agents section is supplied through Layout’s existing sidebar slot; the classic shell uses its existing section.</p>
+        <p>The live app has retired the collapsed icon rail. Coverage uses the supported collapsible Agents section and mobile drawer instead. The proposed Agents section is supplied through Layout’s existing sidebar slot.</p>
         <p>Persistence, migration, API authorization, and production default selection come after this review. These stories remain the implementation reference.</p>
       </section>
     </div>

@@ -5,6 +5,7 @@ import { unprocessable } from "../../../errors.js";
 import { approvalResolutionRecords, resolvableApprovalStatuses } from "../../../lib/approval-records.js";
 import { agentRecords } from "./records.js";
 import { createLifecycleStore } from "./postgres.js";
+import { clampToHostedCeiling, usesHostedInferenceKey } from "../../../services/hosted-inference.js";
 import type { LifecycleEffects } from "./effects.js";
 
 export type HireDecisionTarget = string | { approvalId: string };
@@ -46,6 +47,11 @@ export function hireApprovalService(db: Db, effects: LifecycleEffects) {
       }
       const payload = approval?.payload ?? {};
       let agentId = typeof target === "string" ? target : typeof payload.agentId === "string" ? payload.agentId : null;
+      // A hire approval may only activate or reject a pending agent in its own company.
+      if (agentId && applied) {
+        const targetAgent = await records.getById(agentId);
+        if (targetAgent && targetAgent.companyId !== companyId) throw unprocessable("Hire approval agent belongs to another company");
+      }
       if (applied && status === "approved") {
         if (agentId) {
           const activated = await records.activatePendingApproval(agentId, approval ? payload : null, approval ? approval.requestedByUserId : userId);
@@ -77,7 +83,15 @@ export function hireApprovalService(db: Db, effects: LifecycleEffects) {
           agentId = created.id;
         }
         if (approval && agentId && typeof payload.budgetMonthlyCents === "number" && payload.budgetMonthlyCents > 0) {
-          await effects.setAgentBudget(tx, publications, companyId, agentId, payload.budgetMonthlyCents, userId);
+          // On the operator's hosted key the approved budget is the agent's hosted
+          // limit (a separate limit no agent can write), at most the ceiling, as
+          // at plan apply; otherwise it is the agent's budget.
+          const hired = await records.getById(agentId);
+          if (hired && usesHostedInferenceKey(hired)) {
+            await effects.setAgentBudget(tx, publications, companyId, agentId, clampToHostedCeiling(payload.budgetMonthlyCents), userId, true, "hosted_billed_cents");
+          } else {
+            await effects.setAgentBudget(tx, publications, companyId, agentId, payload.budgetMonthlyCents, userId);
+          }
         }
       } else if (applied && agentId) {
         if (approval) await records.rejectPendingHire(agentId);

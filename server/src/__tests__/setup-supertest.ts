@@ -24,6 +24,11 @@ type SupertestTestConstructor = {
 // Keep the original home available only for read-only host port-lease checks.
 process.env.PAPERCLIP_TEST_HOST_HOME ??= process.env.PAPERCLIP_HOME?.trim() || path.join(os.homedir(), ".paperclip");
 
+// Hosted inference follows the server's STAPLES_HOSTED_ANTHROPIC_API_KEY. Keep it off so a
+// developer's real key never changes a suite; tests that need it opt in with
+// vi.stubEnv("STAPLES_HOSTED_INFERENCE", "") plus a dummy key.
+process.env.STAPLES_HOSTED_INFERENCE = "off";
+
 // Receipt-spool recovery must never scan a developer's instance during tests.
 const paperclipTestHome = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-vitest-home-"));
 process.env.PAPERCLIP_HOME = paperclipTestHome;

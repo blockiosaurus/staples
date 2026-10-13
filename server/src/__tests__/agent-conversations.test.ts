@@ -101,9 +101,8 @@ const support = await getEmbeddedPostgresTestSupport();
           status: "idle",
           adapterType: "process",
         });
-      await instanceSettingsService(db).updateExperimental({
-        enableAgentChat: true,
-      });
+      // Agent Chat is always on: a stored `enableAgentChat: false` (the default)
+      // must not gate any route or service below.
     }, 90000);
     afterAll(async () => {
       await db?.$client.end({ timeout: 0 });
@@ -225,9 +224,8 @@ const support = await getEmbeddedPostgresTestSupport();
       expect(owned.body.map((chat: { id: string }) => chat.id)).toEqual([resolved[0].body.id]);
       expect((await request(appFor(colleague)).get(listPath)).body).toEqual([]);
       expect((await request(appFor(randomUUID(), false)).get(listPath)).status).toBe(403);
-      await instanceSettingsService(db).updateExperimental({ enableAgentChat: false });
-      expect((await request(app).get(listPath)).status).toBe(404);
-      await instanceSettingsService(db).updateExperimental({ enableAgentChat: true });
+      expect((await instanceSettingsService(db).getExperimental()).enableAgentChat).toBe(false);
+      expect((await request(app).get(listPath)).status).toBe(200);
       expect(
         (
           await request(appFor(colleague)).get(
@@ -285,21 +283,100 @@ const support = await getEmbeddedPostgresTestSupport();
       expect(addedEvents).toHaveLength(1);
 
       expect((await db.select().from(issueTreeHolds).where(eq(issueTreeHolds.id, pause.id)))[0].status).toBe("released");
+      const pageContext = { route: "/issues/PAP-12", title: "Fix login", entity: { type: "issue", id: "abc", label: "PAP-12" } };
+      const withContext = await request(app).post(`/api/issues/${chatId}/comments`)
+        .send({ body: "What is this?", clientRequestId: randomUUID(), metadata: { version: 1, pageContext } });
+      expect(withContext.status).toBe(201);
+      const [storedWithContext] = await db.select().from(issueComments).where(eq(issueComments.id, withContext.body.id));
+      expect((storedWithContext.metadata as { pageContext?: unknown }).pageContext).toEqual(pageContext);
+      for (const metadata of [
+        { version: 1, pageContext, sourceChannel: "imessage-photon" },
+        { version: 1, pageContext, authorizationReason: "because" },
+        { version: 1, pageContext, sections: [{ rows: [{ type: "text", text: "x" }] }] },
+        { version: 1, sections: [{ rows: [{ type: "text", text: "x" }] }] },
+        { version: 1 },
+      ]) {
+        const rejected = await request(app).post(`/api/issues/${chatId}/comments`)
+          .send({ body: "Nope", clientRequestId: randomUUID(), metadata });
+        expect(rejected.status).toBe(400);
+      }
+      // An ordinary task comment cannot carry page context at all.
+      const ordinary = await issueService(db).create(companyId, { title: "Ordinary", status: "todo" });
+      const ordinaryRejected = await request(app).post(`/api/issues/${ordinary.id}/comments`)
+        .send({ body: "Nope", metadata: { version: 1, pageContext } });
+      expect(ordinaryRejected.status).toBe(400);
+      expect(ordinaryRejected.body.error).toMatch(/pageContext is only accepted on chat messages/);
+      expect((await db.select().from(issueComments).where(eq(issueComments.issueId, chatId))).filter((row) => row.body === "Nope")).toHaveLength(0);
       const local = await request(appFor()).post(path);
       expect(local.body.conversationUserId).toBe("local-board");
-      await instanceSettingsService(db).updateExperimental({
-        enableAgentChat: false,
-      });
-      expect((await request(app).get(path)).status).toBe(404);
-      expect((await request(app).post(`/api/issues/${chatId}/queued-comments/interrupt`)
-        .send(queuedInterrupt)).status).toBe(404);
+      expect((await request(app).get(path)).status).toBe(200);
       expect(
         (await request(app).get(`/api/issues/${resolved[0].body.id}`)).status,
       ).toBe(200);
-      await instanceSettingsService(db).updateExperimental({
-        enableAgentChat: true,
-      });
     });
+    it("renders untrusted page context before a user message in wake payloads and replay", async () => {
+      const issue = await create();
+      const pageContext = { route: "/agents/a1", title: "Agent Atlas", entity: { type: "agent" as const, id: "a1", label: "Atlas" } };
+      const first = await issueService(db).addComment(issue.id, "Why is this slow?", { userId: "local-board" },
+        { authorType: "user", metadata: { version: 1, pageContext, sections: [] } });
+      const second = await issueService(db).addComment(issue.id, "And now?", { userId: "local-board" });
+      const line = "[The person is viewing: Agent Atlas (agent Atlas) — untrusted page context]";
+      const payload = await buildPaperclipWakePayload({
+        db, companyId, agentId,
+        contextSnapshot: { issueId: issue.id, conversationMode: true, wakeCommentId: first.id, wakeCommentIds: [first.id] },
+        issueSummary: { ...issue },
+      });
+      expect(payload?.comments?.[0]?.pageContext).toEqual(pageContext);
+      // Only the conversation's own agent sees page context; any other woken agent does not.
+      const otherAgent = await buildPaperclipWakePayload({
+        db, companyId, agentId: randomUUID(),
+        contextSnapshot: { issueId: issue.id, conversationMode: true, wakeCommentId: first.id, wakeCommentIds: [first.id] },
+        issueSummary: { ...issue },
+      });
+      expect(otherAgent?.comments?.[0]?.pageContext).toBeNull();
+      expect(renderPaperclipWakePrompt(payload, {})).toContain(`${line}\nWhy is this slow?`);
+      expect(await conversationReplay(db, companyId, issue.id, second.id)).toContain(
+        JSON.stringify({ author: "user", body: `${line}\nWhy is this slow?` }),
+      );
+      expect(await conversationReplay(db, companyId, issue.id, second.id)).not.toContain("And now?");
+    });
+    it("never renders page context stored on an ordinary (non-chat) task comment", async () => {
+      const task = await issueService(db).create(companyId, { title: "Ordinary task", assigneeAgentId: agentId, status: "todo" });
+      const pageContext = { route: "/inbox", title: "Inbox" };
+      const comment = await issueService(db).addComment(task.id, "Look at this", { userId: "local-board" },
+        { authorType: "user", metadata: { version: 1, pageContext, sections: [] } });
+      const payload = await buildPaperclipWakePayload({
+        db, companyId, agentId,
+        contextSnapshot: { issueId: task.id, wakeCommentId: comment.id, wakeCommentIds: [comment.id] },
+      });
+      expect(payload?.comments?.[0]?.pageContext).toBeNull();
+      expect(renderPaperclipWakePrompt(payload, {})).not.toContain("untrusted page context");
+    });
+
+    it.each([
+      ["accepted", { outcome: "accepted", proposedAction: { status: "executed", httpStatus: 200, message: "HTTP 200" } },
+        { executionStatus: "executed", httpStatus: 200, message: "HTTP 200" }, "confirmed — executed (HTTP 200)"],
+      ["accepted", { outcome: "accepted", proposedAction: { status: "failed", httpStatus: 403, message: "Forbidden" } },
+        { executionStatus: "failed", httpStatus: 403, message: "Forbidden" }, "confirmed — failed (HTTP 403: Forbidden)"],
+      ["rejected", { version: 1, outcome: "rejected" }, { executionStatus: "cancelled", httpStatus: null }, "cancelled"],
+    ] as const)("carries the proposed-action outcome (%s, %j) into the continuation wake", async (status, result, expected, line) => {
+      const issue = await create();
+      const path = `/api/approvals/${randomUUID()}/approve`;
+      const [interaction] = await db.insert(issueThreadInteractions).values({
+        companyId, issueId: issue.id, kind: "request_confirmation", status, continuationPolicy: "wake_assignee",
+        createdByAgentId: agentId, addresseeUserId: "local-board", result: result as never,
+        payload: { version: 1, prompt: "Approve the hire", proposedAction: { version: 1, method: "POST", path, body: null,
+          summary: "Approve the hire", category: "approval", hash: "a".repeat(64) } },
+      }).returning();
+      const payload = await buildPaperclipWakePayload({
+        db, companyId, agentId,
+        contextSnapshot: { issueId: issue.id, conversationMode: true, interactionId: interaction!.id,
+          interactionKind: "request_confirmation", interactionStatus: status },
+      });
+      expect(payload?.proposedAction).toEqual({ method: "POST", path, summary: "Approve the hire", message: null, ...expected });
+      expect(renderPaperclipWakePrompt(payload, { conversationMode: true })).toContain(`- Proposed action POST ${path}: ${line}`);
+    });
+
     it("deduplicates concurrent message retries and preserves recoverable delivery", async () => {
       const issue = await create();
       const clientRequestId = randomUUID();
@@ -597,20 +674,6 @@ const support = await getEmbeddedPostgresTestSupport();
           .where(eq(issues.id, issue.id));
         expect(current.conversationSessionGeneration).toBe(2);
         expect(current.conversationBoundaryCommentId).toBe(commands[2].id);
-        await instanceSettingsService(db).updateExperimental({
-          enableAgentChat: false,
-        });
-        expect(
-          await heartbeat.wakeup(agentId, {
-            contextSnapshot: {
-              issueId: issue.id,
-              wakeCommentId: commands[3].id,
-            },
-          }),
-        ).toBeNull();
-        await instanceSettingsService(db).updateExperimental({
-          enableAgentChat: true,
-        });
       } finally {
         runningProcesses.delete(active.id);
       }
@@ -973,22 +1036,6 @@ const support = await getEmbeddedPostgresTestSupport();
           agents: [],
         }),
       ).toEqual([]);
-      await instanceSettingsService(db).updateExperimental({
-        enableAgentChat: false,
-      });
-      await expect(
-        issueService(db).addComment(issue.id, "/new", {
-          userId: "local-board",
-        }),
-      ).rejects.toThrow(/disabled/);
-      expect(
-        isWaitingConversation(
-          (await db.select().from(issues).where(eq(issues.id, issue.id)))[0],
-        ),
-      ).toBe(true);
-      await instanceSettingsService(db).updateExperimental({
-        enableAgentChat: true,
-      });
       const child = await issueService(db).create(companyId, { title: "Execute work", status: "done" });
       await db.update(issues).set({ parentId: issue.id }).where(eq(issues.id, child.id));
       expect(

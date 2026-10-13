@@ -1,0 +1,55 @@
+import { Router } from "express";
+import type { Db } from "@paperclipai/db";
+import { forbidden } from "../errors.js";
+import { builtInAgentService } from "../services/built-in-agents.js";
+import { issueService } from "../services/issues.js";
+import { accessService } from "../services/access.js";
+import { assistantSetupStatus, canConfigureAssistant, readAssistantLifecycle } from "../services/assistant-setup.js";
+import { hostedInference } from "../services/hosted-inference.js";
+import { assertBoard, assertCompanyAccess } from "./authz.js";
+
+/**
+ * The company Assistant: a built-in agent every person can chat with. It is
+ * kept out of staff surfaces, so this route is how the UI reaches it.
+ */
+export function assistantRoutes(db: Db) {
+  const router = Router();
+  const builtIns = builtInAgentService(db);
+  const issues = issueService(db);
+  const access = accessService(db);
+
+  router.get("/companies/:companyId/assistant", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertBoard(req);
+    assertCompanyAccess(req, companyId);
+    if (!req.actor.userId) throw forbidden("Board user access required");
+    const agent = await builtIns.ensureAssistant(companyId);
+    const [conversation, lifecycle, canConfigure] = await Promise.all([
+      issues.getConversation(companyId, agent.id, req.actor.userId),
+      readAssistantLifecycle(db, agent.id),
+      canConfigureAssistant(access, req.actor, companyId, agent.id),
+    ]);
+    res.json({
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        urlKey: agent.urlKey,
+        adapterType: agent.adapterType,
+        status: agent.status,
+      },
+      conversationIssueId: conversation?.id ?? null,
+      // Whether the Assistant can answer yet; drives the inline setup card.
+      setup: assistantSetupStatus(lifecycle ?? {
+        adapterType: agent.adapterType, lifecycleState: agent.lifecycleState ?? "ready",
+        lifecycleVersion: agent.lifecycleVersion ?? 0, lifecycleError: agent.lifecycleError ?? null,
+      }),
+      // Same decision as saving the agent's config: viewers and members
+      // without the configure grant see the state but cannot connect a model.
+      canConfigure,
+      // Boolean only: the server's Anthropic key is never exposed.
+      hostedInferenceAvailable: hostedInference().available,
+    });
+  });
+
+  return router;
+}

@@ -69,3 +69,34 @@ it("restores cleared defaults after switching back before the intermediate schem
   await act(async () => root?.render(view(firstType)));
   expect(set).toHaveBeenCalledExactlyOnceWith({ adapterSchemaValues: { model: "default-model" } });
 });
+
+it("places Claude (hosted) advanced fields in Advanced and shows allowed hosts only for limited networking", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const adapterType = "claude_managed";
+  invalidateConfigSchemaCache(adapterType);
+  const { getConfigSchema } = await import("@paperclipai/adapter-claude-managed/server");
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => getConfigSchema() }));
+  const base: AdapterConfigFieldsProps = {
+    mode: "edit", isCreate: false, adapterType, section: "configuration", hideModel: true,
+    values: null, set: null,
+    config: {}, eff: (_group, _field, original) => original, mark: vi.fn(), models: [],
+  };
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  const render = (props: AdapterConfigFieldsProps) => act(async () => root?.render(<TooltipProvider><SchemaConfigFields {...props} /></TooltipProvider>));
+
+  await render(base);
+  expect(container.textContent).toContain("Environment ID");
+  expect(container.textContent).not.toContain("API base URL");
+  expect(container.textContent).not.toContain("Model");
+
+  await render({ ...base, section: "advanced" });
+  expect(container.textContent).toContain("API base URL");
+  expect(container.textContent).toContain("Sandbox networking");
+  expect(container.textContent).not.toContain("Allowed hosts");
+
+  await render({ ...base, section: "advanced", config: { networkingMode: "limited" } });
+  expect(container.textContent).toContain("Allowed hosts");
+  expect(container.textContent).toContain("Allow package registries");
+});

@@ -114,6 +114,7 @@ import {
 } from "./native-runtime/provider-profile.js";
 import { managedAgentProfileService } from "./managed-agent-profiles.js";
 import { remoteAgentProfileService } from "./remote-agent-profiles.js";
+import { withoutStaplesTemplateMarker } from "../lib/staples-template-metadata.js";
 
 const EXPORT_READ_CONCURRENCY = 8;
 const EXPORT_ISSUE_READ_CONCURRENCY = 2;
@@ -4284,7 +4285,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           permissions: portablePermissions,
           permissionGrants: portablePermissionGrants.length > 0 ? portablePermissionGrants : undefined,
           budgetMonthlyCents: (agent.budgetMonthlyCents ?? 0) > 0 ? agent.budgetMonthlyCents : undefined,
-          metadata: (agent.metadata as Record<string, unknown> | null) ?? null,
+          metadata: withoutStaplesTemplateMarker((agent.metadata as Record<string, unknown> | null) ?? null),
         });
         if (isPlainRecord(extension) && agentEnvInputs.length > 0) {
           extension.inputs = {
@@ -5629,7 +5630,8 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             runtimeConfig: sanitizeImportedAgentRuntimeConfig(manifestAgent.runtimeConfig),
             budgetMonthlyCents: manifestAgent.budgetMonthlyCents,
             permissions: manifestAgent.permissions,
-            metadata: manifestAgent.metadata,
+            // Template provenance is recorded only by plans/apply.
+            metadata: withoutStaplesTemplateMarker(manifestAgent.metadata),
           };
           // "import", not "system": the UI reads this to explain that the
           // agent was parked by the import safety default and to offer a

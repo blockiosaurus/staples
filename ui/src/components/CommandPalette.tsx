@@ -1,6 +1,6 @@
 import { AgentIdentity } from "@/components/AgentIdentity";
-import { useCombinedInboxTasksEnabled } from "@/hooks/useCombinedInboxTasksEnabled";
-import { useState, useEffect, useMemo } from "react";
+import { useSurfaces } from "../staples/surfaces/useSurfaces";
+import { Fragment, useState, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { useCompany } from "../context/CompanyContext";
@@ -9,6 +9,7 @@ import { useSidebar } from "../context/SidebarContext";
 import { issuesApi } from "../api/issues";
 import { authApi } from "../api/auth";
 import { agentsApi } from "../api/agents";
+import { excludeAssistantAgents } from "../lib/assistant-agent";
 import { projectsApi } from "../api/projects";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { queryKeys } from "../lib/queryKeys";
@@ -25,13 +26,9 @@ import {
   CircleDot,
   Bot,
   Hexagon,
-  Target,
-  LayoutDashboard,
-  Inbox,
-  DollarSign,
-  History,
   SquarePen,
   FileCode2,
+  Inbox,
   Plus,
   Search,
 } from "lucide-react";
@@ -104,8 +101,10 @@ export function CommandPalette() {
     queryFn: () => instanceSettingsApi.getExperimental(),
     retry: false,
   });
-  const { enabled: combinedInboxTasksEnabled } = useCombinedInboxTasksEnabled();
+  const { states: surfaceStates } = useSurfaces();
+  const availableSurfaces = surfaceStates.filter((state) => state.available);
   const fileViewerEnabled = experimentalSettings?.enableExperimentalFileViewer === true;
+  const combinedInboxTasksEnabled = experimentalSettings?.enableCombinedInboxTasks === true;
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -128,6 +127,8 @@ export function CommandPalette() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId && open,
   });
+  // The Agents group lists staff only; `agents` still backs name lookups.
+  const staffAgents = useMemo(() => excludeAssistantAgents(agents), [agents]);
 
   const { data: allProjects = [] } = useQuery({
     queryKey: queryKeys.projects.list(selectedCompanyId!),
@@ -356,38 +357,25 @@ export function CommandPalette() {
         <CommandSeparator />
 
         <CommandGroup heading="Pages">
-          <CommandItem onSelect={() => go("/dashboard")}>
-            <LayoutDashboard className="mr-2 h-4 w-4" />
-            Dashboard
-          </CommandItem>
-          <CommandItem onSelect={() => go(combinedInboxTasksEnabled ? "/issues?view=mine" : "/inbox")}>
-            <Inbox className="mr-2 h-4 w-4" />
-            {combinedInboxTasksEnabled ? "My work" : "Inbox"}
-          </CommandItem>
-          <CommandItem onSelect={() => go("/issues")}>
-            <CircleDot className="mr-2 h-4 w-4" />
-            Tasks
-          </CommandItem>
-          <CommandItem onSelect={() => go("/projects")}>
-            <Hexagon className="mr-2 h-4 w-4" />
-            Projects
-          </CommandItem>
-          <CommandItem onSelect={() => go("/goals")}>
-            <Target className="mr-2 h-4 w-4" />
-            Goals
-          </CommandItem>
-          <CommandItem onSelect={() => go("/agents")}>
-            <Bot className="mr-2 h-4 w-4" />
-            Agents
-          </CommandItem>
-          <CommandItem onSelect={() => go("/costs")}>
-            <DollarSign className="mr-2 h-4 w-4" />
-            Costs
-          </CommandItem>
-          <CommandItem onSelect={() => go("/activity")}>
-            <History className="mr-2 h-4 w-4" />
-            Activity
-          </CommandItem>
+          {availableSurfaces.map(({ surface, visible, source }) => {
+            const Icon = surface.icon;
+            const suffix = visible ? null : source === "hidden" ? " · hidden" : " · not in sidebar";
+            return (
+              <Fragment key={surface.id}>
+                <CommandItem onSelect={() => go(surface.to)}>
+                  <Icon className="mr-2 h-4 w-4" />
+                  {surface.label}
+                  {suffix ? <span className="ml-1 text-muted-foreground">{suffix}</span> : null}
+                </CommandItem>
+                {surface.id === "nav.dashboard" && combinedInboxTasksEnabled ? (
+                  <CommandItem onSelect={() => go("/issues?view=mine")}>
+                    <Inbox className="mr-2 h-4 w-4" />
+                    My work
+                  </CommandItem>
+                ) : null}
+              </Fragment>
+            );
+          })}
         </CommandGroup>
 
         {visibleIssues.length > 0 && (
@@ -419,11 +407,11 @@ export function CommandPalette() {
           </>
         )}
 
-        {agents.length > 0 && (
+        {staffAgents.length > 0 && (
           <>
             <CommandSeparator />
             <CommandGroup heading="Agents">
-              {agents.slice(0, 10).map((agent) => (
+              {staffAgents.slice(0, 10).map((agent) => (
                 <CommandItem key={agent.id} onSelect={() => go(agentUrl(agent))}>
                   <Bot className="mr-2 h-4 w-4" />
                   {agent.name}

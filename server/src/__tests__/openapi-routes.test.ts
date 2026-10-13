@@ -20,16 +20,19 @@ const apiPrefixes: Record<string, string> = {
   "adapters.ts": "/api",
   "agents.ts": "/api",
   "agent-commentary.ts": "/api",
+  "agent-autopilot.ts": "/api",
+  "agent-templates.ts": "/api",
   "agent-avatars.ts": "/api",
   "agent-profile-avatar.ts": "/api",
   "announcements.ts": "/api",
   "ai-connections.ts": "/api",
   "decision-models.ts": "/api",
   "attention.ts": "/api",
+  "briefing.ts": "/api",
   "approvals.ts": "/api",
   "assets.ts": "/api",
+  "assistant.ts": "/api",
   "auth.ts": "/api/auth",
-  "board-chat.ts": "/api",
   "browser-use.ts": "/api",
   "built-in-agents.ts": "/api",
   "chat-channels.ts": "/api",
@@ -43,6 +46,8 @@ const apiPrefixes: Record<string, string> = {
   "connection-intents.ts": "/api",
   "costs.ts": "/api",
   "dashboard.ts": "/api",
+  "company-signals.ts": "/api",
+  "company-brief.ts": "/api",
   "dot-runner.ts": "/api",
   "decision-queues.ts": "/api",
   "decisions.ts": "/api",
@@ -65,16 +70,20 @@ const apiPrefixes: Record<string, string> = {
   "openapi.ts": "/api",
   "plugin-ui-static.ts": "/api",
   "plugins.ts": "/api",
+  "plans.ts": "/api",
   "projects.ts": "/api",
   "primary-agent.ts": "/api",
   "public-mcp.ts": "/api",
   "project-tools.ts": "/api",
+  "paperclip-tools.ts": "/api",
+  "assistant-tools.ts": "/api",
   "resource-memberships.ts": "/api",
   "remote-agent-profiles.ts": "/api",
   "routines.ts": "/api",
   "secrets.ts": "/api",
   "sidebar-badges.ts": "/api",
   "sidebar-preferences.ts": "/api",
+  "ui-preferences.ts": "/api",
   "summary-slots.ts": "/api",
   "status-cards.ts": "/api",
   "teams-catalog.ts": "/api",
@@ -419,6 +428,8 @@ describe("openapi routes", () => {
     });
     expect(res.body.paths["/api/health"].get.security).toEqual([]);
     expect(res.body.paths["/api/mcp/project-tools"].post.security).toEqual([{ AgentRunAuth: [] }]);
+    expect(res.body.paths["/api/mcp/assistant-tools"].post.security).toEqual([{ AgentRunAuth: [] }]);
+    expect(res.body.paths["/api/mcp/paperclip-tools"].post["x-paperclip-authorization"]).toEqual({ actor: "agent", heartbeatBound: true });
     expect(res.body.paths["/api/mcp/project-tools"].post["x-paperclip-authorization"]).toEqual({ actor: "agent", heartbeatBound: true, taskBound: true });
     expect(res.body.paths["/mcp/gateways/{gatewayPublicId}"].post.security).toEqual([]);
     expect(res.body.paths["/api/mcp/gateways/{gatewayPublicId}"]).toBeUndefined();
@@ -848,6 +859,34 @@ describe("openapi routes", () => {
     expect(
       spec.paths["/api/chat-webhooks/{publicId}/{provider}"],
     ).toBeUndefined();
+  });
+
+  it("documents proposed-action claims as the person's own board session only", () => {
+    const {spec} = loadSpecRoutes();
+    const claim = spec.paths["/api/issues/{id}/interactions/{interactionId}/claim-proposed-action"].post;
+    expect(claim.security).toEqual([{BoardSessionAuth: []}]);
+    expect(claim["x-paperclip-authorization"]).toEqual({actor: "board", sessionBound: true});
+    expect(claim.requestBody.content["application/json"].schema.required).toEqual(["hash"]);
+    expect(claim.responses["409"]).toBeDefined();
+  });
+
+  it("documents plan apply as the person's own board session only", () => {
+    const {spec} = loadSpecRoutes();
+    const apply = spec.paths["/api/companies/{companyId}/plans/apply"].post;
+    expect(apply.security).toEqual([{BoardSessionAuth: []}]);
+    expect(apply["x-paperclip-authorization"]).toEqual({actor: "board", sessionBound: true});
+    // Tasks may be left out when an agent uses a template (it brings its own starter tasks).
+    const body = apply.requestBody.content["application/json"].schema;
+    expect(body.required ?? []).not.toContain("tasks");
+    expect(body.properties.agents.items.properties).toHaveProperty("templateRef");
+    expect(body.properties.agents.items.properties).toHaveProperty("templateAnswers");
+    expect(apply.parameters.map((parameter: {name: string; in: string}) => `${parameter.in}:${parameter.name}`))
+      .toEqual(expect.arrayContaining(["header:Idempotency-Key", "header:X-Staples-Timezone"]));
+    expect(apply.responses["201"]).toBeDefined();
+    expect(apply.responses["200"].description).toMatch(/Already applied/);
+    expect(apply.description).toMatch(/Idempotency-Key/);
+    expect(apply.responses["409"]).toBeDefined();
+    expect(apply.responses["422"]).toBeDefined();
   });
 
   it("documents session-bound voice authority without durable credentials", () => {

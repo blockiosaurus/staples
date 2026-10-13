@@ -35,6 +35,7 @@ import type { createHeartbeatRunControl, HeartbeatRunControlDependencies } from 
 import type { issueService } from "../issues.js";
 import type { recoveryService } from "../recovery/index.js";
 import type { BudgetServiceHooks } from "../budgets.js";
+import { BUDGET_REACHED_ERROR_CODE, HOSTED_LIMIT_REACHED_ERROR_CODE } from "../budgets.js";
 import type { providerTraceStore } from "../provider-trace-store.js";
 import type { createAgentIdentityRedactor } from "../agent-identity-redaction.js";
 import type { CurrentUserRedactionOptions } from "../../log-redaction.js";
@@ -317,6 +318,16 @@ function readNonEmptyString(value: unknown): string | null {
 }
 
 export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunCompletionDependencies) {
+  /** Best effort; loaded lazily to keep the heartbeat module graph free of the Assistant services. */
+  async function closeWeeklyUpdateTaskAfterRunSafely(run: Run, end: { recoveryOwned: boolean }) {
+    try {
+      const { closeWeeklyUpdateTaskAfterRun } = await import("../assistant-weekly-update.js");
+      await closeWeeklyUpdateTaskAfterRun(db, run, end);
+    } catch (error) {
+      logger.warn({ err: error, runId: run.id }, "could not settle the weekly update task after the run");
+    }
+  }
+
   const {
     getRun,
     getAgent,
@@ -872,6 +883,13 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
         resolvedPresentationDecision,
       );
       const conversationSettled = await settleConversationTurn(db, livenessRun);
+      // A weekly update run that ended without saving closes its task ("No update this week"),
+      // so neither recovery nor the routine waits on it, unless a retry scheduled above still owns it.
+      await closeWeeklyUpdateTaskAfterRunSafely(livenessRun, {
+        // A failed native run without a terminal classification is still native recovery's.
+        // (A legacy run held for execution reconciliation waits for a person, not a retry.)
+        recoveryOwned: outcome !== "succeeded" && livenessRun.runtimeMode === "native" && !adapterResult.nativeFinalization,
+      });
       await releaseIssueExecutionAndPromote(livenessRun, {
         suppressImmediateRecovery: conversationSettled ||
           readNonEmptyString(
@@ -1176,6 +1194,10 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
         livenessRun,
         agent,
       );
+      // While native recovery owns the run (no terminal classification yet), the task stays open.
+      await closeWeeklyUpdateTaskAfterRunSafely(livenessRun, {
+        recoveryOwned: livenessRun.runtimeMode === "native" && nativeTerminalFailureCode === null,
+      });
       await releaseIssueExecutionAndPromote(livenessRun, {
         // Native recovery owns the original heartbeat run through
         // exhaustion. Once its durable coordinator has classified a
@@ -1235,6 +1257,13 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
     });
   }
 
+  /** A budget admission refusal (hosted limit or spending hard stop) keeps its own code. */
+  function budgetRefusalCode(error: unknown): string | null {
+    if (!(error instanceof HttpError) || error.status !== 409) return null;
+    const code = (error.details as { code?: unknown } | undefined)?.code;
+    return code === HOSTED_LIMIT_REACHED_ERROR_CODE || code === BUDGET_REACHED_ERROR_CODE ? code : null;
+  }
+
   async function failRunSetup(input: FailHeartbeatRunSetupInput) {
     const { run, runId, outerErr, identityRedactor, readFailureReportSecrets } = input;
     // Setup code before adapter.execute threw (e.g. ensureRuntimeState, resolveWorkspaceForRun).
@@ -1284,6 +1313,7 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
         : null) ??
       recordedResponsibleUserDenialCode ??
       nonRetryablePreflightCode ??
+      budgetRefusalCode(outerErr) ??
       "setup_failed";
     logger.error(
       { err: identityRedactor.redact({ message: outerErr instanceof Error ? outerErr.message : String(outerErr), stack: outerErr instanceof Error ? outerErr.stack : undefined }), runId },

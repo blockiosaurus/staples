@@ -1,7 +1,7 @@
 # Persistent agent chat, backed by tasks
 
 Date: 2026-09-10
-Status: Implemented behind `enableAgentChat`; verification recorded in the implementation handoff.
+Status: Implemented; now always on (`enableAgentChat` retired); verification recorded in the implementation handoff.
 
 ## Contract
 

@@ -128,6 +128,40 @@ describe("issue graph liveness classifier", () => {
     ]);
   });
 
+  it("never recommends the built-in Assistant as a recovery owner", () => {
+    const assistantId = "assistant-1";
+    const rootAgentId = "root-agent";
+    const findings = classifyIssueGraphLiveness({
+      issues: [
+        issue({ assigneeAgentId: null, createdByAgentId: null }),
+        issue({
+          id: blockerId,
+          identifier: "PAP-1704",
+          title: "Missing unblock work",
+          status: "todo",
+          assigneeAgentId: null,
+          createdByAgentId: null,
+        }),
+      ],
+      relations: blocks,
+      agents: [
+        // Sorts first by id and has no manager, so it would otherwise be a root candidate.
+        agent({
+          id: assistantId,
+          name: "Assistant",
+          role: "general",
+          reportsTo: null,
+          metadata: { paperclipBuiltInAgent: { key: "assistant", featureKeys: ["assistant"] } },
+        }),
+        agent({ id: rootAgentId, name: "Root Operator", role: "operator", reportsTo: null }),
+      ],
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.recommendedOwnerAgentId).toBe(rootAgentId);
+    expect(findings[0]?.recommendedOwnerCandidateAgentIds).not.toContain(assistantId);
+  });
+
   it("does not flag a live blocked chain with an active assignee and wake path", () => {
     const findings = classifyIssueGraphLiveness({
       issues: [

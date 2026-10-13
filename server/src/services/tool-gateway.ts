@@ -2538,6 +2538,9 @@ export function createToolGatewayService(
             actionRequestId: actionRequest.id,
             invocationId: input.invocation.id,
             toolName: input.tool.name,
+            ...(input.tool.upstreamToolName && input.tool.upstreamToolName !== input.tool.name
+              ? { upstreamToolName: input.tool.upstreamToolName }
+              : {}),
             toolDisplayName: input.tool.displayName?.trim() || input.tool.name,
             connectionId: input.tool.connectionId ?? null,
             applicationId: input.tool.applicationId ?? null,
@@ -2548,9 +2551,15 @@ export function createToolGatewayService(
                 : input.tool.risk === "destructive"
                   ? "destructive"
                   : "write",
+            // An approval asked by an agent template's destructive guard can
+            // never be remembered (the trust-rule promotion refuses it), so
+            // "Always allow" is not offered for it. This matters for calls the
+            // guard asks for by name (e.g. a write-rated close_issue), which
+            // do not take the formal (destructive) approval path.
             ...(!formalApprovalId &&
             input.session.agentId &&
-            input.tool.connectionId
+            input.tool.connectionId &&
+            input.policyDecision.policyExplanation?.templateGuard !== "destructive"
               ? {
                   rememberActionScope: `This agent may use this action with different arguments on this connection${input.session.projectId ? " within this project" : ""}.`,
                 }
@@ -5828,6 +5837,9 @@ export function createToolGatewayService(
         },
       },
       { agentId: input.session.agentId },
+      // A remote MCP server authors elicitation fields; it has no
+      // recommendation for Paperclip to carry.
+      { allowQuestionsWithoutRecommendation: true },
     );
     const now = new Date();
     await db
