@@ -37,6 +37,7 @@ import {
 import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { PORTABLE_ZIP_UPLOAD_LIMIT_BYTES } from "../http/body-limits.js";
 import { logger } from "../middleware/logger.js";
+import { issueReadSqlCondition } from "../services/authorization.js";
 import { validate } from "../middleware/validate.js";
 import {
   assembleImportTransferZip,
@@ -424,8 +425,11 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     const query = companyArtifactsQuerySchema.parse(req.query);
+    // Documents and files on tasks this person can't read (private tasks) are not listed.
+    const readCondition = await issueReadSqlCondition(db, req.actor);
     res.json(await artifacts.list(companyId, query, {
       userId: query.starred && req.actor.type === "board" ? req.actor.userId : undefined,
+      issueConditions: [readCondition],
     }));
   });
 

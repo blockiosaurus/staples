@@ -26,6 +26,7 @@ import {
   type CompanyArtifactMediaKind,
   type CompanyArtifactsQuery,
   type CompanyArtifactsResponse,
+  ASSISTANT_WEEKLY_UPDATES_ISSUE_ORIGIN_KIND,
 } from "@paperclipai/shared";
 import { badRequest, notFound } from "../errors.js";
 import type { StorageService } from "../storage/types.js";
@@ -343,6 +344,9 @@ export function companyArtifactsService(db: Db, storage?: StorageService) {
       const issueConditions: SQL[] = [
         isNull(issues.hiddenAt),
         isNull(issues.harnessKind),
+        ...(query.excludeWeeklyUpdates
+          ? [sql`${issues.originKind} is distinct from ${ASSISTANT_WEEKLY_UPDATES_ISSUE_ORIGIN_KIND}`]
+          : []),
         ...(options.issueConditions ?? []),
       ];
       const artifacts: CompanyArtifact[] = [];

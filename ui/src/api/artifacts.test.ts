@@ -41,6 +41,11 @@ describe("artifactsApi.list", () => {
     expect(mockApi.get).toHaveBeenCalledWith("/companies/company-1/artifacts");
   });
 
+  it("asks to leave out the weekly updates only when set", async () => {
+    await artifactsApi.list("company-1", { limit: 6, excludeWeeklyUpdates: true });
+    expect(mockApi.get).toHaveBeenCalledWith("/companies/company-1/artifacts?limit=6&excludeWeeklyUpdates=true");
+  });
+
   it("omits the kind param when filtering by all", async () => {
     await artifactsApi.list("company-1", { kind: "all" });
     expect(mockApi.get).toHaveBeenCalledWith("/companies/company-1/artifacts");

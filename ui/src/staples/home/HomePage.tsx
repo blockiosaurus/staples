@@ -283,7 +283,8 @@ export function HomePage() {
   // once something exists, whatever the signals say.
   const artifactsQuery = useQuery({
     queryKey: queryKeys.artifacts.home(companyId),
-    queryFn: () => artifactsApi.list(companyId, { limit: MADE_RECENTLY_LIMIT }),
+    // The weekly update has its own card at the top, so it isn't repeated here.
+    queryFn: () => artifactsApi.list(companyId, { limit: MADE_RECENTLY_LIMIT, excludeWeeklyUpdates: true }),
     enabled: Boolean(selectedCompanyId),
     refetchInterval: briefingRefetchInterval,
     refetchIntervalInBackground: true,

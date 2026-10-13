@@ -285,7 +285,8 @@ describe("HomePage", () => {
       nextCursor: null,
     });
     await render();
-    expect(mocks.listArtifacts).toHaveBeenCalledWith("company-1", { limit: 6 });
+    // The weekly update has its own card, so it is left out here.
+    expect(mocks.listArtifacts).toHaveBeenCalledWith("company-1", { limit: 6, excludeWeeklyUpdates: true });
     const made = section("What we've made")!;
     expect(made.querySelectorAll('[data-testid="artifact-card"]')).toHaveLength(3);
     expect(made.querySelector("video")).not.toBeNull();
