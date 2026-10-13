@@ -66,8 +66,9 @@ Generate each secret yourself (never commit them):
 | `PAPERCLIP_ALLOWED_HOSTNAMES` | `healthcheck.railway.app` | Required. The image runs in authenticated/private mode, which rejects any request whose `Host` is not allowed. Railway's health checker sends `Host: healthcheck.railway.app`, so without this the deploy fails its health check. Comma-separate to add more hosts. |
 | `PAPERCLIP_PUBLIC_URL` | `https://<your-service>.up.railway.app` | The public origin, no trailing slash. Also the base for connector OAuth callbacks and sign-in origin checks. Generate the domain first (**Settings** > **Networking** > **Generate Domain**), then set this. |
 | `STAPLES_HOSTED_ANTHROPIC_API_KEY` | your Anthropic API key | Turns on hosted inference. Use a dedicated key with its own provider-side spend limit. |
-| `PAPERCLIP_SELF_SERVE_COMPANIES` | `true` | Lets each signed-in trial user create their own company. Default `false`. |
-| `PAPERCLIP_SELF_SERVE_COMPANY_LIMIT` | `3` | Max self-serve companies per user. Default `3`. |
+| `PAPERCLIP_SELF_SERVE_COMPANIES` | `true` | Lets each signed-in trial user create their own company. Default `false`. Only for trusted, invited users (see below). |
+| `PAPERCLIP_SELF_SERVE_COMPANY_LIMIT` | `1` | Companies each non-admin may own (archived ones count). Default `3`; use `1` for a trial. |
+| `PAPERCLIP_SELF_SERVE_ADAPTERS` | `claude_managed` | Agent adapters non-admins may use. The default is fine. `process` and `*_local` adapters are never allowed for non-admins, because they run inside this container. |
 
 Optionally, Railway can generate a secret for you with a template variable such
 as `${{ secret(64, "abcdef0123456789") }}` in the raw editor.
@@ -86,7 +87,13 @@ Recommended trial values, in cents:
 | `STAPLES_HOSTED_COMPANY_BUDGET_CENTS` | `10000` | Company, $100 |
 | `STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS` | `30000` | Ceiling a plan or approval may raise the company cap to, $300 |
 
-`0` means uncapped; avoid that on a trial. These are code defaults when unset;
+`0` means uncapped; avoid that on a trial.
+
+**Worst-case monthly hosted spend with self-serve on** is
+`users x PAPERCLIP_SELF_SERVE_COMPANY_LIMIT x STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS`.
+With the values above and a limit of 1, that is $300 per user. For 10 users it
+is $3,000. Set a monthly spend limit on the Anthropic key at the provider below
+that figure. Do this in addition to the Staples caps, not instead of them. These are code defaults when unset;
 this guide only recommends values.
 
 `STAPLES_HOSTED_INFERENCE=off` disables the hosted key path only. With it set
@@ -113,11 +120,18 @@ The first account to sign in on a private-exposure instance becomes the instance
 admin. Open `PAPERCLIP_PUBLIC_URL` yourself, create your account, and confirm you
 are the admin before sending the link to anyone.
 
-## 7. Optionally close sign-up
+## 7. Close sign-up
 
-Once your trial users have accounts, set `PAPERCLIP_AUTH_DISABLE_SIGN_UP=true`
+Self-serve company creation is for trusted users only. Anyone who signs up can
+create a company and spend your hosted key. Share the URL only with invited
+people, and once they have accounts, set `PAPERCLIP_AUTH_DISABLE_SIGN_UP=true`
 and redeploy to stop new sign-ups. (Sign-up is open by default.) Existing users
 still sign in.
+
+Every company shares this one container and database. Non-admins can't run
+code on the host (see "Host-execution floor" in
+[DEPLOYMENT-MODES.md](DEPLOYMENT-MODES.md)), but treat trial users as trusted
+colleagues, not hostile tenants.
 
 ## 8. Share the URL
 

@@ -774,6 +774,7 @@ export {
   type PluginBridgeErrorCode,
   DEFAULT_SELF_SERVE_COMPANY_LIMIT,
   SELF_SERVE_COMPANY_LIMIT_ERROR_CODE,
+  DEFAULT_SELF_SERVE_ADAPTER_TYPES,
 } from "./constants.js";
 
 export {

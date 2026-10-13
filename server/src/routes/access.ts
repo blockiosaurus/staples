@@ -1,4 +1,5 @@
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
+import { assertSelfServeAdapterAllowed } from "../services/self-serve-policy.js";
 import {
   createHash,
   generateKeyPairSync,
@@ -4265,6 +4266,9 @@ export function accessRoutes(
         );
       } else {
         assertLegacyAgentInviteAdapterType(existing.adapterType);
+        // Self-serve floor: an approved agent join would run its adapter
+        // (default "process") with the requester's config on the host.
+        assertSelfServeAdapterAllowed(req, existing.adapterType ?? "process");
         const existingAgents = await agents.list(companyId);
         const managerId = resolveJoinRequestAgentManagerId(existingAgents);
         if (!managerId) {

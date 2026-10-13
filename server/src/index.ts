@@ -949,6 +949,7 @@ async function startServerWithDatabaseTeardown(
     companyDeletionEnabled: config.companyDeletionEnabled,
     selfServeCompanies: config.selfServeCompanies,
     selfServeCompanyLimit: config.selfServeCompanyLimit,
+    selfServeAdapterTypes: config.selfServeAdapterTypes,
     announcements: { enabled: config.announcementsEnabled, feedUrl: config.announcementsFeedUrl },
     pluginMigrationDb: pluginMigrationDb as any,
     betterAuthHandler,

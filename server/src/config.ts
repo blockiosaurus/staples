@@ -1,4 +1,5 @@
 import { readConfigFile, resolveDeploymentMode } from "./config-file.js";
+import { parseSelfServeAdapterTypes } from "./services/self-serve-policy.js";
 import { parseChatWebhookPublicBaseUrl } from "./chat-webhook-public-url.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
@@ -102,6 +103,8 @@ export interface Config {
   selfServeCompanies: boolean;
   /** PAPERCLIP_SELF_SERVE_COMPANY_LIMIT: active companies a non-admin self-serve user may own. */
   selfServeCompanyLimit: number;
+  /** PAPERCLIP_SELF_SERVE_ADAPTERS: adapters non-admins may use when self-serve is on (host-executed ones are dropped). */
+  selfServeAdapterTypes: string[];
   telemetryEnabled: boolean;
   announcementsEnabled: boolean;
   announcementsFeedUrl: string;
@@ -263,6 +266,7 @@ export function loadConfig(): Config {
       : deploymentMode === "local_trusted";
   const selfServeCompanies = process.env.PAPERCLIP_SELF_SERVE_COMPANIES === "true";
   const selfServeCompanyLimit = parseSelfServeCompanyLimit(process.env.PAPERCLIP_SELF_SERVE_COMPANY_LIMIT);
+  const selfServeAdapterTypes = parseSelfServeAdapterTypes(process.env.PAPERCLIP_SELF_SERVE_ADAPTERS);
   const databaseBackupEnabled =
     process.env.PAPERCLIP_DB_BACKUP_ENABLED !== undefined
       ? process.env.PAPERCLIP_DB_BACKUP_ENABLED === "true"
@@ -372,6 +376,7 @@ export function loadConfig(): Config {
     companyDeletionEnabled,
     selfServeCompanies,
     selfServeCompanyLimit,
+    selfServeAdapterTypes,
     telemetryEnabled: fileConfig?.telemetry?.enabled ?? true,
     announcementsEnabled: process.env.PAPERCLIP_ANNOUNCEMENTS_ENABLED !== "false",
     announcementsFeedUrl: process.env.PAPERCLIP_ANNOUNCEMENTS_FEED_URL?.trim() || "https://pages.paperclip.ing/announcements/v1/current.json",

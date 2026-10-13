@@ -70,6 +70,8 @@ import {
   workTimelineService,
 } from "../services/index.js";
 import { isCloudManagedInstance } from "../services/cloud-instance.js";
+import { hostedInference } from "../services/hosted-inference.js";
+import { assertSelfServeHostAccess, isSelfServeRestricted } from "../services/self-serve-policy.js";
 import { getHiddenSettings } from "../services/settings-visibility.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo, hasCompanyAccess } from "./authz.js";
@@ -582,6 +584,9 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
         code: SETTINGS_OPERATOR_MANAGED_ERROR_CODE,
       });
     }
+    // An import package carries agents with any adapter and config, including
+    // host-executed ones. Self-serve instances keep imports admin-only.
+    assertSelfServeHostAccess(_req, "Importing a company package");
     next();
   };
   // COMPANY_IMPORT_TRANSFERS_ROUTE_PATH nests under the import path, so these
@@ -1217,8 +1222,35 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
   }, validate(createCompanySchema), async (req, res) => {
     assertBoard(req);
     const isAdminCreator = req.actor.source === "local_implicit" || req.actor.isInstanceAdmin === true;
-    let selfServe = false;
-    if (!isAdminCreator) {
+    const ownerPrincipalId = req.actor.userId ?? "local-board";
+    const createOwnedCompany = async (selfServe: boolean) => {
+      const company = await svc.create({
+        ...req.body,
+        defaultResponsibleUserId: req.body.defaultResponsibleUserId ?? ownerPrincipalId,
+      });
+      await access.ensureMembership(company.id, "user", ownerPrincipalId, "owner", "active");
+      await access.ensureRoleDefaultGrants(
+        company.id,
+        ownerPrincipalId,
+        "owner",
+        req.actor.userId ?? null,
+      );
+      await logActivity(db, {
+        companyId: company.id,
+        actorType: "user",
+        actorId: req.actor.userId ?? "board",
+        action: "company.created",
+        entityType: "company",
+        entityId: company.id,
+        details: { name: company.name, ...(selfServe ? { selfServe: true } : {}) },
+      });
+      return company;
+    };
+
+    let company: Awaited<ReturnType<typeof createOwnedCompany>>;
+    if (isAdminCreator) {
+      company = await createOwnedCompany(false);
+    } else {
       const selfServeAllowed =
         options?.selfServeCompanies === true &&
         options.deploymentMode === "authenticated" &&
@@ -1230,37 +1262,27 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
       if (!selfServeAllowed) {
         throw forbidden("Instance admin required");
       }
-      const limit = options?.selfServeCompanyLimit ?? DEFAULT_SELF_SERVE_COMPANY_LIMIT;
-      const owned = await access.countActiveOwnedCompanies(req.actor.userId!);
-      if (owned >= limit) {
-        throw forbidden(
-          `You already own ${owned} active ${owned === 1 ? "company" : "companies"}, which is the limit on this instance. Archive one or ask an admin for more.`,
-          { code: SELF_SERVE_COMPANY_LIMIT_ERROR_CODE, limit, owned },
+      // A self-serve company's Assistant must run on Claude (hosted). Without
+      // the server's Anthropic key it would fall back to a local CLI adapter,
+      // which executes on the shared host.
+      if (!hostedInference().available) {
+        throw conflict(
+          "New companies need Claude (hosted) on this instance, and it isn't set up. Ask an admin.",
+          { code: "self_serve_hosted_inference_required" },
         );
       }
-      selfServe = true;
+      const limit = options?.selfServeCompanyLimit ?? DEFAULT_SELF_SERVE_COMPANY_LIMIT;
+      company = await access.withSelfServeCompanyLock(req.actor.userId!, async (countOwned) => {
+        const owned = await countOwned();
+        if (owned >= limit) {
+          throw forbidden(
+            `You have already created ${owned} ${owned === 1 ? "company" : "companies"}, which is the limit on this instance. Archived companies count too. Ask an admin for more.`,
+            { code: SELF_SERVE_COMPANY_LIMIT_ERROR_CODE },
+          );
+        }
+        return createOwnedCompany(true);
+      });
     }
-    const ownerPrincipalId = req.actor.userId ?? "local-board";
-    const company = await svc.create({
-      ...req.body,
-      defaultResponsibleUserId: req.body.defaultResponsibleUserId ?? ownerPrincipalId,
-    });
-    await access.ensureMembership(company.id, "user", ownerPrincipalId, "owner", "active");
-    await access.ensureRoleDefaultGrants(
-      company.id,
-      ownerPrincipalId,
-      "owner",
-      req.actor.userId ?? null,
-    );
-    await logActivity(db, {
-      companyId: company.id,
-      actorType: "user",
-      actorId: req.actor.userId ?? "board",
-      action: "company.created",
-      entityType: "company",
-      entityId: company.id,
-      details: { name: company.name, ...(selfServe ? { selfServe: true } : {}) },
-    });
     if (company.budgetMonthlyCents > 0) {
       await budgets.upsertPolicy(
         company.id,
@@ -1313,6 +1335,21 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
       body.status === "archived" && existingCompany.status !== "archived";
     const transitionsArchivedToActive =
       body.status === "active" && existingCompany.status === "archived";
+    // Unarchiving by a non-admin on a self-serve instance must fit the same
+    // per-user limit as creating, or archive/unarchive would get around it.
+    if (transitionsArchivedToActive && req.actor.type === "board" && isSelfServeRestricted(req)) {
+      const limit = options?.selfServeCompanyLimit ?? DEFAULT_SELF_SERVE_COMPANY_LIMIT;
+      const owned = await access.countOwnedCompanies(req.actor.userId ?? "", {
+        includeArchived: false,
+        excludeCompanyId: companyId,
+      });
+      if (owned >= limit) {
+        throw forbidden(
+          `You already have ${owned} active ${owned === 1 ? "company" : "companies"}, which is the limit on this instance. Archive one first, or ask an admin.`,
+          { code: SELF_SERVE_COMPANY_LIMIT_ERROR_CODE },
+        );
+      }
+    }
     let transitionsPausedToActiveWithArchivePausedAgents = false;
     if (body.status === "active" && existingCompany.status === "paused") {
       const [archivedPausedCount] = await db

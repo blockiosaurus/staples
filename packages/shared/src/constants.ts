@@ -8,6 +8,8 @@ export type DeploymentMode = (typeof DEPLOYMENT_MODES)[number];
 export const DEFAULT_SELF_SERVE_COMPANY_LIMIT = 3;
 /** Error code returned by POST /companies when a self-serve user reaches the limit. */
 export const SELF_SERVE_COMPANY_LIMIT_ERROR_CODE = "self_serve_company_limit";
+/** Default for PAPERCLIP_SELF_SERVE_ADAPTERS: remote adapters non-admins may use on a self-serve instance. */
+export const DEFAULT_SELF_SERVE_ADAPTER_TYPES = ["claude_managed"] as const;
 
 export const DEPLOYMENT_EXPOSURES = ["private", "public"] as const;
 export type DeploymentExposure = (typeof DEPLOYMENT_EXPOSURES)[number];

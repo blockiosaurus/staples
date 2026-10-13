@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Managed-sandbox-only policy (`enableManagedSandboxOnly`): a project workspace
@@ -108,7 +108,7 @@ function registerModuleMocks() {
   }));
 }
 
-async function createApp() {
+async function createApp(actor?: Record<string, unknown>) {
   const [{ projectRoutes }, { errorHandler }] = await Promise.all([
     vi.importActual<typeof import("../routes/projects.js")>("../routes/projects.js"),
     vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
@@ -117,7 +117,7 @@ async function createApp() {
   app.use(express.json());
   app.use((req, _res, next) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (req as any).actor = {
+    (req as any).actor = actor ?? {
       type: "board",
       userId: "board-user",
       companyIds: ["company-1"],
@@ -314,5 +314,69 @@ describe("project workspace host-path floor", () => {
 
     expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
     expect(mockProjectService.createWorkspace).toHaveBeenCalled();
+  });
+});
+
+describe("project workspace self-serve floor", () => {
+  const selfServeUser = {
+    type: "board",
+    userId: "self-serve-user",
+    sessionId: "session-1",
+    companyIds: ["company-1"],
+    memberships: [{ companyId: "company-1", membershipRole: "owner", status: "active" }],
+    source: "session",
+    isInstanceAdmin: false,
+  };
+
+  async function setSelfServe(enabled: boolean) {
+    const policy = await vi.importActual<typeof import("../services/self-serve-policy.js")>("../services/self-serve-policy.js");
+    policy.configureSelfServePolicy({ selfServeCompanies: enabled, deploymentMode: "authenticated", adapterTypes: ["claude_managed"] });
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+    registerModuleMocks();
+    vi.clearAllMocks();
+    mockAccessService.decide.mockResolvedValue({ allowed: true, action: "project:read", reason: "allow_test", explanation: "ok" });
+    mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
+    mockProjectService.getById.mockResolvedValue(buildProject());
+    mockProjectService.createWorkspace.mockResolvedValue(buildWorkspace());
+    mockProjectService.listWorkspaces.mockResolvedValue([buildWorkspace()]);
+    setManagedSandboxOnly(false);
+  });
+
+  afterEach(async () => {
+    await setSelfServe(false);
+  });
+
+  it("refuses a server folder (cwd) from a self-serve user", async () => {
+    await setSelfServe(true);
+    const app = await createApp(selfServeUser);
+    const res = await request(app)
+      .post("/api/projects/project-1/workspaces")
+      .send({ name: "Primary", cwd: "/" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(mockProjectService.createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("refuses running workspace commands for a self-serve user", async () => {
+    await setSelfServe(true);
+    const app = await createApp(selfServeUser);
+    const res = await request(app)
+      .post("/api/projects/project-1/workspaces/workspace-1/runtime-commands/run")
+      .send({});
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+  });
+
+  it("lets the same user set a cwd when self-serve is off", async () => {
+    await setSelfServe(false);
+    const app = await createApp(selfServeUser);
+    const res = await request(app)
+      .post("/api/projects/project-1/workspaces")
+      .send({ name: "Primary", cwd: "/srv/projects/paperclip" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
   });
 });

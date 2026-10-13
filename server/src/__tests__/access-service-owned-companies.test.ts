@@ -10,7 +10,7 @@ import { accessService } from "../services/access.js";
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 
-describeEmbeddedPostgres("accessService.countActiveOwnedCompanies", () => {
+describeEmbeddedPostgres("accessService.countOwnedCompanies", () => {
   let db!: ReturnType<typeof createDb>;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
 
@@ -51,19 +51,35 @@ describeEmbeddedPostgres("accessService.countActiveOwnedCompanies", () => {
     return company;
   }
 
-  it("counts only active, non-archived companies the user owns", async () => {
+  it("counts owned companies, with archived ones only for creation", async () => {
     const userId = `user-${randomUUID()}`;
-    await companyWith(userId);
+    const active = await companyWith(userId);
     await companyWith(userId, { status: "paused" });
     await companyWith(userId, { status: "archived" });
     await companyWith(userId, { role: "member" });
     await companyWith(userId, { membershipStatus: "archived" });
     await companyWith(`someone-else-${randomUUID()}`);
+    const svc = accessService(db);
 
-    await expect(accessService(db).countActiveOwnedCompanies(userId)).resolves.toBe(2);
+    await expect(svc.countOwnedCompanies(userId, { includeArchived: true })).resolves.toBe(3);
+    await expect(svc.countOwnedCompanies(userId, { includeArchived: false })).resolves.toBe(2);
+    await expect(svc.countOwnedCompanies(userId, { includeArchived: false, excludeCompanyId: active.id })).resolves.toBe(1);
+  });
+
+  it("serializes a user's creations under the advisory lock", async () => {
+    const userId = `user-${randomUUID()}`;
+    const svc = accessService(db);
+    const results = await Promise.all([0, 1].map(() => svc.withSelfServeCompanyLock(userId, async (count) => {
+      const before = await count();
+      if (before >= 1) return "refused";
+      await companyWith(userId);
+      return "created";
+    })));
+
+    expect(results.sort()).toEqual(["created", "refused"]);
   });
 
   it("returns 0 for a user with no companies", async () => {
-    await expect(accessService(db).countActiveOwnedCompanies(`user-${randomUUID()}`)).resolves.toBe(0);
+    await expect(accessService(db).countOwnedCompanies(`user-${randomUUID()}`, { includeArchived: true })).resolves.toBe(0);
   });
 });

@@ -70,6 +70,8 @@ export interface CatalogTeamImportOptions {
   nameOverrides?: Record<string, string>;
   selectedFiles?: string[];
   adapterOverrides?: CompanyPortabilityImport["adapterOverrides"];
+  /** Adapter for catalog agents without an override (the self-serve floor sets a remote one). */
+  defaultAdapterType?: string;
   secretValues?: CompanyPortabilityImport["secretValues"];
   sourcePolicy?: CatalogTeamSourcePolicy;
   actor?: CatalogTeamActorContext | null;
@@ -923,7 +925,7 @@ export function teamsCatalogService(db: Db) {
       throw unprocessable(`Catalog team source preparation failed: ${prepared.errors.join("; ")}`);
     }
 
-    const defaultAdapterType = defaultSafeCatalogAdapterType();
+    const defaultAdapterType = options.defaultAdapterType ?? defaultSafeCatalogAdapterType();
     const importInput: CompanyPortabilityImport = {
       ...buildPortabilityInput(companyId, prepared.source, options),
       adapterOverrides: withSafeCatalogAdapterDefaults(

@@ -1,3 +1,4 @@
+import { configureSelfServePolicy } from "./services/self-serve-policy.js";
 import { voiceSessionRoutes, voiceWebhookRoutes } from "./routes/voice-sessions.js";
 import { createDeliveryWorkCoordinator } from "./services/delivery-work-coordinator.js";
 import { DELIVERY_QUEUES } from "./services/delivery-work-notifications.js";
@@ -522,6 +523,7 @@ export async function createApp(
     companyDeletionEnabled: boolean;
     selfServeCompanies?: boolean;
     selfServeCompanyLimit?: number;
+    selfServeAdapterTypes?: string[];
     announcements?: { enabled: boolean; feedUrl: string };
     instanceId?: string;
     hostVersion?: string;
@@ -549,6 +551,11 @@ export async function createApp(
   const staticUi = express.Router();
   app.locals.paperclipDb = db;
   const isWarmStandby = opts.cloudWarmStandby ?? (() => false);
+  configureSelfServePolicy({
+    selfServeCompanies: opts.selfServeCompanies ?? false,
+    deploymentMode: opts.deploymentMode,
+    adapterTypes: opts.selfServeAdapterTypes,
+  });
   const health = healthRoutes(db, {
     deploymentMode: opts.deploymentMode,
     deploymentExposure: opts.deploymentExposure,

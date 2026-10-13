@@ -210,29 +210,87 @@ By default only an instance admin (or the local board in `local_trusted`) can
 create a company with `POST /api/companies`. A signed-in user with no company
 sees "Ask the person who invited you for access".
 
-Two environment variables open this up for a trial or team instance:
+**Self-serve is for trusted users.** Anyone who can sign up can create a
+company and spend the instance's hosted-inference key. Use it with invited
+people only, and set `PAPERCLIP_AUTH_DISABLE_SIGN_UP=true` once your trial users
+have signed up.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `PAPERCLIP_SELF_SERVE_COMPANIES` | `false` | When `true` and the mode is `authenticated`, any user with a browser session can create a company. Ignored in `local_trusted`. |
-| `PAPERCLIP_SELF_SERVE_COMPANY_LIMIT` | `3` | The most active (not archived) companies a non-admin may own before `POST /api/companies` returns `403` with code `self_serve_company_limit`. Instance admins are not limited. |
+| `PAPERCLIP_SELF_SERVE_COMPANIES` | `false` | When `true` and the mode is `authenticated`, any user with a browser session can create a company. Ignored in `local_trusted`. Requires hosted inference (`STAPLES_HOSTED_ANTHROPIC_API_KEY`); without it self-serve creation returns `409 self_serve_hosted_inference_required`. |
+| `PAPERCLIP_SELF_SERVE_COMPANY_LIMIT` | `3` | How many companies a non-admin may own. Archived companies count, so archiving never frees a slot, and unarchiving must also fit under the limit. At the limit, `POST /api/companies` (or an unarchive) returns `403 self_serve_company_limit`. Instance admins are not limited. **Use `1` for trials.** |
+| `PAPERCLIP_SELF_SERVE_ADAPTERS` | `claude_managed` | Comma-separated agent adapters that non-admins may use while self-serve is on. `process` and every `*_local` adapter are always dropped from this list, because they run on the server host. |
 
-With the flag on:
+#### What the creator gets
 
-- the creator becomes the company `owner` with the same membership, default
-  grants and built-in agents (including the Staples Assistant) an admin
-  creator gets;
-- the creation is activity-logged as `company.created` with the user as actor
-  and `details.selfServe: true`;
-- only browser sessions qualify; board API keys, agents and Cloud tenants do not;
-- company boundaries are unchanged, so a self-serve user sees and changes only
-  the companies they belong to, and joins others only through an invite;
-- `GET /api/health` reports `features.selfServeCompanies: true` to signed-in
-  callers, and the UI sends a user with no company to `/start` ("Name your
-  company") and shows "Create organization" in the company switcher.
+- The creator becomes the company `owner` with the same membership, default
+  grants and built-in agents (the Staples Assistant runs on Claude (hosted)) an
+  admin creator gets.
+- Creation is activity-logged as `company.created` with the user as actor and
+  `details.selfServe: true`.
+- Creation is serialized per user with a Postgres advisory lock, so parallel
+  requests cannot overshoot the limit.
+- Only browser sessions qualify. Board API keys, agents and Cloud tenants do not.
 
-With the flag off, creation stays admin-only and the switcher hides
-"Create organization" from non-admins.
+#### Host-execution floor
+
+With self-serve on, a company owner is not a trusted operator. Every actor that
+is not an instance admin (non-admin people and all agents, in every company) is
+held to this floor:
+
+- Agents may only use the adapters in `PAPERCLIP_SELF_SERVE_ADAPTERS`. This
+  covers create, hire (including plan hires and approvals, which go through the
+  hire route), update and adapter switch, config rollback, agent join-request
+  approval, and team-catalog installs (catalog agents default to the first
+  allowed adapter). `*_local` host-command keys (`command`, `args`, `cwd`, `env`,
+  ...) are refused.
+- Adapter environment tests and `claude-login` (both run a CLI on the host) are
+  refused.
+- Host-executed workspace commands (provision, teardown, cleanup, runtime
+  services and jobs) cannot be set on projects, issues, execution workspaces or
+  agents, and the workspace runtime-command routes cannot be run.
+- Project workspace `cwd` (a server folder) and plugin local folders cannot be
+  set.
+- Local command (stdio) MCP templates cannot be added.
+- Company package imports (`/companies/import`, `/companies/:id/imports/*`)
+  are refused.
+- `POST /api/health/dev-server/restart` is refused.
+
+Already admin-only and unchanged: environments, plugin install, enable and
+config, adapter install, and external instruction paths.
+
+#### Company boundaries
+
+A self-serve user sees and changes only the companies they belong to. They
+can't grant themselves access to another company, create invites for it or
+approve its join requests; joining needs an invite from that company. These
+boundaries keep tenants apart in the API, but every company still runs in one
+server process with one database. Treat self-serve users as trusted colleagues,
+not hostile tenants.
+
+#### Hosted spend exposure
+
+Each self-serve company's hosted spend is capped per month by
+`STAPLES_HOSTED_COMPANY_BUDGET_CENTS` (default $50). The company can raise its
+cap up to `STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS` (default $200). The worst
+case per month is:
+
+```
+users x PAPERCLIP_SELF_SERVE_COMPANY_LIMIT x STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS
+```
+
+For example, 10 users x 3 companies x $200 = $6,000. With a limit of 1 and a
+$100 ceiling it is $1,000. Also set a spend limit on the Anthropic key at the
+provider. That limit is the only cap that holds if Staples' own accounting is
+wrong.
+
+#### UI
+
+`GET /api/health` reports `features.selfServeCompanies: true` to signed-in
+callers. The UI then sends a user with no company to `/start` ("Name your
+company") and shows "Create organization" in the company switcher. With the
+flag off, creation stays admin-only and non-admins don't see "Create
+organization".
 
 ## 9. Current Code Reality (As Of 2026-02-23)
 

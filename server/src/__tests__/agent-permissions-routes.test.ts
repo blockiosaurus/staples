@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_OPENCODE_LOCAL_MODEL } from "@paperclipai/adapter-opencode-local";
 import { LOW_TRUST_REVIEW_PRESET } from "@paperclipai/shared";
 import { hoistModuleGraph } from "./helpers/hoist-module-graph.js";
@@ -865,6 +865,173 @@ describe("agent permission routes", () => {
       GENERIC_NAME: { type: "plain", value: "***REDACTED***" },
     });
     expect(JSON.stringify(res.body)).not.toContain(plaintextValue);
+  });
+
+  describe("self-serve host-execution floor", () => {
+    const selfServeUser = {
+      type: "board",
+      userId: "self-serve-user",
+      sessionId: "session-1",
+      source: "session",
+      isInstanceAdmin: false,
+      companyIds: [companyId],
+      memberships: [{ companyId, membershipRole: "owner", status: "active" }],
+    };
+    const instanceAdmin = { ...selfServeUser, userId: "instance-admin-user", isInstanceAdmin: true };
+    const FLOOR_CODE = "self_serve_host_execution_forbidden";
+
+    async function withSelfServe(on: boolean) {
+      const policy = await vi.importActual<typeof import("../services/self-serve-policy.js")>("../services/self-serve-policy.js");
+      policy.configureSelfServePolicy({
+        selfServeCompanies: on,
+        deploymentMode: "authenticated",
+        adapterTypes: ["claude_managed"],
+      });
+      return policy;
+    }
+
+    afterEach(async () => {
+      (await withSelfServe(false)).resetSelfServePolicy();
+    });
+
+    it.each(["process", "claude_local", "codex_local"])("refuses a self-serve user creating a %s agent", async (adapterType) => {
+      await withSelfServe(true);
+      const app = await createApp(selfServeUser);
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/companies/${companyId}/agents`)
+        .send({ name: "Runner", role: "engineer", adapterType, adapterConfig: {} }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.code).toBe(FLOOR_CODE);
+      expect(mockAgentService.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses a self-serve user hiring a local agent", async () => {
+      await withSelfServe(true);
+      const app = await createApp(selfServeUser);
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/companies/${companyId}/agent-hires`)
+        .send({ name: "Runner", role: "engineer", adapterType: "claude_local", adapterConfig: {} }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.code).toBe(FLOOR_CODE);
+      expect(mockAgentService.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses switching an agent onto a local adapter", async () => {
+      await withSelfServe(true);
+      mockAgentService.getById.mockResolvedValue({ ...baseAgent, adapterType: "claude_managed" });
+      const app = await createApp(selfServeUser);
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .patch(`/api/agents/${agentId}`)
+        .send({ adapterType: "claude_local", adapterConfig: {} }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.code).toBe(FLOOR_CODE);
+      expect(mockAgentService.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["command", { command: "sh" }],
+      ["args", { args: ["-c", "id"] }],
+      ["cwd", { cwd: "/" }],
+    ])("refuses setting host command key %s", async (_label, adapterConfig) => {
+      await withSelfServe(true);
+      mockAgentService.getById.mockResolvedValue({ ...baseAgent, adapterType: "claude_local" });
+      const app = await createApp(selfServeUser);
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .patch(`/api/agents/${agentId}`)
+        .send({ adapterConfig }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(mockAgentService.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses host-executed workspace commands", async () => {
+      await withSelfServe(true);
+      mockAgentService.getById.mockResolvedValue({ ...baseAgent, adapterType: "claude_managed" });
+      const app = await createApp(selfServeUser);
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .patch(`/api/agents/${agentId}`)
+        .send({ adapterConfig: { workspaceStrategy: { type: "git_worktree", provisionCommand: "id" } } }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.code).toBe(FLOOR_CODE);
+      expect(mockAgentService.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a config rollback onto the process adapter", async () => {
+      await withSelfServe(true);
+      mockAgentService.getById.mockResolvedValue({ ...baseAgent, adapterType: "claude_managed" });
+      mockAgentService.getConfigRevision.mockResolvedValue({
+        id: "33333333-3333-4333-8333-333333333333",
+        agentId,
+        afterConfig: { adapterType: "process", adapterConfig: {}, runtimeConfig: {} },
+      });
+      const app = await createApp(selfServeUser);
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/agents/${agentId}/config-revisions/33333333-3333-4333-8333-333333333333/rollback`));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.code).toBe(FLOOR_CODE);
+      expect(mockAgentService.rollbackConfigRevision).not.toHaveBeenCalled();
+    });
+
+    it("refuses a host-side adapter environment test", async () => {
+      await withSelfServe(true);
+      const app = await createApp(selfServeUser);
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/companies/${companyId}/adapters/process/test-environment`)
+        .send({ adapterConfig: { command: "id" } }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.code).toBe(FLOOR_CODE);
+    });
+
+    it("refuses agents on a self-serve instance too", async () => {
+      await withSelfServe(true);
+      mockAccessService.hasPermission.mockResolvedValue(true);
+      mockAgentService.getById.mockResolvedValue({ ...baseAgent, adapterType: "claude_managed", permissions: { canCreateAgents: true } });
+      const app = await createApp({ type: "agent", agentId, companyId, source: "agent_key", runId: "run-1" });
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/companies/${companyId}/agent-hires`)
+        .send({ name: "Runner", role: "engineer", adapterType: "claude_local", adapterConfig: {} }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(mockAgentService.create).not.toHaveBeenCalled();
+    });
+
+    it("leaves instance admins unaffected", async () => {
+      await withSelfServe(true);
+      const app = await createApp(instanceAdmin);
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/companies/${companyId}/agents`)
+        .send({ name: "Builder", role: "engineer", adapterType: "process", adapterConfig: {} }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      expect(mockAgentService.create).toHaveBeenCalled();
+    });
+
+    it("changes nothing when self-serve is off", async () => {
+      await withSelfServe(false);
+      const app = await createApp(selfServeUser);
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/companies/${companyId}/agents`)
+        .send({ name: "Builder", role: "engineer", adapterType: "process", adapterConfig: {} }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      expect(mockAgentService.create).toHaveBeenCalled();
+    });
   });
 
   it("blocks api key creation for authenticated company members without agent admin permission", async () => {

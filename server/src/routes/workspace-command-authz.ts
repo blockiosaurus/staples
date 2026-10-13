@@ -1,5 +1,6 @@
 import type { Request } from "express";
 import { forbidden } from "../errors.js";
+import { isSelfServeRestricted, SELF_SERVE_HOST_EXECUTION_ERROR_CODE } from "../services/self-serve-policy.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -68,10 +69,19 @@ function collectExecutionWorkspaceConfigCommandPaths(raw: unknown, prefix: strin
 }
 
 export function assertNoAgentHostWorkspaceCommandMutation(req: Request, paths: string[]) {
-  if (req.actor.type !== "agent" || paths.length === 0) return;
-  throw forbidden(
-    `Agent keys cannot modify host-executed workspace commands (${paths.join(", ")}).`,
-  );
+  if (paths.length === 0) return;
+  if (req.actor.type === "agent") {
+    throw forbidden(
+      `Agent keys cannot modify host-executed workspace commands (${paths.join(", ")}).`,
+    );
+  }
+  // Self-serve instances: a non-admin company owner is not a trusted operator.
+  if (isSelfServeRestricted(req)) {
+    throw forbidden(
+      `Non-admins on this instance cannot modify host-executed workspace commands (${paths.join(", ")}).`,
+      { code: SELF_SERVE_HOST_EXECUTION_ERROR_CODE },
+    );
+  }
 }
 
 export function collectAgentAdapterWorkspaceCommandPaths(

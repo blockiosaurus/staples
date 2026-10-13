@@ -1,4 +1,5 @@
 import { canActorReadWorkspaceOperation } from "../services/heartbeat-run-privacy.js";
+import { assertSelfServeHostAccess } from "../services/self-serve-policy.js";
 import { canActorReadExecutionWorkspace, executionWorkspaceReadSqlCondition } from "../services/authorization.js";
 import { spawn } from "node:child_process";
 import { accessSync, constants as fsConstants, existsSync, readFileSync } from "node:fs";
@@ -288,6 +289,8 @@ export function executionWorkspaceRoutes(db: Db, opts: { pluginWorkerManager?: P
       res.status(404).json({ error: "Workspace command action not found" });
       return;
     }
+    // Workspace services and jobs run as shell commands on the host.
+    assertSelfServeHostAccess(req, "Running workspace commands");
 
     const existing = await getAccessibleResource(req, res, svc.getById(id), "Execution workspace not found");
     if (!existing) return;

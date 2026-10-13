@@ -19,6 +19,7 @@
  * @see doc/plugins/PLUGIN_SPEC.md for the full plugin specification
  */
 
+import { assertSelfServeHostAccess } from "../services/self-serve-policy.js";
 import { access, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -2881,6 +2882,8 @@ export function pluginRoutes(
   });
 
   router.post("/plugins/:pluginId/companies/:companyId/local-folders/:folderKey/validate", async (req, res) => {
+    // A local folder is a path on the server host.
+    assertSelfServeHostAccess(req, "Choosing a server folder for a plugin");
     assertBoardOrgAccess(req);
     const { pluginId, companyId, folderKey } = req.params;
     assertCompanyAccess(req, companyId);
@@ -2914,6 +2917,8 @@ export function pluginRoutes(
   });
 
   router.put("/plugins/:pluginId/companies/:companyId/local-folders/:folderKey", async (req, res) => {
+    // A local folder is a path on the server host.
+    assertSelfServeHostAccess(req, "Choosing a server folder for a plugin");
     assertBoardOrgAccess(req);
     assertPluginManagementVisible();
     const { pluginId, companyId, folderKey } = req.params;

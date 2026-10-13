@@ -1,4 +1,5 @@
 import { supportsLocalAiLogin } from "../services/local-ai-login-policy.js";
+import { isSelfServeRestricted } from "../services/self-serve-policy.js";
 import { hostedInference } from "../services/hosted-inference.js";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Router } from "express";
@@ -143,6 +144,11 @@ export function healthRoutes(
     const actorType = "actor" in req ? req.actor?.type : null;
     if (opts.deploymentMode === "authenticated" && actorType !== "board") {
       res.status(403).json({ error: "board_access_required" });
+      return;
+    }
+    // Self-serve instances: restarting the shared server is an operator action.
+    if ("actor" in req && req.actor && isSelfServeRestricted(req)) {
+      res.status(403).json({ error: "instance_admin_required" });
       return;
     }
 

@@ -430,11 +430,17 @@ export function accessService(db: Db) {
   }
 
   /**
-   * Companies a user actively owns that are not archived. Used for the
-   * self-serve company creation limit (PAPERCLIP_SELF_SERVE_COMPANY_LIMIT).
+   * Companies a user owns, for the self-serve limit
+   * (PAPERCLIP_SELF_SERVE_COMPANY_LIMIT). Creation counts archived companies
+   * too (`includeArchived`), so archiving never frees a slot; unarchiving
+   * counts the companies that are not archived.
    */
-  async function countActiveOwnedCompanies(userId: string) {
-    const rows = await db
+  async function countOwnedCompanies(
+    userId: string,
+    options: { includeArchived: boolean; excludeCompanyId?: string },
+    executor: Db = db,
+  ) {
+    const rows = await executor
       .select({ value: sql<number>`count(*)` })
       .from(companyMemberships)
       .innerJoin(companies, eq(companies.id, companyMemberships.companyId))
@@ -444,10 +450,24 @@ export function accessService(db: Db) {
           eq(companyMemberships.principalId, userId),
           eq(companyMemberships.membershipRole, "owner"),
           eq(companyMemberships.status, "active"),
-          ne(companies.status, "archived"),
+          options.includeArchived ? undefined : ne(companies.status, "archived"),
+          options.excludeCompanyId ? ne(companies.id, options.excludeCompanyId) : undefined,
         ),
       );
     return Number(rows[0]?.value ?? 0);
+  }
+
+  /**
+   * Serialize a user's self-serve company creation. The transaction only holds
+   * a per-user advisory lock (and runs the count); `fn` writes through the
+   * normal pool, so its rows are committed before the lock is released and a
+   * concurrent request counts them.
+   */
+  async function withSelfServeCompanyLock<T>(userId: string, fn: (count: () => Promise<number>) => Promise<T>) {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`self-serve-company:${userId}`}, 0))`);
+      return fn(() => countOwnedCompanies(userId, { includeArchived: true }, tx as unknown as Db));
+    });
   }
 
   async function listActiveUserMemberships(companyId: string) {
@@ -1158,7 +1178,8 @@ export function accessService(db: Db) {
     ensureMembership,
     listMembers,
     listActiveUserMemberships,
-    countActiveOwnedCompanies,
+    countOwnedCompanies,
+    withSelfServeCompanyLock,
     copyActiveUserMemberships,
     ensureRoleDefaultGrants,
     archiveMember,

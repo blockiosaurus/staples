@@ -252,7 +252,7 @@ export function Dashboard() {
         return (
           <EmptyState
             icon={LayoutDashboard}
-            message="Ask the person who invited you for access to their organization."
+            message="Ask the person who invited you for access"
           />
         );
       }
