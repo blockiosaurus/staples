@@ -319,10 +319,10 @@ function readNonEmptyString(value: unknown): string | null {
 
 export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunCompletionDependencies) {
   /** Best effort; loaded lazily to keep the heartbeat module graph free of the Assistant services. */
-  async function closeWeeklyUpdateTaskAfterRunSafely(run: Run) {
+  async function closeWeeklyUpdateTaskAfterRunSafely(run: Run, end: { recoveryOwned: boolean }) {
     try {
       const { closeWeeklyUpdateTaskAfterRun } = await import("../assistant-weekly-update.js");
-      await closeWeeklyUpdateTaskAfterRun(db, run);
+      await closeWeeklyUpdateTaskAfterRun(db, run, end);
     } catch (error) {
       logger.warn({ err: error, runId: run.id }, "could not settle the weekly update task after the run");
     }
@@ -884,8 +884,12 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
       );
       const conversationSettled = await settleConversationTurn(db, livenessRun);
       // A weekly update run that ended without saving closes its task ("No update this week"),
-      // so neither recovery nor the routine waits on it.
-      await closeWeeklyUpdateTaskAfterRunSafely(livenessRun);
+      // so neither recovery nor the routine waits on it, unless a retry scheduled above still owns it.
+      await closeWeeklyUpdateTaskAfterRunSafely(livenessRun, {
+        // A failed native run without a terminal classification is still native recovery's.
+        // (A legacy run held for execution reconciliation waits for a person, not a retry.)
+        recoveryOwned: outcome !== "succeeded" && livenessRun.runtimeMode === "native" && !adapterResult.nativeFinalization,
+      });
       await releaseIssueExecutionAndPromote(livenessRun, {
         suppressImmediateRecovery: conversationSettled ||
           readNonEmptyString(
@@ -1190,7 +1194,10 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
         livenessRun,
         agent,
       );
-      await closeWeeklyUpdateTaskAfterRunSafely(livenessRun);
+      // While native recovery owns the run (no terminal classification yet), the task stays open.
+      await closeWeeklyUpdateTaskAfterRunSafely(livenessRun, {
+        recoveryOwned: livenessRun.runtimeMode === "native" && nativeTerminalFailureCode === null,
+      });
       await releaseIssueExecutionAndPromote(livenessRun, {
         // Native recovery owns the original heartbeat run through
         // exhaustion. Once its durable coordinator has classified a

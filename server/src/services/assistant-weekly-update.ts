@@ -1,6 +1,8 @@
-import { and, desc, eq, inArray, isNull, like, ne, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, ne, or, sql, type SQL } from "drizzle-orm";
 import {
+  activityLog,
   documents,
+  heartbeatRuns,
   inboxDismissals,
   issueDocuments,
   issues,
@@ -240,6 +242,7 @@ export async function saveWeeklyUpdate(db: Db, input: SaveWeeklyUpdateInput) {
     details: {
       key, documentId: result.document.id, title, revisionNumber: result.document.latestRevisionNumber,
       source: "assistant_weekly_update", timezone: zone.timezone, timezoneKnown: zone.known,
+      executionIssueId: input.executionIssueId ?? null,
     },
   });
   if (input.executionIssueId) await closeExecutionIssue(db, input);
@@ -277,57 +280,130 @@ async function closeExecutionIssue(db: Db, input: SaveWeeklyUpdateInput) {
 }
 
 export const NO_UPDATE_THIS_WEEK_NOTE = "No update this week.";
+const LIVE_RUN_STATUSES = ["queued", "running", "scheduled_retry"];
+
+/** An open task of the Assistant's weekly update routine, or null. */
+async function openWeeklyUpdateTask(db: Db, issueId: string) {
+  const [row] = await db
+    .select({ id: issues.id, companyId: issues.companyId, status: issues.status, originKind: issues.originKind, originId: issues.originId, assigneeAgentId: issues.assigneeAgentId })
+    .from(issues)
+    .where(eq(issues.id, issueId));
+  if (!row || row.originKind !== "routine_execution" || !row.originId) return null;
+  if (row.status === "done" || row.status === "cancelled") return null;
+  const [routine] = await db
+    .select({ originKind: routines.originKind, originId: routines.originId })
+    .from(routines)
+    .where(and(eq(routines.id, row.originId), eq(routines.companyId, row.companyId)));
+  return isAssistantWeeklyUpdateRoutine(routine) ? row : null;
+}
+
+/** True when an update was saved from this routine task (its run saved but the task was not closed). */
+async function weeklyUpdateSavedFromTask(db: Db, companyId: string, issueId: string) {
+  const [saved] = await db
+    .select({ id: activityLog.id })
+    .from(activityLog)
+    .where(and(
+      eq(activityLog.companyId, companyId),
+      inArray(activityLog.action, ["issue.document_created", "issue.document_updated"]),
+      sql`${activityLog.details} ->> 'source' = 'assistant_weekly_update'`,
+      sql`${activityLog.details} ->> 'executionIssueId' = ${issueId}`,
+    ))
+    .limit(1);
+  return Boolean(saved);
+}
+
+/** A queued, running or scheduled-retry run still owns the task (other than `exceptRunId`). */
+export async function weeklyUpdateTaskHasLiveRun(db: Db, companyId: string, issueId: string, exceptRunId?: string | null) {
+  const [live] = await db
+    .select({ id: heartbeatRuns.id })
+    .from(heartbeatRuns)
+    .where(and(
+      eq(heartbeatRuns.companyId, companyId),
+      inArray(heartbeatRuns.status, LIVE_RUN_STATUSES),
+      exceptRunId ? ne(heartbeatRuns.id, exceptRunId) : undefined,
+      or(
+        eq(heartbeatRuns.issueId, issueId),
+        eq(heartbeatRuns.nativeIssueId, issueId),
+        sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issueId}`,
+        exceptRunId ? eq(heartbeatRuns.retryOfRunId, exceptRunId) : undefined,
+      ),
+    ))
+    .limit(1);
+  return Boolean(live);
+}
+
+export type WeeklyUpdateTaskSettlement = "not_weekly" | "kept" | "closed_saved" | "closed_no_update";
 
 /**
- * Close an open weekly update routine task without an update: its run ended
- * without saving, or a newer Monday found it still open. Cancelled with a
- * plain note, as the system, so the routine is never stuck behind it and
- * nothing re-wakes the Assistant on it. Returns whether it closed the task.
+ * Settle an open weekly update task once nothing more will run on it:
+ * - an update was already saved from it: closed as done (the save's own close failed);
+ * - a retry or another run still owns it (or `keep` says recovery owns it): left open;
+ * - otherwise cancelled with "No update this week", as the system, so the
+ *   routine is never stuck behind it and nothing re-wakes the Assistant on it.
  * Never throws.
  */
-export async function closeWeeklyUpdateTaskWithoutUpdate(
+export async function settleWeeklyUpdateTask(
   db: Db,
   issueId: string,
-  reason: "run_finished_without_update" | "superseded_by_next_week",
-): Promise<boolean> {
+  input: {
+    reason: "run_finished_without_update" | "superseded_by_next_week" | "stranded_after_run";
+    /** The run that just ended; its own row does not count as live. */
+    endedRunId?: string | null;
+    /** Recovery still owns the run (for example native recovery before a terminal classification). */
+    keep?: boolean;
+  },
+): Promise<WeeklyUpdateTaskSettlement> {
   try {
-    const [row] = await db
-      .select({ id: issues.id, companyId: issues.companyId, status: issues.status, originKind: issues.originKind, originId: issues.originId })
-      .from(issues)
-      .where(eq(issues.id, issueId));
-    if (!row || row.originKind !== "routine_execution" || !row.originId) return false;
-    if (row.status === "done" || row.status === "cancelled") return false;
-    const [routine] = await db
-      .select({ originKind: routines.originKind, originId: routines.originId })
-      .from(routines)
-      .where(and(eq(routines.id, row.originId), eq(routines.companyId, row.companyId)));
-    if (!isAssistantWeeklyUpdateRoutine(routine)) return false;
+    const task = await openWeeklyUpdateTask(db, issueId);
+    if (!task) return "not_weekly";
     const svc = issueService(db);
-    await svc.update(row.id, { status: "cancelled" });
-    await svc.addComment(row.id, NO_UPDATE_THIS_WEEK_NOTE, {}, { authorType: "system" });
+    if (await weeklyUpdateSavedFromTask(db, task.companyId, task.id)) {
+      await svc.update(task.id, { status: "done" });
+      await logActivity(db, {
+        companyId: task.companyId, actorType: "system", actorId: "assistant-weekly-update",
+        action: "issue.updated", entityType: "issue", entityId: task.id,
+        details: { status: "done", _previous: { status: task.status }, reason: "update_saved", source: "assistant_weekly_update" },
+      });
+      await syncRoutineRun(db, task.id);
+      return "closed_saved";
+    }
+    if (input.keep) return "kept";
+    if (await weeklyUpdateTaskHasLiveRun(db, task.companyId, task.id, input.endedRunId)) return "kept";
+    await svc.update(task.id, { status: "cancelled" });
+    await svc.addComment(task.id, NO_UPDATE_THIS_WEEK_NOTE, {}, { authorType: "system" });
     await logActivity(db, {
-      companyId: row.companyId, actorType: "system", actorId: "assistant-weekly-update",
-      action: "issue.updated", entityType: "issue", entityId: row.id,
-      details: { status: "cancelled", _previous: { status: row.status }, reason, source: "assistant_weekly_update" },
+      companyId: task.companyId, actorType: "system", actorId: "assistant-weekly-update",
+      action: "issue.updated", entityType: "issue", entityId: task.id,
+      details: { status: "cancelled", _previous: { status: task.status }, reason: input.reason, source: "assistant_weekly_update" },
     });
-    const { routineService } = await import("./routines.js");
-    await routineService(db).syncRunStatusForIssue(row.id);
-    return true;
+    await syncRoutineRun(db, task.id);
+    return "closed_no_update";
   } catch (error) {
-    logger.warn({ err: error, issueId }, "could not close the weekly update routine task");
-    return false;
+    logger.warn({ err: error, issueId }, "could not settle the weekly update routine task");
+    return "kept";
   }
 }
 
-/** After an Assistant run ends: a weekly update task it left open (no save) is closed. */
+async function syncRoutineRun(db: Db, issueId: string) {
+  const { routineService } = await import("./routines.js");
+  await routineService(db).syncRunStatusForIssue(issueId);
+}
+
+/**
+ * After an Assistant run ends. `outcome` is the run's terminal status;
+ * `recoveryOwned` is true while native recovery still owns a failed run.
+ * A retry that was scheduled keeps the task open (checked in the database),
+ * so one provider blip never loses the week.
+ */
 export async function closeWeeklyUpdateTaskAfterRun(
   db: Db,
-  run: { nativeIssueId?: string | null; contextSnapshot?: Record<string, unknown> | null },
+  run: { id?: string | null; nativeIssueId?: string | null; contextSnapshot?: Record<string, unknown> | null },
+  end: { recoveryOwned?: boolean } = {},
 ) {
   const snapshotIssueId = run.contextSnapshot?.issueId;
   const issueId = run.nativeIssueId ?? (typeof snapshotIssueId === "string" ? snapshotIssueId : null);
-  if (!issueId) return false;
-  return closeWeeklyUpdateTaskWithoutUpdate(db, issueId, "run_finished_without_update");
+  if (!issueId) return "not_weekly" as const;
+  return settleWeeklyUpdateTask(db, issueId, { reason: "run_finished_without_update", endedRunId: run.id ?? null, keep: end.recoveryOwned });
 }
 
 /** Markdown to a short plain-text preview: the first few lines, minus a heading that repeats the title. */

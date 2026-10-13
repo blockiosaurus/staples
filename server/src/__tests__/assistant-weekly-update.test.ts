@@ -22,6 +22,7 @@ import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import { listBuiltInAgentDefinitions, builtInAgentService } from "../services/built-in-agents.js";
 import { routineService } from "../services/routines.js";
 import { issueService } from "../services/issues.js";
+import { heartbeatService } from "../services/heartbeat.js";
 import { briefingService } from "../services/briefing.js";
 import { issueReadSqlCondition } from "../services/authorization.js";
 import {
@@ -301,11 +302,11 @@ const support = await getEmbeddedPostgresTestSupport();
   it("closes the task when its run ends without saving, and touches no other task", async () => {
     const f = await setup();
     const run = await routineSvc().runRoutine(f.routine.id, { source: "manual" } as never, { agentId: null, userId: f.responsibleUserId, runId: null });
-    expect(await closeWeeklyUpdateTaskAfterRun(server.db, { nativeIssueId: f.issueId })).toBe(false);
-    expect(await closeWeeklyUpdateTaskAfterRun(server.db, { contextSnapshot: { issueId: run.linkedIssueId } })).toBe(true);
+    expect(await closeWeeklyUpdateTaskAfterRun(server.db, { nativeIssueId: f.issueId })).toBe("not_weekly");
+    expect(await closeWeeklyUpdateTaskAfterRun(server.db, { contextSnapshot: { issueId: run.linkedIssueId } })).toBe("closed_no_update");
     const [task] = await server.db.select().from(issues).where(eq(issues.id, run.linkedIssueId!));
     expect(task!.status).toBe("cancelled");
-    expect(await closeWeeklyUpdateTaskAfterRun(server.db, { nativeIssueId: run.linkedIssueId })).toBe(false);
+    expect(await closeWeeklyUpdateTaskAfterRun(server.db, { nativeIssueId: run.linkedIssueId })).toBe("not_weekly");
   }, 60_000);
 
   it("leaves the weekly update's own tasks out of Home's work lists", async () => {
@@ -412,5 +413,57 @@ const support = await getEmbeddedPostgresTestSupport();
     const [kept] = await weeklyRoutines(f.companyId);
     expect(kept!.assigneeAgentId).toBeNull();
     expect(await weeklyRoutines(f.companyId)).toHaveLength(1);
+
+    // A binding written before the flag existed counts as assigned: never reassigned either.
+    const [binding] = await server.db.select().from(builtInManagedResources).where(and(
+      eq(builtInManagedResources.companyId, f.companyId), eq(builtInManagedResources.resourceKind, "routine"),
+    ));
+    const { assigned: _assigned, ...legacyDefaults } = binding!.defaultsJson as Record<string, unknown>;
+    await server.db.update(builtInManagedResources).set({ defaultsJson: legacyDefaults }).where(eq(builtInManagedResources.id, binding!.id));
+    await service.ensure(f.companyId, "assistant");
+    expect((await weeklyRoutines(f.companyId))[0]!.assigneeAgentId).toBeNull();
+  }, 60_000);
+
+  it("leaves a task whose run is still active on Monday, and skips that week's run", async () => {
+    const f = await setup();
+    const first = await routineSvc().runRoutine(f.routine.id, { source: "manual" } as never, { agentId: null, userId: f.responsibleUserId, runId: null });
+    await server.db.insert(heartbeatRuns).values({
+      companyId: f.companyId, agentId: f.assistantId, status: "running", responsibleUserId: f.responsibleUserId,
+      runtimeMode: "native", nativeIssueId: first.linkedIssueId, invocationSource: "assignment", triggerDetail: "system",
+      contextSnapshot: { issueId: first.linkedIssueId },
+    });
+    await server.db.update(routineTriggers).set({ nextRunAt: new Date(Date.now() - 60_000) }).where(eq(routineTriggers.routineId, f.routine.id));
+    await routineSvc().tickScheduledTriggers(new Date());
+    const tasks = await openTasks(f.companyId, f.routine.id);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]!.status).not.toBe("cancelled");
+    const runs = await server.db.select().from(routineRuns).where(eq(routineRuns.routineId, f.routine.id));
+    expect(runs.map((run) => run.status)).toContain("skipped");
+  }, 60_000);
+
+  it("stranded recovery closes a weekly task only when nothing will retry it", async () => {
+    const since = new Date(Date.now() - 1000);
+    const f = await setup();
+    const run = await routineSvc().runRoutine(f.routine.id, { source: "manual" } as never, { agentId: null, userId: f.responsibleUserId, runId: null });
+    const taskId = run.linkedIssueId!;
+    const ended = randomUUID();
+    await server.db.insert(heartbeatRuns).values({
+      id: ended, companyId: f.companyId, agentId: f.assistantId, status: "failed", responsibleUserId: f.responsibleUserId,
+      runtimeMode: "native", nativeIssueId: taskId, issueId: taskId, invocationSource: "assignment", triggerDetail: "system",
+      contextSnapshot: { issueId: taskId }, finishedAt: new Date(),
+    });
+    const retry = randomUUID();
+    await server.db.insert(heartbeatRuns).values({
+      id: retry, companyId: f.companyId, agentId: f.assistantId, status: "scheduled_retry", retryOfRunId: ended,
+      runtimeMode: "native", invocationSource: "automation", triggerDetail: "system", contextSnapshot: { issueId: taskId },
+      scheduledRetryAt: new Date(Date.now() + 3_600_000),
+    });
+    const recovery = heartbeatService(server.db);
+    await recovery.reconcileStrandedAssignedIssues({ issueCreatedAtGte: since });
+    expect((await server.db.select().from(issues).where(eq(issues.id, taskId)))[0]!.status).not.toBe("cancelled");
+
+    await server.db.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date() }).where(eq(heartbeatRuns.id, retry));
+    await recovery.reconcileStrandedAssignedIssues({ issueCreatedAtGte: since });
+    expect((await server.db.select().from(issues).where(eq(issues.id, taskId)))[0]!.status).toBe("cancelled");
   }, 60_000);
 });

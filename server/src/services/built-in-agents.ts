@@ -1781,9 +1781,12 @@ export function builtInAgentService(db: Db) {
       currentHash,
       bindingStockHash: binding?.stockHash ?? null,
     });
-    // The Assistant's routine is assigned after it is created; finish an assignment that failed
-    // earlier, but only if it was never assigned: unassigning it later is a person's opt-out.
-    const everAssigned = (binding?.defaultsJson as Record<string, unknown> | null | undefined)?.assigned === true;
+    // The Assistant's routine is assigned after it is created. Only a first assignment that failed
+    // (recorded as `assigned: false` on the binding) is finished later; an unassigned routine is
+    // otherwise a person's opt-out and stays that way. A binding without the flag (written before
+    // it existed), or a routine found without a binding, counts as assigned: never reassigned.
+    const assignedFlag = (binding?.defaultsJson as Record<string, unknown> | null | undefined)?.assigned;
+    const everAssigned = binding ? assignedFlag !== false : Boolean(routine);
     const unassignedAssistantRoutine = Boolean(routine && !routine.assigneeAgentId && isAssistantAgent(agent) && !everAssigned);
     const shouldWrite =
       mode === "reset"

@@ -67,7 +67,7 @@ import { getConfiguredSecretProvider } from "../secrets/configured-provider.js";
 import { issueService } from "./issues.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
 import { companyHasStaffAgents, isAssistantWeeklyUpdateRoutine } from "./assistant-weekly-update-origin.js";
-import { closeWeeklyUpdateTaskWithoutUpdate } from "./assistant-weekly-update.js";
+import { settleWeeklyUpdateTask } from "./assistant-weekly-update.js";
 import { visibleIssueCondition } from "./issue-visibility.js";
 import { secretService } from "./secrets.js";
 import { getSecretProvider } from "../secrets/provider-registry.js";
@@ -3302,7 +3302,9 @@ export function routineService(
           });
           continue;
         }
-        // Last week's task still open (its run never saved): close it so it never blocks this week.
+        // Last week's task still open with nothing running on it (its run never saved): close it so it
+        // never blocks this week. A task whose run is still queued or running is left alone, and
+        // skip_if_active then skips this week's dispatch.
         if (isAssistantWeeklyUpdateRoutine(row.routine)) {
           const stale = await db
             .select({ id: issues.id })
@@ -3313,7 +3315,7 @@ export function routineService(
               eq(issues.originId, row.routine.id),
               notInArray(issues.status, ["done", "cancelled"]),
             ));
-          for (const task of stale) await closeWeeklyUpdateTaskWithoutUpdate(db, task.id, "superseded_by_next_week");
+          for (const task of stale) await settleWeeklyUpdateTask(db, task.id, { reason: "superseded_by_next_week" });
         }
 
         for (let i = 0; i < runCount; i += 1) {
