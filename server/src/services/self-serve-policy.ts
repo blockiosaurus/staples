@@ -1,9 +1,12 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import type { Request } from "express";
 import { eq } from "drizzle-orm";
 import { companies, type Db } from "@paperclipai/db";
 import type { DeploymentMode } from "@paperclipai/shared";
 import { DEFAULT_SELF_SERVE_ADAPTER_TYPES } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
+import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 
 /**
  * Self-serve floor (PAPERCLIP_SELF_SERVE_COMPANIES).
@@ -115,49 +118,159 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const ENDPOINT_OVERRIDE_KEYS = ["apiBaseUrl", "baseUrl", "baseURL", "apiUrl", "endpoint", "url", "gatewayUrl", "host"] as const;
-const ENDPOINT_OVERRIDE_ENV = /(BASE_URL|_ENDPOINT|API_URL|_HOST|_PROXY)$/i;
-const HOST_COMMAND_KEYS = ["command", "hermesCommand", "args", "extraArgs", "cwd", "filesystemSandboxCommand"] as const;
-const WORKSPACE_COMMAND_KEYS = ["provisionCommand", "runtimeProvisionCommand", "teardownCommand", "cleanupCommand"] as const;
+export const SELF_SERVE_CONFIG_KEY_ERROR_CODE = "self_serve_config_key_not_allowed";
+
+export type SelfServeViolation = { code: string; message: string };
+
+/**
+ * The adapterConfig keys an agent in a self-serve company may carry, per
+ * allowed adapter. Anything else (endpoint overrides, host commands, file
+ * paths, workspace commands, keys added later) is refused: an allowlist, so
+ * a new config key is closed until it is reviewed here.
+ *
+ * claude_managed: the user-facing fields of its config form, plus the fields
+ * the server writes itself (model and skill sync from hosted defaults, plan
+ * hires and templates; the managed instructions bundle).
+ */
+const SELF_SERVE_CONFIG_KEYS: Record<string, ReadonlySet<string>> = {
+  claude_managed: new Set([
+    "model",
+    "env",
+    "environmentId",
+    "promptTemplate",
+    "bootstrapPromptTemplate",
+    "inactivityTimeoutSec",
+    "networkingMode",
+    "networkAllowedHosts",
+    "networkAllowPackageManagers",
+    "apiBaseUrl",
+    "paperclipSkillSync",
+    "instructionsBundleMode",
+    "instructionsRootPath",
+    "instructionsEntryFile",
+    "instructionsFilePath",
+  ]),
+};
+/** For an allowed adapter with no reviewed list: model and server-managed fields only. */
+const DEFAULT_SELF_SERVE_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "model",
+  "paperclipSkillSync",
+  "instructionsBundleMode",
+  "instructionsRootPath",
+  "instructionsEntryFile",
+  "instructionsFilePath",
+]);
+/** env keys a self-serve agent may bind, and only to a stored secret. */
+const SELF_SERVE_ENV_KEYS: ReadonlySet<string> = new Set(["ANTHROPIC_API_KEY"]);
+const MANAGED_INSTRUCTION_PATH_KEYS = ["instructionsRootPath", "instructionsFilePath"] as const;
 
 function normalizeUrl(value: string) {
   return value.trim().replace(/\/+$/, "");
 }
 
+function isWithin(root: string, candidate: string) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 /**
- * Why an agent with this adapter and config may not exist or run in a
- * self-serve company, or null when it may.
+ * Real path of `target`, resolving symlinks in its deepest existing ancestor
+ * and appending the not-yet-existing remainder, so a path that doesn't exist
+ * yet can still be checked without following a link out of the root.
  */
-export function selfServeAgentViolation(
-  adapterType: string | null | undefined,
-  adapterConfig: unknown,
-): string | null {
-  const policy = readPolicy();
-  const type = (adapterType ?? "").trim();
-  if (isHostExecutedAdapterType(type) || !policy.adapterTypes.includes(type)) {
-    return `Agents in this company can only use ${policy.adapterTypes.length > 0 ? policy.adapterTypes.join(", ") : "no adapters"}; "${type || "unknown"}" is not allowed on this instance.`;
-  }
-  const config = isRecord(adapterConfig) ? adapterConfig : {};
-  for (const key of ENDPOINT_OVERRIDE_KEYS) {
-    const value = config[key];
-    if (value === undefined || value === null || value === "") continue;
-    if (key === "apiBaseUrl" && typeof value === "string"
-      && normalizeUrl(value) === normalizeUrl(SELF_SERVE_MANAGED_AGENTS_BASE_URL)) continue;
-    return `Agents in this company cannot override the API endpoint (${key}).`;
-  }
-  for (const key of HOST_COMMAND_KEYS) {
-    if (config[key] !== undefined && config[key] !== null) {
-      return `Agents in this company cannot set host command settings (${key}).`;
+async function realPathAllowingMissing(target: string): Promise<string> {
+  let probe = path.resolve(target);
+  const remainder: string[] = [];
+  for (;;) {
+    try {
+      const real = await fs.realpath(probe);
+      return remainder.length > 0 ? path.join(real, ...remainder.reverse()) : real;
+    } catch {
+      const parent = path.dirname(probe);
+      if (parent === probe) return path.resolve(target);
+      remainder.push(path.basename(probe));
+      probe = parent;
     }
   }
-  if (isRecord(config.env)) {
-    const endpointKey = Object.keys(config.env).find((key) => ENDPOINT_OVERRIDE_ENV.test(key));
-    if (endpointKey) return `Agents in this company cannot override the API endpoint (env.${endpointKey}).`;
+}
+
+/** The managed instructions root for a company's agents: `<instance>/companies/<companyId>/agents`. */
+export function selfServeManagedInstructionsRoot(companyId: string) {
+  return path.resolve(resolvePaperclipInstanceRoot(), "companies", companyId, "agents");
+}
+
+/** True when `candidate` (absolute) resolves, symlinks included, inside `root`. */
+export async function pathResolvesInside(root: string, candidate: string): Promise<boolean> {
+  if (!path.isAbsolute(candidate)) return false;
+  const lexical = path.resolve(candidate);
+  if (!isWithin(path.resolve(root), lexical)) return false;
+  const [realRoot, realCandidate] = await Promise.all([
+    realPathAllowingMissing(root),
+    realPathAllowingMissing(lexical),
+  ]);
+  return isWithin(realRoot, realCandidate);
+}
+
+export function isSelfServeAdapterAllowed(adapterType: string | null | undefined) {
+  const type = (adapterType ?? "").trim();
+  return !isHostExecutedAdapterType(type) && readPolicy().adapterTypes.includes(type);
+}
+
+/**
+ * Why an agent with this adapter and config may not exist or run in the
+ * self-serve company `companyId`, or null when it may.
+ */
+export async function selfServeAgentViolation(
+  companyId: string,
+  adapterType: string | null | undefined,
+  adapterConfig: unknown,
+): Promise<SelfServeViolation | null> {
+  const policy = readPolicy();
+  const type = (adapterType ?? "").trim();
+  if (!isSelfServeAdapterAllowed(type)) {
+    return {
+      code: SELF_SERVE_HOST_EXECUTION_ERROR_CODE,
+      message: `Agents in this company can only use ${policy.adapterTypes.length > 0 ? policy.adapterTypes.join(", ") : "no adapters"}; "${type || "unknown"}" is not allowed on this instance.`,
+    };
   }
-  const strategy = config.workspaceStrategy;
-  if (isRecord(strategy)) {
-    const commandKey = WORKSPACE_COMMAND_KEYS.find((key) => strategy[key] !== undefined && strategy[key] !== null);
-    if (commandKey) return `Agents in this company cannot set host-executed workspace commands (workspaceStrategy.${commandKey}).`;
+  const config = isRecord(adapterConfig) ? adapterConfig : {};
+  const allowedKeys = SELF_SERVE_CONFIG_KEYS[type] ?? DEFAULT_SELF_SERVE_CONFIG_KEYS;
+  const keyRefused = (key: string): SelfServeViolation => ({
+    code: SELF_SERVE_CONFIG_KEY_ERROR_CODE,
+    message: `Agents in this company can't set "${key}" on this instance.`,
+  });
+  for (const [key, value] of Object.entries(config)) {
+    if (value === undefined || value === null) continue;
+    if (!allowedKeys.has(key)) return keyRefused(key);
+  }
+  if (config.apiBaseUrl !== undefined && config.apiBaseUrl !== null && config.apiBaseUrl !== ""
+    && !(typeof config.apiBaseUrl === "string"
+      && normalizeUrl(config.apiBaseUrl) === normalizeUrl(SELF_SERVE_MANAGED_AGENTS_BASE_URL))) {
+    return keyRefused("apiBaseUrl");
+  }
+  if (config.env !== undefined && config.env !== null) {
+    if (!isRecord(config.env)) return keyRefused("env");
+    for (const [key, binding] of Object.entries(config.env)) {
+      if (!SELF_SERVE_ENV_KEYS.has(key)) return keyRefused(`env.${key}`);
+      const kind = isRecord(binding) ? binding.type : null;
+      if (kind !== "secret_ref" && kind !== "user_secret_ref") return keyRefused(`env.${key} (use a stored secret)`);
+    }
+  }
+  if (config.instructionsBundleMode !== undefined && config.instructionsBundleMode !== null
+    && config.instructionsBundleMode !== "managed") {
+    return keyRefused("instructionsBundleMode");
+  }
+  if (config.instructionsEntryFile !== undefined && config.instructionsEntryFile !== null) {
+    const entry = config.instructionsEntryFile;
+    if (typeof entry !== "string" || path.isAbsolute(entry) || entry.split(/[\\/]/).includes("..")) {
+      return keyRefused("instructionsEntryFile");
+    }
+  }
+  const root = selfServeManagedInstructionsRoot(companyId);
+  for (const key of MANAGED_INSTRUCTION_PATH_KEYS) {
+    const value = config[key];
+    if (value === undefined || value === null || value === "") continue;
+    if (typeof value !== "string" || !(await pathResolvesInside(root, value))) return keyRefused(key);
   }
   return null;
 }
@@ -174,8 +287,8 @@ export async function assertSelfServeCompanyAgent(
   adapterConfig: unknown,
 ) {
   if (!(await isSelfServeCompany(db, companyId))) return;
-  const violation = selfServeAgentViolation(adapterType, adapterConfig);
-  if (violation) refuse(violation);
+  const violation = await selfServeAgentViolation(companyId, adapterType, adapterConfig);
+  if (violation) throw forbidden(violation.message, { code: violation.code });
 }
 
 /** Refuse a host-execution surface (workspace commands, server folders, stdio tools, imports) in a self-serve company. */

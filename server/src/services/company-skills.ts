@@ -1,4 +1,5 @@
 import { updateAgentConfigurationInTransaction } from "./agent-configuration-transaction.js";
+import { isSelfServeCompany, SELF_SERVE_HOST_EXECUTION_ERROR_CODE } from "./self-serve-policy.js";
 import { logger } from "../middleware/logger.js";
 import { removeRuntimeSkillCache, resolveRuntimeSkillCache, runtimeSkillCacheSpec } from "./runtime-skill-cache.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -2956,6 +2957,14 @@ export function companySkillService(db: Db) {
   const projects = projectService(db);
 
   async function assertLocalImportSourceAllowed(companyId: string, source: string) {
+    // Self-serve company: no imports from the server's filesystem (a managed
+    // checkout could hold symlinks out of the workspace). GitHub and catalog
+    // sources still work.
+    if (await isSelfServeCompany(db, companyId)) {
+      throw forbidden("Importing skills from a server folder can't be used in this company on this instance.", {
+        code: SELF_SERVE_HOST_EXECUTION_ERROR_CODE,
+      });
+    }
     const sourceRealPath = await fs.realpath(path.resolve(source)).catch(() => null);
     if (!sourceRealPath) {
       throw unprocessable("Local skill source is not available", {

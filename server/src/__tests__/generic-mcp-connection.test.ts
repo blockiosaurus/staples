@@ -2391,6 +2391,24 @@ describeEmbeddedPostgres("generic remote MCP connections", () => {
     });
   });
 
+  it("rejects private and internal endpoints on a self-serve instance even with private exposure", async () => {
+    const policy = await import("../services/self-serve-policy.js");
+    policy.configureSelfServePolicy({ selfServeCompanies: true, deploymentMode: "authenticated", adapterTypes: ["claude_managed"] });
+    try {
+      const company = await createCompany(db);
+      const service = toolAccessService(db, {
+        deploymentMode: "authenticated",
+        deploymentExposure: "private",
+      });
+      for (const link of ["http://127.0.0.1:8848/mcp", "http://10.0.0.5/mcp", "http://169.254.169.254/mcp"]) {
+        await expect(service.connectGalleryApp(company.id, { link, name: "Internal" }))
+          .rejects.toMatchObject({ details: { code: "remote_http_private_endpoint" } });
+      }
+    } finally {
+      policy.resetSelfServePolicy();
+    }
+  });
+
   it("rejects a private-network endpoint in an authenticated public deployment", async () => {
     installMcpOAuthFixture({ auth: "public" });
     const company = await createCompany(db);

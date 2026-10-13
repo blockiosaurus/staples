@@ -25,13 +25,24 @@ let tmpDir: string;
 beforeEach(async () => {
   fake = await startFakeManagedAgentsServer();
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "claude-managed-"));
+  // The managed instructions root lives under the instance root.
+  vi.stubEnv("PAPERCLIP_HOME", tmpDir);
+  vi.stubEnv("PAPERCLIP_INSTANCE_ID", "default");
 });
+
+/** A file inside the managed instructions folder for the harness agent. */
+async function managedInstructionsFile(name = "AGENTS.md") {
+  const dir = path.join(tmpDir, "instances", "default", "companies", "company-1", "agents", "agent-1234567890", "instructions");
+  await fs.mkdir(dir, { recursive: true });
+  return path.join(dir, name);
+}
 
 afterEach(async () => {
   await fake.close();
   await mcp?.close();
   mcp = null;
   await fs.rm(tmpDir, { recursive: true, force: true });
+  vi.unstubAllEnvs();
 });
 
 function turn(text: string, cumulativeCents: number, tokens = { input: 100, output: 20 }): TurnScript {
@@ -153,7 +164,7 @@ describe("claude_managed execute", () => {
   });
 
   it("changed instructions create a new agent version and a new session", async () => {
-    const file = path.join(tmpDir, "AGENTS.md");
+    const file = await managedInstructionsFile();
     await fs.writeFile(file, "Be brief.");
     fake.queueTurns(turn("one", 1), turn("two", 1));
     const first = await execute(harness({ config: { instructionsFilePath: file } }).ctx);
@@ -175,6 +186,37 @@ describe("claude_managed execute", () => {
     expect(secondParams.fingerprint).not.toBe(firstParams.fingerprint);
   });
 
+  it.each([
+    ["a system file", async () => "/proc/self/environ"],
+    ["a file outside the managed folder", async () => {
+      const outside = path.join(tmpDir, "secret.txt");
+      await fs.writeFile(outside, "SECRET=1");
+      return outside;
+    }],
+    ["a .. escape", async () => {
+      const outside = path.join(tmpDir, "secret.txt");
+      await fs.writeFile(outside, "SECRET=1");
+      const inside = await managedInstructionsFile();
+      return path.join(path.dirname(inside), "..", "..", "..", "..", "..", "..", "secret.txt");
+    }],
+    ["a symlink out of the managed folder", async () => {
+      const outside = path.join(tmpDir, "secret.txt");
+      await fs.writeFile(outside, "SECRET=1");
+      const link = await managedInstructionsFile("LINK.md");
+      await fs.symlink(outside, link);
+      return link;
+    }],
+  ])("never reads %s into the system prompt", async (_label, makePath) => {
+    const filePath = await makePath();
+    fake.queueTurns(turn("one", 1));
+    const h = harness({ config: { instructionsFilePath: filePath } });
+    await execute(h.ctx);
+    const created = requestsMatching("POST", /^\/v1\/agents$/)[0].body as { system?: string | null };
+    expect(JSON.stringify(created)).not.toContain("SECRET=1");
+    expect(created.system ?? "").not.toContain("PATH=");
+    expect(h.logs.join("")).toContain("outside the managed instructions folder");
+  });
+
   it("tells the agent to use the paperclip__ tools only when the Staples API tool server is attached", async () => {
     mcp = await startFakeMcpServer({
       token: RUN_TOKEN,
@@ -183,7 +225,7 @@ describe("claude_managed execute", () => {
         { name: "paperclipUpdateIssue", description: "Patch an issue", inputSchema: { type: "object", properties: { issueId: { type: "string" } } }, handler: () => ({ content: [{ type: "text", text: "{}" }] }) },
       ],
     });
-    const file = path.join(tmpDir, "AGENTS.md");
+    const file = await managedInstructionsFile();
     await fs.writeFile(file, "Be brief.");
     fake.queueTurns(turn("one", 1), turn("two", 1));
     await execute(harness({ config: { instructionsFilePath: file }, servers: [{ name: "paperclip", url: mcp.url, token: RUN_TOKEN, connectionId: "paperclip-tools" }] }).ctx);

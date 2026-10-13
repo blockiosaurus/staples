@@ -1,4 +1,5 @@
 import { skillSourceService, type SkillSourceContext } from "../services/skill-sources.js";
+import { assertSelfServeCompanyHostAccess } from "../services/self-serve-policy.js";
 import { skillSourceGitHubReader } from "../services/skill-source-github-access.js";
 import { toolAccessService } from "../services/tool-access.js";
 import { skillSourceCreateSchema, skillSourceDiscoverySchema, skillSourcePreviewSchema, skillSourceSelectionSchema } from "@paperclipai/shared";
@@ -1420,6 +1421,8 @@ export function companySkillRoutes(db: Db) {
     async (req, res) => {
       const companyId = req.params.companyId as string;
       await assertCanMutateCompanySkills(req, companyId, "skills.import", { sourceType: "workspace" });
+      // Reads project folders on the server; not in a self-serve company.
+      await assertSelfServeCompanyHostAccess(db, companyId, "Importing skills from project folders");
       const result = await svc.browseProjectWorkspace(companyId, req.body);
       res.json(result);
     },
@@ -1431,6 +1434,8 @@ export function companySkillRoutes(db: Db) {
     async (req, res) => {
       const companyId = req.params.companyId as string;
       await assertCanMutateCompanySkills(req, companyId, "skills.import", { sourceType: "workspace" });
+      // Reads project folders on the server; not in a self-serve company.
+      await assertSelfServeCompanyHostAccess(db, companyId, "Importing skills from project folders");
       const result = await svc.scanProjectWorkspaces(companyId, req.body);
 
       const actor = getActorInfo(req);

@@ -115,7 +115,7 @@ describe("POST /api/companies self-serve creation", () => {
     delete process.env.PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN;
     delete process.env.PAPERCLIP_MANAGED_CONFIG;
     mockCompanyService.create.mockResolvedValue(createdCompany);
-    mockCompanyService.createRecord.mockResolvedValue({ id: createdCompany.id });
+    mockCompanyService.createRecord.mockResolvedValue({ id: createdCompany.id, name: createdCompany.name });
     mockCompanyService.completeCreate.mockResolvedValue(createdCompany);
     ownedCount = 0;
     vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "sk-ant-test-self-serve");

@@ -1,4 +1,5 @@
 import { chatCredentialMutationLease } from "./chat-credential-mutation-lease.js";
+import { getSelfServePolicy } from "./self-serve-policy.js";
 import { removeSlackRegistration } from "./chat-slack-registration-cleanup.js";
 import { chatEndpoints } from "@paperclipai/db";
 import { AGGREGATOR_NAMES, isAppAggregator, type AggregatorAppsResponse, type ArcadeDiscoverySetupInput } from "@paperclipai/shared/aggregator-apps";
@@ -3323,6 +3324,10 @@ export function toolAccessService(
   }
 
   function allowPrivateRemoteEndpoints() {
+    // Self-serve instances: any signed-in user can own a company, so remote
+    // MCP URLs may not reach private, loopback or internal addresses
+    // (e.g. *.railway.internal). Link-local is always refused.
+    if (getSelfServePolicy().enabled) return false;
     return (
       options.deploymentMode !== "authenticated" ||
       options.deploymentExposure !== "public"

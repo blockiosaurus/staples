@@ -85,6 +85,36 @@ describeEmbeddedPostgres("company skill local import boundary", () => {
     });
   });
 
+  it("refuses every local-path import in a self-serve company, even from its own workspace", async () => {
+    const policy = await import("../services/self-serve-policy.js");
+    policy.configureSelfServePolicy({ selfServeCompanies: true, deploymentMode: "authenticated", adapterTypes: ["claude_managed"] });
+    try {
+      const companyId = randomUUID();
+      const projectId = randomUUID();
+      const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-self-serve-workspace-"));
+      cleanupDirs.add(workspace);
+      const skill = path.join(workspace, ".agents", "skills", "inside");
+      await fs.mkdir(skill, { recursive: true });
+      await fs.writeFile(path.join(skill, "SKILL.md"), "---\nname: inside\ndescription: inside\n---\n# Inside\n", "utf8");
+      await db.insert(companies).values({
+        id: companyId,
+        name: "Self-serve Co",
+        issuePrefix: `S${companyId.replaceAll("-", "").slice(0, 6).toUpperCase()}`,
+        selfServe: true,
+        selfServeCreatedByUserId: "u1",
+      });
+      await db.insert(projects).values({ id: projectId, companyId, name: "Project" });
+      await db.insert(projectWorkspaces).values({ companyId, projectId, name: "Primary", cwd: workspace, isPrimary: true });
+
+      await expect(companySkillService(db).importFromSource(companyId, skill)).rejects.toMatchObject({
+        status: 403,
+        details: { code: "self_serve_host_execution_forbidden" },
+      });
+    } finally {
+      policy.resetSelfServePolicy();
+    }
+  });
+
   // Regression for LOOA-850: a `managed_checkout` project (no registered workspace row) exposes
   // only a server-derived `codebase.managedFolder`; before the fix that folder was never an
   // approved root, so every managed_checkout project's in-place skill re-import was denied.

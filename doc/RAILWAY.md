@@ -129,9 +129,13 @@ and redeploy to stop new sign-ups. (Sign-up is open by default.) Existing users
 still sign in.
 
 Every company shares this one container and database. Companies created
-self-serve are held to a host-execution floor: remote adapters only, no
-endpoint overrides, no workspace commands, and a runtime backstop (see
-"Host-execution floor" in [DEPLOYMENT-MODES.md](DEPLOYMENT-MODES.md)). Your own
+self-serve are held to a host-execution floor. Their agents use remote
+adapters only, with an allowlist of config keys: no endpoint overrides, no
+server file paths, no workspace commands. A runtime backstop catches anything
+missed (see "Host-execution floor" in
+[DEPLOYMENT-MODES.md](DEPLOYMENT-MODES.md)). Keep
+`PAPERCLIP_SELF_SERVE_COMPANIES=true` for as long as any self-serve company
+exists, because turning it off lifts the floor for them. Your own
 admin-created company is not restricted, so be careful whom you invite into it.
 Even so, treat trial users as trusted colleagues, not hostile tenants.
 

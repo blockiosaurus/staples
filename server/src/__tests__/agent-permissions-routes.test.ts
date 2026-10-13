@@ -880,6 +880,7 @@ describe("agent permission routes", () => {
     };
     const instanceAdmin = { ...selfServeUser, userId: "instance-admin-user", isInstanceAdmin: true };
     const FLOOR_CODE = "self_serve_host_execution_forbidden";
+    const CONFIG_KEY_CODE = "self_serve_config_key_not_allowed";
 
     async function withSelfServe(on: boolean) {
       const policy = await vi.importActual<typeof import("../services/self-serve-policy.js")>("../services/self-serve-policy.js");
@@ -962,7 +963,7 @@ describe("agent permission routes", () => {
         .send({ adapterConfig: { workspaceStrategy: { type: "git_worktree", provisionCommand: "id" } } }));
 
       expect(res.status, JSON.stringify(res.body)).toBe(403);
-      expect(res.body.code).toBe(FLOOR_CODE);
+      expect(res.body.code).toBe(CONFIG_KEY_CODE);
       expect(mockAgentService.update).not.toHaveBeenCalled();
     });
 
@@ -1043,7 +1044,26 @@ describe("agent permission routes", () => {
         .send({ name: "Remote", role: "engineer", adapterType: "claude_managed", adapterConfig: { apiBaseUrl: "http://metadata.internal/v1" } }));
 
       expect(res.status, JSON.stringify(res.body)).toBe(403);
-      expect(res.body.code).toBe(FLOOR_CODE);
+      expect(res.body.code).toBe(CONFIG_KEY_CODE);
+      expect(mockAgentService.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["an instructions file outside the managed folder", { instructionsFilePath: "/proc/self/environ" }],
+      ["external instructions", { instructionsBundleMode: "external" }],
+      ["an unknown config key", { someNewKey: "x" }],
+      ["a plain API key", { env: { ANTHROPIC_API_KEY: "sk-ant-plain" } }],
+      ["another env var", { env: { NODE_OPTIONS: { type: "secret_ref", secretId: "11111111-1111-4111-8111-111111111111" } } }],
+    ])("refuses %s on a claude_managed hire", async (_label, adapterConfig) => {
+      await withSelfServe(true);
+      const app = await createApp(selfServeUser, { selfServe: true });
+
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .post(`/api/companies/${companyId}/agent-hires`)
+        .send({ name: "Remote", role: "engineer", adapterType: "claude_managed", adapterConfig: { model: "claude-opus-5-5", ...adapterConfig } }));
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.code).toBe(CONFIG_KEY_CODE);
       expect(mockAgentService.create).not.toHaveBeenCalled();
     });
 

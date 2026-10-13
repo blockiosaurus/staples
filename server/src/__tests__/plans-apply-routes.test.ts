@@ -1461,6 +1461,25 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         expect(await hostedInferenceAllowedFor(db, hired!)).toBe(true);
       }, 120_000);
 
+      it("hires a templated claude_managed agent in a self-serve company, inside the config allowlist", async () => {
+        hostedOn();
+        const policy = await import("../services/self-serve-policy.js");
+        policy.configureSelfServePolicy({ selfServeCompanies: true, deploymentMode: "authenticated", adapterTypes: ["claude_managed"] });
+        try {
+          const s = await seed();
+          await db.update(companies).set({ selfServe: true, selfServeCreatedByUserId: s.userId }).where(eq(companies.id, s.companyId));
+          await assistantOnHosted(s);
+          const { app } = buildApp(sessionActor(s));
+          const response = await apply(app, s.companyId, { agents: [await researcher()] });
+          expect(response.status, JSON.stringify(response.body)).toBe(201);
+          const [hired] = await db.select().from(agents).where(eq(agents.id, response.body.agents.research.id));
+          expect(hired).toMatchObject({ adapterType: "claude_managed" });
+          expect(await policy.selfServeAgentViolation(s.companyId, hired!.adapterType, hired!.adapterConfig)).toBeNull();
+        } finally {
+          policy.resetSelfServePolicy();
+        }
+      }, 120_000);
+
       it("raises the hosted cap to fit hosted hires' budgets, up to the ceiling, and says so in the result; local hires never raise it", async () => {
         hostedOn();
         const hostedCap = async (companyId: string) => (await db.select().from(budgetPolicies).where(and(

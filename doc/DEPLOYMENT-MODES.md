@@ -242,49 +242,87 @@ pool. Built-in provisioning runs after commit.
 
 While `PAPERCLIP_SELF_SERVE_COMPANIES` is on, every company marked `self_serve`
 is held to the floor below, whatever the actor (its owner, an instance admin or
-its agents). Admin-created companies keep normal behaviour.
+its agents). Admin-created companies keep normal behaviour, except that remote
+MCP URLs are restricted instance-wide (see below).
 
-**Agents may only use the adapters in `PAPERCLIP_SELF_SERVE_ADAPTERS`.**
+**Turning the flag off lifts all of this for existing self-serve companies.**
+That includes the floor, the admin-only delete and the unarchive limit; the
+`self_serve` marker stays, so turning the flag back on restores them. Keep the
+flag on while any self-serve company exists.
 
-- Their config may not override an endpoint (`apiBaseUrl` other than the
-  default, `baseUrl`, `url`, `endpoint`, env keys ending in `BASE_URL` /
-  `_ENDPOINT` / `_HOST` / ...). This prevents server-side requests to internal
-  addresses.
-- Their config may not set host command keys (`command`, `args`, `cwd`, ...) or
-  `workspaceStrategy` commands.
+**Adapters.** Agents may only use the adapters in
+`PAPERCLIP_SELF_SERVE_ADAPTERS`.
 
-This is enforced where every path converges:
+**Config keys (an allowlist).** An agent's `adapterConfig` may only carry
+reviewed keys. Any other key, including keys a future version adds, is refused
+with `403 self_serve_config_key_not_allowed`. For `claude_managed` the reviewed
+keys are:
+
+- `model`, `environmentId`, `promptTemplate`, `bootstrapPromptTemplate`,
+  `inactivityTimeoutSec`, `networkingMode`, `networkAllowedHosts` and
+  `networkAllowPackageManagers`;
+- `apiBaseUrl`, only at its default `https://api.anthropic.com/v1`;
+- `env`, only `ANTHROPIC_API_KEY` bound to a stored secret (`secret_ref` or
+  `user_secret_ref`); a plain key value is refused;
+- the server-managed `paperclipSkillSync`;
+- the managed instructions bundle: `instructionsBundleMode` must be `managed`,
+  `instructionsEntryFile` must be a relative name with no `..`, and
+  `instructionsFilePath` / `instructionsRootPath` must resolve (symlinks
+  included) inside `<instance>/companies/<companyId>/agents/`.
+
+Host command keys, workspace commands, endpoint overrides, external instruction
+paths (`agentsMdPath`, `instructionsBundleMode: external`) and runtime-only
+fields are therefore refused.
+
+**Where it is enforced.** These checks run where every path converges:
 
 - **Agent record creation.** Every create, hire, plan hire, join approval,
   import, catalog install, onboarding seed and built-in goes through it.
 - **Agent configuration updates.** This covers update, adapter switch, config
   rollback and Assistant setup.
 - **Pending-hire activation.**
-- **Approval filing.** A `hire_agent` approval with a disallowed adapter is
-  rejected when it is created or resubmitted, not only when it is approved.
+- **Approval filing.** A `hire_agent` approval with a disallowed adapter or
+  config is rejected when it is created or resubmitted, not only when it is
+  approved.
 - **The heartbeat runtime backstop.** A run for an agent whose adapter or
   effective config (including issue adapter overrides) breaks the floor fails
   with `self_serve_adapter_not_allowed` before any workspace or adapter work.
   This catches anything written to the database some other way.
 
+Independently of the flag, the `claude_managed` adapter only reads
+`instructionsFilePath` when it resolves inside that managed folder. Any other
+path is ignored with a warning, so the system prompt can never be a server file
+such as `/proc/self/environ`. This applies to every company.
+
 **Built-in agents in a self-serve company run on Claude (hosted).** A built-in
 that can't run hosted is skipped, never provisioned on a local CLI. The
 onboarding seed's first agent is `claude_managed`.
 
-**These surfaces are also refused in a self-serve company:**
+**Refused in a self-serve company:**
 
-- adapter environment tests and `claude-login` (both run a CLI on the host);
+- `claude-login`, which runs a CLI on the host;
+- adapter environment tests whose adapter or config is not allowed (a
+  `claude_managed` test with an allowed config still works);
 - host-executed workspace commands on projects, issues and execution
   workspaces, and the workspace runtime-command routes;
 - project workspace `cwd` (a server folder) and plugin local folders;
+- skill imports from a server folder, and project skill browse/scan (GitHub and
+  catalog sources still work);
 - adding a local command (stdio) MCP template;
 - company package imports.
 
-**Refused for anyone who is not an instance admin:**
-`POST /api/health/dev-server/restart`, an instance-level action with no company.
+**Refused on the whole instance while self-serve is on:**
+
+- Remote MCP connection URLs that resolve to loopback, private or internal
+  addresses (for example `*.railway.internal`, `127.0.0.1`, `10.x`).
+  Link-local and metadata addresses are always refused.
+- `POST /api/health/dev-server/restart` for anyone who is not an instance admin.
 
 **Already admin-only and unchanged:** environments; plugin install, enable and
-config; adapter install; external instruction paths.
+config; adapter install. The external-instructions route
+(`PATCH /agents/:id/instructions-path`) is admin-only. In a self-serve company
+the config allowlist also refuses external instruction paths that arrive
+through hires or approvals.
 
 #### Company boundaries
 

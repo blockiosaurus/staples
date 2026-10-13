@@ -1,4 +1,5 @@
 import { notifyDeliveryWork, DELIVERY_QUEUES } from "./delivery-work-notifications.js";
+import { getSelfServePolicy } from "./self-serve-policy.js";
 import { composeConnectionInstructions } from "./connection-instructions.js";
 import { isInsufficientConnectionScope, INSUFFICIENT_CONNECTION_SCOPE_MESSAGE } from "./connection-permission-errors.js";
 import { boundedMcpToolName } from "./mcp-tool-names.js";
@@ -3373,6 +3374,10 @@ export function createToolGatewayService(
   }
 
   function allowPrivateRemoteEndpoints() {
+    // Self-serve instances: any signed-in user can own a company, so remote
+    // MCP URLs may not reach private, loopback or internal addresses
+    // (e.g. *.railway.internal). Link-local is always refused.
+    if (getSelfServePolicy().enabled) return false;
     return (
       options.deploymentMode !== "authenticated" ||
       options.deploymentExposure !== "public"

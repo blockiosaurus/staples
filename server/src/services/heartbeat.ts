@@ -2188,8 +2188,8 @@ export function heartbeatService(
       // Self-serve runtime backstop: whatever path created or edited this
       // agent, a self-serve company never runs a host-executed adapter or an
       // endpoint override. Fail before any workspace or adapter work.
-      const refuseSelfServeRun = async (violation: string) => {
-        logger.warn({ runId, agentId: agent?.id, companyId: agent?.companyId, violation }, "self-serve floor refused a run");
+      const refuseSelfServeRun = async ({ message: violation, code }: { message: string; code: string }) => {
+        logger.warn({ runId, agentId: agent?.id, companyId: agent?.companyId, violation, code }, "self-serve floor refused a run");
         await setRunStatus(runId, "failed", {
           error: violation,
           errorCode: SELF_SERVE_RUN_REFUSED_ERROR_CODE,
@@ -2204,7 +2204,7 @@ export function heartbeatService(
       };
       const selfServeCompany = await isSelfServeCompany(db, agent.companyId);
       if (selfServeCompany) {
-        const violation = selfServeAgentViolation(agent.adapterType, agent.adapterConfig);
+        const violation = await selfServeAgentViolation(agent.companyId, agent.adapterType, agent.adapterConfig);
         if (violation) {
           await refuseSelfServeRun(violation);
           return;
@@ -2442,7 +2442,7 @@ export function heartbeatService(
             )
           : null;
       if (selfServeCompany && issueAssigneeOverrides?.adapterConfig) {
-        const violation = selfServeAgentViolation(agent.adapterType, {
+        const violation = await selfServeAgentViolation(agent.companyId, agent.adapterType, {
           ...parseObject(agent.adapterConfig),
           ...issueAssigneeOverrides.adapterConfig,
         });

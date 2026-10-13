@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import path from "node:path";
 import type {
   AdapterExecutionContext,
   AdapterExecutionResult,
@@ -15,6 +16,7 @@ import {
   joinPromptSections,
   parseObject,
   renderTemplate,
+  resolvePaperclipInstanceRootForAdapter,
   selectInitialCommunicationGuidance,
   selectPaperclipPromptSections,
 } from "@paperclipai/adapter-utils/server-utils";
@@ -274,9 +276,56 @@ function environmentFingerprint(config: CloudEnvironmentConfig): string {
   return sha256({ v: 1, config });
 }
 
-async function readInstructions(config: Record<string, unknown>, onLog: AdapterExecutionContext["onLog"]): Promise<string> {
+/** The server-managed instructions root for a company's agents. */
+export function managedInstructionsRootFor(agent: { companyId: string }, env: NodeJS.ProcessEnv = process.env): string {
+  return path.resolve(resolvePaperclipInstanceRootForAdapter({ env }), "companies", agent.companyId, "agents");
+}
+
+async function realPathAllowingMissing(target: string): Promise<string> {
+  let probe = path.resolve(target);
+  const remainder: string[] = [];
+  for (;;) {
+    try {
+      const real = await fs.realpath(probe);
+      return remainder.length > 0 ? path.join(real, ...remainder.reverse()) : real;
+    } catch {
+      const parent = path.dirname(probe);
+      if (parent === probe) return path.resolve(target);
+      remainder.push(path.basename(probe));
+      probe = parent;
+    }
+  }
+}
+
+function isWithin(root: string, candidate: string) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
+ * The instructions file becomes the hosted agent's system prompt, so it may only
+ * come from the server-managed instructions root (symlinks resolved). Anything
+ * else (e.g. /proc/self/environ) would ship server secrets to the model.
+ */
+export async function isManagedInstructionsPath(filePath: string, root: string): Promise<boolean> {
+  if (!path.isAbsolute(filePath)) return false;
+  if (!isWithin(path.resolve(root), path.resolve(filePath))) return false;
+  const [realRoot, realFile] = await Promise.all([realPathAllowingMissing(root), realPathAllowingMissing(filePath)]);
+  return isWithin(realRoot, realFile);
+}
+
+export async function readInstructions(
+  config: Record<string, unknown>,
+  onLog: AdapterExecutionContext["onLog"],
+  agent: { companyId: string },
+  root: string = managedInstructionsRootFor(agent),
+): Promise<string> {
   const filePath = asString(config.instructionsFilePath, "").trim();
   if (!filePath) return "";
+  if (!(await isManagedInstructionsPath(filePath, root))) {
+    await onLog("stderr", `[staples] Warning: ignored agent instructions file "${filePath}": it is outside the managed instructions folder.\n`);
+    return "";
+  }
   try {
     return (await fs.readFile(filePath, "utf8")).trim();
   } catch (error) {
@@ -592,7 +641,7 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
     : staplesApiTools.some((tool) => tool.toolName === "paperclipUpdateIssue")
       ? HOSTED_STAPLES_API_NOTE
       : HOSTED_STAPLES_API_READ_ONLY_NOTE;
-  const instructions = await readInstructions(config, onLog);
+  const instructions = await readInstructions(config, onLog, agent);
 
   // ---- Skills (native custom skills, or inlined on refusal) -------------------
   let skills: SkillsResolution;

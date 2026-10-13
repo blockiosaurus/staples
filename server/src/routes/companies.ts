@@ -1298,20 +1298,22 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
         const txAccess = accessService(tx);
         await txAccess.ensureMembership(row.id, "user", userId, "owner", "active");
         await txAccess.ensureRoleDefaultGrants(row.id, userId, "owner", userId);
+        // Logged in the same transaction, so a failure in post-commit
+        // provisioning can't leave the creation unaudited.
+        await logActivity(tx, {
+          companyId: row.id,
+          actorType: "user",
+          actorId: userId,
+          action: "company.created",
+          entityType: "company",
+          entityId: row.id,
+          details: { name: row.name, selfServe: true },
+        });
         return row;
       });
       // Built-in provisioning (the Assistant, on Claude (hosted)) runs after
       // commit, outside the lock.
       company = await svc.completeCreate(record.id);
-      await logActivity(db, {
-        companyId: company.id,
-        actorType: "user",
-        actorId: userId,
-        action: "company.created",
-        entityType: "company",
-        entityId: company.id,
-        details: { name: company.name, selfServe: true },
-      });
     }
     if (company.budgetMonthlyCents > 0) {
       await budgets.upsertPolicy(

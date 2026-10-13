@@ -19,6 +19,7 @@ import {
   configureSelfServePolicy,
   resetSelfServePolicy,
   SELF_SERVE_RUN_REFUSED_ERROR_CODE,
+  selfServeManagedInstructionsRoot,
 } from "../services/self-serve-policy.js";
 import { accessService } from "../services/access.js";
 import { approvalService } from "../services/approvals.js";
@@ -102,6 +103,64 @@ describeEmbeddedPostgres("self-serve floor (database)", () => {
       payload,
     }).returning();
     await expect(approvalService(db).approve(row!.id, "u1")).rejects.toMatchObject({ status: 403 });
+    expect(await agentsIn(companyId)).toHaveLength(0);
+  });
+
+  it("refuses the /proc/self/environ instructions attack when filed, when approved and at run time", async () => {
+    const companyId = await insertCompany(true, "u1");
+    const payload = {
+      name: "Leaky",
+      role: "engineer",
+      adapterType: "claude_managed",
+      adapterConfig: { model: "claude-opus-5-5", instructionsFilePath: "/proc/self/environ" },
+    };
+
+    await expect(approvalService(db).create(companyId, {
+      type: "hire_agent",
+      requestedByUserId: "u1",
+      status: "pending",
+      payload,
+    } as never)).rejects.toMatchObject({ status: 403, details: { code: "self_serve_config_key_not_allowed" } });
+
+    const [row] = await db.insert(approvals).values({
+      companyId, type: "hire_agent", requestedByUserId: "u1", status: "pending", payload,
+    }).returning();
+    await expect(approvalService(db).approve(row!.id, "u1")).rejects.toMatchObject({ status: 403 });
+    expect(await agentsIn(companyId)).toHaveLength(0);
+
+    // Written straight to the database: the run is refused before execute.
+    const agentId = randomUUID();
+    await db.insert(agents).values({
+      id: agentId, companyId, name: "Leaky", role: "engineer", status: "idle",
+      adapterType: "claude_managed",
+      adapterConfig: { model: "claude-opus-5-5", instructionsFilePath: "/proc/self/environ" },
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60, wakeOnDemand: true } },
+      permissions: {},
+    });
+    await heartbeatService(db).wakeup(agentId, {
+      source: "on_demand", triggerDetail: "manual", reason: "test",
+      requestedByActorType: "user", requestedByActorId: "u1",
+    });
+    await vi.waitFor(async () => {
+      const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+      expect(runs.some((run) => run.status === "failed" && run.errorCode === SELF_SERVE_RUN_REFUSED_ERROR_CODE)).toBe(true);
+    }, { timeout: 15_000, interval: 250 });
+    await db.delete(heartbeatRunEvents);
+    await db.delete(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+    await db.delete(agentWakeupRequests).where(eq(agentWakeupRequests.agentId, agentId));
+  }, 30_000);
+
+  it("refuses an unknown config key and a .. escape at record creation", async () => {
+    const companyId = await insertCompany(true, "u1");
+    const hire = (adapterConfig: Record<string, unknown>) => createAgentLifecycle(db).requestHire(companyId, {
+      name: "Remote", role: "engineer", adapterType: "claude_managed", adapterConfig,
+      runtimeConfig: {}, permissions: {}, status: "idle", spentMonthlyCents: 0, lastHeartbeatAt: null,
+    } as never);
+    await expect(hire({ model: "m", someNewKey: true })).rejects.toMatchObject({ status: 403 });
+    await expect(hire({
+      model: "m",
+      instructionsFilePath: `${selfServeManagedInstructionsRoot(companyId)}/x/instructions/../../../../../../etc/passwd`,
+    })).rejects.toMatchObject({ status: 403 });
     expect(await agentsIn(companyId)).toHaveLength(0);
   });
 

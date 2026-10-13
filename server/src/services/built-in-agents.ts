@@ -1,5 +1,5 @@
 import { createAgentLifecycle, createAgentLifecycleEffects, scheduleAgentLifecycle } from "./agent-lifecycle.js";
-import { isSelfServeCompany, selfServeAgentViolation, SELF_SERVE_HOST_EXECUTION_ERROR_CODE } from "./self-serve-policy.js";
+import { isSelfServeAdapterAllowed, isSelfServeCompany, SELF_SERVE_HOST_EXECUTION_ERROR_CODE } from "./self-serve-policy.js";
 import { HOSTED_INFERENCE_ADAPTER_TYPE, hostedAssistantBudgetCents, hostedInference } from "./hosted-inference.js";
 import { ensureHostedAssistantBudget } from "./hosted-inference-access.js";
 import { hasAnthropicKeyBinding } from "./assistant-setup.js";
@@ -783,7 +783,7 @@ function canRunHostedInSelfServe(definition: BuiltInAgentDefinition) {
   const hosted = hostedInference();
   return hosted.available
     && Boolean(definition.allowedAdapterTypes?.includes(hosted.adapterType))
-    && selfServeAgentViolation(hosted.adapterType, { model: hosted.model }) === null;
+    && isSelfServeAdapterAllowed(hosted.adapterType);
 }
 
 function defaultAdapterType(definition: BuiltInAgentDefinition) {
@@ -1045,7 +1045,7 @@ export function builtInAgentService(db: Db) {
       if (
         !hosted.available
         || !definition.allowedAdapterTypes?.includes(hosted.adapterType)
-        || selfServeAgentViolation(hosted.adapterType, { model: hosted.model }) !== null
+        || !isSelfServeAdapterAllowed(hosted.adapterType)
       ) {
         throw forbidden(`Built-in agent ${definition.key} can't run on Claude (hosted), so it isn't available in this company.`, {
           code: SELF_SERVE_HOST_EXECUTION_ERROR_CODE,

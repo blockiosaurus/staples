@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertSelfServeCompanyAgent,
   assertSelfServeCompanyHostAccess,
@@ -8,6 +11,7 @@ import {
   parseSelfServeAdapterTypes,
   resetSelfServePolicy,
   selfServeAgentViolation,
+  selfServeManagedInstructionsRoot,
 } from "../services/self-serve-policy.js";
 import { assertNoHostWorkspaceCommandMutation } from "../routes/workspace-command-authz.js";
 
@@ -49,27 +53,69 @@ describe("self-serve policy", () => {
     expect(await isSelfServeCompany(dbWith(false), "c1")).toBe(false);
   });
 
-  it("allows only listed remote adapters, never process or *_local even if listed", () => {
+  it("allows only listed remote adapters, never process or *_local even if listed", async () => {
     configureSelfServePolicy({
       selfServeCompanies: true,
       deploymentMode: "authenticated",
       adapterTypes: ["claude_managed", "process", "codex_local"],
     });
-    expect(selfServeAgentViolation("claude_managed", { model: "claude-sonnet" })).toBeNull();
+    expect(await selfServeAgentViolation("c1", "claude_managed", { model: "claude-sonnet" })).toBeNull();
     for (const type of ["process", "claude_local", "codex_local", "http", "", null]) {
-      expect(selfServeAgentViolation(type, {})).not.toBeNull();
+      expect(await selfServeAgentViolation("c1", type, {})).toMatchObject({ code: "self_serve_host_execution_forbidden" });
     }
   });
 
-  it("refuses endpoint overrides, host commands and workspace commands", () => {
+  it("allows only reviewed config keys, and only secret-bound ANTHROPIC_API_KEY", async () => {
     on();
-    expect(selfServeAgentViolation("claude_managed", { apiBaseUrl: "https://api.anthropic.com/v1/" })).toBeNull();
-    expect(selfServeAgentViolation("claude_managed", { apiBaseUrl: "http://169.254.169.254/latest" })).toMatch(/apiBaseUrl/);
-    expect(selfServeAgentViolation("claude_managed", { baseUrl: "http://server.railway.internal" })).toMatch(/baseUrl/);
-    expect(selfServeAgentViolation("claude_managed", { env: { ANTHROPIC_BASE_URL: "http://x" } })).toMatch(/ANTHROPIC_BASE_URL/);
-    expect(selfServeAgentViolation("claude_managed", { env: { ANTHROPIC_API_KEY: { type: "secret_ref" } } })).toBeNull();
-    expect(selfServeAgentViolation("claude_managed", { command: "sh" })).toMatch(/command/);
-    expect(selfServeAgentViolation("claude_managed", { workspaceStrategy: { type: "git_worktree", provisionCommand: "id" } })).toMatch(/provisionCommand/);
+    const ok = async (config: Record<string, unknown>) => selfServeAgentViolation("c1", "claude_managed", config);
+    expect(await ok({ model: "m", paperclipSkillSync: { desiredSkills: [] }, networkingMode: "limited", promptTemplate: "p" })).toBeNull();
+    expect(await ok({ apiBaseUrl: "https://api.anthropic.com/v1/" })).toBeNull();
+    expect(await ok({ env: { ANTHROPIC_API_KEY: { type: "secret_ref", secretId: "s" } } })).toBeNull();
+    for (const config of [
+      { apiBaseUrl: "http://169.254.169.254/latest" },
+      { baseUrl: "http://server.railway.internal" },
+      { env: { ANTHROPIC_BASE_URL: { type: "secret_ref", secretId: "s" } } },
+      { env: { ANTHROPIC_API_KEY: "plain" } },
+      { command: "sh" },
+      { workspaceStrategy: { type: "git_worktree", provisionCommand: "id" } },
+      { instructionsBundleMode: "external" },
+      { agentsMdPath: "/etc/passwd" },
+      { instructionsEntryFile: "../../x.md" },
+      { paperclipRuntimeSkills: [] },
+      { someFutureKey: 1 },
+    ]) {
+      expect(await ok(config), JSON.stringify(config)).toMatchObject({ code: "self_serve_config_key_not_allowed" });
+    }
+  });
+
+  it("allows instruction paths only inside the company's managed folder, with no .. or symlink escape", async () => {
+    on();
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "self-serve-policy-"));
+    vi.stubEnv("PAPERCLIP_HOME", home);
+    vi.stubEnv("PAPERCLIP_INSTANCE_ID", "default");
+    try {
+      const root = selfServeManagedInstructionsRoot("c1");
+      const dir = path.join(root, "a1", "instructions");
+      await fs.mkdir(dir, { recursive: true });
+      const file = path.join(dir, "AGENTS.md");
+      await fs.writeFile(file, "hi");
+      const check = (instructionsFilePath: string) => selfServeAgentViolation("c1", "claude_managed", { instructionsFilePath });
+      expect(await check(file)).toBeNull();
+      expect(await check(path.join(dir, "NOT_YET.md"))).toBeNull();
+      expect(await check("/proc/self/environ")).not.toBeNull();
+      expect(await check(path.join(dir, "..", "..", "..", "..", "..", "secret"))).not.toBeNull();
+      expect(await check(path.join(selfServeManagedInstructionsRoot("other"), "a1", "instructions", "AGENTS.md"))).not.toBeNull();
+      expect(await check("AGENTS.md")).not.toBeNull();
+      const outside = path.join(home, "secret.txt");
+      await fs.writeFile(outside, "SECRET");
+      await fs.symlink(outside, path.join(dir, "LINK.md"));
+      expect(await check(path.join(dir, "LINK.md"))).not.toBeNull();
+      await fs.symlink(home, path.join(dir, "escape"));
+      expect(await check(path.join(dir, "escape", "secret.txt"))).not.toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+      await fs.rm(home, { recursive: true, force: true });
+    }
   });
 
   it("asserts by company, whatever the actor", async () => {
