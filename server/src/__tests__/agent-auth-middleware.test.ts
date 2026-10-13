@@ -223,18 +223,40 @@ describe("agent auth middleware", () => {
   });
 
   describe("provisioned Assistant run token", () => {
-    function assistantClient(input: { provisioned: boolean; marked?: boolean }) {
+    function assistantClient(input: { provisioned: boolean; marked?: boolean; via?: "run_jwt" | "api_key" }) {
       const agentId = randomUUID();
       const companyId = randomUUID();
       const runId = randomUUID();
+      const apiKey = `pcp_${randomUUID()}`;
       const { db } = createDbState({
         agent: { id: agentId, companyId, metadata: input.marked === false ? null : ASSISTANT_METADATA },
         assistantBindingAgentId: input.provisioned ? agentId : undefined,
         run: { id: runId, companyId, agentId },
+        ...(input.via === "api_key"
+          ? { agentKey: { id: randomUUID(), agentId, companyId, keyHash: hashToken(apiKey), responsibleUserId: "user-1" } }
+          : {}),
       });
-      const token = createLocalAgentJwt(agentId, companyId, "claude_local", runId, null);
+      const token = input.via === "api_key" ? apiKey : createLocalAgentJwt(agentId, companyId, "claude_local", runId, null);
       return { client: createApp(db), auth: `Bearer ${token}` };
     }
+
+    it("refuses writes from an API key of the Assistant's agent but keeps reads", async () => {
+      const { client, auth } = assistantClient({ provisioned: true, via: "api_key" });
+      const issueId = randomUUID();
+      const comment = await request(client).post(`/api/issues/${issueId}/comments`).set("Authorization", auth).send({ body: "hi" });
+      expect(comment.status).toBe(403);
+      expect(comment.body.code).toBe("assistant_read_only");
+      const patch = await request(client).patch(`/api/issues/${issueId}`).set("Authorization", auth).send({ status: "done" });
+      expect(patch.status).toBe(403);
+      const read = await request(client).get(`/api/issues/${issueId}`).set("Authorization", auth);
+      expect(read.status).toBe(200);
+    });
+
+    it("leaves writes from another agent's API key unchanged", async () => {
+      const { client, auth } = assistantClient({ provisioned: false, marked: false, via: "api_key" });
+      const comment = await request(client).post(`/api/issues/${randomUUID()}/comments`).set("Authorization", auth).send({ body: "hi" });
+      expect(comment.status).toBe(201);
+    });
 
     it("cannot comment on or update a task", async () => {
       const { client, auth } = assistantClient({ provisioned: true });
