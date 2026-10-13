@@ -317,7 +317,7 @@ const LEGACY_AGENT_DETAIL_TABS = [
 
 export const DISCARD_AGENT_CONFIG_CHANGES_MESSAGE = "Discard unsaved agent configuration changes?";
 
-function plainRunStatus(status: string): string {
+export function plainRunStatus(status: string): string {
   switch (status) {
     case "succeeded": return "Finished";
     case "failed": return "Hit a problem";
@@ -1805,32 +1805,17 @@ export function AgentOverview({
               ) : <span className="text-sm">Board</span>}
             </SummaryRow>
             <SummaryRow label="Direct reports"><span className="text-sm tabular-nums">{directReportCount}</span></SummaryRow>
-            <SummaryRow label="Public key">
-              {identity.isPending ? <span className="text-sm text-muted-foreground">Loading…</span>
-                : identity.isError ? <span className="text-sm text-destructive">Could not load public key</span>
-                : identity.data ? (
-                  <CopyText text={identity.data.publicKeyPem} ariaLabel="Copy public key" title="Copy public key">
-                    <span className="font-mono text-sm">{identity.data.keyId.slice(0, 19)}…</span>
-                  </CopyText>
-                ) : (
-                  <div className="text-sm">
-                    <div>Not created yet</div>
-                    <div className="text-xs text-muted-foreground">Created automatically the next time it runs</div>
-                  </div>
-                )}
-            </SummaryRow>
           </div>
         </section>
 
         <section className="rounded-lg border border-border p-4" aria-labelledby="agent-runtime-heading">
           <div className="mb-4 flex items-center justify-between gap-3">
-            <h3 id="agent-runtime-heading" className="text-sm font-medium">Runs on</h3>
+            <h3 id="agent-runtime-heading" className="text-sm font-medium">Setup</h3>
             <Link className="text-xs text-muted-foreground hover:text-foreground" to={agentDetailHref(agentRouteId, "runtime")}>Configure</Link>
           </div>
           <div className="space-y-3">
             <SummaryRow label="Runs on"><span className="text-sm">{getAdapterDisplay(agent.adapterType === "paperclip_runner" && agent.adapterConfig.provider === "openai_dot" ? "openai_dot" : agent.adapterType).label}</span></SummaryRow>
             <SummaryRow label="Model"><span className="max-w-64 truncate text-sm font-mono">{configuredModel}</span></SummaryRow>
-            <SummaryRow label="Conversation"><span className="max-w-64 truncate text-sm font-mono">{runtimeState?.sessionDisplayId ?? runtimeState?.sessionId ?? "Not started"}</span></SummaryRow>
             <SummaryRow label="Last run">
               <span className="text-sm">{lastRun ? `${plainRunStatus(lastRun.status)} · ${relativeTime(lastRun.createdAt)}` : "No runs"}</span>
             </SummaryRow>
@@ -1865,6 +1850,27 @@ export function AgentOverview({
           )}
         </section>
       </div>
+
+      <details className="rounded-lg border border-border p-4" data-testid="agent-overview-advanced">
+        <summary className="cursor-pointer text-sm font-medium">Advanced</summary>
+        <div className="mt-3 space-y-3">
+          <SummaryRow label="Public key">
+              {identity.isPending ? <span className="text-sm text-muted-foreground">Loading…</span>
+                : identity.isError ? <span className="text-sm text-destructive">Could not load public key</span>
+                : identity.data ? (
+                  <CopyText text={identity.data.publicKeyPem} ariaLabel="Copy public key" title="Copy public key">
+                    <span className="font-mono text-sm">{identity.data.keyId.slice(0, 19)}…</span>
+                  </CopyText>
+                ) : (
+                  <div className="text-sm">
+                    <div>Not created yet</div>
+                    <div className="text-xs text-muted-foreground">Created automatically the next time it runs</div>
+                  </div>
+                )}
+            </SummaryRow>
+          <SummaryRow label="Conversation"><span className="max-w-64 truncate text-sm font-mono">{runtimeState?.sessionDisplayId ?? runtimeState?.sessionId ?? "Not started"}</span></SummaryRow>
+        </div>
+      </details>
 
       <section className="space-y-3" aria-labelledby="agent-recent-tasks-heading">
         <div className="flex items-center justify-between">
@@ -2147,7 +2153,7 @@ export function ConfigurationTab({
         environmentVariablesPlacement="configuration"
         compactTestFeedback
         sectionOrder={["identity", "adapter", "configuration", "environment", "environment-variables", "run-policy"]}
-        sectionTitles={{ adapter: "Runs on", configuration: "Configuration", identity: "Agent identity" }}
+        sectionTitles={{ adapter: "Runs on", configuration: "Configuration", identity: "Name and role" }}
         canConfigureProviderTrace={canConfigureProviderTrace}
       /> : null}
 

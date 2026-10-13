@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@paperclipai/teams-catalog",
   "packageVersion": "0.1.0",
-  "generatedAt": "2026-10-12T01:31:45.613Z",
+  "generatedAt": "2026-10-13T15:52:35.048Z",
   "teams": [
     {
       "id": "paperclipai:bundled:company-defaults:core-exec-team",
@@ -536,8 +536,8 @@
         {
           "path": "agents/bookkeeper/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 6876,
-          "sha256": "81496020ab61a9faa71c8df93ea8b559cc2e845053d6dce2895ae561b5b5a34a"
+          "sizeBytes": 7122,
+          "sha256": "cdf4b3bb6dc215123b36f6b4eb21f9a5046e666676f07b81b3d8bf9a6798a06c"
         },
         {
           "path": "projects/books/PROJECT.md",
@@ -579,14 +579,14 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 1755,
-          "sha256": "a153adf24f233fd889ff45cedcb4f251c94d58650376c70f1ff139f66b687913"
+          "sha256": "1e94a0b2f7737e161b4ac79e612cca4eac3e7afd966e8c3bfd577896b4002f91"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:ea2f4ab3282cd41052692ca55b11bd84806291a17567a50f0c654e9c22b38c2b",
+      "contentHash": "sha256:4fde165a90522e7eca32a0c414ae8cb897a994175478b2882c058e0060cc1c4b",
       "staplesTemplate": {
-        "version": "1.1.0",
+        "version": "1.2.0",
         "tagline": "Read-only weekly summaries of your revenue and spending",
         "icon": "calculator",
         "marketplaceCategory": "finance",
@@ -758,8 +758,8 @@
         {
           "path": "agents/coding-agent/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 8169,
-          "sha256": "49f4f3121426a8b52705aa1ad03a31c4a1fcc2d90926a6c5b22f8ff063725378"
+          "sizeBytes": 8415,
+          "sha256": "3a25618be4e4e5a4063ecff0e20c95f19cef427e5354f02461c7d51a78647998"
         },
         {
           "path": "projects/code/PROJECT.md",
@@ -801,14 +801,14 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 2232,
-          "sha256": "06048274dc8e120ae41141b1fc9a3205c8d5e1d850997998e2d88af8d3698cf2"
+          "sha256": "e12e315a4fbe7dda745eb8db067470584a1df71902d1d23ccb8273f58d2af6a6"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:28e1cb99572173724c7d99b44dd5c19855e5a7c23e3c4cb06c8e1a314c335471",
+      "contentHash": "sha256:c403806b7c3103e141f9e229a598c8022507ddc7c5b114d1ac2e5fda043347af",
       "staplesTemplate": {
-        "version": "1.1.0",
+        "version": "1.2.0",
         "tagline": "Triages GitHub issues, fixes bugs and opens pull requests for review",
         "icon": "code",
         "marketplaceCategory": "engineering",
@@ -960,8 +960,8 @@
         {
           "path": "agents/content-creator/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 6230,
-          "sha256": "fae58765c3d59ed5054b9558ed1cd759fce924d7ac94d521cf8220cab4805548"
+          "sizeBytes": 6476,
+          "sha256": "8f2a7296f6bf551f9ef831c13b5d8f252422d5fe00fc2bbb75d8b9ef7e72617d"
         },
         {
           "path": "projects/content/PROJECT.md",
@@ -1003,14 +1003,14 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 2648,
-          "sha256": "114ab48ed1458b940e65e4e048b7513bfd8bf3b247a3e9c79eabcd5c4e4c8469"
+          "sha256": "d030c795f28871206b76f1005ac95be0cf2cf4c057e402ae52a573521fef3deb"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:0240c9883c2f9d14065bac4b7cb788b9f33773c44442e280460cadd453367d31",
+      "contentHash": "sha256:a054c5b449977d4da68da8fd4a45556df0bf6790b2a3a63aec130257da099c77",
       "staplesTemplate": {
-        "version": "1.1.0",
+        "version": "1.2.0",
         "tagline": "Plans, writes and publishes your posts on a steady schedule",
         "icon": "pen-line",
         "marketplaceCategory": "content",
@@ -1201,8 +1201,8 @@
         {
           "path": "agents/email-secretary/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 6380,
-          "sha256": "df4a0bad05c4dba885ced4bfb47e2a6eb1f7357547044d68e4bbd6343fe6453a"
+          "sizeBytes": 6626,
+          "sha256": "33a641d7f21c660b44e3175ded42565d97baae10ad01bca823049032a5d91392"
         },
         {
           "path": "projects/inbox/PROJECT.md",
@@ -1244,14 +1244,14 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 2932,
-          "sha256": "a8e694ddfb7483ab2f85f7aadf59c7fd0dd4955a76108646c3559e6e895d6760"
+          "sha256": "aac0a8f2dc22bfb7b9a4375f1f875ad7f19ca47c1d769091df24b5bd18444222"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:7f80da003a4b793b869193336c2f585bc4fecec81ef45c356f880b6b2724800a",
+      "contentHash": "sha256:6aabd4b9ff9398c4b9924f171ebc0f8fbee73f0b47a8c2d1092fea0a304daf52",
       "staplesTemplate": {
-        "version": "1.1.0",
+        "version": "1.2.0",
         "tagline": "Sorts your inbox, drafts replies and sends a daily digest",
         "icon": "mail",
         "marketplaceCategory": "communication",
@@ -1445,8 +1445,8 @@
         {
           "path": "agents/newsletter-editor/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 6087,
-          "sha256": "d9c667113f0653d5b730bb1d8755a91d8b0da4c66bef2859ffc1be778535bbe6"
+          "sizeBytes": 6333,
+          "sha256": "739e3453724f93ded6500109465b04476b63f08e5a66699e4829c29fcccdc5f5"
         },
         {
           "path": "projects/newsletter/PROJECT.md",
@@ -1488,14 +1488,14 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 2569,
-          "sha256": "2939d14c192e0a6354639fd2eba6e8ee866e61c816a278ef5394c3db8c297628"
+          "sha256": "f4c2b42552bae5e51a4df56bab6220f86dc51c8583fbee658779306ab2eede2a"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:9d6857179d980111963b523527fc26d010ae356ba782b92b3591902841cc116d",
+      "contentHash": "sha256:2d1aba7faed48de49cb921a3314211d24675dc367d5ddb712eea4592d28e3b7d",
       "staplesTemplate": {
-        "version": "1.1.0",
+        "version": "1.2.0",
         "tagline": "Researches, writes and schedules your newsletter on time",
         "icon": "newspaper",
         "marketplaceCategory": "content",
@@ -1676,8 +1676,8 @@
         {
           "path": "agents/researcher/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 5645,
-          "sha256": "7e9764f93186438dde996f11bb7c022fa68b90fa68a8329e409a8d495c90bfbf"
+          "sizeBytes": 5886,
+          "sha256": "fa086a56a6033c7dd5787f94dbe1f303ce02adcc1e3be8141364ea3827702a94"
         },
         {
           "path": "projects/research/PROJECT.md",
@@ -1713,14 +1713,14 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 2026,
-          "sha256": "f32515092ae42d3fe323b59875e88e14cf82406ad2d388c185ccef9faf059749"
+          "sha256": "e2ce5291426310635b1572974e32994c87ae64298e746b4c89ffea465086b4cc"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:c0cfaa79f83aaab892465138d6e3726774cf5f16114c771cc3fe4072b888cd9c",
+      "contentHash": "sha256:5a149e0084d9fba9c867046fe86f216539774c0b58ca6e98179bfb94bd29e597",
       "staplesTemplate": {
-        "version": "1.1.0",
+        "version": "1.2.0",
         "tagline": "A weekly brief on your market, competitors and customers",
         "icon": "search",
         "marketplaceCategory": "research",
@@ -1865,8 +1865,8 @@
         {
           "path": "agents/social-media-manager/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 6952,
-          "sha256": "492e52eb11145449583ab6d1633e5b9a15b46f9c1d3afbca6848559450ecc1d8"
+          "sizeBytes": 7198,
+          "sha256": "a9be8ddffdb82b8b739966183d9990cea4ac3231b552da4fbdfbaec72cc0a597"
         },
         {
           "path": "projects/social/PROJECT.md",
@@ -1908,14 +1908,14 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 2488,
-          "sha256": "f9e403815c8f067a7a3290e8fcfed9471d26dccea7218aa27806bbcf86776165"
+          "sha256": "5e0469614c37995ae8342d012f3fcae9cb15b872fa30d1c1c18e7327ddec5e96"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:f333ca46a9dae90a24aeaf4b18ca2753a8d461ec6cfbfc1ddfb2d80d98a8b5ae",
+      "contentHash": "sha256:798437c6c6b01430a0484b8d0a55a7c22e69102169448e1c141bc4bf04b31493",
       "staplesTemplate": {
-        "version": "1.1.0",
+        "version": "1.2.0",
         "tagline": "Plans your social posts each week and keeps an eye on replies",
         "icon": "share-2",
         "marketplaceCategory": "content",
@@ -2100,8 +2100,8 @@
         {
           "path": "agents/support-triage/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 6787,
-          "sha256": "226e10bb3248bcf9752e8c62bd56a3e4fb7b4c4983de65cbe321052ea33f1103"
+          "sizeBytes": 7033,
+          "sha256": "c607bec6b75327a91d261055eaffdd087a89abf8f99ccfcd9f8588835e8a6245"
         },
         {
           "path": "projects/support/PROJECT.md",
@@ -2137,14 +2137,14 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 2254,
-          "sha256": "565338c48c18048288f1b73b0e776ebec7e92a0146ff1a676e1e24c69b10e87c"
+          "sha256": "ba719ac02856489abd5c5fc623915bb5d89a77402c0bca5d4f8942bc70ce35c5"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:5eefebc5be625138ce46d3e1b197e3d4b9183dd1a06a59134195313652f7956c",
+      "contentHash": "sha256:dc2bbd39ab1731a6364fcde9a134a506d2b154f5e1982d0b63ff58864f2769d8",
       "staplesTemplate": {
-        "version": "1.1.0",
+        "version": "1.2.0",
         "tagline": "Sorts customer messages, drafts answers and escalates problems",
         "icon": "life-buoy",
         "marketplaceCategory": "communication",
@@ -2299,8 +2299,8 @@
         {
           "path": "agents/website-builder/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 6579,
-          "sha256": "8639bbcf74c2276bc218c528278a3fb85e7d3b352dbc5c11c355cdbc54e21c0f"
+          "sizeBytes": 6825,
+          "sha256": "7c5fc95380af5561027c40fbe50dc6af2d2520ac9bb72ca59a61b34e49f982d1"
         },
         {
           "path": "projects/website/PROJECT.md",
@@ -2336,14 +2336,14 @@
           "path": "staples.template.json",
           "kind": "other",
           "sizeBytes": 2401,
-          "sha256": "ef5ef8ac0220f15ee54033206f1e46c3d9875750319750a4b73d65d47db82aab"
+          "sha256": "2e791c6f3f1b03d519e7acdacdf2b685adad2a2eb1bafaafb48bb5f030c0c0be"
         }
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:81ab8f3d3a391a0c925527d3207051444ec9463e659857c9af587f5162bcfd3e",
+      "contentHash": "sha256:1d22f20bf71133e364a8031a8a542c007fad3d01dd0b8e7ef02d30ba9b04342b",
       "staplesTemplate": {
-        "version": "1.1.0",
+        "version": "1.2.0",
         "tagline": "Builds a simple website, shares previews and checks it every week",
         "icon": "globe",
         "marketplaceCategory": "engineering",

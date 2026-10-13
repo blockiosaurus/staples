@@ -5,6 +5,9 @@ import { parseFrontmatterMarkdown } from "@paperclipai/shared/frontmatter";
 import { agentTemplatesService, validateAgentTemplatePackage } from "../services/agent-templates.js";
 import { validateCron } from "../services/cron.js";
 import { listCatalogSkillsOrEmpty } from "../services/skills-catalog.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { templateTaskSpecs, APP_CONNECTION_ORIGIN_PREFIX } from "../services/plan-templates.js";
 import { listCatalogTeams, readCatalogTeamFile } from "../services/teams-catalog.js";
 
 /**
@@ -101,6 +104,8 @@ describe("shipped Staples agent templates", () => {
       expect(body, team.slug).toContain("Company Brief");
       expect(body, team.slug).toContain("connection_request");
       expect(body, team.slug).toContain("Connect <service>");
+      expect(body, team.slug).toContain("connections_search");
+      expect(body, team.slug).toMatch(/mark the Connect task done/i);
       expect(body, team.slug).toContain("autopilot");
       expect(body, team.slug).toContain("approval");
       expect(body, team.slug).toContain("task document");
@@ -298,7 +303,7 @@ describe("shipped Staples agent templates", () => {
   it("ships every Staples template at one consistent version", async () => {
     const versions = new Set<string>();
     for (const slug of EXPECTED_TEMPLATE_SLUGS) versions.add((await readSidecar(slug)).version);
-    expect([...versions]).toEqual(["1.1.0"]);
+    expect([...versions]).toEqual(["1.2.0"]);
   });
 
   it("keeps the website builder on previews until a version is approved", async () => {
@@ -317,5 +322,38 @@ describe("shipped Staples agent templates", () => {
     expect(rendered.starterTasks.map((task) => task.title)).toEqual([
       "Build a one-page landing site and share a preview link",
     ]);
+  });
+
+  describe("Connect tasks", () => {
+    const rendered = (anyOf: string[], why: string) => ({
+      requiredApps: [{ capability: "newsletter", anyOf, why, optional: false }],
+      starterTasks: [{ title: "Start", description: "Do it" }],
+    }) as never;
+
+    it("writes a person-facing description with the slugs only in the marker", () => {
+      const [connect, starter] = templateTaskSpecs("ed", "Newsletter editor", rendered(["beehiiv", "resend", "klaviyo"], "Holds your subscriber list and sends each issue."), new Set());
+      expect(connect!.title).toMatch(/^Connect /);
+      expect(connect!.description).toBe("Newsletter editor needs one of beehiiv, Resend or Klaviyo. Holds your subscriber list and sends each issue. It will ask you to connect one here.");
+      expect(connect!.description).not.toContain("connection_request");
+      expect(connect!.description).not.toContain("`");
+      expect(connect!.originId).toBe(`${APP_CONNECTION_ORIGIN_PREFIX}beehiiv,resend,klaviyo`);
+      expect(starter!.originId).toBeUndefined();
+    });
+
+    it("uses single-service wording for one service", () => {
+      const [connect] = templateTaskSpecs("dev", "Coder", rendered(["github"], "Reads your code."), new Set());
+      expect(connect!.description).toMatch(/^Coder needs .+\. Reads your code\. It will ask you to connect it here\.$/);
+      expect(connect!.description).not.toContain("one of");
+      expect(connect!.originId).toBe("app-connection:github");
+    });
+
+    it("documents the marker and the narrow title fallback in the paperclip skill", () => {
+      const skill = readFileSync(fileURLToPath(new URL("../../../skills/paperclip/SKILL.md", import.meta.url)), "utf8");
+      expect(skill).toContain("**Connect tasks.**");
+      expect(skill).toContain("app-connection:<slug>,<slug>");
+      expect(skill).toContain("connection_request");
+      expect(skill).toContain("mark the Connect task done");
+      expect(skill).toContain("Connect with the accountant");
+    });
   });
 });

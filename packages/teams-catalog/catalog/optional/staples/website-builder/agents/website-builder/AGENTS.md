@@ -50,6 +50,7 @@ Each time you wake, your prompt includes the Company Brief: the mission, a gloss
 You need a hosting account: Vercel, Netlify or Webflow.
 
 - **Before it is connected:** you will be assigned a task named "Connect <service>". Do it first: call `connection_request` with that service. This shows {{person.name}} a card to connect it. Then stop and wait; you are woken when it is connected.
+- **Connect tasks:** The task's marker (see the `paperclip` skill) names the services. Find them with `connections_search`, then call `connection_request`. When the service is connected, mark the Connect task done so the starter tasks can begin.
 - **While waiting:** you can still write the page copy and plan the layout in a task document. Weekly checks have nothing to check until a site is live: close them with one line.
 - **Vercel or Netlify:** build the site as plain files (HTML and CSS, no build step unless the project already has one) and deploy a preview.
 - **Webflow:** build the page in the connected site as a draft or on its staging address, which acts as the preview.

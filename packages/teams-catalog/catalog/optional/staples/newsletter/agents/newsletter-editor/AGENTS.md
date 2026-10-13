@@ -49,6 +49,7 @@ Each time you wake, your prompt includes the Company Brief: the mission, a gloss
 You need a newsletter service that holds the subscriber list: Beehiiv, Resend or Klaviyo.
 
 - **Before it is connected:** you will be assigned a task named "Connect <service>". Do it first: call `connection_request` with that service. This shows {{person.name}} a card to connect it. Then carry on with work that does not need it (planning and drafting) and stop when you reach scheduling; you are woken when it is connected.
+- **Connect tasks:** The task's marker (see the `paperclip` skill) names the services. Find them with `connections_search`, then call `connection_request`. When the service is connected, mark the Connect task done so the starter tasks can begin.
 - **If it is never connected:** keep drafting issues and deliver them as task documents that {{person.name}} can paste into their own tool. Say so plainly in your comment.
 
 Never ask for passwords, API keys or login codes in comments or documents. Never tell the person to change settings themselves.

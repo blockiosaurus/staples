@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { plainRunStatus } from "./AgentDetail";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AgentDetail, AgentRuntimeState, HeartbeatRun, Issue } from "@paperclipai/shared";
@@ -67,12 +68,29 @@ describe("AgentOverview", () => {
 
     expect(markup).toContain("About");
     expect(markup).toContain("Capabilities");
-    expect(markup).toContain("Runs on");
+    expect(markup).toMatch(/id="agent-runtime-heading"[^>]*>Setup</);
+    expect(markup).toMatch(/text-xs">Runs on</);
+    expect(markup).not.toContain("Harness");
+    // The raw conversation id and public key sit under Advanced, not the default cards.
+    const defaultCards = markup.slice(0, markup.indexOf('data-testid="agent-overview-advanced"'));
+    expect(defaultCards).not.toContain("codex-session-42");
+    expect(defaultCards).not.toContain("Public key");
+    expect(markup.slice(markup.indexOf('data-testid="agent-overview-advanced"'))).toContain("codex-session-42");
     expect(markup).toContain("Design Guide");
     expect(markup).toContain("Simplify agent information architecture");
     expect(markup).toContain("PAP-42");
     expect(markup).toContain('href="/activity/costs?agentId=agent-1"');
     expect(markup).not.toContain("Run Activity");
     expect(markup).not.toContain("Tasks by Status");
+  });
+
+  it("maps raw run statuses to plain words", () => {
+    expect(plainRunStatus("succeeded")).toBe("Finished");
+    expect(plainRunStatus("failed")).toBe("Hit a problem");
+    expect(plainRunStatus("running")).toBe("Working");
+    expect(plainRunStatus("queued")).toBe("Waiting to start");
+    expect(plainRunStatus("cancelled")).toBe("Stopped");
+    expect(plainRunStatus("timed_out")).toBe("Ran out of time");
+    expect(plainRunStatus("some_new_state")).toBe("some new state");
   });
 });

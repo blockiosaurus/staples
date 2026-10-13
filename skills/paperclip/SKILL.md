@@ -752,16 +752,22 @@ to edit settings manually. Yield while waiting. Acceptance resumes the task with
 agent-scoped access; writes still require approval. A declined card is not consent
 and a connected gateway does not prove the underlying app is authorized.
 
-**Connect tasks.** A task whose title starts with "Connect " (for example
-"Connect GitHub" or "Connect beehiiv, Resend or Klaviyo") is a connect task
-created for a templated agent. Its description is written for the person and
-does not tell you what to do. Do this first: use `connections_search` to find
-the service identifiers for the service(s) named in the title, then call
-`connection_request` for one of them (the card lets the person choose). Yield
-while waiting; you are woken when it is done. When the service is connected,
-mark the connect task done so your other starter tasks can begin. Older connect
-tasks may spell out the same steps in their description; the steps are the same.
-Never ask for passwords, API keys or other credentials in comments.
+**Connect tasks.** A Connect task is created for a templated agent when a
+service it needs is not connected yet. Its description is written for the
+person and does not tell you what to do. The marker is the signal: the task's
+`originId` (in the issue and in `heartbeat-context`) is
+`app-connection:<slug>,<slug>`, listing the acceptable service identifiers. Do
+this first: call `connection_request` for one of those slugs (the card lets the
+person choose; use `connections_search` to look up a slug's details or find a
+saved connection). Yield while waiting; you are woken when it is done. When the
+service is connected, mark the Connect task done so your other starter tasks can
+begin. Never ask for passwords, API keys or other credentials in comments.
+
+Fallback for older tasks created before the marker existed: a task titled
+"Connect <service>" whose description tells you to call `connection_request` is
+also a Connect task; follow its description. Do not treat other tasks that
+merely start with "Connect" (for example "Connect with the accountant") as
+Connect tasks.
 
 ## Incidental feedback
 

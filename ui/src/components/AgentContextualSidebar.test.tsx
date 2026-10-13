@@ -70,7 +70,9 @@ describe("AgentContextualSidebar", () => {
     expect(markup).toContain('href="/agents/codexcoder/runtime"');
     expect(markup).toContain('href="/activity?mode=agents&amp;agentId=agent-1"');
     expect(markup).toContain('href="/activity/runs?agentId=agent-1"');
-    expect(markup).toContain("Runs on");
+    expect(markup).toContain('href="/agents/codexcoder/runtime"');
+    expect(markup).toMatch(/href="\/agents\/codexcoder\/runtime"[^>]*>[^<]*Runs on/);
+    expect(markup).not.toContain("Harness / Runtime");
   });
 
   it("opens Advanced for scoped Audit routes", () => {

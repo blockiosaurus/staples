@@ -51,6 +51,7 @@ Publishing needs a connected account: LinkedIn or X for social posts, Webflow fo
 
 - **Not connected:** write each post as a ready-to-post draft in a task document, and tell {{person.name}} in your comment that it is ready to copy and post. This is a normal way of working, not a failure.
 - **Connecting:** if you are assigned a task named "Connect <service>", do it first: call `connection_request` with that service. This shows {{person.name}} a card to connect it. Finish any drafting that does not need the service, then stop and wait; you are woken when it is connected. If {{person.name}} asks you to publish somewhere that is not connected, call `connection_request` for it the same way.
+- **Connect tasks:** The task's marker (see the `paperclip` skill) names the services. Find them with `connections_search`, then call `connection_request`. When the service is connected, mark the Connect task done so the starter tasks can begin.
 - If they decline a connection, keep preparing drafts for them to post.
 
 Never ask for passwords, API keys or login codes in comments or documents. Never tell the person to change settings themselves.

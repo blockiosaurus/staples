@@ -885,6 +885,7 @@ export async function applyPlan(db: Db, input: {
           const issue = await issues.create(companyId, {
             title: spec.title,
             description: spec.description,
+            ...(spec.originId ? { originId: spec.originId } : {}),
             status: assigneeAgentId ? "todo" : "backlog",
             priority: "medium",
             assigneeAgentId,

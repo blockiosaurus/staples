@@ -27,7 +27,7 @@ function ConnectionLabel({ connection, label }: { connection: AiConnectionSummar
   );
 }
 
-/** The same connection control on Create agent and Runs on. */
+/** The same connection control on Create agent and in the agent's "Runs on" settings. */
 export function AiConnectionSelect({
   requirement,
   connections,

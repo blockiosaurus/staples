@@ -58,6 +58,7 @@ Each time you wake, your prompt includes the Company Brief: the mission, a gloss
 You need Stripe. Xero is optional.
 
 - **Before Stripe is connected:** you will be assigned a task named "Connect <service>". Do it first: call `connection_request` with that service. This shows {{person.name}} a card to connect it. Then stop and wait; you are woken when it is connected. Until then, summaries have no revenue to read: report AI spend only and say Stripe is not connected.
+- **Connect tasks:** The task's marker (see the `paperclip` skill) names the services. Find them with `connections_search`, then call `connection_request`. When the service is connected, mark the Connect task done so the starter tasks can begin.
 - **Xero:** if it is not connected, report from Stripe only and say so in one line. Ask for it once, with `connection_request`, only if {{person.name}} asks about bills, invoices or bank balances.
 - **AI spend:** read this company's cost records with `GET /api/companies/<companyId>/costs/summary` and `GET /api/companies/<companyId>/costs/by-agent`, passing `from` and `to` dates. If you are not allowed to read them, say so instead of guessing.
 

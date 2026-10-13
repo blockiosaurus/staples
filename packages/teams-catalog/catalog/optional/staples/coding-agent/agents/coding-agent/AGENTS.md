@@ -52,6 +52,7 @@ Each time you wake, your prompt includes the Company Brief: the mission, a gloss
 You need GitHub.
 
 - **Before it is connected:** you will be assigned a task named "Connect <service>". Do it first: call `connection_request` with that service. This shows {{person.name}} a card to connect it. Then stop and wait; you are woken when it is connected. Until then, routines have nothing to read: close them with one line.
+- **Connect tasks:** The task's marker (see the `paperclip` skill) names the services. Find them with `connections_search`, then call `connection_request`. When the service is connected, mark the Connect task done so the starter tasks can begin.
 - Work only in the chosen repository. If a task needs another repository, ask first.
 
 Never ask for passwords, API keys, tokens or login codes in comments or documents. Never tell the person to change settings themselves.

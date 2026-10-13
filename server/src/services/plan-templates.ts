@@ -193,6 +193,11 @@ export function appDisplayName(slug: string): string {
     ?? slug;
 }
 
+/** "A, B or C". */
+function friendlyList(names: readonly string[]): string {
+  return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
+}
+
 /** "AgentMail or Gmail". */
 export function appChoiceLabel(anyOf: readonly string[]): string {
   return anyOf.map(appDisplayName).join(" or ");
@@ -643,10 +648,19 @@ export async function connectedAppSlugs(db: Db, companyId: string): Promise<Set<
   return new Set((await usableAppConnections(db, companyId)).map((connection) => connection.appSlug));
 }
 
+/** Prefix of the originId on a template-created Connect task; slugs follow, comma-separated. */
+export const APP_CONNECTION_ORIGIN_PREFIX = "app-connection:";
+
 export interface TemplateTaskSpec {
   clientKey: string;
   title: string;
   description: string;
+  /**
+   * Set on Connect tasks: the agent-visible marker `app-connection:<slug>,<slug>`
+   * (stored as the issue's originId; the origin kind stays "manual"). The agent
+   * reads the service slugs here, not from the person-facing description.
+   */
+  originId?: string;
   /** Client keys of template tasks this one waits for. */
   blockedByClientKeys: string[];
 }
@@ -664,9 +678,10 @@ export function templateTaskSpecs(agentClientKey: string, agentName: string, ren
       return {
         clientKey: `${agentClientKey}~connect-${app.capability}`,
         title: `Connect ${choice}`.slice(0, 200),
-        // Person-facing only. The agent recognises a connect task by its
-        // "Connect " title (see the paperclip skill, "Connect tasks").
-        description: `${agentName} needs ${app.anyOf.length > 1 ? `one of ${choice}` : choice}. ${app.why} It will ask you to connect ${app.anyOf.length > 1 ? "one" : "it"} here.`,
+        // Person-facing only. The agent recognises a connect task, and reads
+        // its service slugs, from `originId` (see the paperclip skill).
+        description: `${agentName} needs ${app.anyOf.length > 1 ? `one of ${friendlyList(app.anyOf.map(appDisplayName))}` : choice}. ${app.why} It will ask you to connect ${app.anyOf.length > 1 ? "one" : "it"} here.`,
+        originId: `${APP_CONNECTION_ORIGIN_PREFIX}${app.anyOf.join(",")}`,
         blockedByClientKeys: [],
       };
     });

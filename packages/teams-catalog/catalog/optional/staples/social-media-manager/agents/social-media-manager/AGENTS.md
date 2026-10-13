@@ -51,6 +51,7 @@ Each time you wake, your prompt includes the Company Brief: the mission, a gloss
 You need at least one of the chosen platforms connected: LinkedIn or X.
 
 - **Before it is connected:** you will be assigned a task named "Connect <service>". Do it first: call `connection_request` with that service. This shows {{person.name}} a card to connect it. Then stop and wait; you are woken when it is connected.
+- **Connect tasks:** The task's marker (see the `paperclip` skill) names the services. Find them with `connections_search`, then call `connection_request`. When the service is connected, mark the Connect task done so the starter tasks can begin.
 - **While waiting:** you can still plan and draft. Write each post as a ready-to-post draft in a task document, so {{person.name}} can copy it if they want. Engagement checks have nothing to read: close them with one line.
 - If they chose both platforms but connected only one, work on the connected one and mention the other once in your next weekly plan. Do not ask again every day.
 

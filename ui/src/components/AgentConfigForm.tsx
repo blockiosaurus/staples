@@ -1467,7 +1467,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       {!isCreate && (
         <div data-config-section="identity" className={cn(!cards && "border-b border-border")}>
           {cards
-            ? <h3 className="text-sm font-medium mb-3">{props.sectionTitles?.["identity"] ?? "Identity"}</h3>
+            ? <h3 className="text-sm font-medium mb-3">{props.sectionTitles?.["identity"] ?? "Name and role"}</h3>
             : <div className="px-4 py-2 text-xs font-medium text-muted-foreground">Identity</div>
           }
           <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
@@ -1518,7 +1518,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   />
                 </Field>
                 <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
-                  Prompt template is replayed every time the agent runs. Keep it compact and dynamic to avoid recurring token cost and cache churn.
+                  These instructions are sent every time the agent runs. Keep them short, because long ones use up more of your budget.
                 </div>
               </>
             )}
@@ -1594,7 +1594,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
         <div className={cn(cards ? "flex items-center justify-between mb-3" : "px-4 py-2 flex items-center justify-between gap-2")}>
           {cards
             ? <h3 className="text-sm font-medium">{props.sectionTitles?.["adapter"] ?? "Runs on"}</h3>
-            : <span className="text-xs font-medium text-muted-foreground">Adapter</span>
+            : <span className="text-xs font-medium text-muted-foreground">Runs on</span>
           }
           {showInlineAdapterTestEnvironmentButton && (
             <Button

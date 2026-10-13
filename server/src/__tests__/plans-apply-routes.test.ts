@@ -837,6 +837,8 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       expect(connectRow!.title).toBe("Connect GitHub");
       expect(connectRow!.description).toContain("It will ask you to connect");
       expect(connectRow!.description).not.toContain("connection_request");
+      expect(connectRow!.originId).toBe("app-connection:github");
+      expect(connectRow!.originKind).toBe("manual");
       const blockers = await db.select().from(issueRelations).where(eq(issueRelations.relatedIssueId, starter.id));
       expect(blockers.map((row) => row.issueId)).toEqual([connect.id]);
       const woken = wakeup.mock.calls.map((call) => ((call as unknown[])[1] as { payload: { issueId: string } }).payload.issueId);
