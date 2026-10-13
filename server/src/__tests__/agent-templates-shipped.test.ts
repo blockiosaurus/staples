@@ -7,7 +7,7 @@ import { validateCron } from "../services/cron.js";
 import { listCatalogSkillsOrEmpty } from "../services/skills-catalog.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { templateTaskSpecs, APP_CONNECTION_ORIGIN_PREFIX } from "../services/plan-templates.js";
+import { templateTaskSpecs, templatePurposeText, APP_CONNECTION_ORIGIN_PREFIX } from "../services/plan-templates.js";
 import { listCatalogTeams, readCatalogTeamFile } from "../services/teams-catalog.js";
 
 /**
@@ -333,7 +333,7 @@ describe("shipped Staples agent templates", () => {
     it("writes a person-facing description with the slugs only in the marker", () => {
       const [connect, starter] = templateTaskSpecs("ed", "Newsletter editor", rendered(["beehiiv", "resend", "klaviyo"], "Holds your subscriber list and sends each issue."), new Set());
       expect(connect!.title).toMatch(/^Connect /);
-      expect(connect!.description).toBe("Newsletter editor needs one of beehiiv, Resend or Klaviyo. Holds your subscriber list and sends each issue. It will ask you to connect one here.");
+      expect(connect!.description).toBe("Newsletter editor needs one of beehiiv, Resend or Klaviyo. It holds your subscriber list and sends each issue. It will ask you to connect one here.");
       expect(connect!.description).not.toContain("connection_request");
       expect(connect!.description).not.toContain("`");
       expect(connect!.originId).toBe(`${APP_CONNECTION_ORIGIN_PREFIX}beehiiv,resend,klaviyo`);
@@ -342,9 +342,19 @@ describe("shipped Staples agent templates", () => {
 
     it("uses single-service wording for one service", () => {
       const [connect] = templateTaskSpecs("dev", "Coder", rendered(["github"], "Reads your code."), new Set());
-      expect(connect!.description).toMatch(/^Coder needs .+\. Reads your code\. It will ask you to connect it here\.$/);
+      expect(connect!.description).toMatch(/^Coder needs .+\. It reads your code\. It will ask you to connect it here\.$/);
       expect(connect!.description).not.toContain("one of");
       expect(connect!.originId).toBe("app-connection:github");
+    });
+
+    it("turns every shipped purpose into full sentences", () => {
+      expect(templatePurposeText("Holds your subscriber list and sends each issue.")).toBe("It holds your subscriber list and sends each issue.");
+      expect(templatePurposeText("Hosts your site. Previews are shared with you first.")).toBe("It hosts your site. Previews are shared with you first.");
+      expect(templatePurposeText("Where customer messages arrive.")).toBe("That's where customer messages arrive.");
+      expect(templatePurposeText("This keeps replies short")).toBe("This keeps replies short.");
+      expect(templatePurposeText("  ")).toBe("");
+      const [connect] = templateTaskSpecs("dev", "Coder", rendered(["github"], ""), new Set());
+      expect(connect!.description).toMatch(/^Coder needs .+\. It will ask you to connect it here\.$/);
     });
 
     it("documents the marker and the narrow title fallback in the paperclip skill", () => {

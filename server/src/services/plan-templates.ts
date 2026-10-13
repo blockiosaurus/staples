@@ -665,6 +665,26 @@ export interface TemplateTaskSpec {
   blockedByClientKeys: string[];
 }
 
+/** Words ending in "s" that do not start a verb-led purpose ("This keeps…"). */
+const NOT_A_LEADING_VERB = new Set(["this", "its", "is", "was", "as", "us", "yes", "plus", "thus", "always", "sometimes", "perhaps", "unless", "across", "besides"]);
+
+/**
+ * The catalog's `why` as full sentences. Catalog purposes are verb-led
+ * fragments ("Holds your subscriber list and sends each issue."), so the
+ * first one gets a subject: "It holds your subscriber list…". "Where …"
+ * becomes "That's where …"; anything else is kept as written.
+ */
+export function templatePurposeText(why: string): string {
+  const text = why.trim().replace(/\s+/g, " ");
+  if (!text) return "";
+  const firstWord = text.split(" ", 1)[0]!.replace(/[^A-Za-z']/g, "");
+  const lower = firstWord.toLowerCase();
+  let sentence = text;
+  if (lower === "where") sentence = `That's ${text.charAt(0).toLowerCase()}${text.slice(1)}`;
+  else if (/^[A-Z][a-z]+s$/.test(firstWord) && !NOT_A_LEADING_VERB.has(lower)) sentence = `It ${text.charAt(0).toLowerCase()}${text.slice(1)}`;
+  return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+}
+
 /**
  * A templated agent's tasks: one "Connect <service>" task per required
  * service the company has not connected, then the template's starter tasks,
@@ -680,7 +700,11 @@ export function templateTaskSpecs(agentClientKey: string, agentName: string, ren
         title: `Connect ${choice}`.slice(0, 200),
         // Person-facing only. The agent recognises a connect task, and reads
         // its service slugs, from `originId` (see the paperclip skill).
-        description: `${agentName} needs ${app.anyOf.length > 1 ? `one of ${friendlyList(app.anyOf.map(appDisplayName))}` : choice}. ${app.why} It will ask you to connect ${app.anyOf.length > 1 ? "one" : "it"} here.`,
+        description: [
+          `${agentName} needs ${app.anyOf.length > 1 ? `one of ${friendlyList(app.anyOf.map(appDisplayName))}` : choice}.`,
+          templatePurposeText(app.why),
+          `It will ask you to connect ${app.anyOf.length > 1 ? "one" : "it"} here.`,
+        ].filter(Boolean).join(" "),
         originId: `${APP_CONNECTION_ORIGIN_PREFIX}${app.anyOf.join(",")}`,
         blockedByClientKeys: [],
       };
