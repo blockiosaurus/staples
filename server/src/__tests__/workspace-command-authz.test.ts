@@ -4,6 +4,7 @@ import {
   collectIssueWorkspaceCommandPaths,
   collectProjectExecutionWorkspaceCommandPaths,
   collectProjectWorkspaceCommandPaths,
+  collectWorkspaceHostPathKeys,
 } from "../routes/workspace-command-authz.js";
 
 describe("workspace host-command mutation detection", () => {
@@ -66,5 +67,25 @@ describe("workspace host-command mutation detection", () => {
         jobs: [null, "build"],
       },
     })).toEqual([]);
+  });
+});
+
+describe("workspace host-path key detection", () => {
+  it("finds worktreeParentDir at any depth and ignores cleared values", () => {
+    expect(collectWorkspaceHostPathKeys({
+      executionWorkspacePolicy: { workspaceStrategy: { type: "git_worktree", worktreeParentDir: "/srv/other" } },
+    })).toEqual(["executionWorkspacePolicy.workspaceStrategy.worktreeParentDir"]);
+    expect(collectWorkspaceHostPathKeys({
+      executionWorkspaceSettings: { workspaceStrategy: { worktreeParentDir: "/" } },
+      assigneeAdapterOverrides: { adapterConfig: { workspaceStrategy: { worktreeParentDir: "/tmp/x" } } },
+    })).toEqual([
+      "executionWorkspaceSettings.workspaceStrategy.worktreeParentDir",
+      "assigneeAdapterOverrides.adapterConfig.workspaceStrategy.worktreeParentDir",
+    ]);
+    expect(collectWorkspaceHostPathKeys({
+      executionWorkspacePolicy: { workspaceStrategy: { worktreeParentDir: null } },
+      workspace: { worktreeParentDir: "  " },
+    })).toEqual([]);
+    expect(collectWorkspaceHostPathKeys(undefined)).toEqual([]);
   });
 });

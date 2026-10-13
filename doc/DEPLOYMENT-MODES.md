@@ -294,6 +294,21 @@ Independently of the flag, the `claude_managed` adapter only reads
 path is ignored with a warning, so the system prompt can never be a server file
 such as `/proc/self/environ`. This applies to every company.
 
+**Workspace folders and the file browser.** In a self-serve company nobody
+chooses a server folder: a project workspace `cwd`, an execution workspace
+`cwd` / `providerRef` change, and `worktreeParentDir` in a project, issue or
+execution workspace policy are refused with
+`403 self_serve_host_execution_forbidden`. The issue file browser
+(`/issues/:id/file-resources/*`) only serves a self-serve company's local
+workspace when its root resolves, symlinks included, inside that company's
+server-managed folders: `<instance>/projects/<companyId>/`,
+`<instance>/isolated-workspaces/<companyId>/` and `<instance>/workspaces/<agentId>/`
+for its agents. Any other root is reported as unavailable
+(`workspace_root_not_allowed`). For every company, the file browser never
+serves anything under `/proc`, `/sys`, `/dev`, `/etc`, `/run/secrets`,
+`/var/run/secrets`, or the instance's `db`, `secrets`, `data` and `logs`
+folders, `config.json` or `.env` (`denied_host_path`).
+
 **Built-in agents in a self-serve company run on Claude (hosted).** A built-in
 that can't run hosted is skipped, never provisioned on a local CLI. The
 onboarding seed's first agent is `claude_managed`.

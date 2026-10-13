@@ -46,6 +46,8 @@ import {
   assertNoHostWorkspaceCommandMutation,
   collectProjectExecutionWorkspaceCommandPaths,
   collectProjectWorkspaceCommandPaths,
+  collectWorkspaceHostPathKeys,
+  assertNoSelfServeHostPathMutation,
 } from "./workspace-command-authz.js";
 import { assertCanManageProjectWorkspaceRuntimeServices } from "./workspace-runtime-service-authz.js";
 import { getTelemetryClient } from "../telemetry.js";
@@ -372,6 +374,10 @@ export function projectRoutes(db: Db) {
         ...collectProjectWorkspaceCommandPaths(workspace, "workspace"),
       ],
     );
+    await assertNoSelfServeHostPathMutation(db, companyId, collectWorkspaceHostPathKeys({
+      executionWorkspacePolicy: projectData.executionWorkspacePolicy,
+      workspace,
+    }));
     await assertNoManagedSandboxWorkspacePath(workspace, companyId);
     if (projectData.env !== undefined) {
       projectData.env = await secretsSvc.normalizeEnvBindingsForPersistence(
@@ -458,6 +464,9 @@ export function projectRoutes(db: Db) {
       req,
       collectProjectExecutionWorkspaceCommandPaths(body.executionWorkspacePolicy),
     );
+    await assertNoSelfServeHostPathMutation(db, existing.companyId, collectWorkspaceHostPathKeys({
+      executionWorkspacePolicy: body.executionWorkspacePolicy,
+    }));
     await assertProjectEnvironmentSelection(
       existing.companyId,
       readProjectPolicyEnvironmentId(body.executionWorkspacePolicy),

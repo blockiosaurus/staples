@@ -133,8 +133,19 @@ self-serve are held to a host-execution floor. Their agents use remote
 adapters only, with an allowlist of config keys: no endpoint overrides, no
 server file paths, no workspace commands. A runtime backstop catches anything
 missed (see "Host-execution floor" in
-[DEPLOYMENT-MODES.md](DEPLOYMENT-MODES.md)). Keep
-`PAPERCLIP_SELF_SERVE_COMPANIES=true` for as long as any self-serve company
+[DEPLOYMENT-MODES.md](DEPLOYMENT-MODES.md)). Their workspace folders stay
+the ones the server creates, and the file browser only reads inside those
+folders. Three effects reach further:
+
+- While self-serve is on, MCP URLs on private or internal addresses
+  (`*.railway.internal`, `10.x`, `127.0.0.1` and so on) are refused for every
+  company, including yours.
+- Pasting an `ANTHROPIC_API_KEY` as plain text in a self-serve agent's form
+  returns 403. Store the key as a secret and bind that instead.
+- `claude_managed` agents, in any company, ignore an instructions file outside
+  the server's managed instructions folder.
+
+Keep `PAPERCLIP_SELF_SERVE_COMPANIES=true` for as long as any self-serve company
 exists, because turning it off lifts the floor for them. Your own
 admin-created company is not restricted, so be careful whom you invite into it.
 Even so, treat trial users as trusted colleagues, not hostile tenants.

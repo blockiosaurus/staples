@@ -252,6 +252,8 @@ import {
 import {
   assertNoHostWorkspaceCommandMutation,
   collectIssueWorkspaceCommandPaths,
+  collectWorkspaceHostPathKeys,
+  assertNoSelfServeHostPathMutation,
 } from "./workspace-command-authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import {
@@ -12192,6 +12194,10 @@ export function issueRoutes(
         req,
         collectIssueWorkspaceCommandPaths(req.body),
       );
+      await assertNoSelfServeHostPathMutation(db, companyId, collectWorkspaceHostPathKeys({
+        executionWorkspaceSettings: req.body.executionWorkspaceSettings,
+        assigneeAdapterOverrides: req.body.assigneeAdapterOverrides,
+      }));
       const sanitizedBody = await sanitizeIssueCreateAttribution(
         db,
         req,
@@ -12716,6 +12722,10 @@ export function issueRoutes(
         req,
         collectIssueWorkspaceCommandPaths(req.body),
       );
+      await assertNoSelfServeHostPathMutation(db, parent.companyId, collectWorkspaceHostPathKeys({
+        executionWorkspaceSettings: req.body.executionWorkspaceSettings,
+        assigneeAdapterOverrides: req.body.assigneeAdapterOverrides,
+      }));
       const sanitizedBody = await sanitizeIssueCreateAttribution(
         db,
         req,
@@ -12992,6 +13002,10 @@ export function issueRoutes(
           req,
           collectIssueWorkspaceCommandPaths(childBody),
         );
+        await assertNoSelfServeHostPathMutation(db, sourceIssue.companyId, collectWorkspaceHostPathKeys({
+          executionWorkspaceSettings: childBody.executionWorkspaceSettings,
+          assigneeAdapterOverrides: childBody.assigneeAdapterOverrides,
+        }));
         if (childBody.assigneeAgentId || childBody.assigneeUserId) {
           await assertCanAssignTasks(req, sourceIssue.companyId, {
             projectId: childBody.projectId ?? sourceIssue.projectId ?? null,
@@ -13610,6 +13624,10 @@ export function issueRoutes(
         req,
         collectIssueWorkspaceCommandPaths(req.body),
       );
+      await assertNoSelfServeHostPathMutation(db, existing.companyId, collectWorkspaceHostPathKeys({
+        executionWorkspaceSettings: req.body.executionWorkspaceSettings,
+        assigneeAdapterOverrides: req.body.assigneeAdapterOverrides,
+      }));
 
       if (req.actor.type === "agent" && req.body.onBehalfOfUserId != null) {
         await auditAgentIssueCommentAttributionSpoof({

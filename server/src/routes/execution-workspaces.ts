@@ -51,6 +51,8 @@ import { logger } from "../middleware/logger.js";
 import {
   assertNoHostWorkspaceCommandMutation,
   collectExecutionWorkspaceCommandPaths,
+  collectWorkspaceHostPathKeys,
+  assertNoSelfServeHostPathMutation,
 } from "./workspace-command-authz.js";
 import { assertCanManageExecutionWorkspaceRuntimeServices } from "./workspace-runtime-service-authz.js";
 import { appendWithCap } from "../adapters/utils.js";
@@ -1172,6 +1174,13 @@ export function executionWorkspaceRoutes(db: Db, opts: { pluginWorkerManager?: P
         metadata: req.body.metadata,
       }),
     );
+    // Self-serve: the workspace root is where the file browser reads and where
+    // git and cleanup run, so it stays the folder the server provisioned.
+    await assertNoSelfServeHostPathMutation(db, existing.companyId, [
+      ...(req.body.cwd !== undefined && req.body.cwd !== existing.cwd ? ["cwd"] : []),
+      ...(req.body.providerRef !== undefined && req.body.providerRef !== existing.providerRef ? ["providerRef"] : []),
+      ...collectWorkspaceHostPathKeys({ config: req.body.config, metadata: req.body.metadata }),
+    ]);
     const patch: Record<string, unknown> = {
       ...(req.body.name === undefined ? {} : { name: req.body.name }),
       ...(req.body.cwd === undefined ? {} : { cwd: req.body.cwd }),

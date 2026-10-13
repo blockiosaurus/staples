@@ -181,3 +181,44 @@ export function collectExecutionWorkspaceCommandPaths(input: {
   }
   return paths;
 }
+
+const HOST_PATH_KEYS = new Set(["worktreeParentDir"]);
+
+/**
+ * Paths of keys anywhere in a workspace payload that name a folder on the
+ * server host (today `worktreeParentDir`, where git worktrees are created).
+ * Only a non-empty value counts; clearing one is always allowed.
+ */
+export function collectWorkspaceHostPathKeys(raw: unknown, prefix = "", depth = 0): string[] {
+  if (depth > 8) return [];
+  if (Array.isArray(raw)) {
+    return raw.flatMap((entry, index) => collectWorkspaceHostPathKeys(entry, `${prefix}[${index}]`, depth + 1));
+  }
+  if (!isRecord(raw)) return [];
+  const paths: string[] = [];
+  for (const [key, value] of Object.entries(raw)) {
+    const keyPath = prefixPath(prefix, key);
+    if (HOST_PATH_KEYS.has(key)) {
+      if (typeof value === "string" ? value.trim().length > 0 : value !== null && value !== undefined) {
+        paths.push(keyPath);
+      }
+      continue;
+    }
+    paths.push(...collectWorkspaceHostPathKeys(value, keyPath, depth + 1));
+  }
+  return paths;
+}
+
+/**
+ * In a self-serve company (PAPERCLIP_SELF_SERVE_COMPANIES) nobody chooses a
+ * server folder for a workspace: workspace roots stay in the server-managed
+ * folders the heartbeat creates.
+ */
+export async function assertNoSelfServeHostPathMutation(
+  db: Pick<Db, "select">,
+  companyId: string,
+  paths: string[],
+) {
+  if (paths.length === 0) return;
+  await assertSelfServeCompanyHostAccess(db, companyId, `Choosing a server folder (${paths.join(", ")})`);
+}

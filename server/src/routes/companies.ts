@@ -67,6 +67,8 @@ import {
   companyService,
   feedbackService,
   logActivity,
+  publishActivity,
+  type ActivityPublication,
   workTimelineService,
 } from "../services/index.js";
 import { isCloudManagedInstance } from "../services/cloud-instance.js";
@@ -1279,6 +1281,9 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
       }
       const limit = options?.selfServeCompanyLimit ?? DEFAULT_SELF_SERVE_COMPANY_LIMIT;
       const userId = req.actor.userId!;
+      // The activity row commits with the company; its live event is
+      // published only after that commit, so no one hears of a rolled-back create.
+      const createdPublications: ActivityPublication[] = [];
       // The row, owner membership and grants are written on the lock's own
       // transaction, so a concurrent create by this user counts this one.
       const record = await access.withSelfServeCompanyLock(userId, async (tx, countCreated) => {
@@ -1308,9 +1313,10 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
           entityType: "company",
           entityId: row.id,
           details: { name: row.name, selfServe: true },
-        });
+        }, createdPublications);
         return row;
       });
+      for (const publication of createdPublications) publishActivity(publication);
       // Built-in provisioning (the Assistant, on Claude (hosted)) runs after
       // commit, outside the lock.
       company = await svc.completeCreate(record.id);

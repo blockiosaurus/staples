@@ -144,8 +144,51 @@ export function isPrivateOrReservedIp(address: string): boolean {
   const mappedIpv4Hex = parseMappedIpv4Hex(lower);
   if (mappedIpv4Hex) return isPrivateOrReservedIpv4(mappedIpv4Hex);
   if (isIP(address) === 4) return isPrivateOrReservedIpv4(address);
-  if (isIP(address) === 6) return isPrivateOrReservedIpv6(lower);
+  if (isIP(address) === 6) {
+    const embeddedIpv4 = embeddedIpv4FromIpv6(lower);
+    if (embeddedIpv4) return isPrivateOrReservedIpv4(embeddedIpv4);
+    return isPrivateOrReservedIpv6(lower);
+  }
   return true;
+}
+
+/** The eight 16-bit groups of an IPv6 address (dotted IPv4 tail allowed), or null. */
+function expandIpv6(address: string): number[] | null {
+  let text = address.split("%")[0]!;
+  const dotted = text.match(/^(.*:)(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (dotted) {
+    const octets = parseIpv4Address(dotted[2]!);
+    if (!octets) return null;
+    text = `${dotted[1]}${((octets[0] << 8) | octets[1]).toString(16)}:${((octets[2] << 8) | octets[3]).toString(16)}`;
+  }
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const parse = (part: string) => (part === "" ? [] : part.split(":"));
+  const head = parse(halves[0]!);
+  const tail = halves.length === 2 ? parse(halves[1]!) : [];
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 1 ? missing !== 0 : missing < 1) return null;
+  const groups = [...head, ...Array<string>(halves.length === 2 ? missing : 0).fill("0"), ...tail];
+  const values = groups.map((group) => (/^[0-9a-f]{1,4}$/.test(group) ? Number.parseInt(group, 16) : NaN));
+  return values.some((value) => Number.isNaN(value)) ? null : values;
+}
+
+/**
+ * The IPv4 address embedded in an IPv4-compatible (`::a.b.c.d`), IPv4-mapped
+ * (`::ffff:a.b.c.d`) or IPv4-translated (`::ffff:0:a.b.c.d`) IPv6 address, so
+ * it is classified like the IPv4 address it reaches. `::` and `::1` are left
+ * to the IPv6 rules.
+ */
+function embeddedIpv4FromIpv6(address: string): string | null {
+  const groups = expandIpv6(address);
+  if (!groups) return null;
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = groups as [number, number, number, number, number, number, number, number];
+  if (g0 !== 0 || g1 !== 0 || g2 !== 0 || g3 !== 0) return null;
+  const compatible = g4 === 0 && g5 === 0 && (g6 !== 0 || g7 > 1);
+  const mapped = g4 === 0 && g5 === 0xffff;
+  const translated = g4 === 0xffff && g5 === 0;
+  if (!compatible && !mapped && !translated) return null;
+  return `${g6 >> 8}.${g6 & 0xff}.${g7 >> 8}.${g7 & 0xff}`;
 }
 
 /** Link-local egress is denied in every deployment mode. */
@@ -155,7 +198,10 @@ export function isAlwaysDeniedLinkLocalIp(address: string): boolean {
     const octets = parseIpv4Address(normalized);
     return octets !== null && octets[0] === 169 && octets[1] === 254;
   }
-  return isIP(normalized) === 6 && /^fe[89ab]/.test(normalized);
+  if (isIP(normalized) !== 6) return false;
+  const embeddedIpv4 = embeddedIpv4FromIpv6(normalized);
+  if (embeddedIpv4) return isAlwaysDeniedLinkLocalIp(embeddedIpv4);
+  return /^fe[89ab]/.test(normalized);
 }
 
 function isPrivateOrReservedIpv4(address: string): boolean {

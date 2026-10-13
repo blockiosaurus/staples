@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { Request } from "express";
 import { eq } from "drizzle-orm";
-import { companies, type Db } from "@paperclipai/db";
+import { agents, companies, type Db } from "@paperclipai/db";
 import type { DeploymentMode } from "@paperclipai/shared";
 import { DEFAULT_SELF_SERVE_ADAPTER_TYPES } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
@@ -209,6 +209,57 @@ export async function pathResolvesInside(root: string, candidate: string): Promi
     realPathAllowingMissing(lexical),
   ]);
   return isWithin(realRoot, realCandidate);
+}
+
+/**
+ * Server-managed folders a self-serve company's workspaces may live in, under
+ * the instance root: its managed project checkouts (`projects/<companyId>`),
+ * its isolated task folders (`isolated-workspaces/<companyId>`) and the home
+ * folder of each of its agents (`workspaces/<agentId>`).
+ */
+export async function selfServeManagedWorkspaceRoots(
+  db: Pick<Db, "select">,
+  companyId: string,
+): Promise<string[]> {
+  const instanceRoot = resolvePaperclipInstanceRoot();
+  const agentRows = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(eq(agents.companyId, companyId));
+  return [
+    path.resolve(instanceRoot, "projects", companyId),
+    path.resolve(instanceRoot, "isolated-workspaces", companyId),
+    ...agentRows.map((row) => path.resolve(instanceRoot, "workspaces", row.id)),
+  ];
+}
+
+/** True when `root` resolves, symlinks included, inside one of the company's managed workspace folders. */
+export async function isSelfServeManagedWorkspaceRoot(
+  db: Pick<Db, "select">,
+  companyId: string,
+  root: string | null | undefined,
+): Promise<boolean> {
+  if (typeof root !== "string" || !path.isAbsolute(root)) return false;
+  for (const managedRoot of await selfServeManagedWorkspaceRoots(db, companyId)) {
+    if (await pathResolvesInside(managedRoot, root)) return true;
+  }
+  return false;
+}
+
+/**
+ * Service-level floor for stored workspace roots: in a self-serve company a
+ * project or execution workspace folder may only be one of the company's
+ * server-managed folders. Clearing the folder (null) is always allowed.
+ */
+export async function assertSelfServeWorkspaceRoot(
+  db: Pick<Db, "select">,
+  companyId: string,
+  root: string | null | undefined,
+) {
+  if (root === null || root === undefined || root === "") return;
+  if (!(await isSelfServeCompany(db, companyId))) return;
+  if (await isSelfServeManagedWorkspaceRoot(db, companyId, root)) return;
+  refuse("Choosing a folder on the server can't be used in this company on this instance.");
 }
 
 export function isSelfServeAdapterAllowed(adapterType: string | null | undefined) {

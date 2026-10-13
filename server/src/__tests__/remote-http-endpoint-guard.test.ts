@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { assertPublicRemoteHttpEndpoint } from "../services/remote-http-endpoint-guard.js";
+import {
+  assertPublicRemoteHttpEndpoint,
+  isAlwaysDeniedLinkLocalIp,
+  isPrivateOrReservedIp,
+} from "../services/remote-http-endpoint-guard.js";
 import { readRemoteConnectionFailure } from "../services/remote-connection-failure.js";
 
 function guardError(message: string, code: string) {
@@ -94,5 +98,58 @@ describe("remote HTTP endpoint guard", () => {
       {},
       guardError,
     )).rejects.toMatchObject({ code: "remote_http_private_endpoint" });
+  });
+});
+
+describe("IPv4-embedded IPv6 classification", () => {
+  it.each([
+    "::7f00:1",
+    "::127.0.0.1",
+    "::a00:1",
+    "::10.0.0.1",
+    "::c0a8:101",
+    "::ffff:0:7f00:1",
+    "::ffff:0:127.0.0.1",
+    "::ffff:0:a00:1",
+    "0:0:0:0:0:ffff:0:a00:1",
+    "0:0:0:0:0:0:7f00:1",
+    "::ffff:7f00:1",
+    "::ffff:127.0.0.1",
+  ])("classifies %s by its embedded private IPv4 address", (address) => {
+    expect(isPrivateOrReservedIp(address)).toBe(true);
+  });
+
+  it.each(["::808:808", "::8.8.8.8", "::ffff:0:808:808", "::ffff:0:8.8.8.8"])(
+    "classifies %s by its embedded public IPv4 address",
+    (address) => {
+      expect(isPrivateOrReservedIp(address)).toBe(false);
+    },
+  );
+
+  it.each(["::a9fe:a9fe", "::169.254.169.254", "::ffff:0:a9fe:a9fe", "::ffff:169.254.169.254"])(
+    "always denies the link-local metadata address embedded in %s",
+    (address) => {
+      expect(isAlwaysDeniedLinkLocalIp(address)).toBe(true);
+    },
+  );
+
+  it("keeps :: and ::1 and native IPv6 rules", () => {
+    expect(isPrivateOrReservedIp("::")).toBe(true);
+    expect(isPrivateOrReservedIp("::1")).toBe(true);
+    expect(isPrivateOrReservedIp("fd00::1")).toBe(true);
+    expect(isPrivateOrReservedIp("2606:4700:4700::1111")).toBe(false);
+    expect(isAlwaysDeniedLinkLocalIp("::1")).toBe(false);
+    expect(isAlwaysDeniedLinkLocalIp("2606:4700:4700::1111")).toBe(false);
+  });
+
+  it("refuses an IPv4-compatible loopback URL literal", async () => {
+    const failure = await assertPublicRemoteHttpEndpoint(new URL("http://[::7f00:1]/mcp"), {
+      lookup: async () => [],
+    }, guardError).catch((error) => error);
+    expect(failure).toMatchObject({ code: "remote_http_private_endpoint" });
+    const translated = await assertPublicRemoteHttpEndpoint(new URL("http://[::ffff:0:a00:1]/mcp"), {
+      lookup: async () => [],
+    }, guardError).catch((error) => error);
+    expect(translated).toMatchObject({ code: "remote_http_private_endpoint" });
   });
 });

@@ -35,6 +35,7 @@ import { listCurrentRuntimeServicesForProjectWorkspaces } from "./workspace-runt
 import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-policy.js";
 import { mergeProjectWorkspaceRuntimeConfig, readProjectWorkspaceRuntimeConfig } from "./project-workspace-runtime-config.js";
 import { resolveManagedProjectWorkspaceDir } from "../home-paths.js";
+import { assertSelfServeWorkspaceRoot } from "./self-serve-policy.js";
 import { recordProjectLifecycleEvent, recordResourceCreationEvent } from "./resource-lifecycle-events.js";
 
 type ProjectRow = typeof projects.$inferSelect;
@@ -1098,6 +1099,7 @@ export function projectService(db: Db, options: { captureWorkspaceUpdates?: bool
       if (!project) return null;
 
       const cwd = normalizeWorkspaceCwd(data.cwd);
+      await assertSelfServeWorkspaceRoot(db, project.companyId, cwd);
       const repoUrl = readNonEmptyString(data.repoUrl);
       const sourceType = readNonEmptyString(data.sourceType) ?? (repoUrl ? "git_repo" : cwd ? "local_path" : "remote_managed");
       const remoteWorkspaceRef = readNonEmptyString(data.remoteWorkspaceRef);
@@ -1193,6 +1195,9 @@ export function projectService(db: Db, options: { captureWorkspaceUpdates?: bool
         data.cwd !== undefined
           ? normalizeWorkspaceCwd(data.cwd)
           : normalizeWorkspaceCwd(existing.cwd);
+      if (data.cwd !== undefined && nextCwd !== normalizeWorkspaceCwd(existing.cwd)) {
+        await assertSelfServeWorkspaceRoot(db, existing.companyId, nextCwd);
+      }
       const nextRepoUrl =
         data.repoUrl !== undefined
           ? readNonEmptyString(data.repoUrl)

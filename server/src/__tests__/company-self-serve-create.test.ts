@@ -28,6 +28,7 @@ const mockBudgetService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
+const mockPublishActivity = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
@@ -38,6 +39,7 @@ vi.mock("../services/index.js", () => ({
   companyService: () => mockCompanyService,
   feedbackService: () => ({}),
   logActivity: mockLogActivity,
+  publishActivity: mockPublishActivity,
   workTimelineService: () => ({}),
 }));
 
@@ -181,7 +183,7 @@ describe("POST /api/companies self-serve creation", () => {
       actorId: "user-member",
       action: "company.created",
       details: { name: "Trial Co", selfServe: true },
-    }));
+    }), expect.any(Array));
   });
 
   it("does not apply in local_trusted mode", async () => {
@@ -249,6 +251,51 @@ describe("POST /api/companies self-serve creation", () => {
 
     expect(res.status).toBe(201);
     expect(order).toEqual(["lock", "insert-on-tx", "membership", "unlock", "provision"]);
+  });
+
+  it("publishes the company.created live event only after the creation commits", async () => {
+    const order: string[] = [];
+    const publication = { companyId: createdCompany.id, payload: { action: "company.created" } };
+    mockLogActivity.mockImplementation(async (executor: unknown, input: { action: string }, publications?: unknown[]) => {
+      order.push(executor === lockTx ? `log-on-tx:${input.action}` : `log-elsewhere:${input.action}`);
+      if (publications) publications.push(publication);
+      else order.push("published-before-commit");
+    });
+    mockPublishActivity.mockImplementation(() => order.push("publish"));
+    mockAccessService.withSelfServeCompanyLock.mockImplementationOnce(
+      async (_userId: string, fn: (tx: unknown, count: () => Promise<number>) => Promise<unknown>) => {
+        const result = await fn(lockTx, async () => 0);
+        order.push("commit");
+        return result;
+      },
+    );
+    const app = await createApp(memberSession, selfServeOn);
+
+    const res = await request(app).post("/api/companies").send({ name: "Trial Co" });
+
+    expect(res.status).toBe(201);
+    expect(order).toEqual(["log-on-tx:company.created", "commit", "publish"]);
+    expect(mockPublishActivity).toHaveBeenCalledWith(publication);
+    mockLogActivity.mockReset();
+  });
+
+  it("publishes nothing when the creation transaction rolls back", async () => {
+    mockLogActivity.mockImplementation(async (_executor: unknown, _input: unknown, publications?: unknown[]) => {
+      publications?.push({ companyId: createdCompany.id, payload: {} });
+    });
+    mockAccessService.withSelfServeCompanyLock.mockImplementationOnce(
+      async (_userId: string, fn: (tx: unknown, count: () => Promise<number>) => Promise<unknown>) => {
+        await fn(lockTx, async () => 0);
+        throw new Error("commit failed");
+      },
+    );
+    const app = await createApp(memberSession, selfServeOn);
+
+    const res = await request(app).post("/api/companies").send({ name: "Trial Co" });
+
+    expect(res.status).toBe(500);
+    expect(mockPublishActivity).not.toHaveBeenCalled();
+    mockLogActivity.mockReset();
   });
 
   it("returns 409 when another create by the same user holds the lock", async () => {

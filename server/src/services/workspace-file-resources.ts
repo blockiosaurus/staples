@@ -19,6 +19,8 @@ import type {
   WorkspaceFileWorkspaceKind,
 } from "@paperclipai/shared";
 import { HttpError, notFound, unprocessable } from "../errors.js";
+import { resolvePaperclipInstanceRoot } from "../home-paths.js";
+import { isSelfServeCompany, isSelfServeManagedWorkspaceRoot } from "./self-serve-policy.js";
 import {
   isWorkspaceGitScanError,
   WORKSPACE_GIT_SCAN_ERROR_CODES,
@@ -115,12 +117,15 @@ type ProjectWorkspaceRow = typeof projectWorkspaces.$inferSelect;
 type WorkspaceCandidate = {
   workspaceKind: WorkspaceFileWorkspaceKind;
   workspaceId: string;
+  companyId: string;
   projectId?: string | null;
   projectName?: string | null;
   provider: string;
   label: string;
   rootPath: string | null;
   remote: boolean;
+  /** Set when a local root was refused by the host-path or self-serve root policy. */
+  deniedReason?: string;
 };
 
 type NormalizedPath = {
@@ -343,6 +348,60 @@ function shouldPruneSegments(segments: string[]) {
   return denyReasonForPathSegments(segments) != null;
 }
 
+/**
+ * Host locations no workspace file surface ever serves, whatever the
+ * workspace root: kernel and device filesystems, system configuration,
+ * mounted container secrets, and the instance's own database, secrets,
+ * config, data (storage, backups, run logs) and logs.
+ */
+const DENIED_HOST_ROOTS = [
+  "/proc",
+  "/sys",
+  "/dev",
+  "/etc",
+  "/run/secrets",
+  "/var/run/secrets",
+];
+const DENIED_INSTANCE_ENTRIES = ["db", "secrets", "config.json", ".env", "data", "logs"];
+const deniedHostPrefixCache = new Map<string, Promise<string[]>>();
+
+async function realPathOrSelf(target: string) {
+  try {
+    return await fs.realpath(target);
+  } catch {
+    return target;
+  }
+}
+
+/** Lexical and real forms of every denied host location (cached per instance root). */
+function deniedHostPrefixes(): Promise<string[]> {
+  const instanceRoot = path.resolve(resolvePaperclipInstanceRoot());
+  let cached = deniedHostPrefixCache.get(instanceRoot);
+  if (!cached) {
+    cached = (async () => {
+      const lexical = [
+        ...DENIED_HOST_ROOTS,
+        ...DENIED_INSTANCE_ENTRIES.map((entry) => path.join(instanceRoot, entry)),
+      ];
+      const real = await Promise.all(lexical.map(realPathOrSelf));
+      return [...new Set([...lexical, ...real])];
+    })();
+    deniedHostPrefixCache.set(instanceRoot, cached);
+  }
+  return cached;
+}
+
+async function isDeniedHostPath(realPath: string): Promise<boolean> {
+  const prefixes = await deniedHostPrefixes();
+  return prefixes.some((prefix) => isInsideRoot(prefix, realPath));
+}
+
+async function throwIfDeniedHostPath(realPath: string) {
+  if (await isDeniedHostPath(realPath)) {
+    throw new HttpError(403, "Workspace file path is denied by policy", { code: "denied_host_path" });
+  }
+}
+
 function contentTypeForPath(filePath: string): string | null {
   const ext = path.extname(filePath).toLowerCase();
   if (IMAGE_CONTENT_TYPES.has(ext)) return IMAGE_CONTENT_TYPES.get(ext) ?? null;
@@ -460,7 +519,7 @@ function remoteResource(candidate: WorkspaceCandidate, relativePath: string): Re
     contentType: null,
     byteSize: null,
     previewKind: "unsupported",
-    denialReason: "remote_workspace",
+    denialReason: candidate.deniedReason ?? "remote_workspace",
     capabilities: {
       preview: false,
       download: false,
@@ -476,6 +535,7 @@ function candidateFromExecutionWorkspace(row: ExecutionWorkspaceRow): WorkspaceC
   return {
     workspaceKind: "execution_workspace",
     workspaceId: row.id,
+    companyId: row.companyId,
     provider,
     label: row.name,
     rootPath,
@@ -493,6 +553,7 @@ function candidateFromProjectWorkspace(
   return {
     workspaceKind: "project_workspace",
     workspaceId: row.id,
+    companyId: row.companyId,
     projectId: project?.id ?? row.projectId,
     projectName: project?.name ?? null,
     provider,
@@ -564,6 +625,7 @@ async function statLocalCandidate(candidate: WorkspaceCandidate, normalized: Nor
     throw new HttpError(403, "Workspace file path is outside the workspace", { code: "outside_workspace" });
   }
   throwIfDenied(relativePathFromReal(rootReal, targetReal).split("/").filter(Boolean));
+  await throwIfDeniedHostPath(targetReal);
 
   const stat = await fs.stat(targetReal);
   if (!stat.isFile()) {
@@ -631,6 +693,7 @@ async function statLocalDirectory(candidate: WorkspaceCandidate, normalized: Nor
     throw new HttpError(403, "Workspace folder path is outside the workspace", { code: "outside_workspace" });
   }
   throwIfDenied(relativePathFromReal(rootReal, targetReal).split("/").filter(Boolean));
+  await throwIfDeniedHostPath(targetReal);
 
   const stat = await fs.stat(targetReal);
   if (!stat.isDirectory()) {
@@ -765,6 +828,7 @@ async function listLocalFileCandidate(input: {
     if (!isInsideRoot(input.rootReal, targetReal)) return null;
     const realRelative = relativePathFromReal(input.rootReal, targetReal);
     if (shouldPruneSegments(realRelative.split("/").filter(Boolean))) return null;
+    if (await isDeniedHostPath(targetReal)) return null;
   } catch {
     return null;
   }
@@ -797,6 +861,7 @@ async function listLocalDirectoryChildCandidate(input: {
       if (!isInsideRoot(input.rootReal, targetReal)) return null;
       const realRelative = relativePathFromReal(input.rootReal, targetReal);
       if (shouldPruneSegments(realRelative.split("/").filter(Boolean))) return null;
+      if (await isDeniedHostPath(targetReal)) return null;
       return listItemFromDirectory({ candidate: input.candidate, relativePath: normalized.relativePath, stat });
     } catch {
       return null;
@@ -919,6 +984,7 @@ async function enumerateWorkspaceFiles(input: {
           truncated = true;
           continue;
         }
+        if (await isDeniedHostPath(path.join(dir.realPath, entry.name))) continue;
         dirs.push({
           realPath: path.join(dir.realPath, entry.name),
           relativePath,
@@ -1039,8 +1105,41 @@ async function listChangedWorkspaceFiles(input: {
 }
 
 export function workspaceFileResourceService(db: Db, actor?: AuthorizationActor) {
+  /**
+   * Root policy for local workspaces. A root inside a denied host location is
+   * never served. In a self-serve company (PAPERCLIP_SELF_SERVE_COMPANIES) a
+   * local root must also resolve inside the company's server-managed workspace
+   * folders, so a stored `cwd`/`providerRef` can't point the file browser at
+   * the rest of the server.
+   */
+  async function applyRootPolicy(candidates: WorkspaceCandidate[]) {
+    const selfServeByCompany = new Map<string, boolean>();
+    const result: WorkspaceCandidate[] = [];
+    for (const candidate of candidates) {
+      if (candidate.remote || !candidate.rootPath) {
+        result.push(candidate);
+        continue;
+      }
+      let deniedReason: string | null = null;
+      if (await isDeniedHostPath(await realPathOrSelf(path.resolve(candidate.rootPath)))) {
+        deniedReason = "denied_host_path";
+      } else {
+        let selfServe = selfServeByCompany.get(candidate.companyId);
+        if (selfServe === undefined) {
+          selfServe = await isSelfServeCompany(db, candidate.companyId);
+          selfServeByCompany.set(candidate.companyId, selfServe);
+        }
+        if (selfServe && !(await isSelfServeManagedWorkspaceRoot(db, candidate.companyId, candidate.rootPath))) {
+          deniedReason = "workspace_root_not_allowed";
+        }
+      }
+      result.push(deniedReason ? { ...candidate, rootPath: null, remote: true, deniedReason } : candidate);
+    }
+    return result;
+  }
+
   async function visibleCandidates(candidates: WorkspaceCandidate[]) {
-    if (!actor) return candidates;
+    if (!actor) return applyRootPolicy(candidates);
     const visible: WorkspaceCandidate[] = [];
     for (const candidate of candidates) {
       const rows = candidate.workspaceKind === "execution_workspace"
@@ -1051,7 +1150,7 @@ export function workspaceFileResourceService(db: Db, actor?: AuthorizationActor)
           .where(and(eq(projectWorkspaces.id, candidate.workspaceId), await projectReadSqlCondition(db, actor)));
       if (rows.length) visible.push(candidate);
     }
-    return visible;
+    return applyRootPolicy(visible);
   }
   async function getIssue(issueId: string): Promise<IssueRow> {
     const [issue] = await db.select().from(issues).where(and(eq(issues.id, issueId), actor ? await issueReadSqlCondition(db, actor) : undefined)).limit(1);
