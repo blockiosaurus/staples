@@ -103,7 +103,6 @@ import {
 } from "@paperclipai/shared";
 import { z } from "zod";
 import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
-import { APPROVAL_CHANGED_MESSAGE, APPROVAL_DECISION_PATH, BRIEF_CHANGED_MESSAGE, BRIEF_UPDATE_PATH, PLAN_APPLY_PATH, PLAN_BRIEF_CHANGED_MESSAGE, ProposedActionError, briefProposalIsCurrent, planProposalIsCurrent, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { authorizationService } from "./authorization.js";
 import { isCloudManagedInstance } from "./cloud-instance.js";
@@ -3339,6 +3338,15 @@ export function issueThreadInteractionService(
         const method = String(proposal.method);
         const path = String(proposal.path);
         const body = proposal.body === undefined ? null : proposal.body;
+        // Loaded lazily: assistant-proposed-actions reaches plan templates and,
+        // through them, the heartbeat service. A static import here closes an
+        // import cycle (native-runtime/runtime-context -> tool-access -> ... ->
+        // heartbeat -> native-runtime) that breaks module mocking in tests.
+        const {
+          APPROVAL_CHANGED_MESSAGE, APPROVAL_DECISION_PATH, BRIEF_CHANGED_MESSAGE, BRIEF_UPDATE_PATH,
+          PLAN_APPLY_PATH, PLAN_BRIEF_CHANGED_MESSAGE, ProposedActionError, briefProposalIsCurrent,
+          planProposalIsCurrent, proposedActionHash, validateGovernedAction,
+        } = await import("./assistant-proposed-actions.js");
         try {
           if (proposedActionHash({ method, path, body }) !== proposal.hash) {
             throw new ProposedActionError("The stored proposal does not match its hash.");
