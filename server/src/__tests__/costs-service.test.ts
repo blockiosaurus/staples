@@ -406,6 +406,69 @@ describe("cost routes", () => {
     // Policy mutation owns the atomic entity update and activity log.
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
+
+  describe("hosted agents", () => {
+    const boardActor = {
+      type: "board",
+      userId: "board-user",
+      source: "session",
+      isInstanceAdmin: false,
+      companyIds: ["company-1"],
+      memberships: [{ companyId: "company-1", status: "active", membershipRole: "admin" }],
+    };
+    const hostedAgent = { id: "agent-1", companyId: "company-1", name: "Hosted Agent", adapterType: "claude_managed", adapterConfig: {}, budgetMonthlyCents: 2000, spentMonthlyCents: 0 };
+
+    beforeEach(() => {
+      vi.stubEnv("STAPLES_HOSTED_INFERENCE", "");
+      vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "test-hosted-key");
+      vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS", "20000");
+    });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("also sets a hosted agent's hosted limit to the person's budget", async () => {
+      mockAgentService.getById.mockResolvedValue(hostedAgent);
+      const res = await request(createAppWithActor(boardActor)).patch("/api/agents/agent-1/budgets").send({ budgetMonthlyCents: 10000 });
+      expect(res.status).toBe(200);
+      expect(mockBudgetService.upsertPolicy).toHaveBeenCalledTimes(2);
+      expect(mockBudgetService.upsertPolicy).toHaveBeenLastCalledWith(
+        "company-1",
+        expect.objectContaining({ scopeType: "agent", scopeId: "agent-1", metric: "hosted_billed_cents", amount: 10000, hardStopEnabled: true, isActive: true }),
+        "board-user",
+      );
+    });
+
+    it("clamps the hosted limit to the operator's ceiling", async () => {
+      mockAgentService.getById.mockResolvedValue(hostedAgent);
+      await request(createAppWithActor(boardActor)).patch("/api/agents/agent-1/budgets").send({ budgetMonthlyCents: 50000 });
+      expect(mockBudgetService.upsertPolicy).toHaveBeenLastCalledWith(
+        "company-1", expect.objectContaining({ metric: "hosted_billed_cents", amount: 20000 }), "board-user",
+      );
+    });
+
+    it("leaves the hosted limit alone for a zero budget, an own key, or hosted inference off", async () => {
+      mockAgentService.getById.mockResolvedValue(hostedAgent);
+      await request(createAppWithActor(boardActor)).patch("/api/agents/agent-1/budgets").send({ budgetMonthlyCents: 0 });
+      mockAgentService.getById.mockResolvedValue({
+        ...hostedAgent, adapterConfig: { env: { ANTHROPIC_API_KEY: { type: "secret_ref", secretId: "secret-1" } } },
+      });
+      await request(createAppWithActor(boardActor)).patch("/api/agents/agent-1/budgets").send({ budgetMonthlyCents: 10000 });
+      vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", "");
+      mockAgentService.getById.mockResolvedValue(hostedAgent);
+      await request(createAppWithActor(boardActor)).patch("/api/agents/agent-1/budgets").send({ budgetMonthlyCents: 10000 });
+      const hostedCalls = mockBudgetService.upsertPolicy.mock.calls.filter(([, input]) => input.metric === "hosted_billed_cents");
+      expect(hostedCalls).toHaveLength(0);
+    });
+
+    it("still refuses an agent setting its own budget", async () => {
+      mockAgentService.getById.mockResolvedValue(hostedAgent);
+      const res = await request(createAppWithActor({ type: "agent", agentId: "agent-1", companyId: "company-1", source: "agent_key" }))
+        .patch("/api/agents/agent-1/budgets").send({ budgetMonthlyCents: 10000 });
+      expect(res.status).toBe(403);
+      expect(mockBudgetService.upsertPolicy).not.toHaveBeenCalled();
+    });
+  });
 });
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();

@@ -32,7 +32,9 @@ import {
 import { autopilotCategoriesFromMetadata } from "./agent-autopilot.js";
 import {
   blockedReason,
+  budgetAtMaximum,
   budgetIncidentCopy,
+  clipReason,
   COSTS_HREF,
   failureCause,
   failureReason,
@@ -389,6 +391,7 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
   ): BriefingAction | undefined {
     if (cause === "hosted_limit" || cause === "budget_reached") {
       const incident = incidentFor(incidents, agentId, companyId, cause === "hosted_limit");
+      // A hosted limit already at its maximum gets no raise: Ask Assistant covers it.
       return incident ? raiseBudgetAction(incident) : { kind: "open_settings", label: "Review limits", href: COSTS_HREF };
     }
     if (!agentId) return undefined;
@@ -400,6 +403,14 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     if (kind === "agent") return { kind: "clear_agent_error", label: "Dismiss error", agentId };
     if ((cause === "timed_out" || cause === "out_of_credit") && runId) return { kind: "retry_run", label: "Try again", agentId, runId };
     return undefined;
+  }
+
+  /** A hosted-limit stop whose limit is already at its maximum says so (no raise is offered). */
+  function hostedLimitAtMaximumReason(reason: string, agentId: string | null, context: NeedsYouContext): string {
+    const incident = incidentFor(context.incidents, agentId, context.companyId, true);
+    return incident && budgetAtMaximum(incident)
+      ? clipReason(`${reason} The hosted limit is at its maximum until next month.`)
+      : reason;
   }
 
   function toNeedsYouItem(item: AttentionItem, context: NeedsYouContext): BriefingItem | null {
@@ -447,6 +458,7 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
       title = agentName ? `${agentName} couldn't finish its work` : "An agent couldn't finish its work";
       reason = failureReason(cause, agentName, "run");
       action = failureAction(cause, "run", agentId, item.subject.id, errorCode, context.companyId, context.incidents);
+      if (cause === "hosted_limit") reason = hostedLimitAtMaximumReason(reason, agentId, context);
     } else if (item.sourceKind === "agent_error_alert") {
       const agentId = item.subject.id;
       const agent = context.agentById.get(agentId);
@@ -458,6 +470,7 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
       });
       reason = failureReason(cause, item.subject.title, "agent");
       action = failureAction(cause, "agent", agentId, null, null, context.companyId, context.incidents);
+      if (cause === "hosted_limit") reason = hostedLimitAtMaximumReason(reason, agentId, context);
     } else if (item.sourceKind === "budget_alert") {
       const facts = budgetFacts(item);
       if (facts) {

@@ -30,7 +30,7 @@ import { HttpError, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { withAccountingTransaction } from "./accounting-transaction.js";
 import { logActivity, type LogActivityInput, type ActivityPublication } from "./activity-log.js";
-import { usesHostedInferenceKey } from "./hosted-inference.js";
+import { clampPersonHostedLimit, usesHostedInferenceKey } from "./hosted-inference.js";
 
 type ScopeRecord = {
   companyId: string;
@@ -721,7 +721,12 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
         .then((rows) => rows[0] ?? null);
 
       if (!existing && input.amount === undefined) throw unprocessable("Amount is required for a new budget policy");
-      const amount = Math.max(0, Math.floor(input.amount ?? existing!.amount));
+      const requestedAmount = Math.max(0, Math.floor(input.amount ?? existing!.amount));
+      // A person's hosted limit stops at the operator's ceiling (server-written
+      // hosted policies are clamped by their own callers).
+      const amount = metric === HOSTED_BILLED_CENTS_METRIC && !options.actor
+        ? clampPersonHostedLimit(requestedAmount, existing?.amount ?? 0)
+        : requestedAmount;
       // A saved zero disables enforcement. Raising it is an explicit limit
       // setting; editing a disabled positive policy must preserve that choice.
       const nextIsActive = amount > 0 && (input.isActive ?? (existing?.amount === 0 ? true : existing?.isActive) ?? true);
@@ -824,6 +829,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
           amount: row.amount,
           windowKind: row.windowKind,
           metric: row.metric,
+          ...(amount !== requestedAmount ? { requestedAmount, clampedToHostedCeiling: true } : {}),
         },
       });
 
@@ -950,8 +956,15 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
       if (incident.companyId !== companyId) throw notFound("Budget incident not found");
 
       const policy = await getPolicyRow(incident.policyId);
+      let appliedAmount: number | null = input.amount ?? null;
       if (input.action === "raise_budget_and_resume") {
-        const nextAmount = Math.max(0, Math.floor(input.amount ?? 0));
+        const requestedAmount = Math.max(0, Math.floor(input.amount ?? 0));
+        // A person's hosted raise stops at the operator's ceiling.
+        const nextAmount = isHostedMetric(policy) ? clampPersonHostedLimit(requestedAmount, policy.amount) : requestedAmount;
+        if (isHostedMetric(policy) && requestedAmount > policy.amount && nextAmount <= policy.amount) {
+          throw unprocessable("The hosted limit is already at its maximum");
+        }
+        appliedAmount = nextAmount;
         const observed = await computeObservedSpend(db, policy);
         if (policy.unpricedUsagePolicy !== "allow" && observed.unpricedEventCount > 0) {
           throw unprocessable("Resolve unpriced usage or explicitly allow it in the budget policy before resuming");
@@ -1018,7 +1031,8 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
         entityId: incident.id,
         details: {
           action: input.action,
-          amount: input.amount ?? null,
+          amount: appliedAmount,
+          ...(appliedAmount !== (input.amount ?? null) ? { requestedAmount: input.amount ?? null } : {}),
           scopeType: incident.scopeType,
           scopeId: incident.scopeId,
         },

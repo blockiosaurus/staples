@@ -59,8 +59,14 @@ export interface BriefingBudgetTarget {
   scopeId: string;
   limitCents: number;
   observedCents: number;
-  /** Twice the limit, and always above what has been spent. */
+  /** Twice the limit, and always above what has been spent; at most `maxCents`. */
   suggestedCents: number;
+  /**
+   * The most a person may raise it to: for a hosted limit, the operator's
+   * ceiling (a limit already above it is kept, not raised). Null when there is
+   * no ceiling. Home offers no raise when the limit is already at it.
+   */
+  maxCents: number | null;
 }
 
 export interface BriefingAction {

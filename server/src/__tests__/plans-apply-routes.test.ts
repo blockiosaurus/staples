@@ -8,6 +8,7 @@ import {
   agents,
   builtInManagedResources,
   budgetPolicies,
+  budgetIncidents,
   approvals,
   authUsers,
   companies,
@@ -1677,6 +1678,104 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         ];
         for (const attempt of attempts) expect((await attempt).status).toBe(403);
         expect(await hostedLimit(agentId)).toMatchObject({ amount: 3000 });
+      }, 120_000);
+
+      const boardApp = (s: Seed) => {
+        const api = Router();
+        api.use(agentRoutes(db));
+        api.use(costRoutes(db));
+        const app = express();
+        app.use(express.json());
+        app.use((req, _res, next) => { req.actor = sessionActor(s, "local_implicit"); next(); });
+        app.use("/api", api);
+        app.use(errorHandler);
+        return app;
+      };
+
+      it("a person's budget for a hosted agent is also its hosted limit (create and PATCH), at most the ceiling", async () => {
+        hostedOn();
+        const s = await seed();
+        await assistantOnHosted(s);
+        const app = boardApp(s);
+        const created = await request(app).post(`/api/companies/${s.companyId}/agents`).send({
+          name: "Writer", role: "general", adapterType: "claude_managed", adapterConfig: { model: "claude-opus-5-5" }, budgetMonthlyCents: 10_000,
+        });
+        expect(created.status, JSON.stringify(created.body)).toBe(201);
+        expect(await hostedLimit(created.body.id)).toMatchObject({ amount: 10_000, isActive: true, hardStopEnabled: true });
+        expect(await monthlyPolicy("agent", created.body.id)).toMatchObject({ amount: 10_000 });
+
+        const patched = await request(app).patch(`/api/agents/${created.body.id}/budgets`).send({ budgetMonthlyCents: 50_000 });
+        expect(patched.status, JSON.stringify(patched.body)).toBe(200);
+        expect(patched.body.budgetMonthlyCents).toBe(50_000);
+        // The hosted limit stops at the $200 ceiling.
+        expect(await hostedLimit(created.body.id)).toMatchObject({ amount: 20_000 });
+
+        // A local agent's hosted limit is never written.
+        const local = await request(app).patch(`/api/agents/${s.staffId}/budgets`).send({ budgetMonthlyCents: 4_000 });
+        expect(local.status).toBe(200);
+        expect(await hostedLimit(s.staffId)).toBeNull();
+      }, 120_000);
+
+      it("a person's hosted limit and hosted raise stop at the operator ceiling", async () => {
+        hostedOn();
+        const s = await seed();
+        await assistantOnHosted(s);
+        const app = boardApp(s);
+        const hostedCompanyCap = async () => (await db.select().from(budgetPolicies).where(and(
+          eq(budgetPolicies.scopeType, "company"), eq(budgetPolicies.scopeId, s.companyId), eq(budgetPolicies.metric, "hosted_billed_cents"),
+        )))[0]!;
+        // Board policy upsert: $1,000 asked, $200 set.
+        const upserted = await request(app).post(`/api/companies/${s.companyId}/budgets/policies`)
+          .send({ scopeType: "company", scopeId: s.companyId, metric: "hosted_billed_cents", amount: 100_000, windowKind: "calendar_month_utc" });
+        expect(upserted.status, JSON.stringify(upserted.body)).toBe(200);
+        expect((await hostedCompanyCap()).amount).toBe(20_000);
+        // Billed-cents budgets are not clamped.
+        await request(app).post(`/api/companies/${s.companyId}/budgets/policies`)
+          .send({ scopeType: "company", scopeId: s.companyId, amount: 100_000, windowKind: "calendar_month_utc" });
+        expect(await monthlyPolicy("company", s.companyId)).toMatchObject({ amount: 100_000 });
+
+        // An incident on the cap at $100: a $1,000 raise becomes $200.
+        await db.update(budgetPolicies).set({ amount: 10_000 }).where(eq(budgetPolicies.id, (await hostedCompanyCap()).id));
+        const incidentFor = async (amountLimit: number) => {
+          const policy = await hostedCompanyCap();
+          const now = new Date();
+          const [incident] = await db.insert(budgetIncidents).values({
+            companyId: s.companyId, policyId: policy.id, scopeType: "company", scopeId: s.companyId, metric: "hosted_billed_cents",
+            windowKind: "calendar_month_utc", windowStart: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
+            windowEnd: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)), thresholdType: "hard", amountLimit, amountObserved: amountLimit,
+          }).returning();
+          return incident!;
+        };
+        const first = await incidentFor(10_000);
+        const raised = await request(app).post(`/api/companies/${s.companyId}/budget-incidents/${first.id}/resolve`)
+          .send({ action: "raise_budget_and_resume", amount: 100_000 });
+        expect(raised.status, JSON.stringify(raised.body)).toBe(200);
+        expect((await hostedCompanyCap()).amount).toBe(20_000);
+        const [logged] = await db.select().from(activityLog).where(and(eq(activityLog.entityId, first.id), eq(activityLog.action, "budget.incident_resolved")));
+        expect(logged!.details).toMatchObject({ amount: 20_000, requestedAmount: 100_000 });
+
+        // At the ceiling there is nothing left to raise.
+        const second = await incidentFor(20_000);
+        const refused = await request(app).post(`/api/companies/${s.companyId}/budget-incidents/${second.id}/resolve`)
+          .send({ action: "raise_budget_and_resume", amount: 40_000 });
+        expect(refused.status).toBe(422);
+        expect(refused.body.error).toMatch(/already at its maximum/);
+        expect((await hostedCompanyCap()).amount).toBe(20_000);
+
+        // A cap the operator left above the ceiling may be kept or lowered by a person, not raised.
+        await db.update(budgetPolicies).set({ amount: 30_000 }).where(eq(budgetPolicies.id, (await hostedCompanyCap()).id));
+        await request(app).post(`/api/companies/${s.companyId}/budgets/policies`)
+          .send({ scopeType: "company", scopeId: s.companyId, metric: "hosted_billed_cents", amount: 40_000, windowKind: "calendar_month_utc" });
+        expect((await hostedCompanyCap()).amount).toBe(30_000);
+        await request(app).post(`/api/companies/${s.companyId}/budgets/policies`)
+          .send({ scopeType: "company", scopeId: s.companyId, metric: "hosted_billed_cents", amount: 25_000, windowKind: "calendar_month_utc" });
+        expect((await hostedCompanyCap()).amount).toBe(25_000);
+
+        // A 0 ceiling means no ceiling.
+        vi.stubEnv("STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS", "0");
+        await request(app).post(`/api/companies/${s.companyId}/budgets/policies`)
+          .send({ scopeType: "company", scopeId: s.companyId, metric: "hosted_billed_cents", amount: 90_000, windowKind: "calendar_month_utc" });
+        expect((await hostedCompanyCap()).amount).toBe(90_000);
       }, 120_000);
 
       it("an agent's config rollback never restores a budget", async () => {

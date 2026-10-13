@@ -41,6 +41,8 @@ import {
 
 import {
   budgetIncidentCopy,
+  budgetTarget,
+  raiseBudgetAction,
   failureCause,
   failureReason,
   suggestedBudgetCents,
@@ -103,6 +105,34 @@ describe("briefing failure reasons", () => {
     });
     expect(budgetIncidentCopy({ ...base, metric: "billed_cents", scopeType: "company", scopeId: "c1", thresholdType: "soft", observedPercent: 87.4 }, "Acme"))
       .toEqual({ title: "Acme is close to its budget", reason: "Your company has used 87% of its $50 budget." });
+  });
+});
+
+describe("hosted raises from Home stop at the operator ceiling", () => {
+  const hosted = {
+    incidentId: "i1", policyId: "p1", metric: "hosted_billed_cents", scopeType: "company" as const, scopeId: "c1", scopeName: null,
+    thresholdType: "hard", amountLimit: 5000, amountObserved: 5000, observedPercent: 100,
+  };
+  const env = { STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS: "20000" } as NodeJS.ProcessEnv;
+
+  it("suggests twice the limit, at most the ceiling, and states the ceiling", () => {
+    expect(budgetTarget(hosted, env)).toMatchObject({ suggestedCents: 10000, maxCents: 20000 });
+    expect(budgetTarget({ ...hosted, amountLimit: 15000, amountObserved: 15000 }, env)).toMatchObject({ suggestedCents: 20000, maxCents: 20000 });
+    // Other budgets have no ceiling.
+    expect(budgetTarget({ ...hosted, metric: "billed_cents", amountLimit: 15000 }, env)).toMatchObject({ suggestedCents: 30000, maxCents: null });
+    // A 0 ceiling means no ceiling.
+    expect(budgetTarget({ ...hosted, amountLimit: 15000 }, { STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS: "0" } as NodeJS.ProcessEnv))
+      .toMatchObject({ suggestedCents: 30000, maxCents: null });
+  });
+
+  it("offers no raise when the hosted limit is already at its maximum, and says so", () => {
+    expect(raiseBudgetAction({ ...hosted, amountLimit: 20000, amountObserved: 20000 }, env)).toBeUndefined();
+    expect(raiseBudgetAction({ ...hosted, amountLimit: 25000, amountObserved: 25000 }, env)).toBeUndefined();
+    // Spend already past the ceiling: no raise could clear it.
+    expect(raiseBudgetAction({ ...hosted, amountLimit: 10000, amountObserved: 20500 }, env)).toBeUndefined();
+    expect(raiseBudgetAction(hosted, env)).toMatchObject({ kind: "raise_budget", label: "Raise limit" });
+    expect(budgetIncidentCopy({ ...hosted, amountLimit: 20000, amountObserved: 20000 }, "Acme").reason)
+      .toBe("Your company spent $200 of its $200 monthly hosted limit. That's the most it can be, so hosted runs are on hold until next month.");
   });
 });
 
@@ -1095,7 +1125,7 @@ describeEmbeddedPostgres("briefing service", () => {
       label: "Raise limit",
       budget: {
         incidentId: "incident-hosted", policyId: "policy-hosted", metric: "hosted_billed_cents", scopeType: "agent",
-        scopeId: workerId, limitCents: 5000, observedCents: 5010, suggestedCents: 10000,
+        scopeId: workerId, limitCents: 5000, observedCents: 5010, suggestedCents: 10000, maxCents: 20000,
       },
     };
     expect(byId.get("run-hosted")).toMatchObject({
@@ -1175,6 +1205,27 @@ describeEmbeddedPostgres("briefing service", () => {
     expect(incident?.status).toBe("resolved");
     const after = await briefingService(db).get({ companyId, userId: "board-user", actor: boardActor(companyId) });
     expect(after.needsYou.some((entry) => entry.id === incidentId)).toBe(false);
+  });
+
+  it("offers no raise on a hosted incident already at the operator ceiling", async () => {
+    const { companyId, workerId } = await seedCompany("BRM");
+    const policyId = randomUUID();
+    await db.insert(budgetPolicies).values({
+      id: policyId, companyId, scopeType: "agent", scopeId: workerId, metric: "hosted_billed_cents",
+      windowKind: "calendar_month_utc", amount: 20000,
+    });
+    const now = new Date();
+    const incidentId = randomUUID();
+    await db.insert(budgetIncidents).values({
+      id: incidentId, companyId, policyId, scopeType: "agent", scopeId: workerId, metric: "hosted_billed_cents",
+      windowKind: "calendar_month_utc", windowStart: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
+      windowEnd: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)), thresholdType: "hard", amountLimit: 20000,
+      amountObserved: 20000, status: "open",
+    });
+    const briefing = await briefingService(db).get({ companyId, userId: "board-user", actor: boardActor(companyId) });
+    const item = briefing.needsYou.find((entry) => entry.id === incidentId);
+    expect(item?.action).toBeUndefined();
+    expect(item?.reason).toMatch(/most it can be/);
   });
 
   it("lists up-next and waiting tasks in progress, once each, and skips blocked tasks that need the person", async () => {

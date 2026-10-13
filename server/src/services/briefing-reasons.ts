@@ -1,5 +1,6 @@
 import { BRIEFING_REASON_MAX, type BriefingAction, type BriefingBudgetTarget } from "@paperclipai/shared";
 import { BUDGET_REACHED_ERROR_CODE, HOSTED_LIMIT_REACHED_ERROR_CODE } from "./budgets.js";
+import { hostedPersonLimitMaxCents } from "./hosted-inference.js";
 
 /**
  * Plain reasons and one-click fixes for Home's "Needs you" rows. Built only
@@ -139,7 +140,24 @@ export interface BudgetIncidentFacts {
   observedPercent: number | null;
 }
 
-export function budgetTarget(facts: BudgetIncidentFacts): BriefingBudgetTarget {
+/**
+ * The most a person may raise this limit to: for a hosted limit, the
+ * operator's ceiling (`hostedPersonLimitMaxCents`); null when there is none
+ * (any other budget, or a 0 ceiling).
+ */
+export function budgetRaiseMaxCents(facts: BudgetIncidentFacts, env: NodeJS.ProcessEnv = process.env): number | null {
+  return facts.metric === HOSTED_METRIC ? hostedPersonLimitMaxCents(Math.round(facts.amountLimit), env) : null;
+}
+
+/** True when a hosted limit can't be raised by a person: it is at the ceiling (or spend is already past it). */
+export function budgetAtMaximum(facts: BudgetIncidentFacts, env: NodeJS.ProcessEnv = process.env): boolean {
+  const max = budgetRaiseMaxCents(facts, env);
+  return max !== null && (max <= Math.round(facts.amountLimit) || max <= Math.floor(Math.max(0, facts.amountObserved)));
+}
+
+export function budgetTarget(facts: BudgetIncidentFacts, env: NodeJS.ProcessEnv = process.env): BriefingBudgetTarget {
+  const maxCents = budgetRaiseMaxCents(facts, env);
+  const suggested = suggestedBudgetCents(facts.amountLimit, facts.amountObserved);
   return {
     incidentId: facts.incidentId,
     policyId: facts.policyId,
@@ -148,12 +166,15 @@ export function budgetTarget(facts: BudgetIncidentFacts): BriefingBudgetTarget {
     scopeId: facts.scopeId,
     limitCents: Math.round(facts.amountLimit),
     observedCents: Math.round(facts.amountObserved),
-    suggestedCents: suggestedBudgetCents(facts.amountLimit, facts.amountObserved),
+    suggestedCents: maxCents === null ? suggested : Math.min(suggested, maxCents),
+    maxCents,
   };
 }
 
-export function raiseBudgetAction(facts: BudgetIncidentFacts): BriefingAction {
-  return { kind: "raise_budget", label: "Raise limit", budget: budgetTarget(facts) };
+/** "Raise limit", or nothing when a hosted limit is already at its maximum (Ask Assistant covers it). */
+export function raiseBudgetAction(facts: BudgetIncidentFacts, env: NodeJS.ProcessEnv = process.env): BriefingAction | undefined {
+  if (budgetAtMaximum(facts, env)) return undefined;
+  return { kind: "raise_budget", label: "Raise limit", budget: budgetTarget(facts, env) };
 }
 
 /** Title and reason for a budget incident row. */
@@ -166,7 +187,9 @@ export function budgetIncidentCopy(facts: BudgetIncidentFacts, companyName: stri
   const what = hosted ? "monthly hosted limit" : "budget";
   const titleName = facts.scopeType === "company" ? subjectName(companyName, "Your company") : name;
   if (facts.thresholdType === "hard") {
-    const stops = hosted
+    const stops = hosted && budgetAtMaximum(facts)
+      ? "That's the most it can be, so hosted runs are on hold until next month."
+      : hosted
       ? (facts.scopeType === "agent" ? "Its hosted runs are on hold until you raise it." : "Hosted runs are on hold until you raise it.")
       : "Work is on hold until you raise it.";
     return {

@@ -3,8 +3,9 @@ import { isHeldForTemplateSetup, TEMPLATE_SETUP_RESUME_MESSAGE } from "../lib/st
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
 import { assistantAdapterAvailability, assistantConfigureRoleAllowed, assistantSetupRequestSchema, assistantSetupStatus, canConfigureAssistant, CLAUDE_MANAGED_ADAPTER_TYPE, geminiCredentialsPresent, hasAnthropicKeyBinding, readAssistantLifecycle, resolveAssistantSetupEngine, type AssistantSetupRequest } from "../services/assistant-setup.js";
-import { agentChosenHostedBudgetCents, hostedInference } from "../services/hosted-inference.js";
+import { agentChosenHostedBudgetCents, clampToHostedCeiling, hostedInference, usesHostedInferenceKey } from "../services/hosted-inference.js";
 import { ensureHostedAssistantBudget, hostedInferenceAllowedFor } from "../services/hosted-inference-access.js";
+import { HOSTED_BILLED_CENTS_METRIC } from "../services/budgets.js";
 import { getConfiguredSecretProvider } from "../secrets/configured-provider.js";
 
 import { agentIdentityService } from "../services/agent-identity.js";
@@ -4706,6 +4707,24 @@ export function agentRoutes(
         },
         actor.actorType === "user" ? actor.actorId : null,
       );
+      // A person's budget for an agent on the operator's hosted key is also its
+      // hosted limit (at most the operator's ceiling), as plan apply and hire
+      // approval set it. An agent creator gets the hosted default instead.
+      if (actor.actorType === "user" && usesHostedInferenceKey(agent)) {
+        await budgets.upsertPolicy(
+          companyId,
+          {
+            scopeType: "agent",
+            scopeId: agent.id,
+            metric: HOSTED_BILLED_CENTS_METRIC,
+            amount: clampToHostedCeiling(agent.budgetMonthlyCents),
+            hardStopEnabled: true,
+            isActive: true,
+            windowKind: "calendar_month_utc",
+          },
+          actor.actorId,
+        );
+      }
     }
 
     res.status(201).json(redactAgentRowForResponse(agent));

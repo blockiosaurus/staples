@@ -104,6 +104,7 @@ function RaiseLimitForm({
   limitCents,
   observedCents,
   suggestedCents,
+  maxCents,
   hosted,
   pending,
   onCancel,
@@ -112,6 +113,8 @@ function RaiseLimitForm({
   limitCents: number;
   observedCents: number;
   suggestedCents: number;
+  /** The most it can be raised to (a hosted limit's ceiling); null when there is none. */
+  maxCents: number | null;
   hosted: boolean;
   pending: boolean;
   onCancel: () => void;
@@ -120,9 +123,10 @@ function RaiseLimitForm({
   const [draft, setDraft] = useState(() => centsToInput(suggestedCents));
   const cents = parseDollars(draft);
   const tooLow = cents !== null && cents <= observedCents;
+  const tooHigh = cents !== null && maxCents !== null && cents > maxCents;
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (cents === null || tooLow || pending) return;
+    if (cents === null || tooLow || tooHigh || pending) return;
     onSubmit(cents);
   };
   return (
@@ -139,6 +143,7 @@ function RaiseLimitForm({
       </label>
       <p className="text-xs text-muted-foreground">
         Now {formatDollars(limitCents)} · {formatDollars(observedCents)} spent
+        {maxCents !== null ? ` · up to ${formatDollars(maxCents)}` : ""}
       </p>
       {cents === null ? (
         <p role="alert" className="text-xs text-destructive">Enter an amount in dollars, like 100.</p>
@@ -146,12 +151,16 @@ function RaiseLimitForm({
         <p role="alert" className="text-xs text-destructive">
           The new limit has to be more than the {formatDollars(observedCents)} already spent.
         </p>
+      ) : tooHigh && maxCents !== null ? (
+        <p role="alert" className="text-xs text-destructive">
+          The most this limit can be is {formatDollars(maxCents)}.
+        </p>
       ) : null}
       <div className="flex items-center justify-between gap-2">
         <Button type="button" variant="ghost" size="xs" onClick={onCancel} disabled={pending}>
           Cancel
         </Button>
-        <Button type="submit" size="xs" disabled={pending || cents === null || tooLow}>
+        <Button type="submit" size="xs" disabled={pending || cents === null || tooLow || tooHigh}>
           {pending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
           Raise limit
         </Button>
@@ -177,14 +186,18 @@ export function BriefingRow({
   onAccept: (item: BriefingItem) => void;
   onAsk: (item: BriefingItem) => void;
   fixing?: boolean;
-  /** Runs the row's fix; `amountCents` is the new limit for "raise_budget". */
+  /**
+   * Runs the row's fix; `amountCents` is the new limit for "raise_budget".
+   * Left out for people who can't make changes (viewers): the fix button is hidden.
+   */
   onFix?: (item: BriefingItem, amountCents?: number) => void;
 }) {
   const inline = canAcceptInline(item);
   const action = item.action;
   const [raising, setRaising] = useState(false);
-  // Something went wrong and Home has no fix for it: asking the Assistant is the next step.
-  const askLeads = !inline && !action && FAILURE_KINDS.has(item.kind);
+  const canRunFix = Boolean(action && (action.kind === "open_settings" || onFix));
+  // Something went wrong and Home has no fix this person can run: asking the Assistant is the next step.
+  const askLeads = !inline && !canRunFix && FAILURE_KINDS.has(item.kind);
   return (
     <li data-testid="briefing-row" data-item-id={item.id} className="flex flex-col gap-2 py-3">
       <div className="flex items-start gap-3">
@@ -246,6 +259,7 @@ export function BriefingRow({
           limitCents={action.budget.limitCents}
           observedCents={action.budget.observedCents}
           suggestedCents={action.budget.suggestedCents}
+          maxCents={action.budget.maxCents ?? null}
           hosted={action.budget.metric === "hosted_billed_cents"}
           pending={fixing}
           onCancel={() => setRaising(false)}

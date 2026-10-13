@@ -107,6 +107,25 @@ export function clampToHostedCeiling(cents: number, env: NodeJS.ProcessEnv = pro
 }
 
 /**
+ * The most a person (the board) may set a hosted limit to (company or agent
+ * scope `hosted_billed_cents`, from the Costs page, a budget PATCH or Home's
+ * "Raise limit"): the operator's ceiling. A limit already above the ceiling
+ * may be kept or lowered, never raised further. A 0 ceiling means no ceiling,
+ * as for `clampToHostedCeiling`. (A 0 ceiling also means plans never raise the
+ * company cap; that is the plan path's own rule, not this one.)
+ */
+export function hostedPersonLimitMaxCents(currentCents: number, env: NodeJS.ProcessEnv = process.env): number | null {
+  const ceiling = hostedCompanyBudgetCeilingCents(env);
+  return ceiling > 0 ? Math.max(ceiling, Math.max(0, currentCents)) : null;
+}
+
+/** A person's hosted limit, clamped to `hostedPersonLimitMaxCents`. */
+export function clampPersonHostedLimit(requestedCents: number, currentCents: number, env: NodeJS.ProcessEnv = process.env): number {
+  const max = hostedPersonLimitMaxCents(currentCents, env);
+  return max === null ? requestedCents : Math.min(requestedCents, max);
+}
+
+/**
  * The monthly budget an agent may give an agent it creates or hires: on the
  * operator's hosted key at most the hosted agent default (a lower one is
  * kept; an uncapped 0 default clamps nothing); otherwise as asked.

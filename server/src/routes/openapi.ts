@@ -6117,6 +6117,7 @@ const briefingActionSchema = z.object({
     limitCents: z.number().int(),
     observedCents: z.number().int(),
     suggestedCents: z.number().int(),
+    maxCents: z.number().int().nullable().describe("The most a person may raise it to (a hosted limit's operator ceiling); null when there is none"),
   }).optional(),
   href: z.string().optional().describe("open_settings: company-relative link"),
 });

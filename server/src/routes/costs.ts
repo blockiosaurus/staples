@@ -31,6 +31,8 @@ import {
   accessService,
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
+import { HOSTED_BILLED_CENTS_METRIC } from "../services/budgets.js";
+import { clampToHostedCeiling, usesHostedInferenceKey } from "../services/hosted-inference.js";
 import { fetchCompanyQuotaWindows } from "../services/quota-windows.js";
 import { badRequest, forbidden } from "../errors.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
@@ -403,6 +405,24 @@ export function costRoutes(
       },
       req.actor.type === "board" ? req.actor.userId ?? "board" : null,
     );
+    // On the operator's hosted key the agent's hosted limit follows the
+    // budget a person sets (at most the operator's ceiling), as plan apply and
+    // hire approval do. A zero budget leaves the hosted limit as it is.
+    if (req.body.budgetMonthlyCents > 0 && usesHostedInferenceKey(agent)) {
+      await budgets.upsertPolicy(
+        agent.companyId,
+        {
+          scopeType: "agent",
+          scopeId: agent.id,
+          metric: HOSTED_BILLED_CENTS_METRIC,
+          amount: clampToHostedCeiling(req.body.budgetMonthlyCents),
+          hardStopEnabled: true,
+          isActive: true,
+          windowKind: "calendar_month_utc",
+        },
+        req.actor.type === "board" ? req.actor.userId ?? "board" : null,
+      );
+    }
 
     res.json(await agents.getById(agentId));
   });
