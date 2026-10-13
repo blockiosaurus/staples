@@ -66,6 +66,7 @@ export type {
   BriefingRecommendation,
   BriefingRecommendationAnswer,
   BriefingSection,
+  BriefingWeeklyUpdate,
 } from "./briefing.js";
 export {
   BRIEFING_DONE_RECENTLY_LIMIT,
@@ -74,6 +75,7 @@ export {
   BRIEFING_IN_PROGRESS_LIMIT,
   BRIEFING_NEEDS_YOU_LIMIT,
   BRIEFING_REASON_MAX,
+  BRIEFING_WEEKLY_UPDATE_EXCERPT_MAX,
 } from "./briefing.js";
 export type {
   DecisionQueue,

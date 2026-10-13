@@ -110,6 +110,20 @@ export interface BriefingSpend {
   hosted: { capCents: number; spentCents: number } | null;
 }
 
+/** The latest weekly update the Assistant wrote, for the Home card. */
+export interface BriefingWeeklyUpdate {
+  /** The document id (also the dismissal target). */
+  documentId: string;
+  /** e.g. "Weekly update — Oct 13, 2026". */
+  title: string;
+  /** The first few lines, as plain text (at most 280 characters). */
+  excerpt: string;
+  /** Company-relative link to the document on the "Weekly updates" task. */
+  href: string;
+  /** When the update was last saved. */
+  updatedAt: string;
+}
+
 export interface Briefing {
   /** Capped at 20, newest first. */
   needsYou: BriefingItem[];
@@ -129,6 +143,11 @@ export interface Briefing {
   counts: { needsYou: number; inProgress: number; doneRecently: number };
   /** This month's spend against the company's budgets; null when the person may not read costs. */
   spend: BriefingSpend | null;
+  /**
+   * The latest weekly update, when it was saved in the last
+   * WEEKLY_UPDATE_CARD_MAX_AGE_DAYS days and the person has not dismissed it.
+   */
+  weeklyUpdate: BriefingWeeklyUpdate | null;
   generatedAt: string;
 }
 
@@ -139,3 +158,5 @@ export const BRIEFING_DONE_RECENTLY_LIMIT = 10;
 export const BRIEFING_DONE_RECENTLY_WINDOW_DAYS = 7;
 /** Window of the per-agent outward action roll-up. */
 export const BRIEFING_AGENT_ACTIONS_WINDOW_HOURS = 24;
+/** Longest weekly update excerpt on Home. */
+export const BRIEFING_WEEKLY_UPDATE_EXCERPT_MAX = 280;

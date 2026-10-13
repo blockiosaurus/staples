@@ -66,6 +66,7 @@ import { getTelemetryClient } from "../telemetry.js";
 import { getConfiguredSecretProvider } from "../secrets/configured-provider.js";
 import { issueService } from "./issues.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
+import { companyHasStaffAgents, isAssistantWeeklyUpdateRoutine } from "./assistant-weekly-update-origin.js";
 import { visibleIssueCondition } from "./issue-visibility.js";
 import { secretService } from "./secrets.js";
 import { getSecretProvider } from "../secrets/provider-registry.js";
@@ -1479,7 +1480,7 @@ export function routineService(
         triggeredAt,
         status: input.reason === "paused"
           ? "skipped_paused"
-          : input.reason === "no_external_activity"
+          : input.reason === "no_external_activity" || input.reason === "no_other_agents"
             ? "skipped_no_activity"
             : "skipped_worktree_execution_cutoff",
         nextRunAt: input.nextRunAt,
@@ -1743,7 +1744,7 @@ export function routineService(
     if (!assigneeAgentId) {
       throw unprocessable("Default agent required");
     }
-    await assertAssignableAgent(db, input.routine.companyId, assigneeAgentId, { kind: "routine" });
+    await assertAssignableAgent(db, input.routine.companyId, assigneeAgentId, { kind: "routine", routineId: input.routine.id });
     const automaticVariables: Record<string, string | number | boolean> = {};
     if (input.executionWorkspaceId && routineUsesWorkspaceBranch(input.routine)) {
       const workspace = await db
@@ -2302,7 +2303,7 @@ export function routineService(
       if (patch.projectId !== undefined) await assertProject(existing.companyId, nextProjectId);
       if (patch.folderId !== undefined) await assertRoutineFolder(existing.companyId, nextFolderId);
       if (patch.assigneeAgentId !== undefined || patch.status === "active") {
-        await assertAssignableAgent(db, existing.companyId, nextAssigneeAgentId, { kind: "routine" });
+        await assertAssignableAgent(db, existing.companyId, nextAssigneeAgentId, { kind: "routine", routineId: existing.id });
       }
       if (patch.goalId) await assertGoal(existing.companyId, patch.goalId);
       if (patch.parentIssueId) await assertParentIssue(existing.companyId, patch.parentIssueId);
@@ -2866,7 +2867,7 @@ export function routineService(
       if (routine.status === "archived") throw conflict("Routine is archived");
       await assertProject(routine.companyId, input.projectId ?? null);
       const assigneeAgentId = input.assigneeAgentId ?? routine.assigneeAgentId ?? null;
-      await assertAssignableAgent(db, routine.companyId, assigneeAgentId, { kind: "routine" });
+      await assertAssignableAgent(db, routine.companyId, assigneeAgentId, { kind: "routine", routineId: routine.id });
       const trigger = input.triggerId ? await getTriggerById(input.triggerId) : null;
       if (trigger && trigger.routineId !== routine.id) throw forbidden("Trigger does not belong to routine");
       if (trigger && !trigger.enabled) throw conflict("Routine trigger is not active");
@@ -2894,7 +2895,7 @@ export function routineService(
       if (routine.status === "archived") throw conflict("Routine is archived");
       await assertProject(routine.companyId, input.projectId ?? null);
       const assigneeAgentId = input.assigneeAgentId ?? routine.assigneeAgentId ?? null;
-      await assertAssignableAgent(db, routine.companyId, assigneeAgentId, { kind: "routine" });
+      await assertAssignableAgent(db, routine.companyId, assigneeAgentId, { kind: "routine", routineId: routine.id });
       return dispatchRoutineRun({
         routine,
         trigger: null,
@@ -3285,6 +3286,18 @@ export function routineService(
                 matchedActivityId: null,
               },
             },
+          });
+          continue;
+        }
+
+        // The Assistant's weekly update has nothing to report until the company has other agents.
+        if (isAssistantWeeklyUpdateRoutine(row.routine) && !(await companyHasStaffAgents(db, row.routine.companyId))) {
+          await recordSuppressedAutomaticRun({
+            routine: row.routine,
+            trigger: row.trigger,
+            source: "schedule",
+            reason: "no_other_agents",
+            nextRunAt: claimedNextRunAt,
           });
           continue;
         }

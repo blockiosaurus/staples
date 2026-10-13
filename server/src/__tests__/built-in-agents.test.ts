@@ -15,7 +15,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import {
   activityLog,
   heartbeatRuns,
@@ -338,8 +338,13 @@ describeEmbeddedPostgres("built-in agents", () => {
     const state = await builtInAgentService(db).get(companyId, "assistant");
     expect(state.resources.map((resource) => [resource.resourceKind, resource.stockStatus])).toEqual([
       ["instructions", "stock_current"],
+      ["routine", "stock_current"],
     ]);
-    expect(await db.select().from(routines).where(eq(routines.companyId, companyId))).toHaveLength(0);
+    // Its only routine is the weekly update, assigned to it.
+    const companyRoutines = await db.select().from(routines).where(eq(routines.companyId, companyId));
+    expect(companyRoutines.map((routine) => [routine.title, routine.originId, routine.assigneeAgentId])).toEqual([
+      ["Weekly update", "assistant:weekly-update", state.agentId],
+    ]);
     // The Assistant never appears in the org chart.
     expect(await agentService(db).orgForCompany(companyId)).toEqual([]);
   });
@@ -360,12 +365,12 @@ describeEmbeddedPostgres("built-in agents", () => {
   });
 
   const ASSISTANT_SKILL_KEYS = [
-    "staples-interview", "staples-company-brief", "staples-plan", "staples-questionnaire", "staples-wayfinder",
+    "staples-interview", "staples-company-brief", "staples-plan", "staples-questionnaire", "staples-wayfinder", "staples-weekly-update",
   ].map((name) => `paperclipai/paperclip/${name}`);
   const desiredSkillKeys = (adapterConfig: unknown) =>
     readPaperclipSkillSyncPreference((adapterConfig ?? {}) as Record<string, unknown>).desiredSkillEntries.map((entry) => entry.key);
 
-  it("imports the five Staples planning skills into every company library as markdown-only bundled skills", async () => {
+  it("imports the Staples planning and weekly update skills into every company library as markdown-only bundled skills", async () => {
     const companyId = await seedCompany({ requireApproval: false });
     const library = await companySkillService(db).list(companyId);
     for (const key of ASSISTANT_SKILL_KEYS) {
@@ -377,7 +382,7 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect(library.some((entry) => entry.key.toLowerCase().includes("third_party") || entry.key.toLowerCase().includes("third-party"))).toBe(false);
   });
 
-  it("gives the Assistant the five Staples planning skills on ensure without dropping its other skills, and not staff agents", async () => {
+  it("gives the Assistant the Staples planning and weekly update skills on ensure without dropping its other skills, and not staff agents", async () => {
     const companyId = await seedCompany({ requireApproval: false });
     const service = createBuiltInAgentService(db);
     const ensured = await service.ensure(companyId, "assistant");
@@ -1496,7 +1501,7 @@ describeEmbeddedPostgres("built-in agents", () => {
       "paperclipai/bundled/paperclip-operations/reflection-coach",
     );
 
-    const [routine] = await db.select().from(routines).where(eq(routines.companyId, companyId));
+    const [routine] = await db.select().from(routines).where(and(eq(routines.companyId, companyId), ne(routines.originId, "assistant:weekly-update")));
     expect(routine).toMatchObject({
       title: "Review recent agent trajectories for coaching proposals",
       status: "paused",
@@ -2139,7 +2144,7 @@ describeEmbeddedPostgres("built-in agents", () => {
     });
     expect(readPaperclipSkillSyncPreference(state.agent!.adapterConfig).desiredSkills).toContain(skill!.key);
 
-    const [routine] = await db.select().from(routines).where(eq(routines.companyId, companyId));
+    const [routine] = await db.select().from(routines).where(and(eq(routines.companyId, companyId), ne(routines.originId, "assistant:weekly-update")));
     expect(routine).toMatchObject({
       title: "Review recent agent trajectories for coaching proposals",
       status: "paused",
@@ -2333,7 +2338,7 @@ describeEmbeddedPostgres("built-in agents", () => {
       stockStatus: "stock_current",
       scheduleEnabled: true,
     });
-    const [enabledRoutine] = await db.select().from(routines).where(eq(routines.companyId, companyId));
+    const [enabledRoutine] = await db.select().from(routines).where(and(eq(routines.companyId, companyId), ne(routines.originId, "assistant:weekly-update")));
     const [enabledTrigger] = await db.select().from(routineTriggers).where(eq(routineTriggers.routineId, enabledRoutine!.id));
     expect(enabledRoutine).toMatchObject({ status: "active" });
     expect(enabledTrigger).toMatchObject({ enabled: true });
@@ -2605,7 +2610,7 @@ describeEmbeddedPostgres("built-in agents", () => {
       resetAvailable: true,
     });
     expect((await instructionsSvc.readFile(drifted.agent!, "AGENTS.md")).content).toContain("Do not overwrite me.");
-    const [preservedRoutine] = await db.select().from(routines).where(eq(routines.companyId, companyId));
+    const [preservedRoutine] = await db.select().from(routines).where(and(eq(routines.companyId, companyId), ne(routines.originId, "assistant:weekly-update")));
     expect(preservedRoutine?.title).toBe("DRIFTED BY TEST - do not clobber");
 
     const reset = await builtInAgentService(db).reset(companyId, "reflection-coach", {
@@ -2624,7 +2629,7 @@ describeEmbeddedPostgres("built-in agents", () => {
       resetAvailable: false,
     });
     expect((await instructionsSvc.readFile(reset.agent!, "AGENTS.md")).content).toContain("You are Reflection Coach");
-    const [resetRoutine] = await db.select().from(routines).where(eq(routines.companyId, companyId));
+    const [resetRoutine] = await db.select().from(routines).where(and(eq(routines.companyId, companyId), ne(routines.originId, "assistant:weekly-update")));
     expect(resetRoutine?.title).toBe("Review recent agent trajectories for coaching proposals");
   });
 });

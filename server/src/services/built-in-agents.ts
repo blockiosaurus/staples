@@ -13,7 +13,7 @@ import { readPaperclipSkillSyncPreference, writePaperclipSkillSyncPreference } f
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { activityLog, agents, builtInManagedResources, companies, heartbeatRuns, issueThreadInteractions, issues, routines, routineTriggers } from "@paperclipai/db";
-import { ASSISTANT_BUILT_IN_AGENT_KEY, syncRoutineVariablesWithTemplate } from "@paperclipai/shared";
+import { ASSISTANT_BUILT_IN_AGENT_KEY, ASSISTANT_WEEKLY_UPDATE_ROUTINE_KEY, isAssistantAgent, syncRoutineVariablesWithTemplate } from "@paperclipai/shared";
 import type { Agent, Approval, CompanySkill, PermissionKey, Routine, RoutineTrigger, RoutineVariable } from "@paperclipai/shared";
 import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
@@ -33,6 +33,8 @@ import {
 } from "../lib/built-in-agent-metadata.js";
 import { companySkillService } from "./company-skills.js";
 import { routineService } from "./routines.js";
+import { companyPersonTimezone } from "./assistant-weekly-update.js";
+import { PERSON_TIMEZONE } from "./assistant-weekly-update-origin.js";
 import { accessService } from "./access.js";
 import { listAdapterModels } from "../adapters/registry.js";
 import {
@@ -154,6 +156,7 @@ export interface BuiltInAgentBundleDefinition {
       label: string | null;
       enabled: boolean;
       cronExpression: string;
+      /** An IANA zone, or "person": the person's zone for the company when known, otherwise UTC. */
       timezone: string;
     }>;
   };
@@ -323,6 +326,17 @@ const FALLBACK_ASSISTANT_INSTRUCTIONS = [
 
 const ASSISTANT_INSTRUCTIONS = readBuiltInText("assistant/AGENTS.md", FALLBACK_ASSISTANT_INSTRUCTIONS);
 
+const FALLBACK_ASSISTANT_WEEKLY_UPDATE_ROUTINE = [
+  "Write this week's update for the company and save it.",
+  "",
+  "Follow the `staples-weekly-update` skill: read the briefing, finished tasks and spend with your read tools, write what shipped, what's blocked and what you need from the person, spend against budget, and next week, then save it with `staples_save_weekly_update`. Do not change anything else.",
+  "",
+].join("\n");
+const ASSISTANT_WEEKLY_UPDATE_ROUTINE = readBuiltInText(
+  "assistant/routines/weekly-update.md",
+  FALLBACK_ASSISTANT_WEEKLY_UPDATE_ROUTINE,
+);
+
 const SUMMARIZER_INSTRUCTIONS = readBuiltInText("summarizer/AGENTS.md", FALLBACK_SUMMARIZER_INSTRUCTIONS);
 const SUMMARIZER_ROUTINE = readBuiltInText(
   "summarizer/routines/refresh-stale-summaries.md",
@@ -349,6 +363,7 @@ export const ASSISTANT_DEFAULT_SKILL_KEYS = [
   "paperclipai/paperclip/staples-plan",
   "paperclipai/paperclip/staples-questionnaire",
   "paperclipai/paperclip/staples-wayfinder",
+  "paperclipai/paperclip/staples-weekly-update",
 ] as const;
 
 const DEFINITIONS = validateBuiltInAgentDefinitions([
@@ -374,12 +389,33 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
     inheritCompanyAdapterType: true,
     defaultSkillKeys: ASSISTANT_DEFAULT_SKILL_KEYS,
     bundle: {
-      stockVersion: "2026-10-12b",
+      stockVersion: "2026-10-13",
       instructions: {
         entryFile: "AGENTS.md",
         files: {
           "AGENTS.md": ASSISTANT_INSTRUCTIONS,
         },
+      },
+      // Mondays at 9:00 in the person's zone. The scheduler skips it while the
+      // company has no agents besides the Assistant.
+      routine: {
+        routineKey: ASSISTANT_WEEKLY_UPDATE_ROUTINE_KEY,
+        title: "Weekly update",
+        description: ASSISTANT_WEEKLY_UPDATE_ROUTINE,
+        status: "active",
+        priority: "low",
+        concurrencyPolicy: "skip_if_active",
+        catchUpPolicy: "skip_missed",
+        variables: [],
+        triggers: [
+          {
+            kind: "schedule",
+            label: "Mondays at 9:00",
+            enabled: true,
+            cronExpression: "0 9 * * 1",
+            timezone: PERSON_TIMEZONE,
+          },
+        ],
       },
     },
   },
@@ -1488,6 +1524,11 @@ export function builtInAgentService(db: Db) {
     }));
   }
 
+  /** A stock trigger in the person's zone resolves per company, so its zone is not part of the stock defaults. */
+  function routineUsesPersonZone(routine: Pick<NonNullable<BuiltInAgentBundleDefinition["routine"]>, "triggers">) {
+    return routine.triggers.some((trigger) => trigger.timezone === PERSON_TIMEZONE);
+  }
+
   function normalizeRoutineTriggersForHash(
     triggers: Array<{
       kind: string;
@@ -1495,6 +1536,7 @@ export function builtInAgentService(db: Db) {
       cronExpression?: string | null;
       timezone?: string | null;
     }>,
+    personZone = false,
   ) {
     return triggers
       .filter((trigger) => trigger.kind === "schedule")
@@ -1502,7 +1544,7 @@ export function builtInAgentService(db: Db) {
         kind: "schedule",
         label: trigger.label ?? null,
         cronExpression: trigger.cronExpression ?? "",
-        timezone: trigger.timezone ?? "UTC",
+        timezone: personZone ? PERSON_TIMEZONE : trigger.timezone ?? "UTC",
       }))
       .sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
   }
@@ -1518,6 +1560,7 @@ export function builtInAgentService(db: Db) {
       cronExpression?: string | null;
       timezone?: string | null;
     }>,
+    personZone = false,
   ) {
     return stockHash({
       title: routine.title,
@@ -1526,7 +1569,7 @@ export function builtInAgentService(db: Db) {
       concurrencyPolicy: routine.concurrencyPolicy,
       catchUpPolicy: routine.catchUpPolicy,
       variables: normalizeRoutineVariablesForHash(routine),
-      triggers: normalizeRoutineTriggersForHash(triggers),
+      triggers: normalizeRoutineTriggersForHash(triggers, personZone),
     });
   }
 
@@ -1628,26 +1671,26 @@ export function builtInAgentService(db: Db) {
   async function createOrResetRoutine(agent: Agent, definition: BuiltInAgentDefinition, existing: Routine | null, mode: "reconcile" | "reset") {
     const routine = definition.bundle!.routine!;
     const actor = { agentId: null, userId: "built-in-bundles" };
-    const nextRoutine = existing
+    // The Assistant can hold only its own weekly update routine, which is
+    // recognized by its origin: create it unassigned, mark the origin, then assign.
+    const assignAfterOrigin = isAssistantAgent(agent);
+    const fields = {
+      title: routine.title,
+      description: routine.description,
+      priority: routine.priority,
+      concurrencyPolicy: routine.concurrencyPolicy,
+      catchUpPolicy: routine.catchUpPolicy,
+      variables: routine.variables,
+    };
+    let nextRoutine = existing
       ? await routineSvc.update(existing.id, {
-        title: routine.title,
-        description: routine.description,
-        assigneeAgentId: agent.id,
-        priority: routine.priority,
-        status: routine.status,
-        concurrencyPolicy: routine.concurrencyPolicy,
-        catchUpPolicy: routine.catchUpPolicy,
-        variables: routine.variables,
+        ...fields,
+        ...(assignAfterOrigin ? {} : { assigneeAgentId: agent.id, status: routine.status }),
       }, actor)
       : await routineSvc.create(agent.companyId, {
-        title: routine.title,
-        description: routine.description,
-        assigneeAgentId: agent.id,
-        priority: routine.priority,
-        status: routine.status,
-        concurrencyPolicy: routine.concurrencyPolicy,
-        catchUpPolicy: routine.catchUpPolicy,
-        variables: routine.variables,
+        ...fields,
+        assigneeAgentId: assignAfterOrigin ? null : agent.id,
+        status: assignAfterOrigin ? "paused" : routine.status,
       }, actor);
     if (!nextRoutine) throw notFound("Built-in routine not found");
     await db
@@ -1658,6 +1701,14 @@ export function builtInAgentService(db: Db) {
         updatedAt: new Date(),
       })
       .where(eq(routines.id, nextRoutine.id));
+    if (assignAfterOrigin) {
+      try {
+        nextRoutine = await routineSvc.update(nextRoutine.id, { assigneeAgentId: agent.id, status: routine.status }, actor) ?? nextRoutine;
+      } catch (error) {
+        // Left unassigned and paused; the next reconcile assigns it.
+        logger.warn({ err: error, agentId: agent.id, routineId: nextRoutine.id }, "could not assign the built-in routine yet");
+      }
+    }
 
     const currentTriggers = await db
       .select()
@@ -1666,12 +1717,18 @@ export function builtInAgentService(db: Db) {
       .then((rows) => rows as RoutineTrigger[]);
     const firstSchedule = currentTriggers.find((trigger) => trigger.kind === "schedule");
     const stockTrigger = routine.triggers[0];
+    // "person": keep a zone already chosen, else the person's zone, else UTC.
+    const timezone = stockTrigger?.timezone !== PERSON_TIMEZONE
+      ? stockTrigger?.timezone
+      : mode === "reconcile" && firstSchedule?.timezone && firstSchedule.timezone !== "UTC"
+        ? firstSchedule.timezone
+        : (await companyPersonTimezone(db, agent.companyId)) ?? "UTC";
     if (stockTrigger && firstSchedule) {
       await routineSvc.updateTrigger(firstSchedule.id, {
         label: stockTrigger.label,
         enabled: stockTrigger.enabled,
         cronExpression: stockTrigger.cronExpression,
-        timezone: stockTrigger.timezone,
+        timezone,
       }, actor);
     } else if (stockTrigger) {
       await routineSvc.createTrigger(nextRoutine.id, {
@@ -1679,7 +1736,7 @@ export function builtInAgentService(db: Db) {
         label: stockTrigger.label,
         enabled: stockTrigger.enabled,
         cronExpression: stockTrigger.cronExpression,
-        timezone: stockTrigger.timezone,
+        timezone,
       }, actor);
     }
     await logActivity(db, {
@@ -1700,7 +1757,8 @@ export function builtInAgentService(db: Db) {
 
   async function materializeRoutine(agent: Agent, definition: BuiltInAgentDefinition, mode: "reconcile" | "reset") {
     const bundle = definition.bundle as BuiltInAgentBundleDefinition & { routine: NonNullable<BuiltInAgentBundleDefinition["routine"]> };
-    const stock = routineDefaultsHash(bundle.routine, bundle.routine.triggers);
+    const personZone = routineUsesPersonZone(bundle.routine);
+    const stock = routineDefaultsHash(bundle.routine, bundle.routine.triggers, personZone);
     const { binding, routine, triggers } = await getRoutineByBinding(agent.companyId, definition);
     const currentHash = routine ? routineDefaultsHash({
       title: routine.title,
@@ -1709,7 +1767,7 @@ export function builtInAgentService(db: Db) {
       concurrencyPolicy: routine.concurrencyPolicy as "always_enqueue" | "coalesce_if_active" | "skip_if_active",
       catchUpPolicy: routine.catchUpPolicy as "enqueue_missed_with_cap" | "skip_missed",
       variables: routine.variables ?? [],
-    }, triggers) : null;
+    }, triggers, personZone) : null;
     const currentState = stockState({
       resourceKind: "routine",
       resourceKey: bundle.routine.routineKey,
@@ -1719,10 +1777,13 @@ export function builtInAgentService(db: Db) {
       currentHash,
       bindingStockHash: binding?.stockHash ?? null,
     });
+    // The Assistant's routine is assigned after it is created; finish an assignment that failed earlier.
+    const unassignedAssistantRoutine = Boolean(routine && !routine.assigneeAgentId && isAssistantAgent(agent));
     const shouldWrite =
       mode === "reset"
       || currentState.stockStatus === "missing"
-      || currentState.stockStatus === "stock_update_available";
+      || currentState.stockStatus === "stock_update_available"
+      || unassignedAssistantRoutine;
     const nextRoutine = shouldWrite
       ? await createOrResetRoutine(agent, definition, routine, mode)
       : routine!;
@@ -1802,6 +1863,7 @@ export function builtInAgentService(db: Db) {
     if (bundle.routine) {
       const { routine, triggers } = await getRoutineByBinding(companyId, definition);
       const proposal = await pendingUpdateProposal(agent);
+      const personZone = routineUsesPersonZone(bundle.routine);
       const routineHash = routine ? routineDefaultsHash({
         title: routine.title,
         description: routine.description ?? "",
@@ -1809,13 +1871,13 @@ export function builtInAgentService(db: Db) {
         concurrencyPolicy: routine.concurrencyPolicy as "always_enqueue" | "coalesce_if_active" | "skip_if_active",
         catchUpPolicy: routine.catchUpPolicy as "enqueue_missed_with_cap" | "skip_missed",
         variables: routine.variables ?? [],
-      }, triggers) : null;
+      }, triggers, personZone) : null;
       states.push(withRoutineControls(stockState({
         resourceKind: "routine",
         resourceKey: bundle.routine.routineKey,
         resourceId: routine?.id ?? null,
         stockVersion: bundle.stockVersion,
-        latestStockHash: routineDefaultsHash(bundle.routine, bundle.routine.triggers),
+        latestStockHash: routineDefaultsHash(bundle.routine, bundle.routine.triggers, personZone),
         currentHash: routineHash,
         bindingStockHash: routineBinding?.stockHash ?? null,
       }), { routine, triggers, proposal }));

@@ -2,7 +2,7 @@ import type { Request } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { agents, approvals, authUsers, companies, companyMemberships, issueThreadInteractions, issues, type Db } from "@paperclipai/db";
+import { agents, approvals, authUsers, companies, companyMemberships, issueThreadInteractions, issues, routines, type Db } from "@paperclipai/db";
 import { COMPANY_BRIEF_MAX_CHARS, PROPOSED_ACTION_BODY_MAX_BYTES, PROPOSED_ACTION_CATEGORIES, PROPOSED_BRIEF_BODY_MAX_BYTES, PROPOSED_PLAN_BODY_MAX_BYTES, applyPlanSchema, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, createIssueThreadInteractionSchema, isAssistantAgent, paperclipQuestionSchema, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
@@ -15,6 +15,8 @@ import { APPROVAL_DECISION_PATH, PROPOSABLE_AGENT_ROLES, ProposedActionError, pi
 import { assistantHireDefaults, planHireInheritsConnection } from "./plans.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
 import { logActivity } from "./activity-log.js";
+import { WEEKLY_UPDATE_BODY_MAX_CHARS, saveWeeklyUpdate } from "./assistant-weekly-update.js";
+import { isAssistantWeeklyUpdateRoutine } from "./assistant-weekly-update-origin.js";
 import { McpApiError, McpCapabilityError, object, pick, rows, taskFields, pathId, type ApiDispatch, type Capability } from "./public-mcp/contracts.js";
 import type { McpPrincipal } from "./public-mcp/oauth.js";
 
@@ -30,8 +32,16 @@ export const ASSISTANT_READ_TOOL_NAMES = [
 /** Low-risk writes. Governed actions (finish, block, delete, configure, approvals) are not exposed. */
 export const ASSISTANT_WRITE_TOOL_NAMES = [
   "paperclip_create_task", "paperclip_add_comment", "paperclip_update_task", "staples_answer_question", "staples_pin_surface",
-  "staples_propose_action", "staples_ask_questions", "staples_propose_plan",
+  "staples_propose_action", "staples_ask_questions", "staples_propose_plan", "staples_save_weekly_update",
 ] as const;
+
+export const SAVE_WEEKLY_UPDATE_TOOL = "staples_save_weekly_update";
+/**
+ * A weekly update run (the Assistant's own weekly update routine task) gets the
+ * read tools and this one write, nothing else: no person is in the loop to
+ * confirm anything, so every other write stays out of reach.
+ */
+export const ASSISTANT_WEEKLY_UPDATE_RUN_WRITE_TOOL_NAMES = [SAVE_WEEKLY_UPDATE_TOOL] as const;
 
 /** `paperclip_update_task` may only touch these fields. */
 export const ASSISTANT_UPDATE_TASK_FIELDS = [
@@ -64,6 +74,12 @@ export type AssistantToolContext = {
   userId: string;
   /** The run's task (its Assistant conversation), derived from the run row, never from tool input. */
   issueId: string;
+  /**
+   * "conversation" (default): a person's chat, with that person's authority.
+   * "weekly_update": the Assistant's own weekly update routine task; reads as
+   * the routine's responsible person, and only staples_save_weekly_update writes.
+   */
+  mode?: "conversation" | "weekly_update";
   membership: { companyId: string; membershipRole: string | null; status: string };
   company: { id: string; name: string; issuePrefix: string; status: string };
   canWrite: boolean;
@@ -91,27 +107,87 @@ export async function assistantToolContext(db: Db, actor: Request["actor"]): Pro
   if (!userId) throw forbidden("Assistant tools require a responsible person");
   // The person's authority is lent only inside their own Assistant conversation.
   if (!issueId) throw forbidden("Assistant tools are only available in the person's Assistant conversation");
-  const [issue] = await db.select({ conversationAgentId: issues.conversationAgentId, conversationUserId: issues.conversationUserId, generation: issues.conversationSessionGeneration })
-    .from(issues).where(and(eq(issues.id, issueId), eq(issues.companyId, actor.companyId)));
+  const [issue] = await db.select({
+    conversationAgentId: issues.conversationAgentId, conversationUserId: issues.conversationUserId, generation: issues.conversationSessionGeneration,
+    originKind: issues.originKind, originId: issues.originId, assigneeAgentId: issues.assigneeAgentId, status: issues.status,
+  }).from(issues).where(and(eq(issues.id, issueId), eq(issues.companyId, actor.companyId)));
   if (!issue) throw forbidden("Run task is unavailable");
+  if (!issue.conversationAgentId && await isOwnWeeklyUpdateTask(db, actor.companyId, actor.agentId, issue)) {
+    return weeklyUpdateContext(db, { companyId: actor.companyId, agentId: actor.agentId, runId: run.id, issueId, userId });
+  }
   if (issue.conversationAgentId !== actor.agentId || issue.conversationUserId !== userId) {
     throw forbidden("Assistant tools are only available in the person's Assistant conversation");
   }
   if (Number(snapshot.conversationSessionGeneration ?? 0) !== issue.generation) {
     throw forbidden("Conversation session has changed");
   }
-  const [membership] = await db.select({ companyId: companyMemberships.companyId, membershipRole: companyMemberships.membershipRole, status: companyMemberships.status })
-    .from(companyMemberships).where(and(
-      eq(companyMemberships.companyId, actor.companyId), eq(companyMemberships.principalType, "user"),
-      eq(companyMemberships.principalId, userId), eq(companyMemberships.status, "active"),
-    ));
+  const membership = await activeMembership(db, actor.companyId, userId);
   if (!membership) throw forbidden("The responsible person is not an active member of this company");
-  const [company] = await db.select({ id: companies.id, name: companies.name, issuePrefix: companies.issuePrefix, status: companies.status })
-    .from(companies).where(eq(companies.id, actor.companyId));
-  if (!company || company.status === "archived") throw forbidden("Company is unavailable");
+  const company = await liveCompany(db, actor.companyId);
   return {
     companyId: actor.companyId, agentId: actor.agentId, runId: run.id, userId, issueId, membership, company,
-    canWrite: membership.membershipRole !== "viewer",
+    canWrite: membership.membershipRole !== "viewer", mode: "conversation",
+  };
+}
+
+async function activeMembership(db: Db, companyId: string, userId: string) {
+  const [membership] = await db.select({ companyId: companyMemberships.companyId, membershipRole: companyMemberships.membershipRole, status: companyMemberships.status })
+    .from(companyMemberships).where(and(
+      eq(companyMemberships.companyId, companyId), eq(companyMemberships.principalType, "user"),
+      eq(companyMemberships.principalId, userId), eq(companyMemberships.status, "active"),
+    ));
+  return membership ?? null;
+}
+
+async function liveCompany(db: Db, companyId: string) {
+  const [company] = await db.select({ id: companies.id, name: companies.name, issuePrefix: companies.issuePrefix, status: companies.status })
+    .from(companies).where(eq(companies.id, companyId));
+  if (!company || company.status === "archived") throw forbidden("Company is unavailable");
+  return company;
+}
+
+/** The run's task is an open execution task of the Assistant's own weekly update routine, assigned to it. */
+async function isOwnWeeklyUpdateTask(
+  db: Db, companyId: string, agentId: string,
+  issue: { originKind: string | null; originId: string | null; assigneeAgentId: string | null; status: string },
+) {
+  if (issue.originKind !== "routine_execution" || !issue.originId || issue.assigneeAgentId !== agentId) return false;
+  if (issue.status === "done" || issue.status === "cancelled") return false;
+  const [routine] = await db.select({ originKind: routines.originKind, originId: routines.originId, assigneeAgentId: routines.assigneeAgentId })
+    .from(routines).where(and(eq(routines.id, issue.originId), eq(routines.companyId, companyId)));
+  return isAssistantWeeklyUpdateRoutine(routine) && routine!.assigneeAgentId === agentId;
+}
+
+/**
+ * Reads run as the run's responsible person when they are an active member,
+ * else the company's default responsible person (the routine has no chat
+ * owner). Writes are limited to the weekly update document regardless of role.
+ */
+async function weeklyUpdateContext(
+  db: Db, input: { companyId: string; agentId: string; runId: string; issueId: string; userId: string | null },
+): Promise<AssistantToolContext> {
+  let userId = input.userId;
+  let membership = userId ? await activeMembership(db, input.companyId, userId) : null;
+  if (!membership) {
+    const [company] = await db.select({ defaultResponsibleUserId: companies.defaultResponsibleUserId })
+      .from(companies).where(eq(companies.id, input.companyId));
+    const [owner] = await db.select({ userId: companyMemberships.principalId }).from(companyMemberships).where(and(
+      eq(companyMemberships.companyId, input.companyId), eq(companyMemberships.principalType, "user"),
+      eq(companyMemberships.status, "active"), eq(companyMemberships.membershipRole, "owner"),
+    )).orderBy(companyMemberships.createdAt).limit(1);
+    userId = company?.defaultResponsibleUserId ?? owner?.userId ?? null;
+    membership = userId ? await activeMembership(db, input.companyId, userId) : null;
+    if (!membership && owner?.userId && owner.userId !== userId) {
+      userId = owner.userId;
+      membership = await activeMembership(db, input.companyId, userId);
+    }
+  }
+  if (!userId || !membership) throw forbidden("The weekly update needs an active member of this company to read as");
+  const company = await liveCompany(db, input.companyId);
+  return {
+    companyId: input.companyId, agentId: input.agentId, runId: input.runId, userId, issueId: input.issueId,
+    // Reads only as the person: the one write is checked by name, not by role.
+    membership: { ...membership, membershipRole: "viewer" }, company, canWrite: false, mode: "weekly_update",
   };
 }
 
@@ -356,6 +432,20 @@ function assistantCapabilities(db: Db): Capability[] {
         summary: z.string().trim().min(1).max(500).describe("One sentence shown on the card, in plain language."),
       }).strict(),
       // Dispatched in createAssistantTools: it needs the run's conversation, not just the principal.
+      run: async () => { throw new McpCapabilityError("Tool is unavailable to the Assistant."); },
+    },
+    {
+      name: SAVE_WEEKLY_UPDATE_TOOL, write: true,
+      description: [
+        "Save this week's update for the company: what shipped, what's blocked and what you need from the person, spend against budget, and next week, as Markdown (follow the staples-weekly-update skill).",
+        "It is saved as the document \"Weekly update — <date>\" on the company's \"Weekly updates\" task, which the server creates and owns; you cannot choose another task or key. Saving again the same day replaces that day's update.",
+        "Returns the task, the document key, an href to share, and timezone/timezoneKnown (when false, dates use UTC; say so in the update).",
+      ].join(" "),
+      schema: z.object({
+        ...companyField,
+        body: z.string().trim().min(1).max(WEEKLY_UPDATE_BODY_MAX_CHARS).describe("The update as Markdown, without a title."),
+      }).strict(),
+      // Dispatched in createAssistantTools: it needs the run's identity, not just the principal.
       run: async () => { throw new McpCapabilityError("Tool is unavailable to the Assistant."); },
     },
     {
@@ -615,6 +705,32 @@ async function askQuestions(db: Db, context: AssistantToolContext, args: Record<
   };
 }
 
+/**
+ * The Assistant's one write outside a person's confirmation: its own weekly
+ * update document. The target task and key are resolved by the server; in a
+ * weekly update run the routine task is closed once the update is saved.
+ */
+async function saveWeeklyUpdateTool(db: Db, context: AssistantToolContext, args: Record<string, unknown>) {
+  try {
+    const saved = await saveWeeklyUpdate(db, {
+      companyId: context.companyId, agentId: context.agentId, runId: context.runId, body: String(args.body ?? ""),
+      executionIssueId: context.mode === "weekly_update" ? context.issueId : null,
+    });
+    return {
+      saved: { taskId: saved.issueId, taskIdentifier: saved.issueIdentifier, documentId: saved.documentId, key: saved.key, title: saved.title },
+      href: `/${context.company.issuePrefix}${saved.href}`,
+      timezone: saved.timezone, timezoneKnown: saved.timezoneKnown,
+      next: context.mode === "weekly_update"
+        ? "Saved, and the routine task is closed. End your run."
+        : "Saved. Tell the person in one or two lines, with the link.",
+    };
+  } catch (error) {
+    if (error instanceof McpCapabilityError) throw error;
+    const message = error instanceof Error ? error.message : "";
+    throw new McpCapabilityError(message.startsWith("The weekly update") ? message : "The weekly update could not be saved. Try again.");
+  }
+}
+
 function exposedSchema(schema: Capability["schema"]) {
   // companyId is authority, not input: the run's company is always used.
   return "companyId" in schema.shape ? schema.omit({ companyId: true }) : schema;
@@ -639,9 +755,11 @@ export function createAssistantTools(db: Db, options: { dispatch: ApiDispatch; o
   return {
     isWriteTool: (name: string) => writeNames.has(name),
     isKnownTool: (name: string) => byName.has(name),
-    /** Viewers see read tools only. */
-    definitions(canWrite: boolean) {
-      const names: readonly string[] = canWrite ? [...ASSISTANT_READ_TOOL_NAMES, ...ASSISTANT_WRITE_TOOL_NAMES] : ASSISTANT_READ_TOOL_NAMES;
+    /** Viewers see read tools only; a weekly update run sees the read tools and the weekly update save. */
+    definitions(canWrite: boolean, mode: AssistantToolContext["mode"] = "conversation") {
+      const names: readonly string[] = mode === "weekly_update"
+        ? [...ASSISTANT_READ_TOOL_NAMES, ...ASSISTANT_WEEKLY_UPDATE_RUN_WRITE_TOOL_NAMES]
+        : canWrite ? [...ASSISTANT_READ_TOOL_NAMES, ...ASSISTANT_WRITE_TOOL_NAMES] : ASSISTANT_READ_TOOL_NAMES;
       return names.map((name) => {
         const c = byName.get(name)!;
         return { name: c.name, description: c.description, inputSchema: z.toJSONSchema(exposedSchema(c.schema)) };
@@ -652,7 +770,11 @@ export function createAssistantTools(db: Db, options: { dispatch: ApiDispatch; o
       try {
         const c = byName.get(name);
         if (!c) throw new McpCapabilityError("Tool is unavailable to the Assistant.");
-        if (writeNames.has(name) && !context.canWrite) throw new McpCapabilityError("This person has read-only access.");
+        if (context.mode === "weekly_update") {
+          if (writeNames.has(name) && !(ASSISTANT_WEEKLY_UPDATE_RUN_WRITE_TOOL_NAMES as readonly string[]).includes(name)) {
+            throw new McpCapabilityError("A weekly update run can only read and save the weekly update.");
+          }
+        } else if (writeNames.has(name) && !context.canWrite) throw new McpCapabilityError("This person has read-only access.");
         const raw = { ...object(input) };
         if (raw.companyId !== undefined && raw.companyId !== context.companyId) throw new McpCapabilityError("Company does not match the Assistant's company.");
         if (name === "paperclip_update_task") {
@@ -677,6 +799,8 @@ export function createAssistantTools(db: Db, options: { dispatch: ApiDispatch; o
           })
           : name === ASK_QUESTIONS_TOOL
           ? await askQuestions(db, context, args)
+          : name === SAVE_WEEKLY_UPDATE_TOOL
+          ? await saveWeeklyUpdateTool(db, context, args)
           : await c.run(assistantPrincipal(context), args, options.dispatch, origin);
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
       } catch (error) {

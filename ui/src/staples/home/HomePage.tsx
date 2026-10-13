@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BriefingItem } from "@paperclipai/shared";
-import { RotateCw, Send } from "lucide-react";
+import { WEEKLY_UPDATE_NOW_PROMPT, weeklyUpdateDismissalKey, type BriefingItem } from "@paperclipai/shared";
+import { Newspaper, RotateCw, Send } from "lucide-react";
 import { ArtifactCard } from "@/components/artifacts/ArtifactCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,6 +11,7 @@ import { agentsApi } from "@/api/agents";
 import { artifactsApi } from "@/api/artifacts";
 import { briefingApi } from "@/api/briefing";
 import { budgetsApi } from "@/api/budgets";
+import { inboxDismissalsApi } from "@/api/inboxDismissals";
 import { issuesApi } from "@/api/issues";
 import { applyCompanyPrefix } from "@/lib/company-routes";
 import { queryKeys } from "@/lib/queryKeys";
@@ -19,6 +20,7 @@ import { useAskAssistant } from "@/staples/assistant/AssistantProvider";
 import { assistantUnavailableNotice } from "@/staples/assistant/unavailableNotice";
 import { BriefingCompactRow, BriefingRow, canAcceptInline } from "./BriefingRow";
 import { spendLineText } from "./spendLine";
+import { WeeklyUpdateCard } from "./WeeklyUpdateCard";
 
 export const BRIEFING_REFETCH_INTERVAL_MS = 30_000;
 /**
@@ -134,27 +136,42 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
 /** Same wording the Assistant composer uses when it can't take a message. */
 export const ASK_UNAVAILABLE_NOTICE = assistantUnavailableNotice("your message is in the box to send later.");
 
+/** What "Update me now" says when the Assistant can't take the request. */
+export const UPDATE_NOW_UNAVAILABLE_NOTICE = assistantUnavailableNotice("try Update me now again in a moment.");
+
 function AskComposer() {
   const askAssistant = useAskAssistant();
   const [text, setText] = useState("");
-  const [unavailable, setUnavailable] = useState(false);
+  const [unavailable, setUnavailable] = useState<string | null>(null);
   const trimmed = text.trim();
+  // Asks the Assistant for a weekly update right away, through the same ask path.
+  const updateNow = () => {
+    setUnavailable(askAssistant({ text: WEEKLY_UPDATE_NOW_PROMPT, send: true }) ? null : UPDATE_NOW_UNAVAILABLE_NOTICE);
+  };
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (!trimmed) return;
     // Clear only once the Assistant took the message; otherwise keep it here.
     if (askAssistant({ text: trimmed, send: true })) {
       setText("");
-      setUnavailable(false);
+      setUnavailable(null);
     } else {
-      setUnavailable(true);
+      setUnavailable(ASK_UNAVAILABLE_NOTICE);
     }
   };
   return (
-    <Section title="Ask the Assistant">
+    <Section
+      title="Ask the Assistant"
+      action={
+        <Button type="button" variant="ghost" size="xs" onClick={updateNow}>
+          <Newspaper aria-hidden="true" />
+          Update me now
+        </Button>
+      }
+    >
       {unavailable ? (
         <p role="alert" className="text-sm text-destructive">
-          {ASK_UNAVAILABLE_NOTICE}
+          {unavailable}
         </p>
       ) : null}
       <form className="flex items-end gap-2" onSubmit={submit}>
@@ -276,6 +293,25 @@ export function HomePage() {
     },
   });
 
+  // The weekly update card hides as soon as it is dismissed; a failure brings it back with the error.
+  const [dismissedUpdateId, setDismissedUpdateId] = useState<string | null>(null);
+  const [dismissError, setDismissError] = useState<string | null>(null);
+  const dismissUpdate = useMutation({
+    mutationFn: (documentId: string) => inboxDismissalsApi.dismiss(companyId, weeklyUpdateDismissalKey(documentId)),
+    onMutate: (documentId) => {
+      setDismissedUpdateId(documentId);
+      setDismissError(null);
+    },
+    onError: (error) => {
+      setDismissedUpdateId(null);
+      const reason = error instanceof Error && error.message ? error.message : "Something went wrong.";
+      setDismissError(`Couldn't dismiss the update: ${reason}`);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.briefing(companyId) });
+    },
+  });
+
   const askAbout = useCallback(
     (item: BriefingItem) =>
       askAssistant({
@@ -314,6 +350,9 @@ export function HomePage() {
   const hiddenCount = briefing.needsYou.length - needsYou.length;
   const needsYouCount = Math.max(0, briefing.counts.needsYou - hiddenCount);
   const summary = `${needsYouSummary(needsYouCount)} · ${inProgressSummary(briefing.counts.inProgress)}`;
+  const weeklyUpdate = briefing.weeklyUpdate && briefing.weeklyUpdate.documentId !== dismissedUpdateId
+    ? briefing.weeklyUpdate
+    : null;
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4">
@@ -343,6 +382,15 @@ export function HomePage() {
           </div>
         ) : null}
       </header>
+
+      {weeklyUpdate ? (
+        <WeeklyUpdateCard
+          update={weeklyUpdate}
+          dismissing={dismissUpdate.isPending}
+          error={dismissError}
+          onDismiss={() => dismissUpdate.mutate(weeklyUpdate.documentId)}
+        />
+      ) : null}
 
       <Section title="Needs you">
         {needsYou.length === 0 ? (

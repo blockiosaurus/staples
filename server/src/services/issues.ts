@@ -9958,6 +9958,8 @@ export function issueService(db: Db) {
         await assertAssignableAgent(db, companyId, data.assigneeAgentId, {
           kind: "work",
           conversationAgentId: data.conversationAgentId ?? null,
+          // A routine's execution task: the Assistant may hold its own weekly update routine's tasks.
+          routineId: data.originKind === "routine_execution" && data.originId ? data.originId : null,
         });
       }
       if (data.assigneeUserId) {
@@ -11050,7 +11052,11 @@ export function issueService(db: Db) {
           dbOrTx as Db,
           existing.companyId,
           nextAssigneeAgentId,
-          { kind: "work", conversationAgentId: existing.conversationAgentId },
+          {
+            kind: "work",
+            conversationAgentId: existing.conversationAgentId,
+            routineId: existing.originKind === "routine_execution" ? existing.originId : null,
+          },
         );
       }
       if (issueData.assigneeUserId) {
@@ -11723,7 +11729,12 @@ export function issueService(db: Db) {
       checkoutRunId: string | null,
     ) => {
       const issueCompany = await db
-        .select({ companyId: issues.companyId, conversationAgentId: issues.conversationAgentId })
+        .select({
+          companyId: issues.companyId,
+          conversationAgentId: issues.conversationAgentId,
+          originKind: issues.originKind,
+          originId: issues.originId,
+        })
         .from(issues)
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
@@ -11731,6 +11742,7 @@ export function issueService(db: Db) {
       await assertAssignableAgent(db, issueCompany.companyId, agentId, {
         kind: "work",
         conversationAgentId: issueCompany.conversationAgentId,
+        routineId: issueCompany.originKind === "routine_execution" ? issueCompany.originId : null,
       });
 
       const now = new Date();

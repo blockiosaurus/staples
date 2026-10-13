@@ -366,6 +366,8 @@ export const ISSUE_ORIGIN_KINDS = [
   TASK_WATCHDOG_PRODUCT_BUG_ORIGIN_KIND,
   ONBOARDING_FIRST_TASK_ORIGIN_KIND,
   "chat_channel",
+  // The company's single "Weekly updates" task; the Assistant saves its weekly update documents there.
+  "assistant_weekly_updates",
 ] as const;
 export type BuiltInIssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
 export type PluginIssueOriginKind = `plugin:${string}`;

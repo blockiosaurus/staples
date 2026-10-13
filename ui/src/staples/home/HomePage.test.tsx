@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Briefing, BriefingItem } from "@paperclipai/shared";
+import { WEEKLY_UPDATE_NOW_PROMPT, type Briefing, type BriefingItem, type BriefingWeeklyUpdate } from "@paperclipai/shared";
 import { BreadcrumbProvider, useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { ApiError } from "@/api/client";
 import { queryKeys } from "@/lib/queryKeys";
@@ -14,6 +14,7 @@ import {
   BRIEFING_REFETCH_INTERVAL_MS,
   briefingRefetchInterval,
   HomePage,
+  UPDATE_NOW_UNAVAILABLE_NOTICE,
 } from "./HomePage";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,7 +30,9 @@ const mocks = vi.hoisted(() => ({
   clearError: vi.fn(),
   resolveIncident: vi.fn(),
   listArtifacts: vi.fn(),
+  dismiss: vi.fn(),
 }));
+vi.mock("@/api/inboxDismissals", () => ({ inboxDismissalsApi: { dismiss: mocks.dismiss } }));
 vi.mock("@/api/artifacts", () => ({ artifactsApi: { list: mocks.listArtifacts } }));
 
 vi.mock("@/api/agents", () => ({
@@ -109,6 +112,7 @@ function fixture(overrides: Partial<Briefing> = {}): Briefing {
     doneRecently,
     counts: { needsYou: needsYou.length, inProgress: inProgress.length, doneRecently: doneRecently.length },
     spend: { monthSpendCents: 1200, companyBudgetCents: 9000, hosted: null },
+    weeklyUpdate: null,
     generatedAt: NOW,
     ...overrides,
   };
@@ -700,6 +704,68 @@ describe("HomePage", () => {
     await click(send);
     expect(mocks.askAssistant).toHaveBeenCalledWith({ text: "What should I focus on today?", send: true });
     expect(textarea.value).toBe("");
+  });
+
+  const WEEKLY_UPDATE: BriefingWeeklyUpdate = {
+    documentId: "doc-weekly-1",
+    title: "Weekly update — Oct 12, 2026",
+    excerpt: "Shipped the pricing page and the signup fix. Riley is blocked on the brand colors.",
+    href: "/issues/PAP-7#document-weekly-update-2026-10-12",
+    updatedAt: NOW,
+  };
+
+  it("shows the latest weekly update at the top with its date, first lines and a Read link", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ weeklyUpdate: WEEKLY_UPDATE }));
+    await render();
+    const card = container.querySelector<HTMLElement>('[data-testid="weekly-update-card"]');
+    expect(card).not.toBeNull();
+    expect(card!.textContent).toContain("Weekly update — Oct 12, 2026");
+    expect(card!.textContent).toContain("Shipped the pricing page");
+    const read = [...card!.querySelectorAll("a")].find((link) => link.textContent === "Read");
+    expect(read?.getAttribute("href")).toBe("/PAP/issues/PAP-7#document-weekly-update-2026-10-12");
+    // At the top: before Needs you.
+    const needs = section("Needs you")!;
+    expect(card!.compareDocumentPosition(needs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows no weekly update card when there is none", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture());
+    await render();
+    expect(container.querySelector('[data-testid="weekly-update-card"]')).toBeNull();
+  });
+
+  it("dismisses the weekly update for this person and hides the card", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ weeklyUpdate: WEEKLY_UPDATE }));
+    mocks.dismiss.mockImplementation(async () => {
+      mocks.getBriefing.mockResolvedValue(fixture({ weeklyUpdate: null }));
+      return {};
+    });
+    await render();
+    await click(container.querySelector<HTMLElement>('button[aria-label="Dismiss weekly update"]'));
+    expect(mocks.dismiss).toHaveBeenCalledWith("company-1", "weekly-update:doc-weekly-1");
+    expect(container.querySelector('[data-testid="weekly-update-card"]')).toBeNull();
+  });
+
+  it("brings the card back with the error when dismissing fails", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ weeklyUpdate: WEEKLY_UPDATE }));
+    mocks.dismiss.mockRejectedValue(new Error("Server unavailable"));
+    await render();
+    await click(container.querySelector<HTMLElement>('button[aria-label="Dismiss weekly update"]'));
+    const card = container.querySelector<HTMLElement>('[data-testid="weekly-update-card"]');
+    expect(card?.querySelector('[role="alert"]')?.textContent).toBe("Couldn't dismiss the update: Server unavailable");
+  });
+
+  it("asks the Assistant for a weekly update now through the ask path", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture());
+    mocks.askAssistant.mockReturnValue(true);
+    await render();
+    await click(buttonIn(section("Ask the Assistant"), "Update me now"));
+    expect(mocks.askAssistant).toHaveBeenCalledWith({ text: WEEKLY_UPDATE_NOW_PROMPT, send: true });
+    expect(section("Ask the Assistant")?.querySelector('[role="alert"]')).toBeNull();
+
+    mocks.askAssistant.mockReturnValue(false);
+    await click(buttonIn(section("Ask the Assistant"), "Update me now"));
+    expect(section("Ask the Assistant")?.querySelector('[role="alert"]')?.textContent).toBe(UPDATE_NOW_UNAVAILABLE_NOTICE);
   });
 
   it("shows a retryable error when the briefing fails to load", async () => {

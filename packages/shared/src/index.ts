@@ -218,6 +218,7 @@ export type {
   BriefingRecommendation,
   BriefingRecommendationAnswer,
   BriefingSection,
+  BriefingWeeklyUpdate,
 } from "./types/briefing.js";
 export {
   BRIEFING_DONE_RECENTLY_LIMIT,
@@ -226,6 +227,7 @@ export {
   BRIEFING_IN_PROGRESS_LIMIT,
   BRIEFING_NEEDS_YOU_LIMIT,
   BRIEFING_REASON_MAX,
+  BRIEFING_WEEKLY_UPDATE_EXCERPT_MAX,
 } from "./types/briefing.js";
 export {
   askUserQuestionsPayloadToQuestionSet,
@@ -2951,7 +2953,17 @@ export * from "./customer-success.js";
 export type { GitHubAppOwner, GitHubAppRegistrationInput, GitHubAppCloudState, GitHubAppWizardState } from "./types/github-app-setup.js";
 export * from "./decision-models.js";
 export { updatePrimaryAgentSchema, type UpdatePrimaryAgent, type PrimaryAgentPreference } from "./primary-agent.js";
-export { ASSISTANT_BUILT_IN_AGENT_KEY, isAssistantAgent } from "./assistant-agent.js";
+export {
+  ASSISTANT_BUILT_IN_AGENT_KEY,
+  ASSISTANT_WEEKLY_UPDATE_ROUTINE_KEY,
+  ASSISTANT_WEEKLY_UPDATES_ISSUE_ORIGIN_KIND,
+  WEEKLY_UPDATE_CARD_MAX_AGE_DAYS,
+  WEEKLY_UPDATE_DISMISSAL_KEY_PREFIX,
+  WEEKLY_UPDATE_DOCUMENT_KEY_PREFIX,
+  WEEKLY_UPDATE_NOW_PROMPT,
+  isAssistantAgent,
+  weeklyUpdateDismissalKey,
+} from "./assistant-agent.js";
 
 export * from "./agent-avatar-upload.js";
 

@@ -10,6 +10,7 @@ import { heartbeatService } from "../services/heartbeat.js";
 import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "../services/issue-assignment-wakeup.js";
 import { applyPlan, PlanPartiallyAppliedError, type PlanHireAgent } from "../services/plans.js";
 import { normalizePersonTimezone } from "../services/plan-templates.js";
+import { syncWeeklyUpdateTimezone } from "../services/assistant-weekly-update.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 import { trustedBoardMutationOrigin } from "../middleware/board-mutation-guard.js";
 import { canInstallSharedAiConnectionForNewAgent } from "./ai-connections.js";
@@ -91,6 +92,8 @@ export function planRoutes(db: Db, options: PlanRoutesOptions) {
     }
 
     const { result } = applied;
+    // The Assistant's weekly update moves to the person's zone once it is known (best effort, never throws).
+    await syncWeeklyUpdateTimezone(db, companyId, personTimezone);
     if (applied.replayed) {
       // Already applied with this key: nothing was created now.
       res.status(200).json(result);

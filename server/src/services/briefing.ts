@@ -47,6 +47,7 @@ import { authorizationService, issueReadSqlCondition, type AuthorizationActor } 
 import { issueService, nonPluginOperationIssueCondition } from "./issues.js";
 import { executionIssueCondition } from "./issue-visibility.js";
 import { listLiveRuns } from "./live-runs.js";
+import { latestWeeklyUpdate } from "./assistant-weekly-update.js";
 import { appChoiceLabel, appDisplayName, connectionAppSlug } from "./plan-templates.js";
 import { toolNamePatternMatches } from "./tool-access-policy.js";
 
@@ -856,12 +857,13 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         issueReadSqlCondition(db, input.actor),
       ]);
       const needsPromise = needsYou(input, company.prefix, company.name, readCondition, nowIso);
-      const [needsResult, moving, doneTasks, rollups, monthSpend] = await Promise.all([
+      const [needsResult, moving, doneTasks, rollups, monthSpend, weeklyUpdate] = await Promise.all([
         needsPromise,
         inProgress(input, readCondition, nowIso, needsPromise.then((result) => result.shownIssueIds)),
         doneRecently(input, readCondition, now, nowIso),
         agentActionRollups(input, now, nowIso),
         spend(input, now),
+        latestWeeklyUpdate(db, { companyId: input.companyId, userId: input.userId, now }),
       ]);
       const needs = needsResult.items;
       // Newest first across finished tasks and agent roll-ups.
@@ -872,6 +874,7 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         doneRecently: done.slice(0, BRIEFING_DONE_RECENTLY_LIMIT),
         counts: { needsYou: needs.length, inProgress: moving.total, doneRecently: done.length },
         spend: monthSpend,
+        weeklyUpdate,
         generatedAt: nowIso,
       };
     },

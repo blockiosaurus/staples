@@ -6164,6 +6164,13 @@ const briefingSchema = z.object({
     companyBudgetCents: z.number().int().nullable(),
     hosted: z.object({ capCents: z.number().int(), spentCents: z.number().int() }).nullable(),
   }).nullable(),
+  weeklyUpdate: z.object({
+    documentId: z.string().uuid(),
+    title: z.string(),
+    excerpt: z.string(),
+    href: z.string(),
+    updatedAt: z.string().datetime(),
+  }).nullable(),
   generatedAt: z.string().datetime(),
 });
 registry.register("Briefing", briefingSchema);
@@ -6983,7 +6990,7 @@ registry.registerPath({
           .trim()
           .min(1)
           .regex(
-            /^(approval|join|run|attention):.+$/,
+            /^(approval|join|run|attention|weekly-update):.+$/,
             "Unsupported inbox item key",
           ),
         kind: z.enum(["dismiss", "snooze"]).optional(),
