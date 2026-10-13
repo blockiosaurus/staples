@@ -495,9 +495,9 @@
       ]
     },
     {
-      "id": "skill:skills/paperclip/SKILL.md:incidental-feedback:755",
+      "id": "skill:skills/paperclip/SKILL.md:incidental-feedback:772",
       "sourceKind": "skill_heading",
-      "sourceAnchor": "skills/paperclip/SKILL.md:755",
+      "sourceAnchor": "skills/paperclip/SKILL.md:772",
       "title": "Incidental feedback",
       "expectedSemantics": "Skill guidance headed “Incidental feedback”.",
       "primaryDisposition": "optional_agent_tool",
