@@ -1966,6 +1966,8 @@ const PROPOSED_ACTION_CATEGORY_LABELS: Record<string, string> = {
   other_governed: "Governed action",
   brief: "Company brief",
   plan: "Plan",
+  task: "Task",
+  preference: "Sidebar",
 };
 
 const BRIEF_PROPOSAL_PATH = /^\/api\/companies\/([0-9a-fA-F-]{36})\/brief$/;

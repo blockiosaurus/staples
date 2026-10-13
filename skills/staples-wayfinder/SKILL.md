@@ -76,11 +76,11 @@ When the person returns to a map:
 1. Read the map task with `paperclip_read_task`. Do not load every child unless you need it.
 2. Choose one decision: the one the person names, or else the first frontier task in order.
 3. Settle it according to its kind. Look-ups you may do several at once; settle **only one** Discuss, Draft, Do or Ask-someone decision per conversation.
-4. Record it:
-   - Add the answer as a comment on the decision task with `paperclip_add_comment`.
-   - Add one line under **Decisions so far** in the map's description with `paperclip_update_task`.
+4. Record it, with `staples_propose_action` cards the person confirms:
+   - Propose the answer as a comment on the decision task (`POST /api/issues/<id>/comments`).
+   - Propose one line under **Decisions so far** in the map's description (`PATCH /api/issues/<mapId>` with the whole new `description`).
    - Ask the person to mark the decision task done; finishing tasks is theirs.
-5. Clear the fog the answer revealed: propose new decision tasks with `staples_propose_plan`, then set each one's parent to the map with `paperclip_update_task` (`parentId`). Remove the matching lines from **Not yet specified**. If a decision task turns out to sit beyond the destination, move it to **Out of scope** instead of answering it. If the answer makes other decision tasks wrong, update or drop them.
+5. Clear the fog the answer revealed: propose new decision tasks with `staples_propose_plan`, then, once they exist, propose setting each one's parent to the map (`PATCH /api/issues/<id>` with `parentId`). Remove the matching lines from **Not yet specified**. If a decision task turns out to sit beyond the destination, move it to **Out of scope** instead of answering it. If the answer makes other decision tasks wrong, update or drop them.
 
 When the frontier is empty and nothing is left in the fog, the way is clear: summarize the decisions and use `staples-plan` to turn them into goal, roles and tasks.
 

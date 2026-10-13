@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
-import { agents, approvals, companySecrets, issues, toolConnections, type Db } from "@paperclipai/db";
+import { z } from "zod";
+import { agents, approvals, companySecrets, issueThreadInteractions, issues, toolConnections, type Db } from "@paperclipai/db";
 import { ALL_PROPOSABLE_HIRE_ADAPTER_TYPES, HOSTED_HIRE_ADAPTER_TYPE, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
 import { hostedHireOptions } from "./hosted-inference-access.js";
 import { hostedInference } from "./hosted-inference.js";
@@ -18,13 +19,17 @@ import {
 import {
   AGENT_ROLES,
   COMPANY_BRIEF_MAX_CHARS,
+  ISSUE_PRIORITIES,
   applyPlanSchema,
+  askUserQuestionsAnswerSchema,
   isAssistantAgent,
   planStructureErrors,
   proposedActionBodyMaxBytes,
   type ApplyPlan,
   type ProposedActionCategory,
   type ProposedActionMethod,
+  surfaceIdSchema,
+  updateIssueSchema,
 } from "@paperclipai/shared";
 
 /**
@@ -56,7 +61,7 @@ export type GovernedRoutePattern = {
   /** Route-specific body rules; throws ProposedActionError. */
   validateBody?: (body: unknown) => void;
   /** Body rules that read this company's rows (run after the company binding check); throws ProposedActionError. */
-  validateBodyWithDb?: (db: Db, body: unknown, companyId: string) => Promise<void>;
+  validateBodyWithDb?: (db: Db, body: unknown, companyId: string, match: RegExpExecArray) => Promise<void>;
 };
 
 const BRIEF_BODY_KEYS = new Set(["body", "baseRevisionId"]);
@@ -279,6 +284,133 @@ async function assertPlanAssignees(db: Db, body: unknown, companyId: string) {
 }
 
 /**
+ * Task work the person confirms: create a task, edit one, comment on one,
+ * answer a question an agent asked them, pin a sidebar item. The person's own
+ * session runs the call, so it is authored as them. Bodies are allowlists;
+ * finishing, blocking, cancelling or sending a task to review, and editing or
+ * reopening a closed task, stay in the task page. Chats are never targeted: a
+ * message there can carry the person's authority (for example owner-chat
+ * instruction edits).
+ */
+export const ASSISTANT_CHAT_WRITE_REFUSAL = "The Assistant can't post or edit in chats.";
+export const ASSISTANT_UPDATE_TASK_FIELDS = [
+  "title", "description", "status", "priority", "assigneeAgentId", "assigneeUserId", "projectId", "parentId",
+] as const;
+/** Terminal, blocking and review transitions are governed in the task page, not proposable edits. */
+const GOVERNED_TASK_STATUSES = new Set(["done", "cancelled", "blocked", "in_review"]);
+const CLOSED_TASK_STATUSES = new Set(["done", "cancelled"]);
+const TASK_TEXT_MAX_CHARS = 50_000;
+
+function parseBody<T extends z.ZodType>(schema: T, body: unknown, label: string): z.infer<T> {
+  const parsed = schema.safeParse(body);
+  if (parsed.success) return parsed.data;
+  const issue = parsed.error.issues[0];
+  throw new ProposedActionError(`${label}: ${issue?.path.join(".") || "body"} ${issue?.message ?? "is invalid"}.`);
+}
+
+const taskCreateBody = z.object({
+  title: z.string().trim().min(1).max(200),
+  description: z.string().max(TASK_TEXT_MAX_CHARS).optional(),
+  priority: z.enum(ISSUE_PRIORITIES).optional(),
+  status: z.enum(["backlog", "todo"]).optional(),
+  assigneeAgentId: z.uuid().optional(),
+  assigneeUserId: z.string().trim().min(1).max(200).optional(),
+  projectId: z.uuid().optional(),
+  parentId: z.uuid().optional(),
+}).strict();
+
+const taskUpdateBody = updateIssueSchema.pick({
+  title: true, description: true, status: true, priority: true, assigneeAgentId: true, assigneeUserId: true, projectId: true, parentId: true,
+}).extend({
+  title: z.string().trim().min(1).max(240).optional(),
+  description: z.string().max(TASK_TEXT_MAX_CHARS).nullable().optional(),
+  assigneeAgentId: z.uuid().nullable().optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "must change at least one field");
+
+const taskCommentBody = z.object({ body: z.string().trim().min(1).max(TASK_TEXT_MAX_CHARS) }).strict();
+const questionAnswerBody = z.object({ answers: z.array(askUserQuestionsAnswerSchema).min(1).max(20) }).strict();
+const pinSurfaceBody = z.object({ pin: z.tuple([surfaceIdSchema]) }).strict();
+
+function assertSafeTaskUpdate(body: unknown) {
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const disallowed = Object.keys(body).filter((key) => !(ASSISTANT_UPDATE_TASK_FIELDS as readonly string[]).includes(key));
+    if (disallowed.length) throw new ProposedActionError(`These task fields cannot be changed through the Assistant: ${disallowed.join(", ")}.`);
+  }
+  const changes = parseBody(taskUpdateBody, body, "Task update");
+  if (typeof changes.status === "string" && GOVERNED_TASK_STATUSES.has(changes.status)) {
+    throw new ProposedActionError(`The Assistant cannot propose status ${changes.status}. The person sets it on the task page.`);
+  }
+}
+
+async function assertNotAssistantAssignee(db: Db, companyId: string, assigneeAgentId: unknown) {
+  if (typeof assigneeAgentId !== "string") return;
+  const [row] = await db.select({ id: agents.id, metadata: agents.metadata }).from(agents)
+    .where(and(eq(agents.companyId, companyId), eq(agents.id, assigneeAgentId)));
+  if (!row) throw new ProposedActionError(`assigneeAgentId ${assigneeAgentId} is not an agent in this company.`);
+  if (row.id === await resolveCompanyAssistantAgentId(db, companyId) || isAssistantAgent(row)) {
+    throw new ProposedActionError("Tasks cannot be assigned to the Assistant. Choose a staff agent from paperclip_list_agents.");
+  }
+}
+
+/** Every referenced task is in this company and none is a chat; returns the rows by id. */
+async function companyTasks(db: Db, companyId: string, candidates: unknown[]) {
+  const ids = [...new Set(candidates.filter((value): value is string => typeof value === "string" && value.length > 0).map((id) => id.toLowerCase()))];
+  if (!ids.length) return new Map<string, { status: string }>();
+  const rows = await db.select({ id: issues.id, status: issues.status, conversationAgentId: issues.conversationAgentId })
+    .from(issues).where(and(eq(issues.companyId, companyId), inArray(issues.id, ids)));
+  const missing = ids.filter((id) => !rows.some((row) => row.id.toLowerCase() === id));
+  if (missing.length) throw new ProposedActionError(`Task ${missing.join(", ")} was not found in this company.`);
+  if (rows.some((row) => row.conversationAgentId)) throw new ProposedActionError(ASSISTANT_CHAT_WRITE_REFUSAL);
+  return new Map(rows.map((row) => [row.id.toLowerCase(), row] as const));
+}
+
+async function assertTaskCreateRefs(db: Db, body: unknown, companyId: string) {
+  const task = taskCreateBody.parse(body);
+  await assertNotAssistantAssignee(db, companyId, task.assigneeAgentId);
+  await companyTasks(db, companyId, [task.parentId]);
+}
+
+async function assertTaskUpdateRefs(db: Db, body: unknown, companyId: string, match: RegExpExecArray) {
+  const changes = taskUpdateBody.parse(body);
+  const taskId = match[1]!.toLowerCase();
+  const tasks = await companyTasks(db, companyId, [taskId, changes.parentId]);
+  if (CLOSED_TASK_STATUSES.has(tasks.get(taskId)!.status)) {
+    throw new ProposedActionError("This task is closed. The Assistant cannot propose editing or reopening it; the person does that on the task page.");
+  }
+  await assertNotAssistantAssignee(db, companyId, changes.assigneeAgentId);
+}
+
+async function assertCommentTarget(db: Db, _body: unknown, companyId: string, match: RegExpExecArray) {
+  await companyTasks(db, companyId, [match[1]]);
+}
+
+export const QUESTION_RESPOND_PATH = /^\/api\/issues\/([0-9a-fA-F-]{36})\/interactions\/([0-9a-fA-F-]{36})\/respond$/;
+
+/** At proposal time: the question card is addressed to this person, or to no one in particular. */
+export async function assertQuestionAddressedTo(db: Db, path: string, userId: string) {
+  const match = QUESTION_RESPOND_PATH.exec(path);
+  if (!match) return;
+  const [interaction] = await db.select({ addresseeUserId: issueThreadInteractions.addresseeUserId }).from(issueThreadInteractions)
+    .where(eq(issueThreadInteractions.id, match[2]!.toLowerCase()));
+  if (interaction?.addresseeUserId && interaction.addresseeUserId !== userId) {
+    throw new ProposedActionError("No open question on that task is awaiting this person.");
+  }
+}
+
+/** Only an open question card addressed to a person (not to an agent) can be answered. */
+async function assertOpenQuestion(db: Db, _body: unknown, companyId: string, match: RegExpExecArray) {
+  const [interaction] = await db.select({
+    kind: issueThreadInteractions.kind, status: issueThreadInteractions.status, addresseeAgentId: issueThreadInteractions.addresseeAgentId,
+  }).from(issueThreadInteractions).where(and(
+    eq(issueThreadInteractions.id, match[2]!.toLowerCase()), eq(issueThreadInteractions.issueId, match[1]!.toLowerCase()),
+    eq(issueThreadInteractions.companyId, companyId),
+  ));
+  if (!interaction || interaction.kind !== "ask_user_questions" || interaction.status !== "pending" || interaction.addresseeAgentId !== null) {
+    throw new ProposedActionError("No open question on that task is awaiting a person.");
+  }
+}
+
+/**
  * Secret updates may rename, describe or enable/disable a secret. Anything
  * that changes what the secret resolves to (its key, value, external
  * reference or provider) is refused at any depth.
@@ -329,6 +461,13 @@ export const GOVERNED_ROUTE_PATTERNS: readonly GovernedRoutePattern[] = [
   // plans.ts
   { method: "POST", pattern: re(`/api/companies/${UUID}/plans/apply`), category: "plan", binding: company(), route: "POST /api/companies/:companyId/plans/apply", validateBody: assertSafePlan, validateBodyWithDb: assertPlanAssignees },
   // secrets.ts
+  // Task work and sidebar pins, authored as the person on Confirm.
+  { method: "POST", pattern: re(`/api/companies/${UUID}/issues`), category: "task", binding: company(), route: "POST /api/companies/:companyId/issues", validateBody: (body) => { parseBody(taskCreateBody, body, "Task"); }, validateBodyWithDb: assertTaskCreateRefs },
+  { method: "PATCH", pattern: re(`/api/issues/${UUID}`), category: "task", binding: entity("issue"), route: "PATCH /api/issues/:id", validateBody: assertSafeTaskUpdate, validateBodyWithDb: assertTaskUpdateRefs },
+  { method: "POST", pattern: re(`/api/issues/${UUID}/comments`), category: "task", binding: entity("issue"), route: "POST /api/issues/:id/comments", validateBody: (body) => { parseBody(taskCommentBody, body, "Comment"); }, validateBodyWithDb: assertCommentTarget },
+  { method: "POST", pattern: re(`/api/issues/${UUID}/interactions/${UUID}/respond`), category: "task", binding: entity("issue"), route: "POST /api/issues/:id/interactions/:interactionId/respond", validateBody: (body) => { parseBody(questionAnswerBody, body, "Answer"); }, validateBodyWithDb: assertOpenQuestion },
+  { method: "PATCH", pattern: re(`/api/companies/${UUID}/ui-preferences/me`), category: "preference", binding: company(), route: "PATCH /api/companies/:companyId/ui-preferences/me", validateBody: (body) => { parseBody(pinSurfaceBody, body, "Pin"); } },
+
   { method: "POST", pattern: re(`/api/companies/${UUID}/secrets`), category: "secret", binding: company(), route: "POST /api/companies/:companyId/secrets", forbidBodyKeys: ["value"] },
   { method: "PATCH", pattern: re(`/api/secrets/${UUID}`), category: "secret", binding: entity("secret"), route: "PATCH /api/secrets/:id", validateBody: assertSafeSecretUpdate },
   { method: "DELETE", pattern: re(`/api/secrets/${UUID}`), category: "secret", binding: entity("secret"), route: "DELETE /api/secrets/:id" },
@@ -564,7 +703,7 @@ export async function validateGovernedAction(
   }
   route.validateBody?.(input.body);
   await assertBindingCompany(db, route.binding, route.match, companyId, "path");
-  await route.validateBodyWithDb?.(db, input.body, companyId);
+  await route.validateBodyWithDb?.(db, input.body, companyId, route.match);
   if (input.staleCheckPath) {
     assertPlainApiPath(input.staleCheckPath, "staleCheck.path");
     const check = STALE_CHECK_PATTERNS.map((c) => ({ ...c, match: c.pattern.exec(input.staleCheckPath!) })).find((c) => c.match);

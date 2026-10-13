@@ -1,9 +1,9 @@
 import type { Request } from "express";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { agents, approvals, authUsers, companies, companyMemberships, issueThreadInteractions, issues, routines, type Db } from "@paperclipai/db";
-import { COMPANY_BRIEF_MAX_CHARS, PROPOSED_ACTION_BODY_MAX_BYTES, PROPOSED_ACTION_CATEGORIES, PROPOSED_BRIEF_BODY_MAX_BYTES, PROPOSED_PLAN_BODY_MAX_BYTES, applyPlanSchema, PROPOSED_ACTION_METHODS, askUserQuestionsAnswerSchema, createIssueThreadInteractionSchema, isAssistantAgent, paperclipQuestionSchema, surfaceIdSchema, type ProposedActionContext } from "@paperclipai/shared";
+import { COMPANY_BRIEF_MAX_CHARS, PROPOSED_ACTION_BODY_MAX_BYTES, PROPOSED_ACTION_CATEGORIES, PROPOSED_BRIEF_BODY_MAX_BYTES, PROPOSED_PLAN_BODY_MAX_BYTES, applyPlanSchema, PROPOSED_ACTION_METHODS, createIssueThreadInteractionSchema, isAssistantAgent, paperclipQuestionSchema, type ProposedActionContext } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { HOSTED_HIRE_ADAPTER_TYPE, PROPOSABLE_HIRE_ADAPTER_TYPES, isProvisionedAssistant, resolveCompanyAssistantAgentId } from "./assistant-identity.js";
@@ -11,7 +11,7 @@ import { hostedInference as hostedInferenceStatus } from "./hosted-inference.js"
 import { planBudgetSummary } from "./hosted-inference-access.js";
 import { publicMcpCapabilities } from "./public-mcp/capabilities.js";
 import { defaultAgentTemplates, planHireAdapterDefaults, planTemplateContext, planTemplateSummariesFor } from "./plan-templates.js";
-import { APPROVAL_DECISION_PATH, PROPOSABLE_AGENT_ROLES, ProposedActionError, pinBriefProposalBody, pinPlanProposalBody, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
+import { APPROVAL_DECISION_PATH, PROPOSABLE_AGENT_ROLES, ProposedActionError, assertQuestionAddressedTo, pinBriefProposalBody, pinPlanProposalBody, proposedActionDetailsMarkdown, proposedActionHash, validateGovernedAction } from "./assistant-proposed-actions.js";
 import { assistantHireDefaults, planHireInheritsConnection } from "./plans.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
 import { logActivity } from "./activity-log.js";
@@ -30,14 +30,14 @@ export const ASSISTANT_READ_TOOL_NAMES = [
 ] as const;
 
 /**
- * Low-risk writes in a person's chat. Governed actions (finish, block, delete,
- * configure, approvals) are not exposed. The weekly update save is not here: a
- * chat reads with that person's own task access, so it must never publish a
- * company-wide update (only a weekly update run, which reads company-visible
- * work only, may save one).
+ * The Assistant is proposal-only: in a person's chat it can ask them questions
+ * and put cards in front of them, and every change (tasks and comments
+ * included) runs only when the person confirms it, with their own session. The
+ * weekly update save is not here: a chat reads with that person's own task
+ * access, so it must never publish a company-wide update (only a weekly update
+ * run, which reads company-visible work only, may save one).
  */
 export const ASSISTANT_WRITE_TOOL_NAMES = [
-  "paperclip_create_task", "paperclip_add_comment", "paperclip_update_task", "staples_answer_question", "staples_pin_surface",
   "staples_propose_action", "staples_ask_questions", "staples_propose_plan",
 ] as const;
 
@@ -49,29 +49,7 @@ export const SAVE_WEEKLY_UPDATE_TOOL = "staples_save_weekly_update";
  */
 export const ASSISTANT_WEEKLY_UPDATE_RUN_WRITE_TOOL_NAMES = [SAVE_WEEKLY_UPDATE_TOOL] as const;
 
-/** `paperclip_update_task` may only touch these fields. */
-export const ASSISTANT_UPDATE_TASK_FIELDS = [
-  "title", "description", "status", "priority", "assigneeAgentId", "assigneeUserId", "projectId", "parentId",
-] as const;
-/** Terminal, blocking and review transitions are governed (finish/block/cancel/review), not low-risk edits. */
-const GOVERNED_STATUSES = new Set(["done", "cancelled", "blocked", "in_review"]);
-/** Closed tasks are never edited or reopened by the Assistant. */
-const CLOSED_STATUSES = new Set(["done", "cancelled"]);
 const BRIEFING_CAP = 20;
-export const ASSISTANT_CHAT_WRITE_REFUSAL = "The Assistant can't post or edit in chats.";
-
-/**
- * Chats are a person's direct line to an agent; a message there can carry the
- * person's authority (for example owner-chat instruction edits). The Assistant
- * acts as the person, so it must never write into any chat, its own included.
- */
-async function rejectConversationIssues(db: Db, companyId: string, candidates: unknown[]) {
-  const ids = [...new Set(candidates.filter((value): value is string => typeof value === "string" && value.length > 0))];
-  if (!ids.length) return;
-  const rows = await db.select({ id: issues.id, conversationAgentId: issues.conversationAgentId })
-    .from(issues).where(and(eq(issues.companyId, companyId), inArray(issues.id, ids)));
-  if (rows.some((row) => row.conversationAgentId)) throw new McpCapabilityError(ASSISTANT_CHAT_WRITE_REFUSAL);
-}
 
 export type AssistantToolContext = {
   companyId: string;
@@ -287,11 +265,6 @@ const companyField = { companyId: z.uuid().optional().describe("Optional. Defaul
 
 function assistantCapabilities(db: Db): Capability[] {
   const reused = (name: string, override?: Partial<Capability>): Capability => ({ ...capability(name), ...override });
-  const rejectAssistantAssignee = async (companyId: string, assigneeAgentId: unknown) => {
-    if (typeof assigneeAgentId === "string" && (await assistantAgentIds(db, companyId)).has(assigneeAgentId)) {
-      throw new McpCapabilityError("Tasks cannot be assigned to the Assistant. Choose a staff agent from paperclip_list_agents.");
-    }
-  };
   return [
     reused("paperclip_connection", {
       run: async (p) => ({
@@ -311,29 +284,11 @@ function assistantCapabilities(db: Db): Capability[] {
     }),
     ...["paperclip_list_projects", "paperclip_search_tasks", "paperclip_read_task", "paperclip_list_deliverables",
       "paperclip_read_document", "paperclip_list_document_revisions", "paperclip_pending_approvals",
-      "paperclip_get_project", "paperclip_list_skills", "paperclip_get_skill", "paperclip_add_comment"].map((name) => reused(name)),
+      "paperclip_get_project", "paperclip_list_skills", "paperclip_get_skill"].map((name) => reused(name)),
     reused("paperclip_get_agent", {
       run: async (p, a, api, origin) => {
         if ((await assistantAgentIds(db, p.company.id)).has(String(a.agentId))) throw new McpCapabilityError("Agent not found.");
         return capability("paperclip_get_agent").run(p, a, api, origin);
-      },
-    }),
-    reused("paperclip_create_task", {
-      run: async (p, a, api, origin) => {
-        await rejectAssistantAssignee(p.company.id, a.assigneeAgentId);
-        return capability("paperclip_create_task").run(p, a, api, origin);
-      },
-    }),
-    reused("paperclip_update_task", {
-      description: `Edit a task's ${ASSISTANT_UPDATE_TASK_FIELDS.join(", ")} as the connected person. Finishing, blocking or cancelling a task is not available here. Reuse requestId on retries.`,
-      run: async (p, a, api, origin) => {
-        const changes = object(a.changes);
-        await rejectAssistantAssignee(p.company.id, changes.assigneeAgentId);
-        const current = await api(p, "GET", `/issues/${pathId(a.taskId)}`);
-        if (CLOSED_STATUSES.has(String(object(current).status))) {
-          throw new McpCapabilityError("This task is closed. The Assistant cannot edit or reopen it; ask the person to do it in Paperclip.");
-        }
-        return capability("paperclip_update_task").run(p, a, api, origin);
       },
     }),
     {
@@ -374,33 +329,12 @@ function assistantCapabilities(db: Db): Capability[] {
       run: async (p, _a, api) => ({ briefing: await api(p, "GET", `/companies/${pathId(p.company.id)}/briefing`) }),
     },
     {
-      name: "staples_answer_question", write: true,
-      description: "Answer an open ask_user_questions interaction on this person's behalf. Only questions addressed to this person (or to no one in particular) can be answered. Answer only with choices the person actually made.",
-      schema: z.object({ ...companyField, issueId: z.uuid(), interactionId: z.uuid(), answers: z.array(askUserQuestionsAnswerSchema).min(1).max(20) }).strict(),
-      run: async (p, a, api) => {
-        const [interaction] = await db.select({
-          kind: issueThreadInteractions.kind, status: issueThreadInteractions.status,
-          addresseeAgentId: issueThreadInteractions.addresseeAgentId, addresseeUserId: issueThreadInteractions.addresseeUserId,
-        }).from(issueThreadInteractions).where(and(
-          eq(issueThreadInteractions.id, String(a.interactionId)), eq(issueThreadInteractions.issueId, String(a.issueId)),
-          eq(issueThreadInteractions.companyId, p.company.id),
-        ));
-        if (!interaction || interaction.kind !== "ask_user_questions" || interaction.status !== "pending"
-          || interaction.addresseeAgentId !== null
-          || (interaction.addresseeUserId !== null && interaction.addresseeUserId !== p.actor.userId)) {
-          throw new McpCapabilityError("No open question on that task is awaiting this person.");
-        }
-        // The respond route enforces issue access, conversation ownership and the resolver policy.
-        const result = await api(p, "POST", `/issues/${pathId(a.issueId)}/interactions/${pathId(a.interactionId)}/respond`, { answers: a.answers });
-        return { interaction: pick(result, ["id", "issueId", "kind", "status", "resolvedAt"]) };
-      },
-    },
-    {
       name: PROPOSE_ACTION_TOOL, write: true,
       description: [
         "Propose one exact governed API call for this person to confirm. Nothing runs until they click Confirm on the card in this conversation; their browser then performs the call with their own session and you are woken with the result.",
         `Changing the company brief is governed too: propose PUT /api/companies/<companyId>/brief with category brief and body { body: <the whole new brief in markdown, at most ${COMPANY_BRIEF_MAX_CHARS} characters>, baseRevisionId: <revisionId from staples_get_company_brief> }. Batch edits: one proposal per topic, not per sentence. To create a whole plan (brief, goal, project, agents and tasks) in one card, use staples_propose_plan instead.`,
-        "Only governed actions are allowed: approval approve/reject/request-revision, the company brief (category brief), agent hire/create/pause/resume/terminate (adapterType is required; CEO-level hires are done in the Agents page), budget policy and budget updates, secret create/update/delete (never include secret values; an update may only change name, description or status), revoking a connection, grant or delegation (DELETE with body null), DELETE with body null under this company or one of its tasks (removing tool policies, the skill policy, issue approval links, watchdogs or skill files is not proposable), and a whole starter plan (category plan; propose it with staples_propose_plan). Creating or changing connections is not proposable: point the person to the Connectors page to set them up.",
+        "Task work is proposed here too: create a task (POST /api/companies/<companyId>/issues with title, and optionally description, priority, status backlog or todo, assigneeAgentId (a staff agent, never the Assistant) or assigneeUserId, projectId, parentId), edit one (PATCH /api/issues/<id> changing only title, description, status (never done, cancelled, blocked or in_review), priority, assigneeAgentId, assigneeUserId, projectId or parentId; not a closed task), comment on one (POST /api/issues/<id>/comments with { body }), answer an open question an agent asked the person (POST /api/issues/<id>/interactions/<interactionId>/respond with { answers }, only answers the person gave you), and pin a sidebar item (PATCH /api/companies/<companyId>/ui-preferences/me with { pin: [<surfaceId>] }). None of these may target a chat.",
+        "The other allowed actions are governed ones: approval approve/reject/request-revision, the company brief (category brief), agent hire/create/pause/resume/terminate (adapterType is required; CEO-level hires are done in the Agents page), budget policy and budget updates, secret create/update/delete (never include secret values; an update may only change name, description or status), revoking a connection, grant or delegation (DELETE with body null), DELETE with body null under this company or one of its tasks (removing tool policies, the skill policy, issue approval links, watchdogs or skill files is not proposable), and a whole starter plan (category plan; propose it with staples_propose_plan). Creating or changing connections is not proposable: point the person to the Connectors page to set them up.",
         "The path must start with /api/ and refer to this company. category is derived from the path. Optionally pass staleCheck { path, field: \"updatedAt\", expected } with a GET path whose updatedAt must be unchanged when the person confirms.",
       ].join(" "),
       schema: z.object({
@@ -481,14 +415,6 @@ function assistantCapabilities(db: Db): Capability[] {
       description: "Read the company brief (mission, glossary, key decisions) that every agent sees. Returns null when there is none. Read it before proposing a change so your proposal starts from the current text.",
       schema: z.object(companyField).strict(),
       run: async (p, _a, api) => ({ brief: await api(p, "GET", `/companies/${pathId(p.company.id)}/brief`) }),
-    },
-    {
-      name: "staples_pin_surface", write: true,
-      description: "Pin a navigation surface for this person so it stays visible in their sidebar.",
-      schema: z.object({ ...companyField, surfaceId: surfaceIdSchema }).strict(),
-      run: async (p, a, api) => ({
-        preferences: await api(p, "PATCH", `/companies/${pathId(p.company.id)}/ui-preferences/me`, { pin: [a.surfaceId] }),
-      }),
     },
   ];
 }
@@ -603,6 +529,7 @@ async function proposeAction(db: Db, context: AssistantToolContext, args: Record
   let hash: string;
   try {
     ({ category } = await validateGovernedAction(db, { method, path, body, staleCheckPath: staleCheck?.path ?? null }, context.companyId));
+    await assertQuestionAddressedTo(db, path, context.userId);
     // Brief proposals (and a plan's brief) replace a specific revision; the server pins it.
     if (category === "brief") body = await pinBriefProposalBody(db, context.companyId, body);
     if (category === "plan") body = await pinPlanProposalBody(db, context.companyId, body, { userId: context.userId });
@@ -791,20 +718,9 @@ export function createAssistantTools(db: Db, options: { dispatch: ApiDispatch; o
         } else if (writeNames.has(name) && !context.canWrite) throw new McpCapabilityError("This person has read-only access.");
         const raw = { ...object(input) };
         if (raw.companyId !== undefined && raw.companyId !== context.companyId) throw new McpCapabilityError("Company does not match the Assistant's company.");
-        if (name === "paperclip_update_task") {
-          const changes = object(raw.changes);
-          const disallowed = Object.keys(changes).filter((key) => !(ASSISTANT_UPDATE_TASK_FIELDS as readonly string[]).includes(key));
-          if (disallowed.length) throw new McpCapabilityError(`These task fields cannot be changed by the Assistant: ${disallowed.join(", ")}.`);
-          if (typeof changes.status === "string" && GOVERNED_STATUSES.has(changes.status)) {
-            throw new McpCapabilityError(`The Assistant cannot set status to ${changes.status}. Ask the person to do it in Paperclip.`);
-          }
-        }
         // Tools without a companyId input (e.g. paperclip_connection) are strict, so only inject it where declared.
         const { companyId: _requestedCompanyId, ...rest } = raw;
         const args = c.schema.parse("companyId" in c.schema.shape ? { ...rest, companyId: context.companyId } : rest);
-        if (name === "paperclip_add_comment" || name === "paperclip_update_task" || name === "paperclip_create_task") {
-          await rejectConversationIssues(db, context.companyId, [args.taskId, args.parentId, object(args.changes).parentId]);
-        }
         const result = name === PROPOSE_ACTION_TOOL
           ? await proposeAction(db, context, args)
           : name === PROPOSE_PLAN_TOOL

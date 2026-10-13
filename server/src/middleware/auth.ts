@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import type { Request, RequestHandler } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
@@ -23,13 +23,15 @@ import {
 } from "../services/issue-prefix.js";
 import { verifyLocalAgentJwt } from "../agent-auth-jwt.js";
 import { agentRunWritesRevoked } from "../agent-run-cancellation.js";
-import { isUuidLike, normalizeAgentApiKeyScope, type DeploymentMode } from "@paperclipai/shared";
+import { ASSISTANT_BUILT_IN_AGENT_KEY, isUuidLike, normalizeAgentApiKeyScope, type DeploymentMode } from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "./logger.js";
 import { captureRunIdentity } from "../services/run-identity.js";
 import { boardAuthService } from "../services/board-auth.js";
 import { retryIdempotentDatabaseOperation } from "../database-retry.js";
 import { beginIdleTrackedWork } from "../services/task-admission.js";
+import { isProvisionedAssistant } from "../services/assistant-identity.js";
+import { readBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
 
 export {
   isTransientDbConnectionError,
@@ -224,6 +226,38 @@ interface ActorMiddlewareOptions {
 
 const publicRoutineWebhookPath = /^\/api\/routine-triggers\/public\/[a-f0-9]{24}\/fire\/?$/i;
 
+/**
+ * The provisioned Assistant is read-only over REST: its changes go through
+ * proposals a person confirms. These are the only non-read endpoints its run
+ * token or an API key of its agent may call, its two runtime MCP servers. Their tool calls are dispatched
+ * in-process (never back through this middleware), and each server applies
+ * the Assistant's tool rules: proposal-only governed actions, the scoped
+ * weekly-update save, and read-only Paperclip tools.
+ */
+const ASSISTANT_RUN_WRITE_PATHS: ReadonlySet<string> = new Set([
+  "/api/mcp/assistant-tools",
+  "/api/mcp/paperclip-tools",
+]);
+
+function assistantRunWriteAllowed(req: Request) {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return true;
+  // Express matches routes case-insensitively and ignores a trailing slash.
+  const path = req.path.toLowerCase().replace(/\/+$/, "");
+  return req.method === "POST" && ASSISTANT_RUN_WRITE_PATHS.has(path);
+}
+
+/** True (and the request answered) when this is a refused write from the provisioned Assistant. */
+async function refuseAssistantWrite(
+  db: Db, req: Request, res: Response, agent: { id: string; companyId: string; metadata: unknown },
+) {
+  if (assistantRunWriteAllowed(req)
+    || readBuiltInAgentMarker(agent.metadata)?.key !== ASSISTANT_BUILT_IN_AGENT_KEY
+    || !(await isProvisionedAssistant(db, agent))) return false;
+  res.status(403).json({ error: "The Assistant cannot make changes directly. Propose the change for a person to confirm.",
+    code: "assistant_read_only" });
+  return true;
+}
+
 const publicMcpGatewayProtocolPath = /^\/mcp\/gateways\/gw_[a-f0-9]{32}\/?$/i;
 
 export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHandler {
@@ -412,6 +446,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
           code: conversation ? "conversation_turn_cancelled" : "agent_run_cancelled" });
         return;
       }
+      if (await refuseAssistantWrite(db, req, _res, agentRecord)) return;
       if (identityRun?.activeIdentityContextId && identityRun.status === "running") {
         const captured = await captureRunIdentity(db, { companyId: claims.company_id, agentId: claims.sub, runId: claims.run_id });
         identityRun.activeIdentityContextId = captured.context?.id ?? null;
@@ -470,6 +505,8 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
       next(unauthorized("Agent is pending approval and cannot authenticate"));
       return;
     }
+
+    if (await refuseAssistantWrite(db, req, _res, agentRecord)) return;
 
     const responsibleUserId = normalizeOptionalString(key.responsibleUserId);
     if (!responsibleUserId) {
