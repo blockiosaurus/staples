@@ -1668,7 +1668,9 @@ export function builtInAgentService(db: Db) {
     return resumed as Agent;
   }
 
-  async function createOrResetRoutine(agent: Agent, definition: BuiltInAgentDefinition, existing: Routine | null, mode: "reconcile" | "reset") {
+  async function createOrResetRoutine(
+    agent: Agent, definition: BuiltInAgentDefinition, existing: Routine | null, mode: "reconcile" | "reset", everAssigned = false,
+  ) {
     const routine = definition.bundle!.routine!;
     const actor = { agentId: null, userId: "built-in-bundles" };
     // The Assistant can hold only its own weekly update routine, which is
@@ -1701,7 +1703,9 @@ export function builtInAgentService(db: Db) {
         updatedAt: new Date(),
       })
       .where(eq(routines.id, nextRoutine.id));
-    if (assignAfterOrigin) {
+    // Assign (and set the stock status) only when it is new, being reset, or was never assigned:
+    // a person who paused or unassigned it has opted out, and a stock update keeps that.
+    if (assignAfterOrigin && (!existing || mode === "reset" || !everAssigned)) {
       try {
         nextRoutine = await routineSvc.update(nextRoutine.id, { assigneeAgentId: agent.id, status: routine.status }, actor) ?? nextRoutine;
       } catch (error) {
@@ -1777,15 +1781,17 @@ export function builtInAgentService(db: Db) {
       currentHash,
       bindingStockHash: binding?.stockHash ?? null,
     });
-    // The Assistant's routine is assigned after it is created; finish an assignment that failed earlier.
-    const unassignedAssistantRoutine = Boolean(routine && !routine.assigneeAgentId && isAssistantAgent(agent));
+    // The Assistant's routine is assigned after it is created; finish an assignment that failed
+    // earlier, but only if it was never assigned: unassigning it later is a person's opt-out.
+    const everAssigned = (binding?.defaultsJson as Record<string, unknown> | null | undefined)?.assigned === true;
+    const unassignedAssistantRoutine = Boolean(routine && !routine.assigneeAgentId && isAssistantAgent(agent) && !everAssigned);
     const shouldWrite =
       mode === "reset"
       || currentState.stockStatus === "missing"
       || currentState.stockStatus === "stock_update_available"
       || unassignedAssistantRoutine;
     const nextRoutine = shouldWrite
-      ? await createOrResetRoutine(agent, definition, routine, mode)
+      ? await createOrResetRoutine(agent, definition, routine, mode, everAssigned)
       : routine!;
     await upsertManagedResourceBinding({
       companyId: agent.companyId,
@@ -1799,6 +1805,7 @@ export function builtInAgentService(db: Db) {
         title: bundle.routine.title,
         status: bundle.routine.status,
         triggerCount: bundle.routine.triggers.length,
+        assigned: everAssigned || nextRoutine.assigneeAgentId === agent.id,
       },
     });
     const next = await getRoutineByBinding(agent.companyId, definition);

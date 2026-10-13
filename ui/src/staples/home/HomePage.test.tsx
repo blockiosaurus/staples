@@ -31,7 +31,9 @@ const mocks = vi.hoisted(() => ({
   resolveIncident: vi.fn(),
   listArtifacts: vi.fn(),
   dismiss: vi.fn(),
+  boardAccess: vi.fn(),
 }));
+vi.mock("@/api/access", () => ({ accessApi: { getCurrentBoardAccess: mocks.boardAccess } }));
 vi.mock("@/api/inboxDismissals", () => ({ inboxDismissalsApi: { dismiss: mocks.dismiss } }));
 vi.mock("@/api/artifacts", () => ({ artifactsApi: { list: mocks.listArtifacts } }));
 
@@ -134,6 +136,10 @@ describe("HomePage", () => {
     root = createRoot(container);
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     for (const mock of Object.values(mocks)) mock.mockReset();
+    mocks.boardAccess.mockResolvedValue({
+      userId: "user-1", isInstanceAdmin: false, companyIds: ["company-1"], source: "session", keyId: null, user: null,
+      memberships: [{ companyId: "company-1", membershipRole: "member", status: "active" }],
+    });
   });
 
   afterEach(() => {
@@ -753,6 +759,17 @@ describe("HomePage", () => {
     await click(container.querySelector<HTMLElement>('button[aria-label="Dismiss weekly update"]'));
     const card = container.querySelector<HTMLElement>('[data-testid="weekly-update-card"]');
     expect(card?.querySelector('[role="alert"]')?.textContent).toBe("Couldn't dismiss the update: Server unavailable");
+  });
+
+  it("hides Update me now from viewers, who can't have an update saved", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture());
+    mocks.boardAccess.mockResolvedValue({
+      userId: "user-1", isInstanceAdmin: false, companyIds: ["company-1"], source: "session", keyId: null, user: null,
+      memberships: [{ companyId: "company-1", membershipRole: "viewer", status: "active" }],
+    });
+    await render();
+    expect(buttonIn(section("Ask the Assistant"), "Update me now")).toBeNull();
+    expect(container.querySelector('textarea[aria-label="Ask the Assistant"]')).not.toBeNull();
   });
 
   it("asks the Assistant for a weekly update now through the ask path", async () => {

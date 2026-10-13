@@ -1,5 +1,5 @@
-import { and, eq, ne } from "drizzle-orm";
-import { agents, type Db } from "@paperclipai/db";
+import { and, eq, ne, sql, type SQL } from "drizzle-orm";
+import { agents, issues, routines, type Db } from "@paperclipai/db";
 import { ASSISTANT_BUILT_IN_AGENT_KEY, ASSISTANT_WEEKLY_UPDATE_ROUTINE_KEY, isAssistantAgent } from "@paperclipai/shared";
 
 /** A bundle trigger time zone resolved per company: the person's zone when known, otherwise UTC. */
@@ -21,4 +21,14 @@ export async function companyHasStaffAgents(db: Pick<Db, "select">, companyId: s
     .from(agents)
     .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
   return rows.some((row) => !isAssistantAgent(row));
+}
+
+/** SQL: the task is not one of the weekly update routine's own tasks (Home shows the update card instead). */
+export function notWeeklyUpdateTaskCondition(): SQL<boolean> {
+  return sql<boolean>`not coalesce(${issues.originKind} = 'routine_execution' and ${issues.originId} in (
+    select ${routines.id}::text from ${routines}
+    where ${routines.companyId} = ${issues.companyId}
+      and ${routines.originKind} = ${ASSISTANT_WEEKLY_UPDATE_ROUTINE_ORIGIN_KIND}
+      and ${routines.originId} = ${ASSISTANT_WEEKLY_UPDATE_ROUTINE_ORIGIN_ID}
+  ), false)`;
 }

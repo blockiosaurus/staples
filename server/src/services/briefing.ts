@@ -48,6 +48,7 @@ import { issueService, nonPluginOperationIssueCondition } from "./issues.js";
 import { executionIssueCondition } from "./issue-visibility.js";
 import { listLiveRuns } from "./live-runs.js";
 import { latestWeeklyUpdate } from "./assistant-weekly-update.js";
+import { notWeeklyUpdateTaskCondition } from "./assistant-weekly-update-origin.js";
 import { appChoiceLabel, appDisplayName, connectionAppSlug } from "./plan-templates.js";
 import { toolNamePatternMatches } from "./tool-access-policy.js";
 
@@ -857,13 +858,15 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
         issueReadSqlCondition(db, input.actor),
       ]);
       const needsPromise = needsYou(input, company.prefix, company.name, readCondition, nowIso);
+      // Lists of work leave out the weekly update routine's own tasks; the weekly update card stands for them.
+      const listCondition = and(readCondition, notWeeklyUpdateTaskCondition()) as typeof readCondition;
       const [needsResult, moving, doneTasks, rollups, monthSpend, weeklyUpdate] = await Promise.all([
         needsPromise,
-        inProgress(input, readCondition, nowIso, needsPromise.then((result) => result.shownIssueIds)),
-        doneRecently(input, readCondition, now, nowIso),
+        inProgress(input, listCondition, nowIso, needsPromise.then((result) => result.shownIssueIds)),
+        doneRecently(input, listCondition, now, nowIso),
         agentActionRollups(input, now, nowIso),
         spend(input, now),
-        latestWeeklyUpdate(db, { companyId: input.companyId, userId: input.userId, now }),
+        latestWeeklyUpdate(db, { companyId: input.companyId, userId: input.userId, now, readCondition }),
       ]);
       const needs = needsResult.items;
       // Newest first across finished tasks and agent roll-ups.

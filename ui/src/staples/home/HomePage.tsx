@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useCompany } from "@/context/CompanyContext";
+import { accessApi, type CurrentBoardAccess } from "@/api/access";
 import { agentsApi } from "@/api/agents";
 import { artifactsApi } from "@/api/artifacts";
 import { briefingApi } from "@/api/briefing";
@@ -139,7 +140,16 @@ export const ASK_UNAVAILABLE_NOTICE = assistantUnavailableNotice("your message i
 /** What "Update me now" says when the Assistant can't take the request. */
 export const UPDATE_NOW_UNAVAILABLE_NOTICE = assistantUnavailableNotice("try Update me now again in a moment.");
 
-function AskComposer() {
+/** Viewers can read but not have the Assistant save anything for them, so they get no "Update me now". */
+export function canRequestWeeklyUpdate(companyId: string, access: CurrentBoardAccess | undefined): boolean {
+  if (!companyId || !access) return false;
+  if (access.source === "local_implicit" || access.isInstanceAdmin) return true;
+  if (!access.memberships || access.memberships.length === 0) return access.companyIds.includes(companyId);
+  const membership = access.memberships.find((item) => item.companyId === companyId && item.status === "active");
+  return Boolean(membership && membership.membershipRole !== "viewer");
+}
+
+function AskComposer({ canUpdateNow }: { canUpdateNow: boolean }) {
   const askAssistant = useAskAssistant();
   const [text, setText] = useState("");
   const [unavailable, setUnavailable] = useState<string | null>(null);
@@ -163,10 +173,12 @@ function AskComposer() {
     <Section
       title="Ask the Assistant"
       action={
-        <Button type="button" variant="ghost" size="xs" onClick={updateNow}>
-          <Newspaper aria-hidden="true" />
-          Update me now
-        </Button>
+        canUpdateNow ? (
+          <Button type="button" variant="ghost" size="xs" onClick={updateNow}>
+            <Newspaper aria-hidden="true" />
+            Update me now
+          </Button>
+        ) : undefined
       }
     >
       {unavailable ? (
@@ -210,6 +222,11 @@ export function HomePage() {
   useEffect(() => {
     setBreadcrumbs([{ label: "Home" }]);
   }, [setBreadcrumbs]);
+
+  const boardAccessQuery = useQuery({
+    queryKey: queryKeys.access.currentBoardAccess,
+    queryFn: () => accessApi.getCurrentBoardAccess(),
+  });
 
   const briefingQuery = useQuery({
     queryKey: queryKeys.briefing(companyId),
@@ -452,7 +469,7 @@ export function HomePage() {
         </Section>
       ) : null}
 
-      <AskComposer />
+      <AskComposer canUpdateNow={canRequestWeeklyUpdate(companyId, boardAccessQuery.data)} />
     </div>
   );
 }

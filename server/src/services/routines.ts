@@ -1,7 +1,7 @@
 import { verifyAppWebhook } from "./app-webhook.js";
 import crypto from "node:crypto";
 import { verifyFirefliesWebhook } from "./fireflies-webhook.js";
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, not, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, not, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -67,6 +67,7 @@ import { getConfiguredSecretProvider } from "../secrets/configured-provider.js";
 import { issueService } from "./issues.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
 import { companyHasStaffAgents, isAssistantWeeklyUpdateRoutine } from "./assistant-weekly-update-origin.js";
+import { closeWeeklyUpdateTaskWithoutUpdate } from "./assistant-weekly-update.js";
 import { visibleIssueCondition } from "./issue-visibility.js";
 import { secretService } from "./secrets.js";
 import { getSecretProvider } from "../secrets/provider-registry.js";
@@ -3300,6 +3301,19 @@ export function routineService(
             nextRunAt: claimedNextRunAt,
           });
           continue;
+        }
+        // Last week's task still open (its run never saved): close it so it never blocks this week.
+        if (isAssistantWeeklyUpdateRoutine(row.routine)) {
+          const stale = await db
+            .select({ id: issues.id })
+            .from(issues)
+            .where(and(
+              eq(issues.companyId, row.routine.companyId),
+              eq(issues.originKind, "routine_execution"),
+              eq(issues.originId, row.routine.id),
+              notInArray(issues.status, ["done", "cancelled"]),
+            ));
+          for (const task of stale) await closeWeeklyUpdateTaskWithoutUpdate(db, task.id, "superseded_by_next_week");
         }
 
         for (let i = 0; i < runCount; i += 1) {

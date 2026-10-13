@@ -65,6 +65,8 @@ export type AuthorizationActor =
     keyScope?: AgentApiKeyScope | null;
     runId?: string | null;
     onBehalfOfUserId?: string | null;
+    /** Task privacy: no principal, so only company-visible tasks and projects are readable. */
+    companyVisibleOnly?: boolean;
     source?:
       | "local_implicit"
       | "session"
@@ -545,6 +547,7 @@ export function issuePrivacyMode(): "off" | "shadow" | "enforce" {
 }
 
 function issuePrivacyPrincipal(actor: AuthorizationActor) {
+  if (actor.companyVisibleOnly) return null;
   if (actor.type === "board" && actor.userId) return { type: "user" as const, id: actor.userId };
   if (actor.type === "agent" && actor.agentId) return { type: "agent" as const, id: actor.agentId };
   return null;

@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, like } from "drizzle-orm";
+import { and, eq, like, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
   agents,
+  companies,
+  companyMemberships,
+  issueComments,
   builtInManagedResources,
   documents,
   heartbeatRuns,
@@ -19,8 +22,11 @@ import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import { listBuiltInAgentDefinitions, builtInAgentService } from "../services/built-in-agents.js";
 import { routineService } from "../services/routines.js";
 import { issueService } from "../services/issues.js";
+import { briefingService } from "../services/briefing.js";
+import { issueReadSqlCondition } from "../services/authorization.js";
 import {
   ASSISTANT_WEEKLY_UPDATE_ROUTINE_ORIGIN_ID,
+  closeWeeklyUpdateTaskAfterRun,
   ensureWeeklyUpdatesIssue,
   latestWeeklyUpdate,
   saveWeeklyUpdate,
@@ -171,7 +177,7 @@ const support = await getEmbeddedPostgresTestSupport();
       .rejects.toMatchObject({ status: 400 });
   }, 60_000);
 
-  async function weeklyRun() {
+  async function weeklyRun(options: { responsibleUserId?: "person" | null } = {}) {
     const f = await setup();
     const run = await routineSvc().runRoutine(f.routine.id, { source: "manual" } as never, { agentId: null, userId: f.responsibleUserId, runId: null });
     const taskId = run.linkedIssueId!;
@@ -179,10 +185,11 @@ const support = await getEmbeddedPostgresTestSupport();
     // The Assistant's run on the routine task, as the scheduler would start it.
     const runId = randomUUID();
     await server.db.insert(heartbeatRuns).values({
-      id: runId, companyId: f.companyId, agentId: f.assistantId, status: "running", responsibleUserId: f.responsibleUserId,
+      id: runId, companyId: f.companyId, agentId: f.assistantId, status: "running",
+      responsibleUserId: options.responsibleUserId === null ? null : f.responsibleUserId,
       runtimeMode: "native", nativeIssueId: taskId, invocationSource: "assignment", triggerDetail: "system", contextSnapshot: { issueId: taskId },
     });
-    const token = createLocalAgentJwt(f.assistantId, f.companyId, "claude_local", runId, f.responsibleUserId)!;
+    const token = createLocalAgentJwt(f.assistantId, f.companyId, "claude_local", runId, options.responsibleUserId === null ? null : f.responsibleUserId)!;
     const rpc = async (method: string, params?: Record<string, unknown>) => {
       const response = await fetch(`${server.apiUrl}/api/mcp/assistant-tools`, {
         method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -264,5 +271,146 @@ const support = await getEmbeddedPostgresTestSupport();
       eq(issueDocuments.companyId, f.companyId), like(issueDocuments.key, "weekly-update-%"),
     ));
     expect(weeklyDocs).toHaveLength(1);
+  }, 60_000);
+
+  async function openTasks(companyId: string, routineId: string) {
+    return server.db.select().from(issues).where(and(
+      eq(issues.companyId, companyId), eq(issues.originKind, "routine_execution"), eq(issues.originId, routineId),
+    ));
+  }
+
+  it("closes last week's open task so it never blocks this Monday's run", async () => {
+    const f = await setup();
+    const first = await routineSvc().runRoutine(f.routine.id, { source: "manual" } as never, { agentId: null, userId: f.responsibleUserId, runId: null });
+    await server.db.update(routineTriggers).set({ nextRunAt: new Date(Date.now() - 60_000) }).where(eq(routineTriggers.routineId, f.routine.id));
+    await routineSvc().tickScheduledTriggers(new Date());
+    const tasks = await openTasks(f.companyId, f.routine.id);
+    expect(tasks).toHaveLength(2);
+    const stale = tasks.find((task) => task.id === first.linkedIssueId)!;
+    const fresh = tasks.find((task) => task.id !== first.linkedIssueId)!;
+    expect(stale.status).toBe("cancelled");
+    expect(fresh).toMatchObject({ status: "todo", assigneeAgentId: f.assistantId });
+    const notes = await server.db.select().from(issueComments).where(eq(issueComments.issueId, stale.id));
+    expect(notes.map((note) => note.body)).toEqual(["No update this week."]);
+    const [logged] = await server.db.select().from(activityLog).where(and(
+      eq(activityLog.entityId, stale.id), eq(activityLog.action, "issue.updated"),
+    ));
+    expect(logged).toMatchObject({ actorType: "system", details: expect.objectContaining({ reason: "superseded_by_next_week" }) });
+  }, 60_000);
+
+  it("closes the task when its run ends without saving, and touches no other task", async () => {
+    const f = await setup();
+    const run = await routineSvc().runRoutine(f.routine.id, { source: "manual" } as never, { agentId: null, userId: f.responsibleUserId, runId: null });
+    expect(await closeWeeklyUpdateTaskAfterRun(server.db, { nativeIssueId: f.issueId })).toBe(false);
+    expect(await closeWeeklyUpdateTaskAfterRun(server.db, { contextSnapshot: { issueId: run.linkedIssueId } })).toBe(true);
+    const [task] = await server.db.select().from(issues).where(eq(issues.id, run.linkedIssueId!));
+    expect(task!.status).toBe("cancelled");
+    expect(await closeWeeklyUpdateTaskAfterRun(server.db, { nativeIssueId: run.linkedIssueId })).toBe(false);
+  }, 60_000);
+
+  it("leaves the weekly update's own tasks out of Home's work lists", async () => {
+    const f = await setup();
+    const run = await routineSvc().runRoutine(f.routine.id, { source: "manual" } as never, { agentId: null, userId: f.responsibleUserId, runId: null });
+    // A control: an ordinary assigned to-do task is listed.
+    const control = await issueService(server.db).create(f.companyId, { title: "Ordinary work", status: "todo", assigneeAgentId: f.agentId });
+    const briefing = await briefingService(server.db).get({
+      companyId: f.companyId, userId: f.responsibleUserId!,
+      actor: { type: "board", source: "local_implicit", userId: f.responsibleUserId!, companyIds: [f.companyId], isInstanceAdmin: false } as never,
+    });
+    const ids = [...briefing.inProgress, ...briefing.doneRecently].map((item) => item.issueId);
+    expect(ids).not.toContain(run.linkedIssueId);
+    expect(ids).toContain(control.id);
+  }, 60_000);
+
+  it("reads only company-visible tasks in a weekly run while task privacy is enforced", async () => {
+    const f = await weeklyRun();
+    const secretId = randomUUID();
+    const publicId = randomUUID();
+    const [base] = await server.db.select().from(issues).where(eq(issues.id, f.issueId));
+    await server.db.insert(issues).values([
+      { id: secretId, companyId: f.companyId, issueNumber: 900, identifier: `${base!.identifier}-S`, title: "Quarzite secret plan", status: "todo", visibility: "private", responsibleUserId: f.responsibleUserId, createdByUserId: f.responsibleUserId },
+      { id: publicId, companyId: f.companyId, issueNumber: 901, identifier: `${base!.identifier}-P`, title: "Quarzite public plan", status: "todo" },
+    ]);
+    const found = await f.call("paperclip_search_tasks", { query: "Quarzite" });
+    expect(found.body.result.isError, JSON.stringify(found.body)).toBeUndefined();
+    const ids = found.body.result.structuredContent.tasks.map((task: { id: string }) => task.id);
+    expect(ids).toContain(publicId);
+    expect(ids).not.toContain(secretId);
+    const direct = await f.call("paperclip_read_task", { taskId: secretId });
+    expect(direct.body.result).toMatchObject({ isError: true });
+    const briefing = await f.call("staples_get_briefing", {});
+    expect(briefing.body.result.isError, JSON.stringify(briefing.body)).toBeUndefined();
+    expect(JSON.stringify(briefing.body.result.structuredContent)).not.toContain("Quarzite secret plan");
+  }, 60_000);
+
+  it("grants weekly mode with no responsible person, and never on a done or cancelled task", async () => {
+    const unowned = await weeklyRun({ responsibleUserId: null });
+    // No owner in this company and no default reader yet: nobody to read as.
+    expect((await unowned.rpc("tools/list")).status).toBe(403);
+    // The company's default responsible person reads instead.
+    await server.db.update(companies).set({ defaultResponsibleUserId: unowned.responsibleUserId }).where(eq(companies.id, unowned.companyId));
+    expect((await unowned.rpc("tools/list")).status).toBe(200);
+    await server.db.update(issues).set({ status: "cancelled" }).where(eq(issues.id, unowned.taskId));
+    expect((await unowned.rpc("tools/list")).status).toBe(403);
+    const finished = await weeklyRun();
+    await server.db.update(issues).set({ status: "done" }).where(eq(issues.id, finished.taskId));
+    expect((await finished.rpc("tools/list")).status).toBe(403);
+  }, 60_000);
+
+  it("lets a member save an update from their chat (Update me now) and refuses a viewer", async () => {
+    const f = await setup();
+    await server.db.update(heartbeatRuns).set({ agentId: f.assistantId }).where(eq(heartbeatRuns.id, f.runId));
+    await server.db.update(issues).set({ assigneeAgentId: f.assistantId, conversationAgentId: f.assistantId }).where(eq(issues.id, f.issueId));
+    const token = createLocalAgentJwt(f.assistantId, f.companyId, "claude_local", f.runId, f.responsibleUserId)!;
+    const save = async () => {
+      const response = await fetch(`${server.apiUrl}/api/mcp/assistant-tools`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "staples_save_weekly_update", arguments: { body: "## What shipped\n- Chat update" } } }),
+      });
+      const text = await response.text();
+      return { status: response.status, body: text ? JSON.parse(text) : null };
+    };
+    const saved = await save();
+    expect(saved.status).toBe(200);
+    expect(saved.body.result.isError, JSON.stringify(saved.body)).toBeUndefined();
+    expect(saved.body.result.structuredContent.next).toMatch(/Tell the person/);
+    // The chat itself is untouched: no task is closed from a chat save.
+    const [chat] = await server.db.select().from(issues).where(eq(issues.id, f.issueId));
+    expect(chat!.status).toBe("in_progress");
+
+    await server.db.update(companyMemberships).set({ membershipRole: "viewer" }).where(and(
+      eq(companyMemberships.companyId, f.companyId), eq(companyMemberships.principalId, f.responsibleUserId!),
+    ));
+    expect((await save()).status).toBe(403);
+  }, 60_000);
+
+  it("shows no card to a person who cannot read the Weekly updates task, and replaces a cancelled one", async () => {
+    const f = await setup();
+    const saved = await saveWeeklyUpdate(server.db, { companyId: f.companyId, agentId: f.assistantId, runId: f.runId, body: "Hello" });
+    await server.db.update(issues).set({ visibility: "private" }).where(eq(issues.id, saved.issueId));
+    const outsider = await issueReadSqlCondition(server.db, {
+      type: "board", source: "session", userId: `outsider-${randomUUID()}`, companyIds: [f.companyId],
+      memberships: [{ companyId: f.companyId, membershipRole: "member", status: "active" }], isInstanceAdmin: false,
+    } as never);
+    expect(await latestWeeklyUpdate(server.db, { companyId: f.companyId, userId: "x", now: Date.now(), readCondition: outsider })).toBeNull();
+    expect(await latestWeeklyUpdate(server.db, { companyId: f.companyId, userId: "x", now: Date.now(), readCondition: sql<boolean>`true` })).not.toBeNull();
+
+    await server.db.update(issues).set({ status: "cancelled" }).where(eq(issues.id, saved.issueId));
+    const next = await saveWeeklyUpdate(server.db, { companyId: f.companyId, agentId: f.assistantId, runId: f.runId, body: "Again" });
+    expect(next.issueId).not.toBe(saved.issueId);
+  }, 60_000);
+
+  it("keeps a person's opt-out: an unassigned or paused weekly routine stays that way on reconcile", async () => {
+    const f = await setup();
+    const service = builtInAgentService(server.db);
+    const actor = { agentId: null, userId: f.responsibleUserId, runId: null };
+    await routineSvc().update(f.routine.id, { status: "paused" }, actor);
+    await service.ensure(f.companyId, "assistant");
+    expect((await weeklyRoutines(f.companyId))[0]).toMatchObject({ status: "paused", assigneeAgentId: f.assistantId });
+    await routineSvc().update(f.routine.id, { assigneeAgentId: null }, actor);
+    await service.ensure(f.companyId, "assistant");
+    const [kept] = await weeklyRoutines(f.companyId);
+    expect(kept!.assigneeAgentId).toBeNull();
+    expect(await weeklyRoutines(f.companyId)).toHaveLength(1);
   }, 60_000);
 });

@@ -80,6 +80,8 @@ export type AssistantToolContext = {
    * the routine's responsible person, and only staples_save_weekly_update writes.
    */
   mode?: "conversation" | "weekly_update";
+  /** Reads see only company-visible tasks and projects (weekly update runs). */
+  companyVisibleOnly?: boolean;
   membership: { companyId: string; membershipRole: string | null; status: string };
   company: { id: string; name: string; issuePrefix: string; status: string };
   canWrite: boolean;
@@ -104,7 +106,6 @@ export async function assistantToolContext(db: Db, actor: Request["actor"]): Pro
   const snapshot = run.contextSnapshot ?? {};
   const issueId = run.nativeIssueId ?? (typeof snapshot.issueId === "string" ? snapshot.issueId : null);
   const userId = run.responsibleUserId;
-  if (!userId) throw forbidden("Assistant tools require a responsible person");
   // The person's authority is lent only inside their own Assistant conversation.
   if (!issueId) throw forbidden("Assistant tools are only available in the person's Assistant conversation");
   const [issue] = await db.select({
@@ -113,8 +114,9 @@ export async function assistantToolContext(db: Db, actor: Request["actor"]): Pro
   }).from(issues).where(and(eq(issues.id, issueId), eq(issues.companyId, actor.companyId)));
   if (!issue) throw forbidden("Run task is unavailable");
   if (!issue.conversationAgentId && await isOwnWeeklyUpdateTask(db, actor.companyId, actor.agentId, issue)) {
-    return weeklyUpdateContext(db, { companyId: actor.companyId, agentId: actor.agentId, runId: run.id, issueId, userId });
+    return weeklyUpdateContext(db, { companyId: actor.companyId, agentId: actor.agentId, runId: run.id, issueId, userId: userId ?? null });
   }
+  if (!userId) throw forbidden("Assistant tools require a responsible person");
   if (issue.conversationAgentId !== actor.agentId || issue.conversationUserId !== userId) {
     throw forbidden("Assistant tools are only available in the person's Assistant conversation");
   }
@@ -159,13 +161,17 @@ async function isOwnWeeklyUpdateTask(
 }
 
 /**
- * Reads run as the run's responsible person when they are an active member,
- * else the company's default responsible person (the routine has no chat
- * owner). Writes are limited to the weekly update document regardless of role.
+ * Who a weekly update run reads as: the run's responsible person when they are
+ * an active member, else the company's default responsible person or owner
+ * (the routine has no chat owner). Always with a viewer role, and with task
+ * privacy narrowed to company-visible work: the update is published on a
+ * company-visible task, so it must never summarize anyone's private tasks.
+ * Writes are limited to the weekly update document regardless.
  */
 async function weeklyUpdateContext(
   db: Db, input: { companyId: string; agentId: string; runId: string; issueId: string; userId: string | null },
 ): Promise<AssistantToolContext> {
+  const company = await liveCompany(db, input.companyId);
   let userId = input.userId;
   let membership = userId ? await activeMembership(db, input.companyId, userId) : null;
   if (!membership) {
@@ -183,11 +189,11 @@ async function weeklyUpdateContext(
     }
   }
   if (!userId || !membership) throw forbidden("The weekly update needs an active member of this company to read as");
-  const company = await liveCompany(db, input.companyId);
   return {
     companyId: input.companyId, agentId: input.agentId, runId: input.runId, userId, issueId: input.issueId,
     // Reads only as the person: the one write is checked by name, not by role.
     membership: { ...membership, membershipRole: "viewer" }, company, canWrite: false, mode: "weekly_update",
+    companyVisibleOnly: true,
   };
 }
 
@@ -197,6 +203,7 @@ export function assistantBoardActor(context: AssistantToolContext): Request["act
     type: "board", source: "assistant_run", userId: context.userId,
     companyIds: [context.companyId], memberships: [context.membership],
     isInstanceAdmin: false, assistantRunId: context.runId,
+    ...(context.companyVisibleOnly ? { companyVisibleOnly: true } : {}),
   };
 }
 

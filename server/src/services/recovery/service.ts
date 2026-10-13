@@ -4470,6 +4470,15 @@ export function recoveryService(
       }
 
       let latestRun = await getLatestIssueRun(issue.companyId, issue.id);
+      // The Assistant's weekly update task is never re-woken: once its run has
+      // ended without saving, it is closed ("No update this week") instead.
+      if (issue.originKind === "routine_execution" && latestRun && isTerminalIssueRun(latestRun)) {
+        const { closeWeeklyUpdateTaskWithoutUpdate } = await import("../assistant-weekly-update.js");
+        if (await closeWeeklyUpdateTaskWithoutUpdate(db, issue.id, "run_finished_without_update")) {
+          result.skipped += 1;
+          continue;
+        }
+      }
       // Terminal run/wake rows survive a restart even if finalization never
       // reached the escalation transaction. Retry that idempotent disposition
       // before the participant-only review branch can skip pathless reviews.

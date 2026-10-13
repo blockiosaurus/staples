@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, like, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, ne, sql, type SQL } from "drizzle-orm";
 import {
   documents,
   inboxDismissals,
@@ -145,7 +145,7 @@ export async function syncWeeklyUpdateTimezone(db: Db, companyId: string, person
   }
 }
 
-async function findWeeklyUpdatesIssue(db: Pick<Db, "select">, companyId: string) {
+async function findWeeklyUpdatesIssue(db: Pick<Db, "select">, companyId: string, readCondition?: SQL<boolean>) {
   const [row] = await db
     .select({ id: issues.id, identifier: issues.identifier })
     .from(issues)
@@ -153,6 +153,10 @@ async function findWeeklyUpdatesIssue(db: Pick<Db, "select">, companyId: string)
       eq(issues.companyId, companyId),
       eq(issues.originKind, ASSISTANT_WEEKLY_UPDATES_ISSUE_ORIGIN_KIND),
       eq(issues.originId, companyId),
+      // A cancelled or hidden task is retired: the next save starts a fresh one.
+      ne(issues.status, "cancelled"),
+      isNull(issues.hiddenAt),
+      readCondition,
     ))
     .orderBy(issues.createdAt)
     .limit(1);
@@ -272,6 +276,60 @@ async function closeExecutionIssue(db: Db, input: SaveWeeklyUpdateInput) {
   }
 }
 
+export const NO_UPDATE_THIS_WEEK_NOTE = "No update this week.";
+
+/**
+ * Close an open weekly update routine task without an update: its run ended
+ * without saving, or a newer Monday found it still open. Cancelled with a
+ * plain note, as the system, so the routine is never stuck behind it and
+ * nothing re-wakes the Assistant on it. Returns whether it closed the task.
+ * Never throws.
+ */
+export async function closeWeeklyUpdateTaskWithoutUpdate(
+  db: Db,
+  issueId: string,
+  reason: "run_finished_without_update" | "superseded_by_next_week",
+): Promise<boolean> {
+  try {
+    const [row] = await db
+      .select({ id: issues.id, companyId: issues.companyId, status: issues.status, originKind: issues.originKind, originId: issues.originId })
+      .from(issues)
+      .where(eq(issues.id, issueId));
+    if (!row || row.originKind !== "routine_execution" || !row.originId) return false;
+    if (row.status === "done" || row.status === "cancelled") return false;
+    const [routine] = await db
+      .select({ originKind: routines.originKind, originId: routines.originId })
+      .from(routines)
+      .where(and(eq(routines.id, row.originId), eq(routines.companyId, row.companyId)));
+    if (!isAssistantWeeklyUpdateRoutine(routine)) return false;
+    const svc = issueService(db);
+    await svc.update(row.id, { status: "cancelled" });
+    await svc.addComment(row.id, NO_UPDATE_THIS_WEEK_NOTE, {}, { authorType: "system" });
+    await logActivity(db, {
+      companyId: row.companyId, actorType: "system", actorId: "assistant-weekly-update",
+      action: "issue.updated", entityType: "issue", entityId: row.id,
+      details: { status: "cancelled", _previous: { status: row.status }, reason, source: "assistant_weekly_update" },
+    });
+    const { routineService } = await import("./routines.js");
+    await routineService(db).syncRunStatusForIssue(row.id);
+    return true;
+  } catch (error) {
+    logger.warn({ err: error, issueId }, "could not close the weekly update routine task");
+    return false;
+  }
+}
+
+/** After an Assistant run ends: a weekly update task it left open (no save) is closed. */
+export async function closeWeeklyUpdateTaskAfterRun(
+  db: Db,
+  run: { nativeIssueId?: string | null; contextSnapshot?: Record<string, unknown> | null },
+) {
+  const snapshotIssueId = run.contextSnapshot?.issueId;
+  const issueId = run.nativeIssueId ?? (typeof snapshotIssueId === "string" ? snapshotIssueId : null);
+  if (!issueId) return false;
+  return closeWeeklyUpdateTaskWithoutUpdate(db, issueId, "run_finished_without_update");
+}
+
 /** Markdown to a short plain-text preview: the first few lines, minus a heading that repeats the title. */
 export function weeklyUpdateExcerpt(body: string, title: string | null, max = BRIEFING_WEEKLY_UPDATE_EXCERPT_MAX): string {
   const lines = body
@@ -295,9 +353,13 @@ export function weeklyUpdateExcerpt(body: string, title: string | null, max = BR
  */
 export async function latestWeeklyUpdate(
   db: Pick<Db, "select">,
-  input: { companyId: string; userId: string; now: number },
+  input: {
+    companyId: string; userId: string; now: number;
+    /** The caller's task read predicate (issueReadSqlCondition): no card for a task they cannot read. */
+    readCondition?: SQL<boolean>;
+  },
 ): Promise<BriefingWeeklyUpdate | null> {
-  const issue = await findWeeklyUpdatesIssue(db, input.companyId);
+  const issue = await findWeeklyUpdatesIssue(db, input.companyId, input.readCondition);
   if (!issue) return null;
   const [doc] = await db
     .select({

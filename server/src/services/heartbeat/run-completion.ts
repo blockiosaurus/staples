@@ -318,6 +318,16 @@ function readNonEmptyString(value: unknown): string | null {
 }
 
 export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunCompletionDependencies) {
+  /** Best effort; loaded lazily to keep the heartbeat module graph free of the Assistant services. */
+  async function closeWeeklyUpdateTaskAfterRunSafely(run: Run) {
+    try {
+      const { closeWeeklyUpdateTaskAfterRun } = await import("../assistant-weekly-update.js");
+      await closeWeeklyUpdateTaskAfterRun(db, run);
+    } catch (error) {
+      logger.warn({ err: error, runId: run.id }, "could not settle the weekly update task after the run");
+    }
+  }
+
   const {
     getRun,
     getAgent,
@@ -873,6 +883,9 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
         resolvedPresentationDecision,
       );
       const conversationSettled = await settleConversationTurn(db, livenessRun);
+      // A weekly update run that ended without saving closes its task ("No update this week"),
+      // so neither recovery nor the routine waits on it.
+      await closeWeeklyUpdateTaskAfterRunSafely(livenessRun);
       await releaseIssueExecutionAndPromote(livenessRun, {
         suppressImmediateRecovery: conversationSettled ||
           readNonEmptyString(
@@ -1177,6 +1190,7 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
         livenessRun,
         agent,
       );
+      await closeWeeklyUpdateTaskAfterRunSafely(livenessRun);
       await releaseIssueExecutionAndPromote(livenessRun, {
         // Native recovery owns the original heartbeat run through
         // exhaustion. Once its durable coordinator has classified a
