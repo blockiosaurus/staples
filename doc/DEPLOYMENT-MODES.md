@@ -312,7 +312,11 @@ embedded-database, backup, storage and log folders, the secrets key file, the
 config file and `.env` are refused too, even when they live outside the
 instance root. Git commands the server runs in a workspace folder (for example
 the file browser's `git status`) pass `-c core.fsmonitor=false` and
-`-c core.hooksPath=/dev/null`, so a planted `.git/config` can't run a program.
+`-c core.hooksPath=/dev/null`, so a planted `.git/config` can't run a program
+through fsmonitor or hooks. Other config-driven programs (for example
+`filter.*` drivers) are not neutralised; self-serve tenants have no way to write
+a `.git/config` into a managed folder. While self-serve is on, server-side
+`fetch` and `ls-remote` also pass `-c http.followRedirects=false`.
 
 **Repository URLs.** The server clones a project or execution workspace
 `repoUrl` into the company's managed folder, which the file browser serves. In

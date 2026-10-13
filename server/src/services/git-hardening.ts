@@ -28,7 +28,9 @@ export const MANAGED_WORKSPACE_GIT_CONFIG_ARGS: readonly string[] = Object.freez
  */
 export function untrustedRemoteGitConfigArgs(): string[] {
   const args = ["-c", "protocol.ext.allow=never"];
-  if (getSelfServePolicy().enabled) args.push("-c", "protocol.file.allow=never");
+  // With untrusted tenants, no fetch or ls-remote may follow a redirect to a
+  // host the clone-time address check never saw.
+  if (getSelfServePolicy().enabled) args.push("-c", "protocol.file.allow=never", "-c", "http.followRedirects=false");
   return args;
 }
 
