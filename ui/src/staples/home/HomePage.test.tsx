@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { WEEKLY_UPDATE_NOW_PROMPT, type Briefing, type BriefingItem, type BriefingWeeklyUpdate } from "@paperclipai/shared";
+import { type Briefing, type BriefingItem, type BriefingWeeklyUpdate } from "@paperclipai/shared";
 import { BreadcrumbProvider, useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { ApiError } from "@/api/client";
 import { queryKeys } from "@/lib/queryKeys";
@@ -14,7 +14,8 @@ import {
   BRIEFING_REFETCH_INTERVAL_MS,
   briefingRefetchInterval,
   HomePage,
-  UPDATE_NOW_UNAVAILABLE_NOTICE,
+  UPDATE_NOW_ALREADY_RUNNING_NOTICE,
+  UPDATE_NOW_STARTED_NOTICE,
 } from "./HomePage";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -32,7 +33,9 @@ const mocks = vi.hoisted(() => ({
   listArtifacts: vi.fn(),
   dismiss: vi.fn(),
   boardAccess: vi.fn(),
+  runRoutine: vi.fn(),
 }));
+vi.mock("@/api/builtInAgents", () => ({ builtInAgentsApi: { runRoutine: mocks.runRoutine } }));
 vi.mock("@/api/access", () => ({ accessApi: { getCurrentBoardAccess: mocks.boardAccess } }));
 vi.mock("@/api/inboxDismissals", () => ({ inboxDismissalsApi: { dismiss: mocks.dismiss } }));
 vi.mock("@/api/artifacts", () => ({ artifactsApi: { list: mocks.listArtifacts } }));
@@ -410,7 +413,7 @@ describe("HomePage", () => {
       label: "Raise limit",
       budget: {
         incidentId: "incident-1", policyId: "policy-1", metric: "hosted_billed_cents", scopeType: "agent",
-        scopeId: "agent-1", limitCents: 5000, observedCents: 5010, suggestedCents: 10000,
+        scopeId: "agent-1", limitCents: 5000, observedCents: 5010, suggestedCents: 10000, maxCents: 20000,
       },
     },
   });
@@ -470,6 +473,7 @@ describe("HomePage", () => {
     const input = form.querySelector<HTMLInputElement>('input[aria-label="New limit in dollars"]')!;
     expect(input.value).toBe("100");
     expect(form.textContent).toContain("New monthly hosted limit (USD)");
+    expect(form.textContent).toContain("up to $200");
     // Cancel on the left, the primary action on the right, in one row.
     const footer = buttonIn(form, "Cancel")!.parentElement!;
     expect([...footer.querySelectorAll("button")].map((button) => button.textContent?.trim())).toEqual(["Cancel", "Raise limit"]);
@@ -481,6 +485,14 @@ describe("HomePage", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(form.querySelector('[role="alert"]')?.textContent).toContain("more than the $50.10 already spent");
+    expect((buttonIn(form, "Raise limit") as HTMLButtonElement).disabled).toBe(true);
+
+    // Above the operator's ceiling: refused inline.
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "250");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(form.querySelector('[role="alert"]')?.textContent).toBe("The most this limit can be is $200.");
     expect((buttonIn(form, "Raise limit") as HTMLButtonElement).disabled).toBe(true);
 
     await act(async () => {
@@ -772,17 +784,38 @@ describe("HomePage", () => {
     expect(container.querySelector('textarea[aria-label="Ask the Assistant"]')).not.toBeNull();
   });
 
-  it("asks the Assistant for a weekly update now through the ask path", async () => {
+  it("hides Resume, Dismiss error and Raise limit from viewers, who can only ask the Assistant", async () => {
+    mocks.getBriefing.mockResolvedValue(fixture({ needsYou: [PAUSED_RUN, AGENT_ERROR, HOSTED_LIMIT, NOT_CONNECTED] }));
+    mocks.boardAccess.mockResolvedValue({
+      userId: "user-1", isInstanceAdmin: false, companyIds: ["company-1"], source: "session", keyId: null, user: null,
+      memberships: [{ companyId: "company-1", membershipRole: "viewer", status: "active" }],
+    });
+    await render();
+    expect(buttonIn(row("run-10"), "Resume")).toBeNull();
+    expect(buttonIn(row("agent-3"), "Dismiss error")).toBeNull();
+    expect(buttonIn(row("incident-1"), "Raise limit")).toBeNull();
+    // Links still work; Ask Assistant leads where no fix is offered.
+    expect(row("run-11")?.querySelector('a[href="/PAP/agents/agent-1/tools"]')).not.toBeNull();
+    expect(buttonIn(row("incident-1"), "Ask Assistant")?.getAttribute("data-variant")).toBe("default");
+  });
+
+  it("runs the weekly update routine for Update me now, never a chat message", async () => {
     mocks.getBriefing.mockResolvedValue(fixture());
-    mocks.askAssistant.mockReturnValue(true);
+    mocks.runRoutine.mockResolvedValue({ id: "routine-run-1", status: "issue_created" });
     await render();
     await click(buttonIn(section("Ask the Assistant"), "Update me now"));
-    expect(mocks.askAssistant).toHaveBeenCalledWith({ text: WEEKLY_UPDATE_NOW_PROMPT, send: true });
-    expect(section("Ask the Assistant")?.querySelector('[role="alert"]')).toBeNull();
+    expect(mocks.runRoutine).toHaveBeenCalledWith("company-1", "assistant", "weekly-update");
+    expect(mocks.askAssistant).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="update-now-notice"]')?.textContent).toBe(UPDATE_NOW_STARTED_NOTICE);
 
-    mocks.askAssistant.mockReturnValue(false);
+    // A run already underway: the routine skips, and Home says an update is being written.
+    mocks.runRoutine.mockResolvedValue({ id: "routine-run-2", status: "skipped" });
     await click(buttonIn(section("Ask the Assistant"), "Update me now"));
-    expect(section("Ask the Assistant")?.querySelector('[role="alert"]')?.textContent).toBe(UPDATE_NOW_UNAVAILABLE_NOTICE);
+    expect(container.querySelector('[data-testid="update-now-notice"]')?.textContent).toBe(UPDATE_NOW_ALREADY_RUNNING_NOTICE);
+
+    mocks.runRoutine.mockRejectedValue(new Error("Missing permission: tasks:assign"));
+    await click(buttonIn(section("Ask the Assistant"), "Update me now"));
+    expect(section("Ask the Assistant")?.querySelector('[role="alert"]')?.textContent).toBe("Couldn't start the update: Missing permission: tasks:assign");
   });
 
   it("shows a retryable error when the briefing fails to load", async () => {

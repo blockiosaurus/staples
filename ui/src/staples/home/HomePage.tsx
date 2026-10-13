@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { WEEKLY_UPDATE_NOW_PROMPT, weeklyUpdateDismissalKey, type BriefingItem } from "@paperclipai/shared";
-import { Newspaper, RotateCw, Send } from "lucide-react";
+import {
+  ASSISTANT_BUILT_IN_AGENT_KEY,
+  ASSISTANT_WEEKLY_UPDATE_ROUTINE_KEY,
+  weeklyUpdateDismissalKey,
+  type BriefingItem,
+  type RoutineRun,
+} from "@paperclipai/shared";
+import { Loader2, Newspaper, RotateCw, Send } from "lucide-react";
 import { ArtifactCard } from "@/components/artifacts/ArtifactCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,6 +18,7 @@ import { agentsApi } from "@/api/agents";
 import { artifactsApi } from "@/api/artifacts";
 import { briefingApi } from "@/api/briefing";
 import { budgetsApi } from "@/api/budgets";
+import { builtInAgentsApi } from "@/api/builtInAgents";
 import { inboxDismissalsApi } from "@/api/inboxDismissals";
 import { issuesApi } from "@/api/issues";
 import { applyCompanyPrefix } from "@/lib/company-routes";
@@ -68,6 +75,7 @@ const KNOWN_FIX_FAILURES: Array<[RegExp, string]> = [
   [/completed runs must finish accounting/i, "Recent runs are still being added up. Try again in a minute."],
   [/new budget must exceed current observed spend/i, "The new limit has to be more than what's already been spent."],
   [/budget incident not found/i, "This limit was already handled. Refresh to see the latest."],
+  [/hosted limit is already at its maximum/i, "This hosted limit is already as high as it can go."],
 ];
 
 function fixErrorMessage(item: BriefingItem, error: unknown): string {
@@ -137,10 +145,22 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
 /** Same wording the Assistant composer uses when it can't take a message. */
 export const ASK_UNAVAILABLE_NOTICE = assistantUnavailableNotice("your message is in the box to send later.");
 
-/** What "Update me now" says when the Assistant can't take the request. */
-export const UPDATE_NOW_UNAVAILABLE_NOTICE = assistantUnavailableNotice("try Update me now again in a moment.");
+/** What "Update me now" says once the Assistant has started (or was already writing) the update. */
+export const UPDATE_NOW_STARTED_NOTICE = "Writing your update now. It shows here when it's ready.";
+export const UPDATE_NOW_ALREADY_RUNNING_NOTICE = "An update is already being written.";
 
-/** Viewers can read but not have the Assistant save anything for them, so they get no "Update me now". */
+/** "Update me now" runs the weekly update routine; a skipped or coalesced run means one is already underway. */
+export function updateNowNotice(run: Pick<RoutineRun, "status"> | null | undefined): string {
+  return run?.status === "skipped" || run?.status === "coalesced"
+    ? UPDATE_NOW_ALREADY_RUNNING_NOTICE
+    : UPDATE_NOW_STARTED_NOTICE;
+}
+
+/**
+ * Whether this person can change things in the company (not a viewer). Viewers
+ * can read, but get no "Update me now" and no fixes (Resume, Dismiss error,
+ * Raise limit): the server would refuse them.
+ */
 export function canRequestWeeklyUpdate(companyId: string, access: CurrentBoardAccess | undefined): boolean {
   if (!companyId || !access) return false;
   if (access.source === "local_implicit" || access.isInstanceAdmin) return true;
@@ -149,15 +169,24 @@ export function canRequestWeeklyUpdate(companyId: string, access: CurrentBoardAc
   return Boolean(membership && membership.membershipRole !== "viewer");
 }
 
-function AskComposer({ canUpdateNow }: { canUpdateNow: boolean }) {
+function AskComposer({ companyId, canUpdateNow }: { companyId: string; canUpdateNow: boolean }) {
   const askAssistant = useAskAssistant();
   const [text, setText] = useState("");
   const [unavailable, setUnavailable] = useState<string | null>(null);
+  const [updateNotice, setUpdateNotice] = useState<{ text: string; failed: boolean } | null>(null);
   const trimmed = text.trim();
-  // Asks the Assistant for a weekly update right away, through the same ask path.
-  const updateNow = () => {
-    setUnavailable(askAssistant({ text: WEEKLY_UPDATE_NOW_PROMPT, send: true }) ? null : UPDATE_NOW_UNAVAILABLE_NOTICE);
-  };
+  // Runs the Assistant's weekly update routine now: a weekly update run that
+  // reads only company-visible work, never a chat with this person's access.
+  const updateNow = useMutation({
+    mutationFn: () =>
+      builtInAgentsApi.runRoutine(companyId, ASSISTANT_BUILT_IN_AGENT_KEY, ASSISTANT_WEEKLY_UPDATE_ROUTINE_KEY) as Promise<RoutineRun>,
+    onMutate: () => setUpdateNotice(null),
+    onSuccess: (run) => setUpdateNotice({ text: updateNowNotice(run), failed: false }),
+    onError: (error) => {
+      const reason = error instanceof Error && error.message ? error.message : "Something went wrong.";
+      setUpdateNotice({ text: `Couldn't start the update: ${reason}`, failed: true });
+    },
+  });
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (!trimmed) return;
@@ -174,8 +203,8 @@ function AskComposer({ canUpdateNow }: { canUpdateNow: boolean }) {
       title="Ask the Assistant"
       action={
         canUpdateNow ? (
-          <Button type="button" variant="ghost" size="xs" onClick={updateNow}>
-            <Newspaper aria-hidden="true" />
+          <Button type="button" variant="ghost" size="xs" disabled={updateNow.isPending} onClick={() => updateNow.mutate()}>
+            {updateNow.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Newspaper aria-hidden="true" />}
             Update me now
           </Button>
         ) : undefined
@@ -184,6 +213,15 @@ function AskComposer({ canUpdateNow }: { canUpdateNow: boolean }) {
       {unavailable ? (
         <p role="alert" className="text-sm text-destructive">
           {unavailable}
+        </p>
+      ) : null}
+      {updateNotice ? (
+        <p
+          role={updateNotice.failed ? "alert" : "status"}
+          className={updateNotice.failed ? "text-sm text-destructive" : "text-sm text-muted-foreground"}
+          data-testid="update-now-notice"
+        >
+          {updateNotice.text}
         </p>
       ) : null}
       <form className="flex items-end gap-2" onSubmit={submit}>
@@ -341,6 +379,7 @@ export function HomePage() {
   );
 
   const briefing = briefingQuery.data;
+  const canAct = canRequestWeeklyUpdate(companyId, boardAccessQuery.data);
 
   if (briefingQuery.isError && !briefing) {
     return (
@@ -423,7 +462,7 @@ export function HomePage() {
                 onAccept={(target) => accept.mutate(target)}
                 onAsk={askAbout}
                 fixing={fixing.has(briefingItemKey(item))}
-                onFix={(target, amountCents) => fix.mutate({ item: target, amountCents })}
+                onFix={canAct ? (target, amountCents) => fix.mutate({ item: target, amountCents }) : undefined}
               />
             ))}
           </ul>
@@ -469,7 +508,7 @@ export function HomePage() {
         </Section>
       ) : null}
 
-      <AskComposer canUpdateNow={canRequestWeeklyUpdate(companyId, boardAccessQuery.data)} />
+      <AskComposer companyId={companyId} canUpdateNow={canAct} />
     </div>
   );
 }

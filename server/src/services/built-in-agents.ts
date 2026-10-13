@@ -34,7 +34,7 @@ import {
 import { companySkillService } from "./company-skills.js";
 import { routineService } from "./routines.js";
 import { companyPersonTimezone } from "./assistant-weekly-update.js";
-import { PERSON_TIMEZONE } from "./assistant-weekly-update-origin.js";
+import { BUILT_IN_BUNDLES_ACTOR_USER_ID, PERSON_TIMEZONE, weeklyUpdateRunsUnattended } from "./assistant-weekly-update-origin.js";
 import { accessService } from "./access.js";
 import { listAdapterModels } from "../adapters/registry.js";
 import {
@@ -389,7 +389,7 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
     inheritCompanyAdapterType: true,
     defaultSkillKeys: ASSISTANT_DEFAULT_SKILL_KEYS,
     bundle: {
-      stockVersion: "2026-10-13",
+      stockVersion: "2026-10-13b",
       instructions: {
         entryFile: "AGENTS.md",
         files: {
@@ -397,7 +397,8 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
         },
       },
       // Mondays at 9:00 in the person's zone. The scheduler skips it while the
-      // company has no agents besides the Assistant.
+      // company has no agents besides the Assistant. Created paused unless the
+      // Assistant is on the hosted adapter (see weeklyUpdateRunsUnattended).
       routine: {
         routineKey: ASSISTANT_WEEKLY_UPDATE_ROUTINE_KEY,
         title: "Weekly update",
@@ -1672,10 +1673,16 @@ export function builtInAgentService(db: Db) {
     agent: Agent, definition: BuiltInAgentDefinition, existing: Routine | null, mode: "reconcile" | "reset", everAssigned = false,
   ) {
     const routine = definition.bundle!.routine!;
-    const actor = { agentId: null, userId: "built-in-bundles" };
+    const actor = { agentId: null, userId: BUILT_IN_BUNDLES_ACTOR_USER_ID };
     // The Assistant can hold only its own weekly update routine, which is
     // recognized by its origin: create it unassigned, mark the origin, then assign.
     const assignAfterOrigin = isAssistantAgent(agent);
+    // The weekly update runs unattended only on the hosted adapter: elsewhere it
+    // starts paused (the scheduler turns it on if the Assistant moves to hosted,
+    // and a person can turn it on themselves).
+    const stockStatus = assignAfterOrigin && routine.status === "active" && !weeklyUpdateRunsUnattended(agent)
+      ? "paused"
+      : routine.status;
     const fields = {
       title: routine.title,
       description: routine.description,
@@ -1707,7 +1714,7 @@ export function builtInAgentService(db: Db) {
     // a person who paused or unassigned it has opted out, and a stock update keeps that.
     if (assignAfterOrigin && (!existing || mode === "reset" || !everAssigned)) {
       try {
-        nextRoutine = await routineSvc.update(nextRoutine.id, { assigneeAgentId: agent.id, status: routine.status }, actor) ?? nextRoutine;
+        nextRoutine = await routineSvc.update(nextRoutine.id, { assigneeAgentId: agent.id, status: stockStatus }, actor) ?? nextRoutine;
       } catch (error) {
         // Left unassigned and paused; the next reconcile assigns it.
         logger.warn({ err: error, agentId: agent.id, routineId: nextRoutine.id }, "could not assign the built-in routine yet");
@@ -1753,7 +1760,7 @@ export function builtInAgentService(db: Db) {
       details: {
         key: definition.key,
         routineKey: routine.routineKey,
-        status: routine.status,
+        status: assignAfterOrigin ? stockStatus : routine.status,
       },
     });
     return nextRoutine;

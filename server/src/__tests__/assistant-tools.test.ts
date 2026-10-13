@@ -251,6 +251,8 @@ describe("staples_ask_questions", () => {
   it("is a write tool hidden from viewers", () => {
     const t = tools(vi.fn() as unknown as ApiDispatch);
     expect(ASSISTANT_WRITE_TOOL_NAMES).toContain("staples_ask_questions");
+    // The weekly update is saved only by its routine run, never from a chat.
+    expect(ASSISTANT_WRITE_TOOL_NAMES).not.toContain("staples_save_weekly_update");
     expect(t.definitions(true).some((d) => d.name === "staples_ask_questions")).toBe(true);
     expect(t.definitions(false).some((d) => d.name === "staples_ask_questions")).toBe(false);
   });

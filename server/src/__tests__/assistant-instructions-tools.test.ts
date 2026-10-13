@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { ASSISTANT_READ_TOOL_NAMES, ASSISTANT_WRITE_TOOL_NAMES } from "../services/assistant-tools.js";
+import { ASSISTANT_READ_TOOL_NAMES, ASSISTANT_WEEKLY_UPDATE_RUN_WRITE_TOOL_NAMES, ASSISTANT_WRITE_TOOL_NAMES } from "../services/assistant-tools.js";
 
 const TOOL_NAME = /\b(?:staples|paperclip)_[a-z0-9_]+\b/g;
 const assistantInstructions = fileURLToPath(new URL("../built-ins/agents/assistant/AGENTS.md", import.meta.url));
@@ -17,7 +17,7 @@ async function instructionFiles() {
 
 describe("Assistant instructions and tool list", () => {
   it("names only tools the Assistant actually has", async () => {
-    const tools = new Set<string>([...ASSISTANT_READ_TOOL_NAMES, ...ASSISTANT_WRITE_TOOL_NAMES]);
+    const tools = new Set<string>([...ASSISTANT_READ_TOOL_NAMES, ...ASSISTANT_WRITE_TOOL_NAMES, ...ASSISTANT_WEEKLY_UPDATE_RUN_WRITE_TOOL_NAMES]);
     const files = await instructionFiles();
     expect(files.length).toBeGreaterThan(1);
     const missing: string[] = [];

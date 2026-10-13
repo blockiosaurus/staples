@@ -1,6 +1,6 @@
 ---
 name: staples-weekly-update
-description: Write the company's weekly update (what shipped, what's blocked and what you need from the person, spend against budget, next week) from read-only tools, and save it with staples_save_weekly_update. Use when the weekly update routine wakes you, or when the person asks for an update now.
+description: Write the company's weekly update (what shipped, what's blocked and what you need from the person, spend against budget, next week) from read-only tools, and save it with staples_save_weekly_update. Use when the weekly update routine wakes you (on its Monday schedule, or when the person presses Update me now on Home).
 ---
 
 # Weekly update
@@ -34,6 +34,6 @@ Call `staples_save_weekly_update` with the Markdown as `body`. The server saves 
 
 If the result has `timezoneKnown: false`, add this last line and save again: "Dates use UTC because I don't know your time zone yet."
 
-When the weekly update routine woke you, the save also closes the routine's task: end your run. Do not comment, create tasks, answer questions or propose actions in that run.
+The save also closes the routine's task: end your run. Do not comment, create tasks, answer questions or propose actions in that run.
 
-When the person asked in chat, reply in one or two lines with a link to the update (`href` in the result) and the single most important thing that needs them.
+The save works only in the weekly update routine's run. In a chat it is refused: a chat reads with the person's own access, which can include private tasks, and the update is shown to the whole company. If the person asks in chat for an update now, tell them to press "Update me now" on Home.

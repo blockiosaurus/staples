@@ -29,10 +29,16 @@ export const ASSISTANT_READ_TOOL_NAMES = [
   "staples_list_templates", "staples_get_template",
 ] as const;
 
-/** Low-risk writes. Governed actions (finish, block, delete, configure, approvals) are not exposed. */
+/**
+ * Low-risk writes in a person's chat. Governed actions (finish, block, delete,
+ * configure, approvals) are not exposed. The weekly update save is not here: a
+ * chat reads with that person's own task access, so it must never publish a
+ * company-wide update (only a weekly update run, which reads company-visible
+ * work only, may save one).
+ */
 export const ASSISTANT_WRITE_TOOL_NAMES = [
   "paperclip_create_task", "paperclip_add_comment", "paperclip_update_task", "staples_answer_question", "staples_pin_surface",
-  "staples_propose_action", "staples_ask_questions", "staples_propose_plan", "staples_save_weekly_update",
+  "staples_propose_action", "staples_ask_questions", "staples_propose_plan",
 ] as const;
 
 export const SAVE_WEEKLY_UPDATE_TOOL = "staples_save_weekly_update";
@@ -721,15 +727,13 @@ async function saveWeeklyUpdateTool(db: Db, context: AssistantToolContext, args:
   try {
     const saved = await saveWeeklyUpdate(db, {
       companyId: context.companyId, agentId: context.agentId, runId: context.runId, body: String(args.body ?? ""),
-      executionIssueId: context.mode === "weekly_update" ? context.issueId : null,
+      executionIssueId: context.issueId,
     });
     return {
       saved: { taskId: saved.issueId, taskIdentifier: saved.issueIdentifier, documentId: saved.documentId, key: saved.key, title: saved.title },
       href: `/${context.company.issuePrefix}${saved.href}`,
       timezone: saved.timezone, timezoneKnown: saved.timezoneKnown,
-      next: context.mode === "weekly_update"
-        ? "Saved, and the routine task is closed. End your run."
-        : "Saved. Tell the person in one or two lines, with the link.",
+      next: "Saved, and the routine task is closed. End your run.",
     };
   } catch (error) {
     if (error instanceof McpCapabilityError) throw error;
@@ -756,7 +760,8 @@ export type AssistantToolResult = { content: Array<{ type: "text"; text: string 
 export function createAssistantTools(db: Db, options: { dispatch: ApiDispatch; origin?: string }) {
   const all = assistantCapabilities(db);
   const byName = new Map(all.map((c) => [c.name, c]));
-  const writeNames = new Set<string>(ASSISTANT_WRITE_TOOL_NAMES);
+  const writeNames = new Set<string>([...ASSISTANT_WRITE_TOOL_NAMES, ...ASSISTANT_WEEKLY_UPDATE_RUN_WRITE_TOOL_NAMES]);
+  const weeklyRunWriteNames = new Set<string>(ASSISTANT_WEEKLY_UPDATE_RUN_WRITE_TOOL_NAMES);
   const origin = (options.origin ?? "").replace(/\/+$/, "");
 
   return {
@@ -778,9 +783,11 @@ export function createAssistantTools(db: Db, options: { dispatch: ApiDispatch; o
         const c = byName.get(name);
         if (!c) throw new McpCapabilityError("Tool is unavailable to the Assistant.");
         if (context.mode === "weekly_update") {
-          if (writeNames.has(name) && !(ASSISTANT_WEEKLY_UPDATE_RUN_WRITE_TOOL_NAMES as readonly string[]).includes(name)) {
+          if (writeNames.has(name) && !weeklyRunWriteNames.has(name)) {
             throw new McpCapabilityError("A weekly update run can only read and save the weekly update.");
           }
+        } else if (weeklyRunWriteNames.has(name)) {
+          throw new McpCapabilityError("The weekly update is saved only by the weekly update routine. Ask the person to use Update me now on Home.");
         } else if (writeNames.has(name) && !context.canWrite) throw new McpCapabilityError("This person has read-only access.");
         const raw = { ...object(input) };
         if (raw.companyId !== undefined && raw.companyId !== context.companyId) throw new McpCapabilityError("Company does not match the Assistant's company.");

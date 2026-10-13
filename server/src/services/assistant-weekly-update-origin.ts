@@ -14,6 +14,26 @@ export function isAssistantWeeklyUpdateRoutine(routine: { originKind?: string | 
     && routine.originId === ASSISTANT_WEEKLY_UPDATE_ROUTINE_ORIGIN_ID;
 }
 
+/** The actor user id the built-in bundle writes routines as (not a person). */
+export const BUILT_IN_BUNDLES_ACTOR_USER_ID = "built-in-bundles";
+/** The hosted adapter (Claude (hosted)); the weekly update runs unattended only there. */
+export const WEEKLY_UPDATE_HOSTED_ADAPTER_TYPE = "claude_managed";
+
+/**
+ * The weekly update runs on its schedule only when the Assistant is on the
+ * hosted adapter. On a local adapter an unattended Monday run would use the
+ * person's own machine and account, so the routine is created paused there
+ * and the scheduler skips it, unless a person turned it on themselves.
+ */
+export function weeklyUpdateRunsUnattended(assistant: { adapterType: string } | null | undefined): boolean {
+  return assistant?.adapterType === WEEKLY_UPDATE_HOSTED_ADAPTER_TYPE;
+}
+
+/** A person (not the built-in bundle or an agent) last changed the routine, e.g. turned it on or paused it. */
+export function weeklyUpdateRoutineSetByPerson(routine: { updatedByUserId?: string | null }): boolean {
+  return Boolean(routine.updatedByUserId && routine.updatedByUserId !== BUILT_IN_BUNDLES_ACTOR_USER_ID);
+}
+
 /** True when the company has an agent other than the Assistant that is not terminated. */
 export async function companyHasStaffAgents(db: Pick<Db, "select">, companyId: string): Promise<boolean> {
   const rows = await db

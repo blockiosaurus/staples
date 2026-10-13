@@ -2960,7 +2960,6 @@ export {
   WEEKLY_UPDATE_CARD_MAX_AGE_DAYS,
   WEEKLY_UPDATE_DISMISSAL_KEY_PREFIX,
   WEEKLY_UPDATE_DOCUMENT_KEY_PREFIX,
-  WEEKLY_UPDATE_NOW_PROMPT,
   isAssistantAgent,
   weeklyUpdateDismissalKey,
 } from "./assistant-agent.js";

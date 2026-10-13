@@ -57,7 +57,7 @@ describe("weekly update helpers", () => {
 
   it("ships the weekly update routine in the Assistant bundle with a bumped stock version", () => {
     const assistant = listBuiltInAgentDefinitions().find((definition) => definition.key === "assistant")!;
-    expect(assistant.bundle?.stockVersion).toBe("2026-10-13");
+    expect(assistant.bundle?.stockVersion).toBe("2026-10-13b");
     expect(assistant.bundle?.routine).toMatchObject({
       routineKey: "weekly-update", title: "Weekly update", status: "active",
       triggers: [{ kind: "schedule", cronExpression: "0 9 * * 1", timezone: "person", enabled: true }],
@@ -88,15 +88,69 @@ const support = await getEmbeddedPostgresTestSupport();
     return server.db.select().from(routineTriggers).where(eq(routineTriggers.routineId, routineId));
   }
 
-  async function setup() {
+  /** `hosted`: the Assistant runs on Claude (hosted), so the scheduler has turned the weekly update on. */
+  async function setup(options: { hosted?: boolean } = {}) {
     const f = await server.fixture({ conversation: true, disableWakeOnDemand: true });
     const assistant = await builtInAgentService(server.db).ensureAssistant(f.companyId);
+    if (options.hosted) {
+      await server.db.update(agents).set({ adapterType: "claude_managed" }).where(eq(agents.id, assistant.id));
+      await routineSvc().tickScheduledTriggers(new Date());
+    }
     const [routine] = await weeklyRoutines(f.companyId);
+    if (options.hosted) expect(routine!.status).toBe("active");
     return { ...f, assistantId: assistant.id, routine: routine! };
   }
 
-  it("creates one active weekly routine for the Assistant on Mondays at 9:00, never duplicated, also on stock upgrade", async () => {
+  it("creates the weekly routine paused for a local Assistant, and the scheduler never runs it unattended there", async () => {
     const f = await setup();
+    expect(f.routine).toMatchObject({ title: "Weekly update", status: "paused", assigneeAgentId: f.assistantId });
+    const state = await builtInAgentService(server.db).get(f.companyId, "assistant");
+    expect(state.resources.find((resource) => resource.resourceKind === "routine")).toMatchObject({ scheduleEnabled: false });
+
+    // Shipped active before this ruling (or switched on by the system): still skipped, with the reason recorded.
+    await server.db.update(routines).set({ status: "active" }).where(eq(routines.id, f.routine.id));
+    await server.db.update(routineTriggers).set({ nextRunAt: new Date(Date.now() - 60_000) }).where(eq(routineTriggers.routineId, f.routine.id));
+    await routineSvc().tickScheduledTriggers(new Date());
+    const runs = await server.db.select().from(routineRuns).where(eq(routineRuns.routineId, f.routine.id));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ status: "skipped", failureReason: "assistant_not_hosted", linkedIssueId: null });
+    expect(await openTasks(f.companyId, f.routine.id)).toHaveLength(0);
+  }, 60_000);
+
+  it("runs it for a local Assistant once a person turns it on themselves", async () => {
+    const f = await setup();
+    const state = await builtInAgentService(server.db).enableRoutineSchedule(f.companyId, "assistant", "weekly-update", { userId: f.responsibleUserId });
+    expect(state.resources.find((resource) => resource.resourceKind === "routine")).toMatchObject({ scheduleEnabled: true });
+    await server.db.update(routineTriggers).set({ nextRunAt: new Date(Date.now() - 60_000) }).where(eq(routineTriggers.routineId, f.routine.id));
+    await routineSvc().tickScheduledTriggers(new Date());
+    const [task] = await openTasks(f.companyId, f.routine.id);
+    expect(task).toMatchObject({ title: "Weekly update", assigneeAgentId: f.assistantId, status: "todo" });
+  }, 60_000);
+
+  it("turns the routine on when the Assistant moves to hosted, unless a person paused it", async () => {
+    const f = await setup();
+    await server.db.update(agents).set({ adapterType: "claude_managed" }).where(eq(agents.id, f.assistantId));
+    const before = Date.now();
+    await routineSvc().tickScheduledTriggers(new Date());
+    const [activated] = await weeklyRoutines(f.companyId);
+    expect(activated!.status).toBe("active");
+    // The next run is the next scheduled Monday, not a catch-up now.
+    const [trigger] = await scheduleOf(f.routine.id);
+    expect(trigger!.nextRunAt!.getTime()).toBeGreaterThan(before);
+    expect(await server.db.select().from(routineRuns).where(eq(routineRuns.routineId, f.routine.id))).toHaveLength(0);
+    const [logged] = await server.db.select().from(activityLog).where(and(eq(activityLog.entityId, f.routine.id), eq(activityLog.action, "routine.updated")));
+    expect(logged).toMatchObject({ actorType: "system", details: expect.objectContaining({ reason: "assistant_on_hosted" }) });
+
+    // A person pauses it: it stays paused.
+    const g = await setup();
+    await builtInAgentService(server.db).disableRoutineSchedule(g.companyId, "assistant", "weekly-update", { userId: g.responsibleUserId });
+    await server.db.update(agents).set({ adapterType: "claude_managed" }).where(eq(agents.id, g.assistantId));
+    await routineSvc().tickScheduledTriggers(new Date());
+    expect((await weeklyRoutines(g.companyId))[0]!.status).toBe("paused");
+  }, 60_000);
+
+  it("creates one active weekly routine for a hosted Assistant on Mondays at 9:00, never duplicated, also on stock upgrade", async () => {
+    const f = await setup({ hosted: true });
     const service = builtInAgentService(server.db);
     expect(await weeklyRoutines(f.companyId)).toHaveLength(1);
     expect(f.routine).toMatchObject({ title: "Weekly update", status: "active", assigneeAgentId: f.assistantId, originKind: "built_in_agent_bundle" });
@@ -107,7 +161,7 @@ const support = await getEmbeddedPostgresTestSupport();
 
     const state = await service.get(f.companyId, "assistant");
     expect(state.resources.find((resource) => resource.resourceKind === "routine"))
-      .toMatchObject({ stockVersion: "2026-10-13", stockStatus: "stock_current", scheduleEnabled: true });
+      .toMatchObject({ stockVersion: "2026-10-13b", stockStatus: "stock_current", scheduleEnabled: true });
 
     await service.ensure(f.companyId, "assistant");
     await service.ensure(f.companyId, "assistant");
@@ -150,7 +204,7 @@ const support = await getEmbeddedPostgresTestSupport();
   }, 60_000);
 
   it("skips the schedule while the company has no other agents, and runs it as the Assistant's task otherwise", async () => {
-    const f = await setup();
+    const f = await setup({ hosted: true });
     const past = new Date(Date.now() - 60_000);
     await server.db.update(agents).set({ status: "terminated" }).where(eq(agents.id, f.agentId));
     await server.db.update(routineTriggers).set({ nextRunAt: past }).where(eq(routineTriggers.routineId, f.routine.id));
@@ -281,7 +335,7 @@ const support = await getEmbeddedPostgresTestSupport();
   }
 
   it("closes last week's open task so it never blocks this Monday's run", async () => {
-    const f = await setup();
+    const f = await setup({ hosted: true });
     const first = await routineSvc().runRoutine(f.routine.id, { source: "manual" } as never, { agentId: null, userId: f.responsibleUserId, runId: null });
     await server.db.update(routineTriggers).set({ nextRunAt: new Date(Date.now() - 60_000) }).where(eq(routineTriggers.routineId, f.routine.id));
     await routineSvc().tickScheduledTriggers(new Date());
@@ -358,31 +412,45 @@ const support = await getEmbeddedPostgresTestSupport();
     expect((await finished.rpc("tools/list")).status).toBe(403);
   }, 60_000);
 
-  it("lets a member save an update from their chat (Update me now) and refuses a viewer", async () => {
+  it("never saves the weekly update from a chat, which reads with the person's own access", async () => {
     const f = await setup();
     await server.db.update(heartbeatRuns).set({ agentId: f.assistantId }).where(eq(heartbeatRuns.id, f.runId));
     await server.db.update(issues).set({ assigneeAgentId: f.assistantId, conversationAgentId: f.assistantId }).where(eq(issues.id, f.issueId));
     const token = createLocalAgentJwt(f.assistantId, f.companyId, "claude_local", f.runId, f.responsibleUserId)!;
-    const save = async () => {
+    const rpc = async (method: string, params?: Record<string, unknown>) => {
       const response = await fetch(`${server.apiUrl}/api/mcp/assistant-tools`, {
         method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "staples_save_weekly_update", arguments: { body: "## What shipped\n- Chat update" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params ? { params } : {}) }),
       });
       const text = await response.text();
       return { status: response.status, body: text ? JSON.parse(text) : null };
     };
-    const saved = await save();
-    expect(saved.status).toBe(200);
-    expect(saved.body.result.isError, JSON.stringify(saved.body)).toBeUndefined();
-    expect(saved.body.result.structuredContent.next).toMatch(/Tell the person/);
-    // The chat itself is untouched: no task is closed from a chat save.
-    const [chat] = await server.db.select().from(issues).where(eq(issues.id, f.issueId));
-    expect(chat!.status).toBe("in_progress");
-
-    await server.db.update(companyMemberships).set({ membershipRole: "viewer" }).where(and(
-      eq(companyMemberships.companyId, f.companyId), eq(companyMemberships.principalId, f.responsibleUserId!),
+    const listed = await rpc("tools/list");
+    expect(listed.status).toBe(200);
+    const names = listed.body.result.tools.map((tool: { name: string }) => tool.name);
+    expect(names).toContain("paperclip_create_task");
+    expect(names).not.toContain("staples_save_weekly_update");
+    const saved = await rpc("tools/call", { name: "staples_save_weekly_update", arguments: { body: "## What shipped\n- Chat update" } });
+    expect(saved.body.result).toMatchObject({ isError: true });
+    expect(saved.body.result.content[0].text).toMatch(/Update me now/);
+    const docs = await server.db.select().from(issues).where(and(
+      eq(issues.companyId, f.companyId), eq(issues.originKind, ASSISTANT_WEEKLY_UPDATES_ISSUE_ORIGIN_KIND),
     ));
-    expect((await save()).status).toBe(403);
+    expect(docs).toHaveLength(0);
+  }, 60_000);
+
+  it("Update me now runs the weekly routine as a weekly update run, even while its schedule is paused", async () => {
+    const f = await setup();
+    expect(f.routine.status).toBe("paused");
+    const service = builtInAgentService(server.db);
+    const run = await service.runRoutine(f.companyId, "assistant", "weekly-update", { userId: f.responsibleUserId });
+    expect(run.linkedIssueId).toBeTruthy();
+    const [task] = await server.db.select().from(issues).where(eq(issues.id, run.linkedIssueId!));
+    expect(task).toMatchObject({ originKind: "routine_execution", originId: f.routine.id, assigneeAgentId: f.assistantId });
+    // While that update is being written, a second press is skipped (Home says so).
+    const again = await service.runRoutine(f.companyId, "assistant", "weekly-update", { userId: f.responsibleUserId });
+    expect(again.status).toBe("skipped");
+    expect(await openTasks(f.companyId, f.routine.id)).toHaveLength(1);
   }, 60_000);
 
   it("shows no card to a person who cannot read the Weekly updates task, and replaces a cancelled one", async () => {
@@ -425,7 +493,7 @@ const support = await getEmbeddedPostgresTestSupport();
   }, 60_000);
 
   it("leaves a task whose run is still active on Monday, and skips that week's run", async () => {
-    const f = await setup();
+    const f = await setup({ hosted: true });
     const first = await routineSvc().runRoutine(f.routine.id, { source: "manual" } as never, { agentId: null, userId: f.responsibleUserId, runId: null });
     await server.db.insert(heartbeatRuns).values({
       companyId: f.companyId, agentId: f.assistantId, status: "running", responsibleUserId: f.responsibleUserId,
