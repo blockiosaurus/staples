@@ -4,8 +4,10 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# The image's default target is `production`. It listens on $PORT (Railway
+# Railway builds the Dockerfile's last stage, `railway` (an alias of
+# `production`). It listens on $PORT (Railway
 # injects it and it overrides the image's PORT=3100) and binds HOST=0.0.0.0.
+# Needs PAPERCLIP_ALLOWED_HOSTNAMES=healthcheck.railway.app (see doc/RAILWAY.md).
 healthcheckPath = "/api/health"
 # First boot applies database migrations before the server listens.
 healthcheckTimeout = 300
