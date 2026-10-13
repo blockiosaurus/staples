@@ -4769,3 +4769,47 @@ describe("TaskChatThread composer execution controls", () => {
     expect(container.querySelector('[data-testid="task-chat-composer-stop"]')).toBeNull();
   });
 });
+
+describe("TaskChatThread proposed plan card", () => {
+  const PLAN_PATH = "/api/companies/company-1/plans/apply";
+  function planProposal(status: "pending" | "accepted"): IssueThreadInteraction {
+    const base = planReviewInteraction(status);
+    return {
+      ...base,
+      id: "plan-proposal",
+      addresseeUserId: "user-board",
+      result: status === "accepted"
+        ? { version: 1, proposedAction: { status: "executed", httpStatus: 201, message: "Plan created: 1 agent, 1 task.", hash: "a".repeat(64) } }
+        : null,
+      payload: {
+        version: 1,
+        prompt: "Set up a writer",
+        acceptLabel: "Create plan",
+        rejectLabel: "Cancel",
+        proposedAction: {
+          version: 1, method: "POST", path: PLAN_PATH, summary: "Set up a writer", category: "plan", hash: "a".repeat(64),
+          body: { agents: [], tasks: [{ clientKey: "t1", title: "Write intro", blockedByClientKeys: [] }] },
+        },
+      },
+    } as unknown as IssueThreadInteraction;
+  }
+  const createPlanButtons = () => Array.from(container.querySelectorAll("button")).filter(b => b.textContent?.trim() === "Create plan");
+
+  it("shows the full card once (in the takeover) with a stub in the timeline while pending", () => {
+    render(<TaskChatThread comments={[]} interactions={[planProposal("pending")]} currentUserId="user-board" onAdd={async () => {}} />);
+    expect(createPlanButtons()).toHaveLength(1);
+    expect(container.querySelectorAll('[data-testid="proposed-action-card"]')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="task-chat-composer-takeover"] [data-testid="proposed-action-card"]')).not.toBeNull();
+    const stub = container.querySelector('[data-testid="task-chat-proposed-action-stub"]');
+    expect(stub?.textContent).toContain("Plan waiting for your confirmation");
+    expect(container.querySelector('[data-testid="task-chat-composer-takeover"] [data-testid="task-chat-proposed-action-stub"]')).toBeNull();
+  });
+
+  it("shows the outcome in the timeline once resolved, with no stub", () => {
+    render(<TaskChatThread comments={[]} interactions={[planProposal("accepted")]} currentUserId="user-board" onAdd={async () => {}} />);
+    expect(container.querySelector('[data-testid="task-chat-proposed-action-stub"]')).toBeNull();
+    expect(createPlanButtons()).toHaveLength(0);
+    const card = container.querySelector('[data-testid="proposed-action-card"]');
+    expect(card?.textContent).toContain("Plan created: 1 agent, 1 task.");
+  });
+});

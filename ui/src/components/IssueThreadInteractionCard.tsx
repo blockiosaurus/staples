@@ -30,6 +30,8 @@ import {
   type SuggestedTaskDraft,
   type SuggestedTaskTreeNode,
 } from "../lib/issue-thread-interactions";
+import { roleLabels } from "./agent-config-primitives";
+import { getAdapterDisplay } from "../adapters/adapter-display-registry";
 import { cn, formatCents, formatDateTime, formatShortDate } from "../lib/utils";
 import { InteractionPreparationNotice } from "./InteractionPreparationNotice";
 import { InteractionAudienceLine } from "./InteractionAudienceLine";
@@ -2099,16 +2101,28 @@ function ProposedPlanPreview({ path, body, hireConnections, templateSummaries }:
           <ul data-testid="proposed-plan-agents" className="list-disc space-y-0.5 pl-5">
             {plan.agents.map((agent) => (
               <li key={agent.clientKey}>
-                {agent.name ?? agent.clientKey}{agent.role ? ` — ${agent.role}` : ""}{agent.adapterType ? <> (<span className="font-mono text-xs">{agent.adapterType}</span>)</> : null}
-                {agent.title ? <span className="text-muted-foreground"> · {agent.title}</span> : null}
-                {agent.budgetMonthlyCents !== undefined ? <span className="text-muted-foreground"> · budget {formatCents(agent.budgetMonthlyCents)}/month</span> : null}
-                {agent.reportsToClientKey ? <span className="text-muted-foreground"> · reports to {newAgentByKey.get(agent.reportsToClientKey)?.name ?? agent.reportsToClientKey}</span> : null}
-                {connectionByKey.has(agent.clientKey) ? (
-                  <span data-testid="proposed-plan-agent-connection" className="text-muted-foreground"> · {inheritedConnectionLabel(connectionByKey.get(agent.clientKey) ?? null)}</span>
-                ) : null}
-                {templateByKey.has(agent.clientKey) ? (
-                  <p data-testid="proposed-plan-agent-template" className="text-muted-foreground">{planTemplateLine(templateByKey.get(agent.clientKey)!)}</p>
-                ) : null}
+                {(() => {
+                  const template = templateByKey.get(agent.clientKey);
+                  const roleLabel = agent.role ? (roleLabels[agent.role] ?? null) : null;
+                  const engine = agent.adapterType ? getAdapterDisplay(agent.adapterType).label : null;
+                  const title = agent.title ?? null;
+                  return (
+                    <>
+                      <span className="font-medium">{agent.name ?? template?.name ?? agent.clientKey}</span>
+                      {title ? <span className="text-muted-foreground"> · {title}</span> : null}
+                      {roleLabel ? <span className="text-muted-foreground"> · {roleLabel}</span> : null}
+                      {engine ? <span className="text-muted-foreground"> · {engine}</span> : null}
+                      {agent.budgetMonthlyCents !== undefined ? <span className="text-muted-foreground"> · budget {formatCents(agent.budgetMonthlyCents)}/month</span> : null}
+                      {agent.reportsToClientKey ? <span className="text-muted-foreground"> · reports to {newAgentByKey.get(agent.reportsToClientKey)?.name ?? agent.reportsToClientKey}</span> : null}
+                      {connectionByKey.has(agent.clientKey) ? (
+                        <span data-testid="proposed-plan-agent-connection" className="text-muted-foreground"> · {inheritedConnectionLabel(connectionByKey.get(agent.clientKey) ?? null)}</span>
+                      ) : null}
+                      {template ? (
+                        <p data-testid="proposed-plan-agent-template" className="text-muted-foreground">{planTemplateLine(template)}</p>
+                      ) : null}
+                    </>
+                  );
+                })()}
               </li>
             ))}
           </ul>
@@ -2294,18 +2308,19 @@ function ProposedActionCard({
       {action.context ? <ProposedActionContextBlock context={action.context} /> : null}
       {action.category === "brief" ? <ProposedBriefPreview path={action.path} body={action.body} /> : null}
       {action.category === "plan" ? <ProposedPlanPreview path={action.path} body={action.body} hireConnections={action.planHireConnections} templateSummaries={action.planTemplateSummaries} /> : null}
-      {/* The exact request comes first, at full prominence: it is what runs. */}
-      <div data-testid="proposed-action-request" className="mt-3 space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">Request</p>
-        <p className="break-all font-mono text-sm text-foreground">
-          <span className="font-semibold">{action.method}</span> {action.path}
-        </p>
-        {prettyBody ? (
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-mono text-xs text-foreground">{prettyBody}</pre>
-        ) : (
-          <p className="text-xs text-muted-foreground">No request body.</p>
-        )}
-      </div>
+      <details data-testid="proposed-action-request" className="mt-3 text-sm">
+        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">Technical details</summary>
+        <div className="mt-2 space-y-2">
+          <p className="break-all font-mono text-sm text-foreground">
+            <span className="font-semibold">{action.method}</span> {action.path}
+          </p>
+          {prettyBody ? (
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-mono text-xs text-foreground">{prettyBody}</pre>
+          ) : (
+            <p className="text-xs text-muted-foreground">No request body.</p>
+          )}
+        </div>
+      </details>
       <p className="mt-3 text-sm text-foreground"><span className="text-muted-foreground">Assistant's summary: </span>{action.summary}</p>
       {outcome ? (
         <p className={cn("mt-2 flex items-center gap-1.5 text-sm", failed ? "text-destructive" : "text-muted-foreground")} aria-live="polite">

@@ -111,11 +111,14 @@ describe("ProposedActionCard", () => {
     expect(host.querySelector('[data-testid="proposed-action-card"]')).toBeTruthy();
     expect(host.textContent).toContain("Approve hiring the Writer agent");
     expect(host.textContent).toContain("Approval");
-    const requestBlock = host.querySelector('[data-testid="proposed-action-request"]')!;
-    expect(requestBlock.textContent).toContain("Request");
+    const requestBlock = host.querySelector('[data-testid="proposed-action-request"]') as HTMLDetailsElement;
+    // The raw request sits behind a disclosure that is closed by default.
+    expect(requestBlock.tagName).toBe("DETAILS");
+    expect(requestBlock.open).toBe(false);
+    expect(requestBlock.querySelector("summary")?.textContent).toBe("Technical details");
     expect(requestBlock.textContent).toContain("POST");
     expect(requestBlock.textContent).toContain(ACTION_PATH);
-    // The body is visible without any click, in a scrollable block.
+    // The body is in a scrollable block inside the disclosure.
     const body = requestBlock.querySelector("pre")!;
     expect(body.textContent).toContain('"decisionNote": "Looks good"');
     expect(body.className).toContain("overflow-auto");
@@ -359,8 +362,9 @@ describe("ProposedActionCard", () => {
       expect(preview.textContent).toContain("Publish weekly");
       expect(preview.textContent).toContain("Weekly articles");
       const agentsText = preview.querySelector('[data-testid="proposed-plan-agents"]')?.textContent ?? "";
-      expect(agentsText).toContain("Writer — general (claude_local)");
-      expect(agentsText).toContain("Staff writer");
+      expect(agentsText).toContain("Writer · Staff writer · General · Claude Code");
+      expect(agentsText).not.toContain("claude_local");
+      expect(agentsText).not.toContain("general ");
       expect(agentsText).toContain("$25.00/month");
       const items = Array.from(preview.querySelectorAll('[data-testid="proposed-plan-tasks"] > li')).map((li) => li.textContent ?? "");
       expect(items).toHaveLength(4);
