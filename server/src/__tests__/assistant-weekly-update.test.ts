@@ -51,8 +51,14 @@ describe("weekly update helpers", () => {
 
   it("previews the first lines as plain text, without a heading that repeats the title", () => {
     const body = "# Weekly update — Oct 12, 2026\n\n## What shipped\n- **Pricing page** ([PAP-3](/PAP/issues/PAP-3))\n- Signup fix\n\n## Spend\n$12 of $50";
-    expect(weeklyUpdateExcerpt(body, "Weekly update — Oct 12, 2026")).toBe("What shipped Pricing page (PAP-3) Signup fix Spend");
+    expect(weeklyUpdateExcerpt(body, "Weekly update — Oct 12, 2026")).toBe("What shipped: Pricing page (PAP-3), Signup fix\nSpend: $12 of $50");
     expect(weeklyUpdateExcerpt("word ".repeat(200), null, 20)).toHaveLength(20);
+  });
+
+  it("keeps underscores inside words and strips emphasis around them", () => {
+    expect(weeklyUpdateExcerpt("## Next week\n- Rename `user_id` in the snake_case export\n- _Ship_ the __new__ *pricing* page", null))
+      .toBe("Next week: Rename user_id in the snake_case export, Ship the new pricing page");
+    expect(weeklyUpdateExcerpt("Plain first line\n\nSecond line", null)).toBe("Plain first line, Second line");
   });
 
   it("ships the weekly update routine in the Assistant bundle with a bumped stock version", () => {
@@ -311,7 +317,7 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(again.documentId).toBe(saved.documentId);
     const latest = await latestWeeklyUpdate(server.db, { companyId: f.companyId, userId: f.responsibleUserId!, now: Date.now() });
     expect(latest).toMatchObject({
-      documentId: saved.documentId, title: saved.title, excerpt: "What shipped The pricing page and signup",
+      documentId: saved.documentId, title: saved.title, excerpt: "What shipped: The pricing page and signup",
       href: `/issues/${a.identifier}#document-${saved.key}`,
     });
 
@@ -527,8 +533,13 @@ const support = await getEmbeddedPostgresTestSupport();
       scheduledRetryAt: new Date(Date.now() + 3_600_000),
     });
     const recovery = heartbeatService(server.db);
-    await recovery.reconcileStrandedAssignedIssues({ issueCreatedAtGte: since });
+    const runsBefore = await server.db.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(eq(heartbeatRuns.companyId, f.companyId));
+    const kept = await recovery.reconcileStrandedAssignedIssues({ issueCreatedAtGte: since });
     expect((await server.db.select().from(issues).where(eq(issues.id, taskId)))[0]!.status).not.toBe("cancelled");
+    // The pending retry owns the task: generic recovery starts no parallel retry chain.
+    expect(kept.issueIds).not.toContain(taskId);
+    const runsAfter = await server.db.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(eq(heartbeatRuns.companyId, f.companyId));
+    expect(runsAfter).toHaveLength(runsBefore.length);
 
     await server.db.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date() }).where(eq(heartbeatRuns.id, retry));
     await recovery.reconcileStrandedAssignedIssues({ issueCreatedAtGte: since });

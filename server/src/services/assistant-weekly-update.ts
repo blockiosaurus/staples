@@ -406,19 +406,52 @@ export async function closeWeeklyUpdateTaskAfterRun(
   return settleWeeklyUpdateTask(db, issueId, { reason: "run_finished_without_update", endedRunId: run.id ?? null, keep: end.recoveryOwned });
 }
 
-/** Markdown to a short plain-text preview: the first few lines, minus a heading that repeats the title. */
+/** Inline Markdown to plain text. Underscores inside words (snake_case) are kept. */
+function plainInline(text: string): string {
+  return text
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/`+/g, "")
+    .replace(/~~/g, "")
+    .replace(/\*{1,3}(?=\S)([^*]*?\S)\*{1,3}/g, "$1")
+    .replace(/(^|[^\p{L}\p{N}_])_{1,3}(?=\S)([^_]*?\S)_{1,3}(?![\p{L}\p{N}_])/gu, "$1$2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Markdown to a short plain-text preview, minus a heading that repeats the
+ * title. Each heading starts its own line ("What shipped: Pricing page,
+ * Signup fix"); list items under it are joined with commas.
+ */
 export function weeklyUpdateExcerpt(body: string, title: string | null, max = BRIEFING_WEEKLY_UPDATE_EXCERPT_MAX): string {
-  const lines = body
-    .split(/\r?\n/)
-    .map((line) => line
-      .replace(/^\s{0,3}(#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/, "")
-      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-      .replace(/[*_`~]+/g, "")
-      .trim())
-    .filter(Boolean);
-  if (lines.length && title && lines[0]!.toLowerCase() === title.toLowerCase()) lines.shift();
-  const text = lines.slice(0, 4).join(" ");
+  type Segment = { heading: string | null; parts: string[] };
+  const segments: Segment[] = [];
+  let current: Segment | null = null;
+  for (const raw of body.split(/\r?\n/)) {
+    const heading = /^\s{0,3}#{1,6}\s+(.*)$/.exec(raw);
+    if (heading) {
+      const text = plainInline(heading[1]!.replace(/\s+#+\s*$/, ""));
+      if (!text) continue;
+      if (!segments.length && title && text.toLowerCase() === title.toLowerCase()) continue;
+      current = { heading: text, parts: [] };
+      segments.push(current);
+      continue;
+    }
+    const text = plainInline(raw.replace(/^\s{0,3}(>\s?|[-*+]\s+|\d+[.)]\s+)/, ""));
+    if (!text || /^[-*_=]{3,}$/.test(text)) continue;
+    if (!current) {
+      if (!segments.length && title && text.toLowerCase() === title.toLowerCase()) continue;
+      current = { heading: null, parts: [] };
+      segments.push(current);
+    }
+    current.parts.push(text);
+  }
+  const lines = segments.slice(0, 4).map((segment) => {
+    const parts = segment.parts.join(", ");
+    return segment.heading ? (parts ? `${segment.heading}: ${parts}` : segment.heading) : parts;
+  }).filter(Boolean);
+  const text = lines.join("\n");
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1).trimEnd()}…`;
 }

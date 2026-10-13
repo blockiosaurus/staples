@@ -122,7 +122,7 @@ export interface BriefingWeeklyUpdate {
   documentId: string;
   /** e.g. "Weekly update — Oct 13, 2026". */
   title: string;
-  /** The first few lines, as plain text (at most 280 characters). */
+  /** The first few lines as plain text (at most 280 characters); each heading starts a new line ("\n"). */
   excerpt: string;
   /** Company-relative link to the document on the "Weekly updates" task. */
   href: string;
