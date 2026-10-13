@@ -771,13 +771,15 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
           connectionId: "paperclip-runtime-tools",
         });
       }
-      if (authToken && configuredPaperclipApiBaseUrl() && issueRef) {
-        runtimeMcpServers.unshift({ name: "Paperclip projects", url: `${paperclipApiBaseUrl()}/api/mcp/project-tools`,
-          token: authToken, connectionId: "paperclip-project-tools" });
-      }
       const assistantServer = await assistantRuntimeMcpServer(db, {
         agent, authToken, apiBaseUrl: configuredPaperclipApiBaseUrl() ? paperclipApiBaseUrl() : null, runId: run.id,
       });
+      // Project tools write as the agent itself; the Assistant's run token is
+      // refused for REST writes (auth middleware), so it does not get them.
+      if (authToken && configuredPaperclipApiBaseUrl() && issueRef && !assistantServer) {
+        runtimeMcpServers.unshift({ name: "Paperclip projects", url: `${paperclipApiBaseUrl()}/api/mcp/project-tools`,
+          token: authToken, connectionId: "paperclip-project-tools" });
+      }
       if (assistantServer) runtimeMcpServers.unshift(assistantServer);
       const paperclipServer = paperclipRuntimeMcpServer({
         adapterType: agent.adapterType, authToken, apiBaseUrl: configuredPaperclipApiBaseUrl() ? paperclipApiBaseUrl() : null,

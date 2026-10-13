@@ -36,7 +36,7 @@ Every item from step 2 must be covered by at least one question.
 Show the questionnaire in chat first, then track it as a task that is **assigned to nobody**, so no agent starts working on it:
 
 - Use `staples_propose_plan` with a single task: the title "Questionnaire: <topic>", the whole questionnaire as the `description`, no assignee and no blockers. Write a `summary` such as "Track the pricing questionnaire for the co-founder."
-- If `staples_propose_plan` is not available, do not create the task with `paperclip_create_task`: it needs an agent assignee and would wake that agent. Leave the questionnaire in chat for the person to copy and send, and say so.
+- If `staples_propose_plan` is not available, leave the questionnaire in chat for the person to copy and send, and say so.
 
 Tell the person how to bring the answers back: paste them into the conversation or the task. When answers arrive, return to the interview and settle the waiting decisions.
 
