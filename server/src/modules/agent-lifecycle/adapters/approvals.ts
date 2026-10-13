@@ -83,10 +83,15 @@ export function hireApprovalService(db: Db, effects: LifecycleEffects) {
           agentId = created.id;
         }
         if (approval && agentId && typeof payload.budgetMonthlyCents === "number" && payload.budgetMonthlyCents > 0) {
-          // On the operator's hosted key the cap is at most the ceiling, as at plan apply.
+          // On the operator's hosted key the approved budget is the agent's hosted
+          // limit (a separate limit no agent can write), at most the ceiling, as
+          // at plan apply; otherwise it is the agent's budget.
           const hired = await records.getById(agentId);
-          const amount = hired && usesHostedInferenceKey(hired) ? clampToHostedCeiling(payload.budgetMonthlyCents) : payload.budgetMonthlyCents;
-          await effects.setAgentBudget(tx, publications, companyId, agentId, amount, userId);
+          if (hired && usesHostedInferenceKey(hired)) {
+            await effects.setAgentBudget(tx, publications, companyId, agentId, clampToHostedCeiling(payload.budgetMonthlyCents), userId, true, "hosted_billed_cents");
+          } else {
+            await effects.setAgentBudget(tx, publications, companyId, agentId, payload.budgetMonthlyCents, userId);
+          }
         }
       } else if (applied && agentId) {
         if (approval) await records.rejectPendingHire(agentId);

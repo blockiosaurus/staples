@@ -879,8 +879,9 @@ export type BudgetScopeType = (typeof BUDGET_SCOPE_TYPES)[number];
 
 /**
  * `billed_cents`: all billed spend in the scope. `hosted_billed_cents`: only
- * spend billed to the operator's hosted-inference key (company scope; set by
- * the server for hosted inference, never pauses the company or local agents).
+ * spend billed to the operator's hosted-inference key (company or agent scope;
+ * set by the server and board routes for hosted inference; never pauses the
+ * company or an agent, it only refuses hosted runs).
  */
 export const BUDGET_METRICS = ["billed_cents", "hosted_billed_cents"] as const;
 export type BudgetMetric = (typeof BUDGET_METRICS)[number];

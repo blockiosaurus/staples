@@ -41,7 +41,8 @@ export function createLifecycleStore(db: Db, effects: LifecycleEffects): Lifecyc
           const policies = await tx.select().from(budgetPolicies).where(and(eq(budgetPolicies.companyId, agent.companyId),
             eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, id)));
           let budgetBlocked = false;
-          for (const policy of policies) if (await effects.policyBlocks(tx, policy)) budgetBlocked = true;
+          // A hosted-inference limit only refuses hosted runs; it never holds (pauses) the agent.
+          for (const policy of policies) if (policy.metric !== "hosted_billed_cents" && await effects.policyBlocks(tx, policy)) budgetBlocked = true;
           holds = holds.filter(hold => hold !== "budget" && hold !== "company_archived" && hold !== "company_paused");
           if (budgetBlocked) holds.push("budget");
           if (company.status === "archived") holds.push("company_archived");

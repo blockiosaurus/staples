@@ -89,8 +89,8 @@ hard-stop monthly budget policies:
 
 | Scope | Metric | Env var | Default |
 | --- | --- | --- | --- |
-| The Assistant | `billed_cents` | `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS` | `2000` ($20) |
-| Any other agent on hosted inference | `billed_cents` | `STAPLES_HOSTED_AGENT_BUDGET_CENTS` | `2000` ($20) |
+| The Assistant's hosted spend | `hosted_billed_cents` (agent scope) | `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS` | `2000` ($20) |
+| Any other agent's hosted spend | `hosted_billed_cents` (agent scope) | `STAPLES_HOSTED_AGENT_BUDGET_CENTS` | `2000` ($20) |
 | The company's hosted spend | `hosted_billed_cents` | `STAPLES_HOSTED_COMPANY_BUDGET_CENTS` | `5000` ($50) |
 | Ceiling for a plan's raise of the company's hosted cap | — | `STAPLES_HOSTED_COMPANY_BUDGET_MAX_CENTS` | `20000` ($200) |
 
@@ -102,13 +102,30 @@ records these policy writes in the activity log with a system actor
 (`hosted_inference`). Agents with their own key binding never use the server
 key and get no forced caps.
 
-An agent's cap amount comes only from a person or the operator: a hire from
-a confirmed plan gets the plan's monthly budget as its hard-stop cap (at most
-the ceiling below, written with the system actor), a person can change it on
-the agent's budget, and otherwise the agent default applies. The agent's own
-`budgetMonthlyCents` field is never read for a hosted cap. An agent may not
-change any agent's monthly budget (`PATCH /agents/:id` refuses it), and an
-agent creating a hosted agent cannot give it a cap above the agent default.
+**Each agent's hosted limit is separate from its budget.** The per-agent
+cap is an agent-scope `hosted_billed_cents` policy: it counts only that
+agent's spend on the hosted key, and, like the company cap, it only refuses
+the agent's hosted runs ("This agent reached its monthly hosted inference
+limit ..."); it never pauses the agent or touches local work, and it caps the
+hosted session (`max_list_cost`) next to the agent's other limits. Only the
+server and board routes write it:
+
+- the ensure creates it at the default above when it is missing;
+- a confirmed plan's hosted hire gets it at the plan's monthly budget, and an
+  approved hosted hire at its approved budget, both at most the ceiling below;
+- a person can change it on the Costs page, where it shows as
+  "agent · hosted limit".
+
+No agent path writes it: not `PATCH /agents/:id` (which also refuses any
+`budgetMonthlyCents` from an agent), not a config rollback (an agent's rollback
+keeps the current budget), not an import, a hire or an adapter switch. So an
+agent created on a local adapter with a large budget and later switched onto
+the hosted key still runs there under the default hosted limit. The agent's
+person-set `billed_cents` budget keeps its meaning (all spend, pauses the
+agent) and is never read for the hosted limit. On a database from before this
+change, an existing hosted agent keeps any agent `billed_cents` policy the
+server wrote for it (activity actor `hosted_inference`) as an ordinary budget;
+its hosted limit is created at the default on its next run.
 
 **Plans raise the company cap to fit their hosted hires.** When an applied
 plan hires agents on the hosted key (Claude (hosted) with no key of its own,
@@ -122,8 +139,8 @@ card and the apply result (`hostedLimit`, with `limited: true`) say so.
 An explicit `STAPLES_HOSTED_COMPANY_BUDGET_CENTS=0` (uncapped) is never raised
 or changed, and the card then says nothing about the hosted limit; a ceiling
 of `0` means plans never raise the cap. Hires on a local adapter or on the
-company's own key never raise it. Each agent counts its agent cap (above), at
-most the ceiling; hires still awaiting approval do not count until a person
+company's own key never raise it. Each agent counts its hosted limit (above), or
+the default when it has none yet, at most the ceiling; hires still awaiting approval do not count until a person
 approves them, and approving a hosted hire raises the cap then by the same
 rules. If the raise fails (a database error), the plan is still applied and
 the result says so (`hostedLimit: { failed: true, fromCents }`): the limit stays

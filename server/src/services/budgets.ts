@@ -184,9 +184,9 @@ export function budgetPoliciesForRun(companyId: string, agentId: string | null, 
 type SpendPolicy = Pick<PolicyRow, "companyId" | "scopeType" | "scopeId" | "windowKind" | "metric">;
 
 /**
- * Company-scope policy counting only spend billed to the operator's hosted
- * inference key (cost events marked `hostedInference`). It never pauses the
- * company or cancels local work: it only refuses admission to runs that would
+ * Company- or agent-scope policy counting only spend billed to the operator's
+ * hosted inference key (cost events marked `hostedInference`). It never pauses
+ * the company or the agent, or cancels local work: it only refuses admission to runs that would
  * use the hosted key, and caps their sessions (see remainingHardStopCentsForRun).
  */
 export const HOSTED_BILLED_CENTS_METRIC = "hosted_billed_cents" as const;
@@ -245,8 +245,8 @@ async function computeObservedSpends(db: Db, policies: SpendPolicy[]): Promise<O
 /**
  * The smallest remaining amount, in cents, across the active hard-stop policies
  * that apply to a run: its agent's, its project's and its company's
- * `billed_cents` policies, plus the company's hosted-inference cap when the run
- * uses the operator's hosted key. Null when no such policy exists. Adapters
+ * `billed_cents` policies, plus the company's and the agent's hosted-inference
+ * limits when the run uses the operator's hosted key. Null when no such policy exists. Adapters
  * that can cap a provider session (claude_managed's `max_list_cost`) use it.
  */
 export async function remainingHardStopCentsForRun(db: Db, input: {
@@ -257,7 +257,7 @@ export async function remainingHardStopCentsForRun(db: Db, input: {
     sql`${budgetPolicies.amount} > 0`, budgetPoliciesForRun(input.companyId, input.agentId, input.projectId),
   ));
   const policies = candidates.filter((policy) => policy.metric === "billed_cents"
-    || (isHostedMetric(policy) && policy.scopeType === "company" && input.hostedInference));
+    || (isHostedMetric(policy) && policy.scopeType !== "project" && input.hostedInference));
   if (!policies.length) return null;
   const observed = await computeObservedSpends(db, policies);
   return Math.max(0, Math.min(...policies.map((policy, index) => policy.amount - observed[index].total)));
@@ -621,7 +621,9 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
           await createIncidentIfNeeded(policy, "hard", observed);
           if (options.hostedInference) {
             return { scopeType, scopeId, scopeName: scope.name,
-              reason: "This company reached its monthly spending cap for hosted inference (Claude hosted on the Staples server's key)." };
+              reason: scopeType === "agent"
+                ? "This agent reached its monthly hosted inference limit (Claude hosted on the Staples server's key)."
+                : "This company reached its monthly spending cap for hosted inference (Claude hosted on the Staples server's key)." };
           }
           continue;
         }
@@ -696,8 +698,8 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
 
       if (input.reservationCents !== undefined && compareCents(input.reservationCents, 0) < 0) throw unprocessable("Reservation cannot be negative");
       const metric = input.metric ?? "billed_cents";
-      if (metric === HOSTED_BILLED_CENTS_METRIC && input.scopeType !== "company") {
-        throw unprocessable("A hosted-inference budget applies to a company only");
+      if (metric === HOSTED_BILLED_CENTS_METRIC && input.scopeType === "project") {
+        throw unprocessable("A hosted-inference budget applies to a company or an agent only");
       }
       const windowKind = input.windowKind ?? (input.scopeType === "project" ? "lifetime" : "calendar_month_utc");
       const existing = await db

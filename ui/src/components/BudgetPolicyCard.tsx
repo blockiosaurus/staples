@@ -29,9 +29,9 @@ function statusTone(status: BudgetPolicySummary["status"]) {
   return "text-emerald-700 dark:text-emerald-200 border-emerald-500/30 bg-emerald-500/10";
 }
 
-/** The hosted-inference company cap counts only spend on the Staples server's hosted key. */
-function scopeLabel(summary: Pick<BudgetPolicySummary, "scopeType" | "metric">) {
-  return summary.metric === "hosted_billed_cents" ? `${summary.scopeType} · hosted inference` : summary.scopeType;
+/** A hosted limit (company or agent) counts only spend on the Staples server's hosted key. */
+function budgetScopeLabel(summary: Pick<BudgetPolicySummary, "scopeType" | "metric">) {
+  return summary.metric === "hosted_billed_cents" ? `${summary.scopeType} · hosted limit` : summary.scopeType;
 }
 
 export function BudgetPolicyCard({
@@ -208,7 +208,7 @@ export function BudgetPolicyCard({
         <div className="flex items-start justify-between gap-6">
           <div>
             <div className="text-(length:--text-micro) uppercase tracking-(--tracking-caps) text-muted-foreground">
-              {scopeLabel(summary)}
+              {budgetScopeLabel(summary)}
             </div>
             <div className="mt-2 text-xl font-semibold">{summary.scopeName}</div>
             <div className="mt-2 text-sm text-muted-foreground">{windowLabel(summary.windowKind)}</div>
@@ -246,7 +246,7 @@ export function BudgetPolicyCard({
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-(length:--text-micro) uppercase tracking-(--tracking-caps) text-muted-foreground">
-              {scopeLabel(summary)}
+              {budgetScopeLabel(summary)}
             </div>
             <CardTitle className="mt-1 text-base">{summary.scopeName}</CardTitle>
             <CardDescription className="mt-1">{windowLabel(summary.windowKind)}</CardDescription>

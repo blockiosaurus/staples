@@ -803,12 +803,14 @@ describeEmbeddedPostgres("built-in agents", () => {
     const companyId = await seedCompany({ requireApproval: false });
     const assistant = await createBuiltInAgentService(db).ensureAssistant(companyId);
     expect(await hostedInferenceAllowedFor(db, assistant)).toBe(true);
-    // A person sets each agent's budget (its billed_cents policy).
-    const personBudget = (agentId: string, amount: number) => budgetService(db).upsertPolicy(companyId,
-      { scopeType: "agent", scopeId: agentId, amount, windowKind: "calendar_month_utc" }, "board-user");
+    // A person sets an agent's budget (billed_cents) or, on the board, its hosted limit.
+    const personBudget = (agentId: string, amount: number, metric: "billed_cents" | "hosted_billed_cents" = "billed_cents") => budgetService(db).upsertPolicy(companyId,
+      { scopeType: "agent", scopeId: agentId, metric, amount, windowKind: "calendar_month_utc" }, "board-user");
     const staffed = async (name: string, cents: number) => {
       const agent = await hire(companyId, "claude_managed", "claude-opus-5-5", name);
-      await personBudget(agent.id, cents);
+      await personBudget(agent.id, cents, "hosted_billed_cents");
+      // A large person-set billed_cents budget is not the hosted limit and never counts.
+      await personBudget(agent.id, 90_000);
       return agent;
     };
     // A local agent's budget never counts toward the hosted cap.
@@ -824,7 +826,7 @@ describeEmbeddedPostgres("built-in agents", () => {
     expect(await raiseHostedCompanyCapForHires(db, companyId)).toEqual({ fromCents: 5000, toCents: 13000, neededCents: 13000, ceilingCents: 20000, limited: false });
     expect(await hostedCap()).toMatchObject({ amount: 13000, isActive: true, hardStopEnabled: true });
     const upserts = await db.select().from(activityLog).where(and(eq(activityLog.companyId, companyId), eq(activityLog.action, "budget.policy_upserted")));
-    const capUpserts = upserts.filter((row) => (row.details as Record<string, unknown>)?.metric === "hosted_billed_cents");
+    const capUpserts = upserts.filter((row) => (row.details as Record<string, unknown>)?.metric === "hosted_billed_cents" && (row.details as Record<string, unknown>)?.scopeType === "company");
     expect(capUpserts.some((row) => (row.details as Record<string, unknown>)?.amount === 13000)).toBe(true);
     for (const row of capUpserts) expect(row).toMatchObject({ actorType: "system", actorId: "hosted_inference" });
     // Already fits: nothing to say, nothing written.

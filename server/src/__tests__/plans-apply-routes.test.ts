@@ -24,6 +24,7 @@ import {
   companySkills,
   companySkillPolicies,
   agentConfigRevisions,
+  costEvents,
   routines,
   routineTriggers,
   toolApplications,
@@ -55,7 +56,8 @@ import { defaultAgentTemplates } from "../services/plan-templates.js";
 import { conflict, notFound } from "../errors.js";
 import { agentInstructionsService } from "../services/agent-instructions.js";
 import { approvalService } from "../services/approvals.js";
-import { budgetService } from "../services/budgets.js";
+import { budgetService, remainingHardStopCentsForRun } from "../services/budgets.js";
+import { costRoutes } from "../routes/costs.js";
 import { teamsCatalogService } from "../services/teams-catalog.js";
 import { toolAccessPolicyService } from "../services/tool-access-policy.js";
 import { agentService } from "../services/agents.js";
@@ -1429,6 +1431,10 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
       const monthlyPolicy = async (scopeType: "agent" | "company", scopeId: string) => (await db.select().from(budgetPolicies).where(and(
         eq(budgetPolicies.scopeType, scopeType), eq(budgetPolicies.scopeId, scopeId), eq(budgetPolicies.windowKind, "calendar_month_utc"),
       )))[0] ?? null;
+      // The agent's hosted limit: agent-scope hosted_billed_cents, separate from its billed_cents budget.
+      const hostedLimit = async (agentId: string) => (await db.select().from(budgetPolicies).where(and(
+        eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, agentId), eq(budgetPolicies.metric, "hosted_billed_cents"),
+      )))[0] ?? null;
       const researcher = async () => {
         const { adapterType: _omitted, ...agent } = await templatedAgent("research", "staples/researcher");
         return agent;
@@ -1444,7 +1450,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         const [hired] = await db.select().from(agents).where(eq(agents.id, response.body.agents.research.id));
         expect(hired).toMatchObject({ adapterType: "claude_managed", adapterConfig: expect.objectContaining({ model: "claude-opus-5-5" }) });
         expect(JSON.stringify(hired!.adapterConfig)).not.toContain("ANTHROPIC_API_KEY");
-        const agentPolicy = await monthlyPolicy("agent", hired!.id);
+        const agentPolicy = await hostedLimit(hired!.id);
         expect(agentPolicy).toMatchObject({ isActive: true, hardStopEnabled: true });
         expect(agentPolicy!.amount).toBeGreaterThan(0);
         expect(await monthlyPolicy("company", s.companyId)).toMatchObject({ amount: 5000, isActive: true, hardStopEnabled: true });
@@ -1471,7 +1477,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         const response = await apply(buildApp(sessionActor(s)).app, s.companyId, hires(3000));
         expect(response.status, JSON.stringify(response.body)).toBe(201);
         // Each hosted hire keeps the budget its plan set.
-        expect(await monthlyPolicy("agent", response.body.agents.a.id)).toMatchObject({ amount: 3000, isActive: true, hardStopEnabled: true });
+        expect(await hostedLimit(response.body.agents.a.id)).toMatchObject({ amount: 3000, isActive: true, hardStopEnabled: true });
         // 3 x $30 plus the Assistant's $20.
         expect(response.body.hostedLimit).toEqual({ fromCents: 5000, toCents: 11000, neededCents: 11000, ceilingCents: 20000, limited: false });
         expect(await hostedCap(s.companyId)).toMatchObject({ amount: 11000, isActive: true, hardStopEnabled: true });
@@ -1508,7 +1514,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         expect(applied.status, JSON.stringify(applied.body)).toBe(201);
         const agentId = applied.body.agents.a.id as string;
         // The plan's (person-confirmed) $30 is the hire's cap.
-        expect(await monthlyPolicy("agent", agentId)).toMatchObject({ amount: 3000, isActive: true, hardStopEnabled: true });
+        expect(await hostedLimit(agentId)).toMatchObject({ amount: 3000, isActive: true, hardStopEnabled: true });
         // The agent raises its own budget field.
         const actor = { type: "agent", agentId, companyId: s.companyId, runId: null, source: "agent_key" } as unknown as Actor;
         const api = Router();
@@ -1521,24 +1527,24 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         const patched = await request(agentApp).patch(`/api/agents/${agentId}`).send({ budgetMonthlyCents: 1_000_000 });
         // Refused: a budget is a person's decision, and the cap is untouched.
         expect(patched.status, JSON.stringify(patched.body)).toBe(403);
-        expect(await monthlyPolicy("agent", agentId)).toMatchObject({ amount: 3000, isActive: true });
+        expect(await hostedLimit(agentId)).toMatchObject({ amount: 3000, isActive: true });
         // Other edits still work, and the field itself is never trusted even when it holds a large value.
         expect((await request(agentApp).patch(`/api/agents/${agentId}`).send({ title: "Lead" })).status).toBe(200);
         await db.update(agents).set({ budgetMonthlyCents: 1_000_000 }).where(eq(agents.id, agentId));
         // Not counted as need: 2 x $30 plus the Assistant's $20, plus a new $30 hire.
         expect(await planBudgetFor(db, s.companyId, { agents: [{ clientKey: "n", name: "New", role: "general", adapterType: "claude_managed", budgetMonthlyCents: 3000 }], tasks: [{ clientKey: "t", title: "Start" }] }))
           .toMatchObject({ hostedNeededCents: 11000 });
-        // A person zeroes the cap: the next run's ensure restores the default, not the self-set value.
-        await budgetService(db).upsertPolicy(s.companyId, { scopeType: "agent", scopeId: agentId, amount: 0, windowKind: "calendar_month_utc" }, s.userId);
+        // A person zeroes the hosted limit: the next run's ensure restores the default, not the self-set value.
+        await budgetService(db).upsertPolicy(s.companyId, { scopeType: "agent", scopeId: agentId, metric: "hosted_billed_cents", amount: 0, windowKind: "calendar_month_utc" }, s.userId);
         const [row] = await db.select().from(agents).where(eq(agents.id, agentId));
         await db.update(agents).set({ budgetMonthlyCents: 1_000_000 }).where(eq(agents.id, agentId));
         expect(await hostedInferenceAllowedFor(db, row!)).toBe(true);
-        expect(await monthlyPolicy("agent", agentId)).toMatchObject({ amount: 2000, isActive: true, hardStopEnabled: true });
+        expect(await hostedLimit(agentId)).toMatchObject({ amount: 2000, isActive: true, hardStopEnabled: true });
         // A deleted cap is recreated at the default too.
         await db.delete(budgetPolicies).where(and(eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, agentId)));
         await db.update(agents).set({ budgetMonthlyCents: 1_000_000 }).where(eq(agents.id, agentId));
         expect(await hostedInferenceAllowedFor(db, row!)).toBe(true);
-        expect(await monthlyPolicy("agent", agentId)).toMatchObject({ amount: 2000, isActive: true });
+        expect(await hostedLimit(agentId)).toMatchObject({ amount: 2000, isActive: true });
       }, 120_000);
 
       it("an agent creating a hosted agent cannot give it a cap above the hosted default", async () => {
@@ -1588,7 +1594,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         expect(hired.status, JSON.stringify(hired.body)).toBe(201);
         const hireId = hired.body.agent.id as string;
         expect((await db.select().from(agents).where(eq(agents.id, hireId)))[0]!.budgetMonthlyCents).toBe(2000);
-        expect(await monthlyPolicy("agent", hireId)).toBeNull();
+        expect(await hostedLimit(hireId)).toBeNull();
         // 2. Re-sending a budget, even unchanged, is refused for agents (the hire itself and its creator).
         for (const app of [agentAppFor(hireId, s.companyId), creator]) {
           for (const budgetMonthlyCents of [2000, 1_000_000]) {
@@ -1596,14 +1602,79 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
             expect(patched.status, JSON.stringify(patched.body)).toBe(403);
           }
         }
-        expect(await monthlyPolicy("agent", hireId)).toBeNull();
+        expect(await hostedLimit(hireId)).toBeNull();
         // Defense in depth: an unchanged budget written without a person writes no policy.
         await agentService(db).update(hireId, { budgetMonthlyCents: 2000 });
-        expect(await monthlyPolicy("agent", hireId)).toBeNull();
+        expect(await hostedLimit(hireId)).toBeNull();
         // 3. The run's ensure sets the default cap.
         const [row] = await db.select().from(agents).where(eq(agents.id, hireId));
         expect(await hostedInferenceAllowedFor(db, row!)).toBe(true);
-        expect(await monthlyPolicy("agent", hireId)).toMatchObject({ amount: 2000, isActive: true });
+        expect(await hostedLimit(hireId)).toMatchObject({ amount: 2000, isActive: true });
+      }, 120_000);
+
+      it("an agent's local hire with a big budget switched onto the hosted key still gets only the $20 hosted limit", async () => {
+        hostedOn();
+        const s = await seed();
+        await assistantOnHosted(s);
+        await db.insert(principalPermissionGrants).values({ companyId: s.companyId, principalType: "agent", principalId: s.staffId, permissionKey: "agents:create" });
+        await db.update(agents).set({ permissions: { canCreateAgents: true } }).where(eq(agents.id, s.staffId));
+        const creator = agentAppFor(s.staffId, s.companyId);
+        // 1. A local hire with a $10,000 budget: not hosted, so its billed_cents budget is written as asked.
+        const created = await request(creator).post(`/api/companies/${s.companyId}/agents`).send({
+          name: "Switcher", role: "general", adapterType: "claude_local", adapterConfig: {}, budgetMonthlyCents: 1_000_000,
+        });
+        expect(created.status, JSON.stringify(created.body)).toBe(201);
+        const hireId = created.body.id as string;
+        expect(await monthlyPolicy("agent", hireId)).toMatchObject({ metric: "billed_cents", amount: 1_000_000 });
+        // 2. Switched onto the operator's hosted key (claude_managed, no key of its own).
+        const switched = await request(creator).patch(`/api/agents/${hireId}`).send({ adapterType: "claude_managed", adapterConfig: { model: "claude-opus-5-5" } });
+        if (switched.status !== 200) {
+          // Where an agent may not switch adapters, a person's switch reaches the same state.
+          await db.update(agents).set({ adapterType: "claude_managed", adapterConfig: { model: "claude-opus-5-5" } }).where(eq(agents.id, hireId));
+        }
+        const [row] = await db.select().from(agents).where(eq(agents.id, hireId));
+        expect(row!.adapterType).toBe("claude_managed");
+        // 3. At the run: its hosted limit is the $20 default, whatever its billed_cents budget says.
+        expect(await hostedInferenceAllowedFor(db, row!)).toBe(true);
+        expect(await hostedLimit(hireId)).toMatchObject({ amount: 2000, isActive: true, hardStopEnabled: true });
+        expect(await remainingHardStopCentsForRun(db, { companyId: s.companyId, agentId: hireId, projectId: null, hostedInference: true })).toBe(2000);
+        // 4. $20 of hosted spend blocks its hosted runs (without pausing the agent).
+        const [event] = await db.insert(costEvents).values({ companyId: s.companyId, agentId: hireId, provider: "anthropic", biller: "anthropic",
+          billingType: "metered_api", model: "claude", costCents: 2000, occurredAt: new Date(), hostedInference: true }).returning();
+        await budgetService(db).evaluateCostEvent(event!);
+        expect(await budgetService(db).getInvocationBlock(s.companyId, hireId)).toMatchObject({ scopeType: "agent", reason: expect.stringMatching(/hosted inference limit/) });
+        expect((await db.select().from(agents).where(eq(agents.id, hireId)))[0]!.pauseReason).not.toBe("budget");
+        // A local agent with a big billed_cents budget is unaffected by hosted limits.
+        await budgetService(db).upsertPolicy(s.companyId, { scopeType: "agent", scopeId: s.staffId, amount: 100_000, windowKind: "calendar_month_utc" }, s.userId);
+        const [local] = await db.insert(costEvents).values({ companyId: s.companyId, agentId: s.staffId, provider: "anthropic", biller: "anthropic",
+          billingType: "metered_api", model: "claude", costCents: 5000, occurredAt: new Date(), hostedInference: false }).returning();
+        await budgetService(db).evaluateCostEvent(local!);
+        expect(await budgetService(db).getInvocationBlock(s.companyId, s.staffId)).toBeNull();
+        expect(await hostedLimit(s.staffId)).toBeNull();
+      }, 120_000);
+
+      it("no agent-actor route writes an agent's hosted limit", async () => {
+        hostedOn();
+        const s = await seed();
+        await assistantOnHosted(s);
+        const applied = await apply(buildApp(sessionActor(s)).app, s.companyId, hostedHires(3000));
+        const agentId = applied.body.agents.a.id as string;
+        const actor = { type: "agent", agentId, companyId: s.companyId, runId: null, source: "agent_key" } as unknown as Actor;
+        const api = Router();
+        api.use(agentRoutes(db));
+        api.use(costRoutes(db));
+        const agentApp = express();
+        agentApp.use(express.json());
+        agentApp.use((req, _res, next) => { req.actor = actor; next(); });
+        agentApp.use("/api", api);
+        agentApp.use(errorHandler);
+        const attempts = [
+          request(agentApp).post(`/api/companies/${s.companyId}/budgets/policies`).send({ scopeType: "agent", scopeId: agentId, metric: "hosted_billed_cents", amount: 1_000_000 }),
+          request(agentApp).patch(`/api/agents/${agentId}/budgets`).send({ budgetMonthlyCents: 1_000_000 }),
+          request(agentApp).patch(`/api/agents/${agentId}`).send({ budgetMonthlyCents: 1_000_000 }),
+        ];
+        for (const attempt of attempts) expect((await attempt).status).toBe(403);
+        expect(await hostedLimit(agentId)).toMatchObject({ amount: 3000 });
       }, 120_000);
 
       it("an agent's config rollback never restores a budget", async () => {
@@ -1635,7 +1706,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         const applied = await apply(buildApp(sessionActor(s)).app, s.companyId, hostedHires(9000));
         expect(applied.status, JSON.stringify(applied.body)).toBe(201);
         await approvalService(db).approve(applied.body.agents.a.approvalId, s.userId);
-        expect(await monthlyPolicy("agent", applied.body.agents.a.id)).toMatchObject({ amount: 5000, isActive: true });
+        expect(await hostedLimit(applied.body.agents.a.id)).toMatchObject({ amount: 5000, isActive: true });
       }, 120_000);
 
       it("clamps a planned hosted hire's cap to the ceiling", async () => {
@@ -1645,7 +1716,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         await assistantOnHosted(s);
         const applied = await apply(buildApp(sessionActor(s)).app, s.companyId, hostedHires(9000));
         expect(applied.status, JSON.stringify(applied.body)).toBe(201);
-        expect(await monthlyPolicy("agent", applied.body.agents.a.id)).toMatchObject({ amount: 4000 });
+        expect(await hostedLimit(applied.body.agents.a.id)).toMatchObject({ amount: 4000 });
       }, 120_000);
 
       it("keeps the plan applied and says so when the hosted cap cannot be raised", async () => {
@@ -1709,7 +1780,7 @@ describeEmbeddedPostgres("POST /api/companies/:companyId/plans/apply", () => {
         const second = await apply(buildApp(sessionActor(t)).app, t.companyId, { agents: [await researcher()] });
         expect(second.status).toBe(201);
         expect(await monthlyPolicy("company", t.companyId)).toBeNull();
-        expect(await monthlyPolicy("agent", second.body.agents.research.id)).toMatchObject({ isActive: true, hardStopEnabled: true });
+        expect(await hostedLimit(second.body.agents.research.id)).toMatchObject({ isActive: true, hardStopEnabled: true });
       }, 120_000);
 
       it("a company with its own Anthropic key hires on it: the key binding is inherited and no caps are forced", async () => {

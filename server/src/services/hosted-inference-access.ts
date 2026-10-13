@@ -19,7 +19,7 @@ import { readBuiltInAgentMarker } from "../lib/built-in-agent-metadata.js";
 import { logger } from "../middleware/logger.js";
 
 type BudgetScope = { scopeType: "agent" | "company"; scopeId: string };
-type HostedPolicyMetric = "billed_cents" | typeof HOSTED_BILLED_CENTS_METRIC;
+type HostedPolicyMetric = typeof HOSTED_BILLED_CENTS_METRIC;
 
 /** Activity-log actor for the policies the server creates for hosted inference. */
 const HOSTED_INFERENCE_ACTOR = { actorType: "system", actorId: "hosted_inference" } as const;
@@ -65,10 +65,13 @@ async function ensureHardStopMonthlyPolicy(db: Db, companyId: string, scope: Bud
 
 /**
  * An agent on hosted inference spends the operator's key, so before that key
- * is used it must carry an ACTIVE hard-stop monthly budget, and so must its
- * company's hosted spend. Agent cap (`billed_cents`), when the agent has no
- * positive one yet: the Assistant's `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS` (default $20) or, for any other
- * agent, `STAPLES_HOSTED_AGENT_BUDGET_CENTS` (default $20). Company cap
+ * is used it must carry an ACTIVE hard-stop monthly hosted limit, and so must
+ * its company's hosted spend. Agent hosted limit (agent-scope
+ * `hosted_billed_cents`, counting only that agent's spend on the hosted key; a
+ * separate limit no agent can write), when the agent has no positive one yet:
+ * the Assistant's `STAPLES_HOSTED_ASSISTANT_BUDGET_CENTS` (default $20) or, for
+ * any other agent, `STAPLES_HOSTED_AGENT_BUDGET_CENTS` (default $20). The
+ * agent's person-set `billed_cents` budget is never touched. Company cap
  * (`hosted_billed_cents`, counting only spend billed to the hosted key):
  * `STAPLES_HOSTED_COMPANY_BUDGET_CENTS` (default $50); an existing active
  * hosted company cap is kept, never lowered. A person-set company budget
@@ -84,10 +87,10 @@ export async function ensureHostedAgentBudgets(
 ): Promise<void> {
   // An unsaved agent (an environment test before create) has no agent scope yet.
   if (agent.id) {
-    // Only the operator's defaults: an agent's own budgetMonthlyCents is
-    // agent-writable and never sets its cap (a plan sets a confirmed one at hire).
+    // Only the operator's defaults (a confirmed plan or an approval sets a
+    // person-confirmed amount on this same hosted limit).
     const assistant = options.assistant ?? await isProvisionedAssistant(db, agent);
-    await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "agent", scopeId: agent.id }, "billed_cents",
+    await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "agent", scopeId: agent.id }, HOSTED_BILLED_CENTS_METRIC,
       assistant ? hostedAssistantBudgetCents(env) : hostedAgentBudgetCents(env));
   }
   await ensureHardStopMonthlyPolicy(db, agent.companyId, { scopeType: "company", scopeId: agent.companyId }, HOSTED_BILLED_CENTS_METRIC,
@@ -114,10 +117,11 @@ export function hostedCapAfterRaise(input: { currentCents: number; neededCents: 
 
 /**
  * The monthly caps of every agent in the company that runs on the hosted key
- * (hires awaiting approval excluded). Each counts its agent `billed_cents`
- * policy amount (only a person or the server writes those), else the hosted
- * default the server will give it; at most the ceiling. `agents.budgetMonthlyCents`
- * is never read: an agent can write it about itself.
+ * (hires awaiting approval excluded). Each counts its agent hosted limit
+ * (agent-scope `hosted_billed_cents`, written only by the server and board
+ * routes), else the hosted default the server will give it; at most the
+ * ceiling. Neither `agents.budgetMonthlyCents` nor the agent's `billed_cents`
+ * budget is read.
  */
 export async function hostedAgentsMonthlyCents(db: Db, companyId: string, env: NodeJS.ProcessEnv = process.env): Promise<number> {
   if (!hostedInference(env).available) return 0;
@@ -130,7 +134,7 @@ export async function hostedAgentsMonthlyCents(db: Db, companyId: string, env: N
   if (!hostedRows.length) return 0;
   const policies = await db.select({ scopeId: budgetPolicies.scopeId, amount: budgetPolicies.amount }).from(budgetPolicies).where(and(
     eq(budgetPolicies.companyId, companyId), eq(budgetPolicies.scopeType, "agent"),
-    eq(budgetPolicies.metric, "billed_cents"), eq(budgetPolicies.windowKind, "calendar_month_utc"),
+    eq(budgetPolicies.metric, HOSTED_BILLED_CENTS_METRIC), eq(budgetPolicies.windowKind, "calendar_month_utc"),
   ));
   const policyAmount = new Map(policies.map((row) => [row.scopeId, row.amount] as const));
   const assistantId = await resolveCompanyAssistantAgentId(db, companyId);
@@ -143,8 +147,9 @@ export async function hostedAgentsMonthlyCents(db: Db, companyId: string, env: N
 }
 
 /**
- * At hire, from a person-confirmed plan: a hosted hire's agent cap at the
- * plan's budget (at most the ceiling), as a hard stop written by the system.
+ * At hire, from a person-confirmed plan: a hosted hire's agent hosted limit
+ * at the plan's budget (at most the ceiling), as a hard stop written by the
+ * system.
  * Without a plan budget the ensure gives it the hosted default instead.
  */
 export async function setPlannedHostedHireCap(
@@ -152,7 +157,7 @@ export async function setPlannedHostedHireCap(
 ): Promise<void> {
   if (!budgetMonthlyCents || budgetMonthlyCents <= 0) return;
   await budgetService(db).upsertPolicy(agent.companyId, {
-    scopeType: "agent", scopeId: agent.id, metric: "billed_cents", windowKind: "calendar_month_utc",
+    scopeType: "agent", scopeId: agent.id, metric: HOSTED_BILLED_CENTS_METRIC, windowKind: "calendar_month_utc",
     amount: clampToHostedCeiling(budgetMonthlyCents, env), hardStopEnabled: true, isActive: true,
   }, null, { actor: HOSTED_INFERENCE_ACTOR });
 }
