@@ -7,6 +7,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CloudAccessGate } from "./components/CloudAccessGate";
 import { queryKeys } from "./lib/queryKeys";
+import { ApiError } from "./api/client";
+import { useCombinedInboxTasksEnabled } from "./hooks/useCombinedInboxTasksEnabled";
 import appSource from "./App.tsx?raw";
 
 const mockHealthApi = vi.hoisted(() => ({
@@ -37,6 +39,14 @@ vi.mock("./api/auth", () => ({
 
 vi.mock("./api/access", () => ({
   accessApi: mockAccessApi,
+}));
+
+const mockInstanceSettingsApi = vi.hoisted(() => ({
+  getExperimental: vi.fn(),
+}));
+
+vi.mock("./api/instanceSettings", () => ({
+  instanceSettingsApi: mockInstanceSettingsApi,
 }));
 
 vi.mock("@/lib/router", () => ({
@@ -329,6 +339,84 @@ describe("CloudAccessGate", () => {
     expect(container.textContent).not.toContain("Sign in / Create account");
     expect(mockAccessApi.claimBootstrapAdmin).not.toHaveBeenCalled();
 
+    unmountRoot(root);
+  });
+});
+
+/**
+ * Mirrors App's gated route element: the board routes wait for the
+ * experimental settings read before mounting CloudAccessGate. Signed-out
+ * visitors and nonmembers get a 403 from that read, so it must settle on the
+ * first failure instead of holding the page on "Loading…" through retries.
+ */
+function GatedRoot() {
+  const { loaded } = useCombinedInboxTasksEnabled();
+  return loaded ? <CloudAccessGate /> : <div>Loading…</div>;
+}
+
+describe("root route gating when experimental settings are forbidden", () => {
+  let container: HTMLDivElement;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    mockInstanceSettingsApi.getExperimental.mockRejectedValue(new ApiError("Forbidden", 403, null));
+  });
+
+  afterEach(() => {
+    container.remove();
+    document.body.innerHTML = "";
+    vi.clearAllMocks();
+  });
+
+  function renderRoot() {
+    const root = createRoot(container);
+    // Production defaults: React Query retries failed reads three times.
+    const queryClient = new QueryClient();
+    flushSync(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <GatedRoot />
+        </QueryClientProvider>,
+      );
+    });
+    return root;
+  }
+
+  it("sends a signed-out visitor to /auth without waiting on retries", async () => {
+    mockHealthApi.get.mockResolvedValue({
+      status: "ok",
+      deploymentMode: "authenticated",
+      deploymentExposure: "private",
+      bootstrapStatus: "ready",
+    });
+    mockAuthApi.getSession.mockResolvedValue(null);
+
+    const root = renderRoot();
+    await waitForText(container, "Navigate:/auth?next=");
+    expect(mockInstanceSettingsApi.getExperimental).toHaveBeenCalledTimes(1);
+    unmountRoot(root);
+  });
+
+  it("shows the claim screen to a signed-in user with no company on an unclaimed instance", async () => {
+    mockHealthApi.get.mockResolvedValue({
+      status: "ok",
+      deploymentMode: "authenticated",
+      deploymentExposure: "private",
+      bootstrapStatus: "bootstrap_pending",
+      bootstrapInviteActive: false,
+      features: { selfServeCompanies: true },
+    });
+    mockAuthApi.getSession.mockResolvedValue({
+      session: { id: "session-1", userId: "user-1" },
+      user: { id: "user-1", email: "user@example.com", name: "User", image: null },
+    });
+    mockAccessApi.getCurrentBoardAccess.mockResolvedValue({ isInstanceAdmin: false, companyIds: [] });
+
+    const root = renderRoot();
+    await waitForText(container, "Claim this instance");
+    expect(container.textContent).not.toContain("Loading…");
+    expect(mockInstanceSettingsApi.getExperimental).toHaveBeenCalledTimes(1);
     unmountRoot(root);
   });
 });
