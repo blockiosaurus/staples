@@ -26,10 +26,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn, SIDEBAR_RAIL_HIDDEN_LABEL } from "../lib/utils";
 import { ThemeToggle } from "./ThemeToggle";
 import { SidebarServerInfo } from "./SidebarServerInfo";
+import { DOCS_URL, FEEDBACK_URL } from "@/lib/branding";
 
 const INVITES_PATH = "/company/settings/members?tab=invites";
-const DOCS_URL = "https://docs.paperclip.ing/";
-const FEEDBACK_URL = "https://paperclip.ing/feedback";
 
 interface SidebarAccountMenuProps {
   deploymentMode?: DeploymentMode;
@@ -244,13 +243,15 @@ export function SidebarAccountMenu({
                   onClick={closeNavigationChrome}
                 />
               ) : null}
-              <MenuAction
-                label="Documentation"
-                icon={BookOpen}
-                href={DOCS_URL}
-                external
-                onClick={() => setOpen(false)}
-              />
+              {DOCS_URL ? (
+                <MenuAction
+                  label="Documentation"
+                  icon={BookOpen}
+                  href={DOCS_URL}
+                  external
+                  onClick={() => setOpen(false)}
+                />
+              ) : null}
               <ThemeToggle variant="compact-menu-action" onAfterToggle={() => setOpen(false)} />
               {deploymentMode === "authenticated" ? (
                 <button
@@ -274,7 +275,7 @@ export function SidebarAccountMenu({
             </div>
           </PopoverContent>
         </Popover>
-        {!rail && !isCloud ? (
+        {!rail && !isCloud && FEEDBACK_URL ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <a
