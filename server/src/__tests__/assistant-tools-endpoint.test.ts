@@ -80,7 +80,7 @@ const support = await getEmbeddedPostgresTestSupport();
     const finished = await assistantFixture();
     expect((await rpc(finished, "tools/list")).status).toBe(200);
     expect(await assistantRuntimeMcpServer(server.db, { agent: { id: finished.agentId, companyId: finished.companyId }, authToken: "jwt", apiBaseUrl: "http://127.0.0.1:1/" }))
-      .toEqual({ name: "Staples assistant", url: "http://127.0.0.1:1/api/mcp/assistant-tools", token: "jwt", connectionId: "staples-assistant-tools" });
+      .toEqual({ name: "Staples assistant", url: "http://127.0.0.1:1/api/mcp/assistant-tools", token: "jwt", connectionId: "staples-assistant-tools", required: true });
     const warn = vi.spyOn(logger, "warn");
     try {
       expect(await assistantRuntimeMcpServer(server.db, { agent: { id: finished.agentId, companyId: finished.companyId }, authToken: null, apiBaseUrl: "http://127.0.0.1:1", runId: finished.runId })).toBeNull();
