@@ -197,6 +197,8 @@ export interface AdapterRuntimeMcpServer {
   url: string;
   token: string;
   connectionId: string;
+  /** The run must not start without this server's tools: discovery failure fails the run. */
+  required?: boolean;
 }
 
 export interface AdapterRuntimeMcpAccess {

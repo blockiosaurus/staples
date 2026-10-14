@@ -67,7 +67,7 @@ function harness(options: {
   sessionParams?: Record<string, unknown> | null;
   config?: Record<string, unknown>;
   context?: Record<string, unknown>;
-  servers?: Array<{ name: string; url: string; token: string; connectionId: string }>;
+  servers?: Array<{ name: string; url: string; token: string; connectionId: string; required?: boolean }>;
   signal?: AbortSignal;
 } = {}): Harness {
   const logs: string[] = [];
@@ -237,6 +237,17 @@ describe("claude_managed execute", () => {
     await execute(harness({ config: { instructionsFilePath: file }, servers: [{ name: "Other tools", url: mcp.url, token: RUN_TOKEN, connectionId: "c1" }] }).ctx);
     const systems = fake.requests.filter((r) => r.method === "POST" && /^\/v1\/agents/.test(r.path)).map((r) => (r.body as { system?: string }).system);
     expect(systems.at(-1)).toBe("Be brief.");
+  });
+
+  it("fails the run before any model call when a required tool server rejects the run token", async () => {
+    mcp = await startFakeMcpServer({ token: "a-different-token", tools: [] });
+    fake.queueTurns(turn("one", 1));
+    const result = await execute(harness({
+      servers: [{ name: "Staples assistant", url: mcp.url, token: RUN_TOKEN, connectionId: "staples-assistant-tools", required: true }],
+    }).ctx);
+    expect(result.errorCode).toBe("claude_managed_tools_failed");
+    expect(result.errorMessage).toMatch(/Staples assistant tools could not be reached/);
+    expect(requestsMatching("POST", /^\/v1\/agents$/)).toHaveLength(0);
   });
 
   it("gives a read-only Staples API tool set the read-only note, with no write step", async () => {
