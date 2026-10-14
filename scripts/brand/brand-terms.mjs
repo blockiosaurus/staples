@@ -38,10 +38,20 @@ export function rewriteText(text) {
   return swapped.replace(/Staples(\\?['\u2019])s\b/g, "Staples$1");
 }
 
-function mentionsInText(text, baseOffset) {
+/** A line containing this token keeps its upstream name (e.g. wording of comments already stored). */
+export const KEEP_MARKER = "brand:keep";
+
+function lineHasMarker(source, index) {
+  const start = source.lastIndexOf("\n", index - 1) + 1;
+  const end = source.indexOf("\n", index);
+  return source.slice(start, end === -1 ? undefined : end).includes(KEEP_MARKER);
+}
+
+function mentionsInText(text, baseOffset, source = text) {
   const found = [];
   for (const match of text.matchAll(WORD)) {
     if (keepAt(text, match.index)) continue;
+    if (lineHasMarker(source, baseOffset + match.index)) continue;
     found.push(baseOffset + match.index);
   }
   return found;
@@ -95,17 +105,30 @@ function lineText(source, index) {
 
 export function findBrandMentions(source, ext) {
   const offsets = ext === ".ts" || ext === ".tsx"
-    ? textRanges(source, ext).flatMap(([start, end]) => mentionsInText(source.slice(start, end), start))
+    ? textRanges(source, ext).flatMap(([start, end]) => mentionsInText(source.slice(start, end), start, source))
     : mentionsInText(source, 0);
   return offsets.map((index) => ({ line: lineOf(source, index), text: lineText(source, index) }));
 }
 
+/** Rewrites text line by line, leaving lines that carry the keep marker alone. */
+function rewriteLines(text, whole = text, offset = 0) {
+  let position = offset;
+  return text.split("\n").map((line) => {
+    const lineEndIdx = whole.indexOf("\n", position);
+    const fullLine = whole.slice(whole.lastIndexOf("\n", position - 1) + 1, lineEndIdx === -1 ? undefined : lineEndIdx);
+    position += line.length + 1;
+    return fullLine.includes(KEEP_MARKER) ? line : rewriteText(line);
+  }).join("\n");
+}
+
 export function rewriteBrand(source, ext) {
-  if (ext !== ".ts" && ext !== ".tsx") return rewriteText(source);
+  if (ext !== ".ts" && ext !== ".tsx") return rewriteLines(source);
   const ranges = textRanges(source, ext).sort((a, b) => b[0] - a[0]);
   let output = source;
   for (const [start, end] of ranges) {
-    output = output.slice(0, start) + rewriteText(output.slice(start, end)) + output.slice(end);
+    // Applied back to front, so offsets before `start` are still valid in `output`.
+    const piece = output.slice(start, end);
+    output = output.slice(0, start) + rewriteLines(piece, output, start) + output.slice(end);
   }
   return output;
 }

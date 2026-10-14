@@ -67,10 +67,11 @@ export function successfulRunHandoffFromActivity(event: ActivityEvent): Successf
   };
 }
 
-// Comments stored before the rebrand keep the old product name forever.
-const LEGACY_REQUIRED_NOTICE_BODY = "Staples needs a disposition before this issue can continue.";
+// Stored comments keep the pre-rebrand wording forever, so recognise it too.
+const LEGACY_REQUIRED_NOTICE_BODY = "Paperclip needs a disposition before this issue can continue."; // brand:keep
+// Stored comments keep the pre-rebrand wording forever, so recognise it too.
 const LEGACY_EXHAUSTED_NOTICE_BODY =
-  "Staples could not resolve this issue's missing disposition automatically. The source assignment is unchanged and a board decision is required.";
+  "Paperclip could not resolve this issue's missing disposition automatically. The source assignment is unchanged and a board decision is required."; // brand:keep
 
 export function isSuccessfulRunHandoffComment(text: string) {
   const trimmed = text.trim();

@@ -50,3 +50,12 @@ test("template head, middle and tail are all rewritten", () => {
   const out = rewriteBrand("const a = `Paperclip ${x} for Paperclip ${y} by Paperclip`;", ".ts");
   assert.equal(out, "const a = `Staples ${x} for Staples ${y} by Staples`;");
 });
+
+test("brand:keep lines are neither rewritten nor reported", () => {
+  const ts = `const a = "Paperclip stays here"; // brand:keep\nconst b = "Paperclip goes";\n`;
+  assert.equal(rewriteBrand(ts, ".ts"), `const a = "Paperclip stays here"; // brand:keep\nconst b = "Staples goes";\n`);
+  assert.deepEqual(findBrandMentions(ts, ".ts").map((m) => m.line), [2]);
+  const md = "Paperclip kept <!-- brand:keep -->\nPaperclip swapped\n";
+  assert.equal(rewriteBrand(md, ".md"), "Paperclip kept <!-- brand:keep -->\nStaples swapped\n");
+  assert.deepEqual(findBrandMentions(md, ".md").map((m) => m.line), [2]);
+});

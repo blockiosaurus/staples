@@ -29,11 +29,15 @@ describe("successful run handoff UI helpers", () => {
     expect(isSuccessfulRunHandoffComment("Ordinary issue comment")).toBe(false);
   });
 
-  it("recognises the legacy Staples wording and the Staples wording", () => {
-    const required = ["Staples", "Staples"].map((n) => `${n} needs a disposition before this issue can continue.`);
-    const exhausted = ["Staples", "Staples"].map(
-      (n) => `${n} could not resolve this issue's missing disposition automatically. The source assignment is unchanged and a board decision is required.`,
-    );
+  it("recognises stored legacy Staples comments as well as the Staples wording", () => {
+    const required = [
+      "Paperclip needs a disposition before this issue can continue.", // brand:keep
+      "Staples needs a disposition before this issue can continue.",
+    ];
+    const exhausted = [
+      "Paperclip could not resolve this issue's missing disposition automatically. The source assignment is unchanged and a board decision is required.", // brand:keep
+      "Staples could not resolve this issue's missing disposition automatically. The source assignment is unchanged and a board decision is required.",
+    ];
     for (const text of required) expect(isSuccessfulRunHandoffComment(text)).toBe(true);
     for (const text of exhausted) {
       expect(isSuccessfulRunHandoffComment(text)).toBe(true);
