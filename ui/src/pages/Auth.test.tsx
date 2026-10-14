@@ -170,6 +170,18 @@ describe("AuthPage", () => {
     await act(() => root.unmount());
   });
 
+  it("explains the product and links the legal pages", async () => {
+    const { root } = await mount();
+    expect(container.querySelector("h1")?.textContent).toBe("Run your business with a team of AI agents you direct");
+    expect(container.querySelector('ul[aria-label="Examples"]')?.children.length).toBe(3);
+    expect(container.querySelector("h2")?.textContent).toBe("Sign in to Staples");
+    expect(container.querySelector('a[href="/terms"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/privacy"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("instance");
+    expect(container.textContent).not.toContain("v1");
+    await act(() => root.unmount());
+  });
+
   it("exposes password-manager metadata and a11y attributes on the sign-in form", async () => {
     const { root } = await mount();
 

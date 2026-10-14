@@ -94,18 +94,19 @@ export function StartCompanyPage() {
   }
 
   return (
-    <StartShell title="Name your company" footer={backLink}>
+    <StartShell title="What's your business called?" footer={backLink}>
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="start-company-name">Company name</Label>
+          <Label htmlFor="start-company-name">Business name</Label>
           <Input
             id="start-company-name"
             autoFocus
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder="Acme Inc."
+            placeholder="Lantern Candle Co"
             disabled={creating}
           />
+          <p className="text-xs text-muted-foreground">You can change this later.</p>
         </div>
         {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
         <Button type="submit" disabled={!trimmed || creating}>

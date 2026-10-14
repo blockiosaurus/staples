@@ -84,7 +84,7 @@ describe("StartCompanyPage", () => {
   it("asks only for a company name and keeps Create disabled until one is typed", async () => {
     await render();
     expect(container.querySelectorAll("input")).toHaveLength(1);
-    expect(container.textContent).toContain("Name your company");
+    expect(container.textContent).toContain("What's your business called?");
     const button = container.querySelector("button[type=submit]") as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     await type("  ");
