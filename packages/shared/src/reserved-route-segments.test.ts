@@ -14,4 +14,10 @@ describe("reserved route segments", () => {
     expect(isReservedCompanyRouteSegment("start")).toBe(true);
     expect(isReservedCompanyRouteSegment("START")).toBe(true);
   });
+
+  it.each(["terms", "privacy"])("reserves the public legal page /%s", (segment) => {
+    expect(GLOBAL_ROUTE_ROOTS).toContain(segment);
+    expect(isReservedCompanyRouteSegment(segment)).toBe(true);
+    expect(isReservedCompanyRouteSegment(segment.toUpperCase())).toBe(true);
+  });
 });

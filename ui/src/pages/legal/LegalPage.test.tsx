@@ -8,7 +8,11 @@ import { PrivacyPage } from "./PrivacyPage";
 
 // The router's Link wrapper reads the active company prefix from context.
 vi.mock("@/context/CompanyContext", () => ({
-  useCompany: () => ({ selectedCompany: null, selectedCompanyId: null, companies: [] }),
+  useCompany: () => ({
+    selectedCompany: { id: "company-1", issuePrefix: "LAN", name: "Lantern" },
+    selectedCompanyId: "company-1",
+    companies: [{ id: "company-1", issuePrefix: "LAN", name: "Lantern" }],
+  }),
 }));
 
 function render(node: React.ReactElement) {
@@ -32,5 +36,13 @@ describe("legal pages", () => {
     expect(container.querySelector("h1")?.textContent).toBe("Privacy policy");
     expect(container.querySelector('a[href="/terms"]')).not.toBeNull();
     expect(container.querySelector('a[href="/auth"]')).not.toBeNull();
+  });
+
+  it("never prefixes the public legal links with the active company", () => {
+    const container = render(<TermsPage />);
+    expect(container.querySelector('a[href="/privacy"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/terms"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/auth"]')).not.toBeNull();
+    expect(container.querySelector('a[href^="/LAN"]')).toBeNull();
   });
 });

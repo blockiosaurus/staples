@@ -182,6 +182,17 @@ describe("AuthPage", () => {
     await act(() => root.unmount());
   });
 
+  it("shows the account-creation heading and password hint in sign-up mode", async () => {
+    const { root } = await mount();
+    const toggle = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Create one") as HTMLButtonElement;
+    await act(async () => {
+      toggle.click();
+    });
+    expect(container.querySelector("h2")?.textContent).toBe("Create your Staples account");
+    expect(container.textContent).toContain("at least 8 characters");
+    await act(() => root.unmount());
+  });
+
   it("exposes password-manager metadata and a11y attributes on the sign-in form", async () => {
     const { root } = await mount();
 
