@@ -25,6 +25,7 @@ export const SCAN_TARGETS: ReadonlyArray<{ path: string; fn?: string }> = [
   { path: "components/AgentActionButtons.tsx" },
   { path: "components/primary-agent/PrimaryAgentPresentation.tsx" },
   { path: "pages/CompanySettings.tsx" },
+  { path: "pages/costs" },
   { path: "components/task-chat/TaskChatComposer.tsx" },
   { path: "components/task-chat/ComposerRunSettingsPicker.tsx" },
   { path: "components/task-chat/TaskChatProtocolCard.tsx" },

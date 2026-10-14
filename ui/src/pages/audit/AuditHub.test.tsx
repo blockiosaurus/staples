@@ -109,7 +109,7 @@ describe("AuditHub", () => {
     expect(feed?.dataset.run).toBe("run-1");
     expect(feed?.dataset.entity).toBe(JSON.stringify(null));
     expect(feed?.dataset.action).toBe("tool_");
-    expect(setBreadcrumbsMock).toHaveBeenCalledWith([{ label: "Audit" }]);
+    expect(setBreadcrumbsMock).toHaveBeenCalledWith([{ label: "Activity" }]);
   });
 
   it("uses routine-scoped activity instead of the privileged organization feed", () => {

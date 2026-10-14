@@ -29,6 +29,7 @@ import { FinanceBillerCard } from "../components/FinanceBillerCard";
 import { FinanceKindCard } from "../components/FinanceKindCard";
 import { FinanceTimelineCard } from "../components/FinanceTimelineCard";
 import { Identity } from "../components/Identity";
+import { CostsOverview } from "./costs/CostsOverview";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
 import { ProviderQuotaCard } from "../components/ProviderQuotaCard";
@@ -164,6 +165,17 @@ function FinanceSummaryCard({
         />
       </CardContent>
     </Card>
+  );
+}
+
+/** Wraps the detailed spend views in a closed "Details" disclosure on the full page; a no-op when embedded. */
+function DetailsDisclosure({ enabled, children }: { enabled: boolean; children: ReactNode }) {
+  if (!enabled) return <>{children}</>;
+  return (
+    <details data-testid="costs-details" className="rounded-lg border border-border p-4">
+      <summary className="cursor-pointer text-sm font-medium">Details</summary>
+      <div className="mt-4 space-y-5">{children}</div>
+    </details>
   );
 }
 
@@ -639,6 +651,14 @@ export function Costs({
               />
             </div>
           ) : null}
+          <CostsOverview companyId={companyId} />
+        </div>
+      ) : null}
+
+      <DetailsDisclosure enabled={showSummaryChrome}>
+      {showSummaryChrome ? (
+        <div className="space-y-5">
+
 
           {financeData?.summary.currencies?.some((row) => row.currency !== "USD") && (
             <p role="status" className="text-sm text-muted-foreground">
@@ -1183,6 +1203,7 @@ export function Costs({
           )}
         </TabsContent>
       </Tabs>
+      </DetailsDisclosure>
     </div>
   );
 }

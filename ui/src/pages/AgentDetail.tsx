@@ -313,7 +313,7 @@ const LEGACY_AGENT_DETAIL_TABS = [
   { value: "secrets", label: "Secrets" },
   { value: "tools", label: "Tools" },
   { value: "runs", label: "Runs" },
-  { value: "audit", label: "Audit" },
+  { value: "audit", label: "Activity" },
   { value: "budget", label: "Budget" },
 ] as const;
 

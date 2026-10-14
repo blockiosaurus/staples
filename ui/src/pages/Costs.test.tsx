@@ -28,6 +28,8 @@ const costsApiMocks = vi.hoisted(() => ({
   windowSpend: vi.fn(),
   quotaWindows: vi.fn(),
 }));
+const briefingGetMock = vi.hoisted(() => vi.fn());
+const agentsListMock = vi.hoisted(() => vi.fn());
 const subscriptionsMocks = vi.hoisted(() => ({ report: vi.fn(), refresh: vi.fn(), update: vi.fn(), link: vi.fn() }));
 vi.mock("../api/subscriptions", () => ({ subscriptionsApi: subscriptionsMocks }));
 
@@ -39,6 +41,8 @@ vi.mock("../api/budgets", () => ({
   },
 }));
 
+vi.mock("../api/briefing", () => ({ briefingApi: { get: briefingGetMock } }));
+vi.mock("../api/agents", () => ({ agentsApi: { list: agentsListMock } }));
 vi.mock("../api/costs", () => ({ costsApi: costsApiMocks }));
 vi.mock("../api/decision-models", () => ({ decisionModelsApi: { history: decisionHistoryMock } }));
 
@@ -67,6 +71,8 @@ describe("Shared Costs surfaces", () => {
   beforeEach(() => {
     const usage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, costCents: "0", eventCount: 0, estimatedEventCount: 0, unpricedEventCount: 0 };
     subscriptionsMocks.report.mockResolvedValue({ canRefresh: false, asOf: "2026-10-08T00:00:00Z", accounts: [], monthlyTotals: [], activeCount: 0, unknownPriceCount: 0, unidentifiedAccountCount: 0, api: usage, subscription: usage, unknown: usage, unattributedSubscription: usage });
+    briefingGetMock.mockResolvedValue({ spend: { monthSpendCents: 200, companyBudgetCents: 1000, hosted: null } });
+    agentsListMock.mockResolvedValue([]);
     decisionHistoryMock.mockResolvedValue([]);
     costsApiMocks.byUser.mockResolvedValue({ activeUserCount: 1, rows: [] });
     container = document.createElement("div");
@@ -136,6 +142,24 @@ describe("Shared Costs surfaces", () => {
     expect(container.querySelector('[role="tab"]')).toBeFalsy();
     expect(setBreadcrumbsMock).not.toHaveBeenCalled();
     for (const mock of Object.values(costsApiMocks)) expect(mock).not.toHaveBeenCalled();
+  });
+
+  it("renders the owner overview above a closed details disclosure", async () => {
+    for (const mock of Object.values(costsApiMocks)) mock.mockResolvedValue([]);
+    costsApiMocks.byUser.mockResolvedValue({ activeUserCount: 1, rows: [] });
+    costsApiMocks.summary.mockResolvedValue({ spendCents: 0, budgetCents: 0, pricingComplete: true });
+    costsApiMocks.financeSummary.mockResolvedValue({ netCents: 0, debitCents: 0, creditCents: 0, estimatedDebitCents: 0, eventCount: 0 });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<MemoryRouter><QueryClientProvider client={queryClient}><Costs /></QueryClientProvider></MemoryRouter>);
+    });
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="costs-overview"]')).not.toBeNull());
+    const overview = container.querySelector('[data-testid="costs-overview"]')!;
+    const details = container.querySelector<HTMLDetailsElement>('[data-testid="costs-details"]')!;
+    expect(details.open).toBe(false);
+    expect(overview.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(details.contains(overview)).toBe(false);
   });
 
   it("opens linked decision history with real date bounds instead of report cache labels", async () => {

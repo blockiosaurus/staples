@@ -278,7 +278,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
   },
   {
     id: "nav.audit",
-    label: "Audit",
+    label: "Activity",
     to: "/activity",
     matchRoots: ["activity", "audit"],
     icon: History,
