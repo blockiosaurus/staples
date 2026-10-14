@@ -324,11 +324,11 @@ function ConnectModel({
         onSubmit={(event) => { event.preventDefault(); if (!submitting && (!needsKey || hostedKey.trim())) void connectHosted(); }}
       >
         <p className="text-foreground">
-          {needsKey ? "The Assistant will use Claude (hosted) with your Anthropic API key." : "The Assistant will use Claude (hosted), provided by this Staples server."}
+          {needsKey ? "The Assistant will use Claude (hosted) with your Anthropic key." : "The Assistant will use Claude (hosted), provided by this Staples server."}
         </p>
         {needsKey ? (
           <label className="flex w-full max-w-(--tc-shell-max-w) flex-col gap-1">
-            <span className="text-muted-foreground">Anthropic API key</span>
+            <span className="text-muted-foreground">Anthropic key</span>
             <input
               type="password"
               name="anthropic-api-key"

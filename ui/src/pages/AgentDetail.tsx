@@ -45,6 +45,8 @@ import { assetsApi } from "../api/assets";
 import { toolsApi } from "../api/tools";
 import { getUIAdapter, buildTranscript, onAdapterChange } from "../adapters";
 import { StatusBadge } from "../components/StatusBadge";
+import { formatModelName } from "@/lib/model-utils";
+import { useSurfaces } from "@/staples/surfaces/useSurfaces";
 import { AgentTemplateChip } from "../staples/autopilot/AgentTemplateChip";
 import { AutopilotPanel } from "../staples/autopilot/AutopilotPanel";
 import { AgentLifecycleStatus, useAgentLifecycleStatus } from "../components/AgentLifecycleStatus";
@@ -240,10 +242,10 @@ function formatEnvForDisplay(envValue: unknown, censorUsernameInLogs: boolean): 
 }
 
 const sourceLabels: Record<string, string> = {
-  timer: "Timer",
-  assignment: "Assignment",
-  on_demand: "On-demand",
-  automation: "Automation",
+  timer: "Scheduled",
+  assignment: "Assigned",
+  on_demand: "You asked",
+  automation: "Automatic",
 };
 
 const LIVE_SCROLL_BOTTOM_TOLERANCE_PX = 32;
@@ -786,6 +788,9 @@ export function AgentDetail() {
   const { closePanel } = usePanel();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
+  const surfaces = useSurfaces();
+  const skillsSurfaceVisible = !surfaces.ready
+    || surfaces.states.find((state) => state.surface.id === "nav.skills")?.visible !== false;
   const navigate = useNavigate();
   const [actionError, setActionError] = useState<string | null>(null);
   const [dismissedLeftAgentIds, setDismissedLeftAgentIds] = useState<Set<string>>(() => new Set());
@@ -1431,6 +1436,7 @@ export function AgentDetail() {
           skillNames={overviewSkillNames}
           skillsState={overviewSkillsState}
           agentRouteId={canonicalAgentRef}
+          showSkills={skillsSurfaceVisible}
         />
       )}
 
@@ -1684,10 +1690,7 @@ function LatestRunCard({
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
               </span>
             )}
-            <span>{isLive ? "Live Run" : "Latest Run"}</span>
-            <span className="font-mono text-xs font-normal text-muted-foreground">
-              &middot; {run.id.slice(0, 8)}
-            </span>
+            <span>{isLive ? "Working now" : "Latest work"}</span>
           </h3>
         </Link>
       </div>
@@ -1706,13 +1709,12 @@ function LatestRunCard({
             <>
               <StatusGlyph status={task.status} size="sm" />
               <span className="font-mono text-xs text-muted-foreground">
-                {task.identifier ?? task.id.slice(0, 8)}
+                {task.identifier ?? task.title}
               </span>
               <span className="truncate text-xs">{task.title}</span>
             </>
           ) : (
             <>
-              <span className="font-mono text-xs text-muted-foreground">{run.id.slice(0, 8)}</span>
               <Badge variant="ghost" className={cn(
                 "px-1.5 text-(length:--text-nano)",
                 run.invocationSource === "timer" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"
@@ -1720,7 +1722,7 @@ function LatestRunCard({
                   : run.invocationSource === "on_demand" ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300"
                   : "bg-muted text-muted-foreground"
               )}>
-                {sourceLabels[run.invocationSource] ?? run.invocationSource}
+                {sourceLabels[run.invocationSource] ?? "Run"}
               </Badge>
             </>
           )}
@@ -1759,6 +1761,7 @@ export function AgentOverview({
   skillNames,
   skillsState = "ready",
   agentRouteId,
+  showSkills,
 }: {
   agent: AgentDetailRecord;
   runs: HeartbeatRun[];
@@ -1769,6 +1772,7 @@ export function AgentOverview({
   skillNames: string[];
   skillsState?: "ready" | "loading" | "error";
   agentRouteId: string;
+  showSkills: boolean;
 }) {
   const issuesById = useMemo(() => {
     const map = new Map<string, (typeof assignedIssues)[number]>();
@@ -1778,7 +1782,7 @@ export function AgentOverview({
   const configuredModel = asNonEmptyString(agent.adapterConfig?.model)
     ?? asNonEmptyString(agent.adapterConfig?.modelName)
     ?? asNonEmptyString(agent.runtimeConfig?.model)
-    ?? "Adapter default";
+    ?? "Default";
   const lastRun = runs[0] ?? null;
   const identity = useQuery({
     queryKey: [...queryKeys.agents.identity(agent.id), lastRun?.id, lastRun?.status],
@@ -1802,7 +1806,7 @@ export function AgentOverview({
                 <Link className="text-sm hover:underline" to={agentDetailHref(agentRouteRef(reportsToAgent))}>
                   {reportsToAgent.name}
                 </Link>
-              ) : <span className="text-sm">Board</span>}
+              ) : <span className="text-sm">You</span>}
             </SummaryRow>
             <SummaryRow label="Direct reports"><span className="text-sm tabular-nums">{directReportCount}</span></SummaryRow>
           </div>
@@ -1815,7 +1819,7 @@ export function AgentOverview({
           </div>
           <div className="space-y-3">
             <SummaryRow label="Runs on"><span className="text-sm">{getAdapterDisplay(agent.adapterType === "paperclip_runner" && agent.adapterConfig.provider === "openai_dot" ? "openai_dot" : agent.adapterType).label}</span></SummaryRow>
-            <SummaryRow label="Model"><span className="max-w-64 truncate text-sm font-mono">{configuredModel}</span></SummaryRow>
+            <SummaryRow label="Model"><span className="max-w-64 truncate text-sm">{configuredModel === "Default" ? "Default" : formatModelName(configuredModel)}</span></SummaryRow>
             <SummaryRow label="Last run">
               <span className="text-sm">{lastRun ? `${plainRunStatus(lastRun.status)} · ${relativeTime(lastRun.createdAt)}` : "No runs"}</span>
             </SummaryRow>
@@ -1827,28 +1831,30 @@ export function AgentOverview({
           {agent.capabilities?.trim() ? (
             <MarkdownBody className="text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{agent.capabilities}</MarkdownBody>
           ) : (
-            <p className="text-sm text-muted-foreground">No capability summary has been added.</p>
+            <p className="text-sm text-muted-foreground">Not described yet.</p>
           )}
         </section>
 
-        <section className="rounded-lg border border-border p-4" aria-labelledby="agent-skills-heading">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 id="agent-skills-heading" className="text-sm font-medium">Skills</h3>
-            <Link className="text-xs text-muted-foreground hover:text-foreground" to={agentDetailHref(agentRouteId, "skills")}>Manage</Link>
-          </div>
-          {skillsState === "loading" ? (
-            <p className="text-sm text-muted-foreground" data-testid="agent-skills-loading">Loading skills…</p>
-          ) : skillsState === "error" ? (
-            <p className="text-sm text-destructive" data-testid="agent-skills-error">Skills could not be loaded.</p>
-          ) : skillNames.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {skillNames.slice(0, 8).map((skill) => <Badge key={skill} variant="secondary">{skill}</Badge>)}
-              {skillNames.length > 8 ? <Badge variant="outline">+{skillNames.length - 8} more</Badge> : null}
+        {showSkills ? (
+          <section className="rounded-lg border border-border p-4" aria-labelledby="agent-skills-heading">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h3 id="agent-skills-heading" className="text-sm font-medium">Skills</h3>
+              <Link className="text-xs text-muted-foreground hover:text-foreground" to={agentDetailHref(agentRouteId, "skills")}>Manage</Link>
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No skills enabled.</p>
-          )}
-        </section>
+            {skillsState === "loading" ? (
+              <p className="text-sm text-muted-foreground" data-testid="agent-skills-loading">Loading skills…</p>
+            ) : skillsState === "error" ? (
+              <p className="text-sm text-destructive" data-testid="agent-skills-error">Skills could not be loaded.</p>
+            ) : skillNames.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {skillNames.slice(0, 8).map((skill) => <Badge key={skill} variant="secondary">{skill}</Badge>)}
+                {skillNames.length > 8 ? <Badge variant="outline">+{skillNames.length - 8} more</Badge> : null}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No skills enabled.</p>
+            )}
+          </section>
+        ) : null}
       </div>
 
       <details className="rounded-lg border border-border p-4" data-testid="agent-overview-advanced">
@@ -1905,15 +1911,20 @@ export function AgentOverview({
       </section>
 
       <section className="space-y-3" aria-labelledby="agent-audit-links-heading">
-        <h3 id="agent-audit-links-heading" className="text-sm font-medium">Audit</h3>
+        <h3 id="agent-audit-links-heading" className="text-sm font-medium">History</h3>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {(["activity", "runs", "costs", "budgets"] as const).map((section) => (
+          {([
+            ["activity", "Activity"],
+            ["runs", "Work history"],
+            ["costs", "Costs"],
+            ["budgets", "Limits"],
+          ] as const).map(([section, label]) => (
             <Link
               key={section}
               to={agentScopedAuditHref(agent.id, section)}
-              className="rounded-lg border border-border px-3 py-2 text-sm font-medium capitalize hover:bg-accent"
+              className="rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-accent"
             >
-              {section}
+              {label}
             </Link>
           ))}
         </div>
@@ -3327,7 +3338,7 @@ function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelect
             : run.invocationSource === "on_demand" ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300"
             : "bg-muted text-muted-foreground"
         )}>
-          {sourceLabels[run.invocationSource] ?? run.invocationSource}
+          {sourceLabels[run.invocationSource] ?? "Run"}
         </Badge>
         {sourceResolvedFold ? <SourceResolvedFoldBadge showIcon={false} className="shrink-0 text-(length:--text-nano) py-0" /> : null}
         <span className="ml-auto text-(length:--text-micro) text-muted-foreground shrink-0">

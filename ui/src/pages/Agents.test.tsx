@@ -384,7 +384,7 @@ describe("Agents", () => {
       expect(row?.getAttribute("href")).toMatch(/^\/agents\//);
       expect(row?.querySelector('button[aria-label^="Open actions for"]')).toBeNull();
       const buttons = Array.from(row?.querySelectorAll("button") ?? []).map((button) => button.textContent);
-      expect(buttons).not.toEqual(expect.arrayContaining([expect.stringMatching(/Assign Task|Run Heartbeat|Run with provider trace|Pause|Resume/)]));
+      expect(buttons).not.toEqual(expect.arrayContaining([expect.stringMatching(/Assign Task|Run Heartbeat|Run with detailed log|Pause|Resume/)]));
     }
   });
 
@@ -564,7 +564,7 @@ describe("Agents", () => {
     expect(actions).toBeNull();
     expect(row?.textContent).not.toContain("Assign Task");
     expect(row?.textContent).not.toContain("Run Heartbeat");
-    expect(row?.textContent).not.toContain("Run with provider trace");
+    expect(row?.textContent).not.toContain("Run with detailed log");
     expect(row?.textContent).not.toContain("Pause");
   });
 

@@ -12,7 +12,7 @@ export const ASSISTANT_ADAPTER_LABELS: Record<string, string> = {
 export const HOSTED_FINISHING_MESSAGE = "Finishing Assistant setup…";
 
 export const HOSTED_TILE_COPY = {
-  needsKey: "Runs in Anthropic's cloud. Needs an Anthropic API key.",
+  needsKey: "Runs in Anthropic's cloud. Needs an Anthropic key.",
   provided: "Provided by this Staples server.",
 } as const;
 
@@ -30,9 +30,9 @@ const acpNodeMinimum = (adapterType: string) => ACP_NODE_MINIMUM[adapterType] ??
 
 export function connectionFailureReason(adapterType: string, codes: readonly string[]): string {
   const label = ASSISTANT_ADAPTER_LABELS[adapterType] ?? "The model";
-  if (codes.includes("claude_managed_api_key_missing")) return "Add an Anthropic API key to use Claude (hosted).";
+  if (codes.includes("claude_managed_api_key_missing")) return "Add an Anthropic key to use Claude (hosted).";
   if (codes.some((code) => code === "claude_managed_auth_invalid" || code === "claude_managed_access_denied")) {
-    return "That Anthropic API key was rejected.";
+    return "That Anthropic key was rejected.";
   }
   if (codes.includes("assistant_provisioning_incomplete")) return "The Assistant's setup didn't finish. Try again.";
   if (codes.some((code) => code === ADAPTER_AUTH_MISSING_CHECK_CODE || /_auth_required$/.test(code))) {
@@ -45,12 +45,12 @@ export function connectionFailureReason(adapterType: string, codes: readonly str
     const cliFallback = ASSISTANT_CLI_ENGINE_ADAPTER_TYPES.includes(adapterType);
     if (codes.includes("adapter_engine_node_unsupported")) {
       return cliFallback
-        ? `${label} is installed, but its default engine needs Node ${acpNodeMinimum(adapterType)} or newer. Pick ${label} below to connect it on its CLI engine instead.`
+        ? `${label} is installed, but it needs Node ${acpNodeMinimum(adapterType)} or newer here. Pick another option to continue.`
         : `${label} is installed, but it needs Node ${acpNodeMinimum(adapterType)} or newer on this computer to run the Assistant.`;
     }
     return cliFallback
-      ? `${label} is installed, but its default engine isn't available here. Pick ${label} below to connect it on its CLI engine instead.`
-      : `${label} is installed, but its default engine isn't available here.`;
+      ? `${label} is installed, but it can't run here. Pick another option to continue.`
+      : `${label} is installed, but it can't run here.`;
   }
   if (codes.some((code) => /_usage_limited$/.test(code))) return `${label} has reached its usage limit.`;
   if (codes.some((code) => /_timed_out$|_timeout$/.test(code))) return `${label} didn't answer in time.`;

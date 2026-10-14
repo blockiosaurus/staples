@@ -351,6 +351,7 @@ function SettingsPage({ runtimeContent }: { runtimeContent?: ReactNode }) {
                     .filter((s) => skills?.desiredSkills.includes(s.key))
                     .map((s) => s.name)}
                   agentRouteId={REF}
+                  showSkills
                 />
               )}
               {view === "instructions" && (

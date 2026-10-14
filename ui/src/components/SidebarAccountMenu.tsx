@@ -58,7 +58,7 @@ function deriveInitials(name: string) {
   if (parts.length >= 2) {
     return `${parts[0]?.[0] ?? ""}${parts[parts.length - 1]?.[0] ?? ""}`.toUpperCase();
   }
-  return name.slice(0, 2).toUpperCase();
+  return (parts[0] ?? "").slice(0, 1).toUpperCase();
 }
 
 function MenuAction({
@@ -152,9 +152,9 @@ export function SidebarAccountMenu({
 
   const signOutMutation = useSignOut({ onSignedOut: closeNavigationChrome });
 
-  const displayName = session?.user.name?.trim() || "Board";
+  const displayName = session?.user.name?.trim() || "You";
   const secondaryLabel =
-    session?.user.email?.trim() || (deploymentMode === "authenticated" ? "Signed in" : "Local workspace board");
+    session?.user.email?.trim() || (deploymentMode === "authenticated" ? "Signed in" : "This computer");
   const initials = deriveInitials(displayName);
   const profileHref = userProfilePath(session?.user);
 

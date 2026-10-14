@@ -3,7 +3,7 @@ import { agentTemplatesApi } from "@/api/agentTemplates";
 import { queryKeys } from "@/lib/queryKeys";
 import { agentTemplateRecord } from "./templateRecord";
 
-/** "From template: <name> v<version>" for agents hired from a template; nothing otherwise. */
+/** "Ready-made: <name>" for agents hired from a template (version in the tooltip); nothing otherwise. */
 export function AgentTemplateChip({ agent, companyId }: { agent: { metadata?: unknown }; companyId: string | null | undefined }) {
   const record = agentTemplateRecord(agent.metadata);
   const templates = useQuery({
@@ -19,9 +19,9 @@ export function AgentTemplateChip({ agent, companyId }: { agent: { metadata?: un
     <span
       data-testid="agent-template-chip"
       className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+      title={record.version ? `Template version ${record.version}` : undefined}
     >
-      From template: {name}
-      {record.version ? ` v${record.version}` : ""}
+      Ready-made: {name}
     </span>
   );
 }

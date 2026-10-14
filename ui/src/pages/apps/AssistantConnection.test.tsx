@@ -102,7 +102,7 @@ describe("assistant setup from Connections", () => {
   it("uses the person’s initials when they have no profile image", async () => {
     mocks.connections.mockResolvedValue([{ ...grant, user: { name: "Dotta", image: null } }]);
     await render();
-    expect(container.querySelector('[data-slot="avatar-fallback"]')?.textContent).toBe("DO");
+    expect(container.querySelector('[data-slot="avatar-fallback"]')?.textContent).toBe("D");
     expect(container.textContent).toContain("Dotta’s OpenCode connection");
   });
   it("keeps an older server’s connection usable without profile metadata", async () => {
