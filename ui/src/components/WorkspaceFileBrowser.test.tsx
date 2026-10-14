@@ -122,7 +122,7 @@ function createWorkspace(overrides: Partial<ProjectWorkspace> = {}): ProjectWork
     id: "workspace-content",
     companyId: "company-1",
     projectId: "project-content",
-    name: "Paperclip Content",
+    name: "Staples Content",
     sourceType: "local_path",
     cwd: "/srv/paperclip/home/paperclipai/paperclip-content",
     repoUrl: null,
@@ -152,7 +152,7 @@ function createProject(overrides: Partial<Project> = {}): Project {
     goalId: null,
     goalIds: [],
     goals: [],
-    name: "Paperclip Content",
+    name: "Staples Content",
     description: null,
     status: "in_progress",
     leadAgentId: null,
@@ -646,12 +646,12 @@ describe("WorkspaceFileBrowser", () => {
   it("opens a result from a selected other project workspace", () => {
     const contentItem = createItem({
       relativePath: "content-os/cases/active/2026-06-06-pap-10199-bundled-skills/README.md",
-      displayPath: "Paperclip Content / content-os/cases/active/2026-06-06-pap-10199-bundled-skills/README.md",
-      workspaceLabel: "Paperclip Content",
+      displayPath: "Staples Content / content-os/cases/active/2026-06-06-pap-10199-bundled-skills/README.md",
+      workspaceLabel: "Staples Content",
       workspaceKind: "project_workspace",
       workspaceId: "workspace-content",
       projectId: "project-content",
-      projectName: "Paperclip Content",
+      projectName: "Staples Content",
     });
     useQueryMock.mockImplementation((options: { queryKey: readonly unknown[] }) => {
       if (options.queryKey[0] === "projects") return ok([createProject()]);
@@ -665,7 +665,7 @@ describe("WorkspaceFileBrowser", () => {
     });
 
     expect(container.textContent).not.toContain("Other project");
-    expect(container.textContent).toContain("Paperclip Content / Paperclip Content");
+    expect(container.textContent).toContain("Staples Content / Staples Content");
     const listCall = useQueryMock.mock.calls.find(([options]) => options.queryKey?.[3] === "list");
     expect(listCall?.[0].queryKey[4]).toMatchObject({
       workspace: "project",
@@ -693,12 +693,12 @@ describe("WorkspaceFileBrowser", () => {
     const folderPath = "content-os/cases/active/2026-06-06-pap-10199-bundled-skills/";
     const contentItem = createItem({
       relativePath: `${folderPath}README.md`,
-      displayPath: `Paperclip Content / ${folderPath}README.md`,
-      workspaceLabel: "Paperclip Content",
+      displayPath: `Staples Content / ${folderPath}README.md`,
+      workspaceLabel: "Staples Content",
       workspaceKind: "project_workspace",
       workspaceId: "workspace-content",
       projectId: "project-content",
-      projectName: "Paperclip Content",
+      projectName: "Staples Content",
     });
     useQueryMock.mockImplementation((options: { queryKey: readonly unknown[] }) => {
       if (options.queryKey[0] === "projects") return ok([createProject()]);

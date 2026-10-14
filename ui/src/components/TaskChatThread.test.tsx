@@ -1036,7 +1036,7 @@ describe("TaskChatThread runtime transcript selection", () => {
     expect(nativeRuns.map((run) => run.id)).toEqual(["native-run"]);
   });
 
-  it("uses runner-only controls only for an actual native Paperclip Runner run", () => {
+  it("uses runner-only controls only for an actual native Staples Runner run", () => {
     nativeTranscriptState.transcriptByRun.set("native-run", [
       {
         kind: "assistant",
@@ -3388,7 +3388,7 @@ describe("TaskChatThread no-live-execution-path recovery", () => {
     authorType: "system" as const,
     authorAgentId: null,
     authorUserId: null,
-    body: "Paperclip retried continuation, but it still has no live execution path.",
+    body: "Staples retried continuation, but it still has no live execution path.",
     presentation: {
       kind: "system_notice" as const,
       tone: "danger" as const,
@@ -3909,7 +3909,7 @@ describe("TaskChatThread queued message actions", () => {
   });
 });
 
-describe("TaskChatThread Paperclip Runner queue", () => {
+describe("TaskChatThread Staples Runner queue", () => {
   const queuedComment = {
     id: "queued-prp-1",
     companyId: "company-1",

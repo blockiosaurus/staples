@@ -156,7 +156,7 @@ describe("StartCompanyPage", () => {
     await render();
     expect(container.querySelector("input")).toBeNull();
     expect(container.querySelector("button")).toBeNull();
-    expect(container.textContent).toContain("Paperclip Cloud");
+    expect(container.textContent).toContain("Staples Cloud");
   });
 
   it("tells a signed-in user with no company to ask for access when they cannot create", async () => {

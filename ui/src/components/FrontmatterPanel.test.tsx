@@ -130,7 +130,7 @@ describe("FrontmatterPanel", () => {
   it("edits nested metadata scalar values", () => {
     const onChange = vi.fn();
     render({
-      frontmatterText: "name: coach\nmetadata:\n  author: Paperclip\n  version: 2",
+      frontmatterText: "name: coach\nmetadata:\n  author: Staples\n  version: 2",
       hasFrontmatter: true,
       onChange,
     });

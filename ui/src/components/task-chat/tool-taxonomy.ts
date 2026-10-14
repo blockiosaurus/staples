@@ -3,6 +3,7 @@
  * and canonical provider activity. Exact semantic tools get purpose-specific
  * copy; ACP kinds and normalized name prefixes cover future adapters.
  */
+import { PRODUCT_NAME } from "@/lib/branding";
 import {
   BookOpen,
   Brain,
@@ -226,7 +227,7 @@ const EXACT_ACTIONS: Record<string, ExactAction> = {
   decide_approval: { action: "update", running: "Deciding an approval", completed: "Decided an approval" },
   comment_on_approval: { action: "post", running: "Commenting on an approval", completed: "Commented on an approval" },
   schedule_wake: { action: "create", running: "Scheduling a wake-up", completed: "Scheduled a wake-up", family: "wait" },
-  generic_api_request: { action: "request", running: "Calling the Paperclip API", completed: "Called the Paperclip API" },
+  generic_api_request: { action: "request", running: "Calling the Staples API", completed: "Called the Staples API" },
 };
 
 const ACTION_PREFIXES: Record<Action, readonly string[]> = {
@@ -351,7 +352,7 @@ function defaultSummaryGroup(action: Action): ToolSummaryGroup {
 }
 
 function paperclipSummaryGroup(action: Action): ToolSummaryGroup {
-  if (action === "read" || action === "list") return group("paperclip_read", "Paperclip read", "Paperclip reads");
+  if (action === "read" || action === "list") return group("paperclip_read", "Staples read", "Staples reads");
   return group("task_operation", "task operation", "task operations");
 }
 
@@ -397,7 +398,7 @@ export function toolActivityPresentation(input: ToolActivityPresentationInput): 
   const semanticFamily = exact?.family ?? actionFamily(action);
   const family = transport === "mcp" ? "mcp" : semanticFamily;
   const sourceLabel = namespace
-    ? humanizeToolName(namespace)
+    ? namespace.toLowerCase() === "paperclip" ? PRODUCT_NAME : humanizeToolName(namespace)
     : transport === "mcp"
       ? "MCP"
       : undefined;

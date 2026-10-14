@@ -19,8 +19,8 @@ const mockNavigate = vi.hoisted(() => vi.fn());
 const mockSetSelectedCompanyId = vi.hoisted(() => vi.fn());
 const mockSetSidebarOpen = vi.hoisted(() => vi.fn());
 const mockCompanyState = vi.hoisted(() => ({
-  companies: [{ id: "company-1", issuePrefix: "PAP", name: "Paperclip" }],
-  selectedCompany: { id: "company-1", issuePrefix: "PAP", name: "Paperclip" },
+  companies: [{ id: "company-1", issuePrefix: "PAP", name: "Staples" }],
+  selectedCompany: { id: "company-1", issuePrefix: "PAP", name: "Staples" },
   selectedCompanyId: "company-1",
 }));
 const mockPluginSlots = vi.hoisted(() => ({
@@ -316,12 +316,12 @@ describe("Layout", () => {
     document.body.appendChild(container);
     currentPathname = "/PAP/dashboard";
     mockCompanyState.companies = [
-      { id: "company-1", issuePrefix: "PAP", name: "Paperclip" },
+      { id: "company-1", issuePrefix: "PAP", name: "Staples" },
     ];
     mockCompanyState.selectedCompany = {
       id: "company-1",
       issuePrefix: "PAP",
-      name: "Paperclip",
+      name: "Staples",
     };
     mockCompanyState.selectedCompanyId = "company-1";
     mockHealthApi.get.mockResolvedValue({
@@ -1340,13 +1340,13 @@ describe("Layout", () => {
   it("uses the route company context for plugin route sidebars on the first render", async () => {
     currentPathname = "/ALT/wiki";
     mockCompanyState.companies = [
-      { id: "company-1", issuePrefix: "PAP", name: "Paperclip" },
+      { id: "company-1", issuePrefix: "PAP", name: "Staples" },
       { id: "company-2", issuePrefix: "ALT", name: "Alternate" },
     ];
     mockCompanyState.selectedCompany = {
       id: "company-1",
       issuePrefix: "PAP",
-      name: "Paperclip",
+      name: "Staples",
     };
     mockCompanyState.selectedCompanyId = "company-1";
     mockPluginSlots.slots = [

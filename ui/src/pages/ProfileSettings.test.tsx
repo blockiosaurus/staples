@@ -40,7 +40,7 @@ vi.mock("../context/BreadcrumbContext", () => ({
 vi.mock("../context/CompanyContext", () => ({
   useCompany: () => ({
     selectedCompanyId: "company-1",
-    selectedCompany: { id: "company-1", name: "Paperclip", issuePrefix: "PAP" },
+    selectedCompany: { id: "company-1", name: "Staples", issuePrefix: "PAP" },
   }),
 }));
 
@@ -101,7 +101,7 @@ describe("ProfileSettings", () => {
     await act(async () => root.unmount());
   });
 
-  it("uploads a clicked avatar into Paperclip storage and persists the returned asset path", async () => {
+  it("uploads a clicked avatar into Staples storage and persists the returned asset path", async () => {
     const root = createRoot(container);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },

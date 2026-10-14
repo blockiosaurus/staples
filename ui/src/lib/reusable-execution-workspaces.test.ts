@@ -183,7 +183,7 @@ describe("buildReusableExecutionWorkspaceOptionGroups", () => {
     const groups = buildReusableExecutionWorkspaceOptionGroups([
       workspace({
         id: "workspace-1",
-        name: "Paperclip app",
+        name: "Staples app",
         cwd: "/repo/paperclip",
         branchName: "feature/workspaces",
         status: "active",
@@ -192,16 +192,16 @@ describe("buildReusableExecutionWorkspaceOptionGroups", () => {
     ], { now });
 
     const option = groups[0]!.options[0]!;
-    expect(option.label).toBe("Paperclip app");
+    expect(option.label).toBe("Staples app");
     expect(option.description).toBe("feature/workspaces");
-    expect(option.searchText).toBe("Paperclip app active feature/workspaces /repo/paperclip workspace-1");
+    expect(option.searchText).toBe("Staples app active feature/workspaces /repo/paperclip workspace-1");
   });
 
   it("matches workspace options with fuzzy query tokens", () => {
     const groups = buildReusableExecutionWorkspaceOptionGroups([
       workspace({
         id: "workspace-1",
-        name: "Paperclip app",
+        name: "Staples app",
         cwd: "/srv/paperclip",
         branchName: "feature/reusable-workspaces",
         status: "active",
@@ -257,7 +257,7 @@ describe("buildReusableExecutionWorkspaceOptionGroups", () => {
     const groups = buildReusableExecutionWorkspaceOptionGroups([
       workspace({
         id: "path-only-mobile",
-        name: "Paperclip app",
+        name: "Staples app",
         cwd: "/srv/paperclip/mobile-checkout",
         branchName: "feature/workspace-reuse",
         lastUsedAt: "2026-01-10T00:00:00.000Z",

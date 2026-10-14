@@ -17,7 +17,7 @@ describe("API responses during a restart", () => {
     for (const read of [healthApi.get, authApi.getSession, () => api.get("/cli-auth/me")]) {
       await expect(read()).rejects.toMatchObject({
         name: "ApiUnavailableError",
-        message: "Paperclip is temporarily unavailable. Please try again in a moment.",
+        message: "Staples is temporarily unavailable. Please try again in a moment.",
         status,
       });
     }

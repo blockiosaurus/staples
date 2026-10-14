@@ -69,7 +69,7 @@ export function McpConfigHelpDialog() {
             prompt={MCP_CONFIG_HELP_PROMPT}
             label="Get a config with an agent"
             title="MCP configuration"
-            description="Paste this into your agent to create an MCP config, then paste its JSON reply back into Paperclip."
+            description="Paste this into your agent to create an MCP config, then paste its JSON reply back into Staples."
           />
         </div>
       </DialogContent>

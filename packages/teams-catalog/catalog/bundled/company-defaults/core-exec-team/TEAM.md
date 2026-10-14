@@ -1,6 +1,6 @@
 ---
 name: Core Exec Team
-description: Default leadership and engineering team for bootstrapping a Paperclip company with a CEO, CTO, QA Engineer, starter project, and a recurring CEO heartbeat review task.
+description: Default leadership and engineering team for bootstrapping a Staples company with a CEO, CTO, QA Engineer, starter project, and a recurring CEO heartbeat review task.
 schema: agentcompanies/v1
 slug: core-exec-team
 category: company-defaults
@@ -29,7 +29,7 @@ requiredSkills:
 
 # Core Exec Team
 
-The Core Exec Team is the bundled default install for a new Paperclip company. It boots the smallest org that can take a board prompt, plan it, implement it, and verify it.
+The Core Exec Team is the bundled default install for a new Staples company. It boots the smallest org that can take a board prompt, plan it, implement it, and verify it.
 
 ## Contents
 

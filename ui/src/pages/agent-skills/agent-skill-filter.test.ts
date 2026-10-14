@@ -10,7 +10,7 @@ const ROWS = [
     key: "agent-browser",
     name: "agent-browser",
     slug: "agent-browser",
-    author: "Paperclip",
+    author: "Staples",
     tagline: "Drive a real browser",
     description: "Inspect and interact with web pages",
     categories: ["automation", "web"],
@@ -29,7 +29,7 @@ const ROWS = [
 describe("buildAgentSkillHaystack", () => {
   it("joins every searchable field lowercased", () => {
     expect(buildAgentSkillHaystack(ROWS[0])).toBe(
-      "agent-browser agent-browser paperclip drive a real browser inspect and interact with web pages automation web",
+      "agent-browser agent-browser staples drive a real browser inspect and interact with web pages automation web",
     );
   });
 

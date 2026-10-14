@@ -1,7 +1,7 @@
 /** A proxy or restarting server answered an API request without usable JSON. */
 export class ApiUnavailableError extends Error {
   constructor(public readonly status: number) {
-    super("Paperclip is temporarily unavailable. Please try again in a moment.");
+    super("Staples is temporarily unavailable. Please try again in a moment.");
     this.name = "ApiUnavailableError";
   }
 }

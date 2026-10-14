@@ -316,7 +316,7 @@ describe("GitHub App wizard", () => {
     window.history.replaceState(null, "", "/BOT/apps/chat/connect?provider=github&purpose=chat&resume=draft-1");
     try {
       await render("purpose=chat&resume=draft-1");
-      await click("Connect Paperclip Cloud");
+      await click("Connect Staples Cloud");
       expect(toolsApi.startCloudConnectorEnrollment).toHaveBeenCalledWith("company-1", undefined, "/apps/chat/connect?provider=github&purpose=chat&resume=draft-1");
     } finally {
       window.history.replaceState(null, "", prior);

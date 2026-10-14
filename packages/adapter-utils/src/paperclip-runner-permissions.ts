@@ -118,13 +118,13 @@ export const PAPERCLIP_RUNNER_PERMISSION_CAPABILITIES = {
       },
       {
         value: "approve-paperclip",
-        label: "Automatic Paperclip actions",
+        label: "Automatic Staples actions",
         description:
           "Automatically run assigned Paperclip planning and task tools, including reassignment. Company permissions and approval requirements still apply. Other operations require permission.",
       },
       {
         value: "approve-reads",
-        label: "Allow Paperclip reads",
+        label: "Allow Staples reads",
         description:
           "Automatically allow assigned Paperclip read tools. Other operations request a supported permission decision. Company permissions and execution boundaries still apply.",
       },

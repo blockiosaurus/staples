@@ -195,7 +195,7 @@ export function RemoteMcpProductionSetup({ providerId, connection, host = "page"
         } catch {
           // The connection and OAuth session already exist. Preserve them and
           // let the native sign-in link recover a blocked browser handoff.
-          edit({ notice: "Paperclip couldn’t open sign-in. Use the sign-in link below to continue." });
+          edit({ notice: "Staples couldn’t open sign-in. Use the sign-in link below to continue." });
           onPhaseChange?.("needs_retry");
         }
         return;

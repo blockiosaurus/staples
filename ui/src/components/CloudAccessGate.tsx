@@ -8,6 +8,7 @@ import { authApi } from "@/api/auth";
 import { healthApi } from "@/api/health";
 import { isTemporaryApiError } from "@/api/response";
 import { queryKeys } from "@/lib/queryKeys";
+import { PRODUCT_NAME } from "@/lib/branding";
 import { BootstrapPendingPage } from "@/components/BootstrapPendingPage";
 import { PaperclipLoading } from "@/components/AnimatedPaperclipIcon";
 import { Card } from "@/components/ui/card";
@@ -32,7 +33,7 @@ export function CloudAccessError({
       <RefreshCw className="size-6 text-muted-foreground" aria-hidden="true" />
       <div className="flex flex-col gap-2" role="status">
         <h1 className="text-xl font-semibold">
-          {temporary ? "Reconnecting to Paperclip" : "Unable to load Paperclip"}
+          {temporary ? `Reconnecting to ${PRODUCT_NAME}` : `Unable to load ${PRODUCT_NAME}`}
         </h1>
         <p className="text-sm text-muted-foreground">
           {temporary

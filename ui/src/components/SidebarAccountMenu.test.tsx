@@ -426,7 +426,7 @@ describe("SidebarAccountMenu", () => {
 
     // The popover header stays down to name + email: no "Account" badge, no version line.
     expect(popover?.textContent).not.toContain("Account");
-    expect(popover?.textContent).not.toContain("Paperclip v");
+    expect(popover?.textContent).not.toContain("Staples v");
     expect(document.body.textContent).toContain("jane@example.com");
     expect(document.body.querySelector('[data-slot="popover-content"]')?.className)
       .toContain("w-(--profile-popover-width)");

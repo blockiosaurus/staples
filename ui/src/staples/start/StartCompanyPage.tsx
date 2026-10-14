@@ -45,14 +45,14 @@ export function StartCompanyPage() {
       <StartShell title={existing ? "New companies are created in Cloud" : "Create your company"} footer={backLink}>
         <p className="mb-4 text-sm text-muted-foreground">
           {existing
-            ? "This stack is managed by Paperclip Cloud, so a new company is created there, not in this app."
-            : "Companies on this stack are created in Paperclip Cloud."}
+            ? "This stack is managed by Staples Cloud, so a new company is created there, not in this app."
+            : "Companies on this stack are created in Staples Cloud."}
         </p>
         {createStackUrl ? (
-          <Button onClick={() => navigateTopLevel(createStackUrl)}>Create in Paperclip Cloud</Button>
+          <Button onClick={() => navigateTopLevel(createStackUrl)}>Create in Staples Cloud</Button>
         ) : (
           <p className="text-sm text-muted-foreground">
-            This instance can&apos;t reach Paperclip Cloud right now; try again from your Cloud portfolio.
+            This instance can&apos;t reach Staples Cloud right now; try again from your Cloud portfolio.
           </p>
         )}
       </StartShell>
@@ -66,7 +66,7 @@ export function StartCompanyPage() {
       <StartShell title={existing ? "Only an admin can create a company here" : "Ask the person who invited you for access"} footer={backLink}>
         <p className="text-sm text-muted-foreground">
           {existing
-            ? "Ask an admin of this Paperclip to create the company, or to add you to one."
+            ? "Ask an admin of this Staples to create the company, or to add you to one."
             : "You're signed in, but this account isn't part of a company here yet. The person who invited you can add you."}
         </p>
       </StartShell>

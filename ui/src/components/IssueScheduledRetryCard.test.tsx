@@ -133,7 +133,7 @@ describe("IssueScheduledRetryCard", () => {
       error: "Selected model is at capacity. Please try a different model.", errorCode: "native_provider_overloaded" }} />);
     expect(container.textContent).toContain("Model at capacity");
     expect(container.textContent).toContain("Selected model is at capacity");
-    expect(container.textContent).toContain("Paperclip will retry automatically");
+    expect(container.textContent).toContain("Staples will retry automatically");
     expect(container.textContent).not.toContain("Native session failed");
   });
 
@@ -222,7 +222,7 @@ describe("IssueScheduledRetryCard", () => {
   });
 
   it("shows cleanup waiting without claiming success or disabling Retry now", async () => {
-    const message = "Waiting for execution cleanup. Paperclip will retry automatically once cleanup finishes.";
+    const message = "Waiting for execution cleanup. Staples will retry automatically once cleanup finishes.";
     retryNowMock.mockResolvedValue({ outcome: "waiting", message, scheduledRetry: baseRetry });
     renderWithProviders(<IssueScheduledRetryCard issueId="issue-1" scheduledRetry={baseRetry} />);
     act(() => { getRetryNowButton()!.click(); });

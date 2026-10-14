@@ -44,7 +44,7 @@ const HARNESS_LABELS: Record<string, string> = {
   claude_local: "Claude Code", codex_local: "Codex", opencode_local: "OpenCode",
   pi_local: "Pi", kimi_local: "Kimi Code", gemini_local: "Gemini CLI",
   cursor: "Cursor", cursor_cloud: "Cursor Cloud", claude_managed: "Claude (hosted)", grok_local: "Grok CLI",
-  hermes_local: "Hermes CLI", paperclip_runner: "Paperclip Runner",
+  hermes_local: "Hermes CLI", paperclip_runner: "Staples Runner",
   process: "Process", http: "HTTP", openclaw_gateway: "OpenClaw Gateway",
   hermes_gateway: "Hermes Gateway",
 };
@@ -62,7 +62,7 @@ function unavailableModelReason(agent: Agent | undefined): string {
   if (!agent) return "Choose an agent to select its model and effort.";
   if (agent?.adapterType === "process") return "This agent runs a command. Its harness does not expose a model or effort setting.";
   if (agent?.adapterType === "http") return "This agent calls an HTTP endpoint. The destination service chooses its model.";
-  return "This gateway chooses its model remotely; Paperclip has no per-task model setting for it.";
+  return "This gateway chooses its model remotely; Staples has no per-task model setting for it.";
 }
 
 function AnimatedBody({ children }: { children: ReactNode }) {

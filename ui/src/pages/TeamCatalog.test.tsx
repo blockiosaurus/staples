@@ -110,7 +110,7 @@ describe("TeamCatalog routes", () => {
     });
   });
 
-  it("fails closed for Paperclip Runner until adapter availability is loaded and enabled", () => {
+  it("fails closed for Staples Runner until adapter availability is loaded and enabled", () => {
     expect(listTeamInstallAdapterTypes(new Set(), false)).not.toContain("paperclip_runner");
     expect(listTeamInstallAdapterTypes(new Set(), false)).not.toContain("process");
     expect(listTeamInstallAdapterTypes(new Set(), false)).not.toContain("http");
@@ -185,7 +185,7 @@ function makePreview(): CatalogTeamImportPreviewResult {
     portabilityPreview: {
       include: { company: false, agents: true, projects: true, issues: false, skills: true },
       targetCompanyId: "company-1",
-      targetCompanyName: "Paperclip",
+      targetCompanyName: "Staples",
       collisionStrategy: "rename",
       selectedAgentSlugs: ["ceo", "cto"],
       plan: {
@@ -251,7 +251,7 @@ describe("TeamCatalog install preview path", () => {
     mockTeamCatalogApi.install.mockResolvedValue({
       team: makeTeam(),
       portabilityImport: {
-        company: { id: "company-1", name: "Paperclip", action: "unchanged" },
+        company: { id: "company-1", name: "Staples", action: "unchanged" },
         agents: [],
         projects: [],
         envInputs: [],

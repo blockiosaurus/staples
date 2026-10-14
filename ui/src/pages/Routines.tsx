@@ -446,7 +446,7 @@ export function Routines() {
         } catch (moveError) {
           pushToast({
             title: "Folder created, move failed",
-            body: moveError instanceof Error ? moveError.message : "Paperclip could not move the selected routines.",
+            body: moveError instanceof Error ? moveError.message : "Staples could not move the selected routines.",
             tone: "error",
           });
           return;
@@ -459,7 +459,7 @@ export function Routines() {
     onError: (mutationError) => {
       pushToast({
         title: "Failed to save folder",
-        body: mutationError instanceof Error ? mutationError.message : "Paperclip could not save the folder.",
+        body: mutationError instanceof Error ? mutationError.message : "Staples could not save the folder.",
         tone: "error",
       });
     },
@@ -475,7 +475,7 @@ export function Routines() {
     onError: (mutationError) => {
       pushToast({
         title: "Folder save failed",
-        body: mutationError instanceof Error ? mutationError.message : "Paperclip could not update the folder.",
+        body: mutationError instanceof Error ? mutationError.message : "Staples could not update the folder.",
         tone: "error",
       });
     },
@@ -494,7 +494,7 @@ export function Routines() {
     onError: (mutationError) => {
       pushToast({
         title: "Folder delete failed",
-        body: mutationError instanceof Error ? mutationError.message : "Paperclip could not delete the folder.",
+        body: mutationError instanceof Error ? mutationError.message : "Staples could not delete the folder.",
         tone: "error",
       });
     },
@@ -511,7 +511,7 @@ export function Routines() {
     onError: (mutationError) => {
       pushToast({
         title: "Move failed",
-        body: mutationError instanceof Error ? mutationError.message : "Paperclip could not move the routine.",
+        body: mutationError instanceof Error ? mutationError.message : "Staples could not move the routine.",
         tone: "error",
       });
     },
@@ -533,7 +533,7 @@ export function Routines() {
     onError: (mutationError) => {
       pushToast({
         title: "Failed to update routine",
-        body: mutationError instanceof Error ? mutationError.message : "Paperclip could not update the routine.",
+        body: mutationError instanceof Error ? mutationError.message : "Staples could not update the routine.",
         tone: "error",
       });
     },
@@ -568,7 +568,7 @@ export function Routines() {
     onError: (mutationError) => {
       pushToast({
         title: "Routine run failed",
-        body: mutationError instanceof Error ? mutationError.message : "Paperclip could not start the routine run.",
+        body: mutationError instanceof Error ? mutationError.message : "Staples could not start the routine run.",
         tone: "error",
       });
     },
@@ -700,7 +700,7 @@ export function Routines() {
     } catch (moveError) {
       pushToast({
         title: "Failed to move routines",
-        body: moveError instanceof Error ? moveError.message : "Paperclip could not move the selected routines.",
+        body: moveError instanceof Error ? moveError.message : "Staples could not move the selected routines.",
         tone: "error",
       });
     }
@@ -1119,7 +1119,7 @@ export function Routines() {
 
           <div className="shrink-0 flex flex-col gap-3 border-t border-border/60 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-muted-foreground">
-              After creation, Paperclip takes you straight to trigger setup. Draft routines stay paused until you add a default agent.
+              After creation, Staples takes you straight to trigger setup. Draft routines stay paused until you add a default agent.
             </div>
             <div className="flex flex-col gap-2 sm:items-end">
               <Button

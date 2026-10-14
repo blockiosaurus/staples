@@ -45,7 +45,7 @@ const archivedCompany = { id: "archived-company" };
 function makeCompany(id: string): Company {
   return {
     id,
-    name: "Paperclip",
+    name: "Staples",
     description: null,
     status: "active",
     pauseReason: null,

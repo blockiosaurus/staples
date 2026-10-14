@@ -10,7 +10,7 @@ describe("chat connector UI contract", () => {
   it("describes the close command as a conversation control rather than a task status change", () => {
     const setup = source("./ChatEndpointSetup.tsx");
     expect(setup).toContain("Close the active chat conversation");
-    expect(setup).not.toContain("Close the active Paperclip task");
+    expect(setup).not.toContain("Close the active Staples task");
   });
 
   it("retries the selected failed run from every Board entry point", () => {
@@ -74,7 +74,7 @@ describe("chat connector UI contract", () => {
     expect(detail).toContain("People without linked accounts can start isolated tasks");
     expect(detail).toContain("Requests are refused when isolation is unavailable");
     expect(setup).toContain("Link the account you’re testing");
-    expect(setup).toContain("Paperclip does not replay the refused request");
+    expect(setup).toContain("Staples does not replay the refused request");
     expect(setup).toContain("Review identity access");
     expect(setup).toContain("instanceSettingsApi.getExperimental()");
     expect(setup).toContain("chatEndpointsApi.listPrincipals(endpointId)");
@@ -122,7 +122,7 @@ describe("chat connector UI contract", () => {
       "does not reinstall the App or change repository access",
       "does not add or remove the bot from the server",
       "does not upload or reinstall the Teams app",
-      "automatically refreshes its Paperclip webhook and command menu",
+      "automatically refreshes its Staples webhook and command menu",
     ]) {
       expect(detail).toContain(reconnectCopy);
       expect(setup).toContain(reconnectCopy);
@@ -133,7 +133,7 @@ describe("chat connector UI contract", () => {
       "It does not uninstall the bot",
       "It does not uninstall the Teams app",
       "queues durable removal of its Telegram webhook and command menu",
-      "After Telegram confirms that cleanup, Paperclip retires the saved token",
+      "After Telegram confirms that cleanup, Staples retires the saved token",
       "BotFather bot and its chat memberships remain",
     ]) {
       expect(detail).toContain(removalCopy);

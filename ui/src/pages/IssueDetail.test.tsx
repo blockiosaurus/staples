@@ -251,7 +251,7 @@ vi.mock("../context/CompanyContext", () => ({
     companies: [
       {
         id: "company-1",
-        name: "Paperclip",
+        name: "Staples",
         issuePrefix: "PAP",
         status: "active",
       },
@@ -259,7 +259,7 @@ vi.mock("../context/CompanyContext", () => ({
     selectedCompanyId: "company-1",
     selectedCompany: {
       id: "company-1",
-      name: "Paperclip",
+      name: "Staples",
       issuePrefix: "PAP",
       status: "active",
     },
@@ -2508,7 +2508,7 @@ describe("IssueDetail", () => {
     const createdFrom: Issue["createdFrom"] = {
       issue: { id: "origin-task", identifier: "PAP-168", title: "Origin task", status: "in_progress" },
       run: { id: "run-1", agentId: "qa-agent" },
-      agent: { id: "qa-agent", name: "Paperclip QA" },
+      agent: { id: "qa-agent", name: "Staples QA" },
     };
     const source = createIssue({ ancestors, createdFrom });
     const child = createIssue({ id: "manual-child", parentId: source.id, title: "Manual child" });
@@ -5919,7 +5919,7 @@ describe("IssueDetail", () => {
     });
   });
 
-  it("keeps the authoritative Paperclip queue mounted after handoff promotion", async () => {
+  it("keeps the authoritative Staples queue mounted after handoff promotion", async () => {
     mockIssuesApi.get.mockResolvedValue(
       createIssue({
         status: "in_progress",
