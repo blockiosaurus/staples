@@ -6,7 +6,7 @@
   "categories": [
     "content"
   ],
-  "featured": false,
+  "featured": true,
   "branding": {
     "logoUrl": "/brands/apps/beehiiv.png"
   },

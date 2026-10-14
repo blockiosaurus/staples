@@ -6,7 +6,7 @@
   "categories": [
     "analytics"
   ],
-  "featured": true,
+  "featured": false,
   "branding": {
     "logoUrl": "/brands/apps/posthog.svg",
     "darkLogoUrl": "/brands/apps/posthog-dark.svg"

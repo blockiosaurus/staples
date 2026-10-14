@@ -1,5 +1,8 @@
 import { AGGREGATOR_NAMES, aggregatorManagementUrl, isAppAggregator, type AggregatorAppSnapshot, type AggregatorAppsResponse } from "@paperclipai/shared/aggregator-apps";
 import { CatalogSourceFilters, type CatalogSource } from "./CatalogSourceFilters";
+import { NeededByTeam } from "./NeededByTeam";
+import { classifyRow, groupPopular, teamNeeds } from "./connector-sections";
+import { connectionIntentsApi } from "@/api/connection-intents";
 import { ExecutorManagementSetup } from "./ExecutorManagementSetup";
 import { ArcadeDiscoverySetup } from "./ArcadeDiscoverySetup";
 import { AggregatorAppManager } from "./AggregatorAppManager";
@@ -351,6 +354,9 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [source, setSource] = useState<CatalogSource>("paperclip");
+  const [advanced, setAdvanced] = useState(() => {
+    try { return localStorage.getItem("staples.connectors.advanced") === "1"; } catch { return false; }
+  });
   const [expandedSearch, setExpandedSearch] = useState(false);
   const [executorToConfigure, setExecutorToConfigure] = useState<ToolConnection | null>(null);
   const [arcadeToConfigure, setArcadeToConfigure] = useState<ToolConnection | null>(null);
@@ -398,7 +404,13 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
   const chatAgentsQuery = useQuery({
     queryKey: queryKeys.agents.list(selectedCompanyId ?? "__none__"),
     queryFn: () => agentsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId && Boolean(chatEndpointsQuery.data?.length),
+    enabled: !!selectedCompanyId,
+  });
+  const requestsQuery = useQuery({
+    queryKey: queryKeys.connectionRequests.pending(selectedCompanyId ?? ""),
+    queryFn: () => connectionIntentsApi.listPending(selectedCompanyId!),
+    enabled: Boolean(selectedCompanyId),
+    retry: false,
   });
   const chatAgentById = useMemo(() => new Map((chatAgentsQuery.data ?? []).map(agent => [agent.id, agent])), [chatAgentsQuery.data]);
   const userDirectoryQuery = useQuery({
@@ -782,15 +794,16 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
   ]);
 
   const trimmed = query.trim().toLocaleLowerCase();
+  const effectiveSource: CatalogSource = advanced ? source : "paperclip";
   const visibleRows = useMemo(() => {
     const scoped = rows.filter((row) => {
-      if (source === "all") return true;
-      if (source === "installed") return isInstalled(row);
-      if (source === "paperclip") return !row.aggregatorApp || isInstalled(row);
-      return isAppAggregator(source) && (
-        row.slug === source && isInstalled(row)
-        || row.upstreamApps?.some(snapshot => snapshot.provider === source && snapshot.accounts.length > 0)
-        || row.aggregatorApp?.routes.some(route => route.provider === source)
+      if (effectiveSource === "all") return true;
+      if (effectiveSource === "installed") return isInstalled(row);
+      if (effectiveSource === "paperclip") return !row.aggregatorApp || isInstalled(row);
+      return isAppAggregator(effectiveSource) && (
+        row.slug === effectiveSource && isInstalled(row)
+        || row.upstreamApps?.some(snapshot => snapshot.provider === effectiveSource && snapshot.accounts.length > 0)
+        || row.aggregatorApp?.routes.some(route => route.provider === effectiveSource)
       );
     });
     if (!trimmed) return scoped;
@@ -802,9 +815,24 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
         ...row.chatEndpoints.map((endpoint) => endpoint.assignedAgentName)].join(" "));
       return terms.every((term) => text.includes(term));
     });
-  }, [rows, trimmed, source]);
-  const installedRows = visibleRows.filter(isInstalled);
-  const catalogRows = visibleRows.filter(row => !isInstalled(row));
+  }, [rows, trimmed, effectiveSource]);
+  const simpleRows = useMemo(
+    () => advanced ? visibleRows : visibleRows.filter((row) => classifyRow(row) !== "advanced"),
+    [advanced, visibleRows],
+  );
+  const sectioned = !advanced && !trimmed;
+  const needs = useMemo(
+    () => sectioned ? teamNeeds({ agents: chatAgentsQuery.data ?? [], rows: simpleRows, requests: requestsQuery.data?.requests ?? [] }) : [],
+    [sectioned, chatAgentsQuery.data, simpleRows, requestsQuery.data],
+  );
+  const popularGroups = sectioned ? groupPopular(simpleRows.filter((row) => classifyRow(row) === "popular" && !isInstalled(row))) : [];
+  const featuredKeys = new Set([
+    ...needs.flatMap((need) => need.row ? [need.row.key] : []),
+    ...popularGroups.flatMap((group) => group.rows.map((row) => row.key)),
+  ]);
+  const listRows = simpleRows.filter((row) => !featuredKeys.has(row.key));
+  const installedRows = listRows.filter(isInstalled);
+  const catalogRows = listRows.filter(row => !isInstalled(row));
   const pageCount = Math.max(1, Math.ceil(catalogRows.length / CATALOG_PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
   const pageStart = (currentPage - 1) * CATALOG_PAGE_SIZE;
@@ -847,7 +875,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
   }
   function connectAggregator(app: AggregatorAppCatalogEntry) {
     setInitialAggregatorProvider(undefined);
-    if (isAppAggregator(source)) app = { ...app, routes: app.routes.filter(route => route.provider === source) };
+    if (isAppAggregator(effectiveSource)) app = { ...app, routes: app.routes.filter(route => route.provider === effectiveSource) };
     const onlyRoute = app.routes.length === 1 ? app.routes[0] : null;
     if (onlyRoute && aggregatorConnections[onlyRoute.provider].length === 0) {
       navigate(aggregatorAppConnectHref(onlyRoute));
@@ -855,11 +883,33 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
     }
     setAggregatorToConnect(app);
   }
-  const showAssistantConnection = (source === "paperclip" || source === "all" ||
-    (source === "installed" && (!assistantConnections.isSuccess || assistantConnections.rows.some(row => !row.revokedAt)))) &&
+  const renderCard = (row: ConnectorRowModel) => (
+    <ConnectorCard
+      renderAccountDetails={renderAccountDetails}
+      key={row.key}
+      row={row}
+      userProfileById={userProfileById}
+      chatAgentById={chatAgentById}
+      connectionById={connectionById}
+      onNavigate={navigate}
+      onRequestRemove={target => void requestConnectionRemoval(target)}
+      preselectedAgentId={preselectedChatAgentId}
+      chatConnectorsEnabled={chatConnectorsEnabled}
+      githubReviewBotsEnabled={githubEnabled}
+      onConnectAggregator={connectAggregator}
+      onManageAggregator={(app, connectionId) => setAggregatorToManage({ app, connectionId })}
+      onRefreshAggregator={connectionId => refreshAggregator.mutate(connectionId)}
+      aggregatorRefreshState={aggregatorRefreshState}
+      discoveryByConnection={discoveryByConnection}
+      onConfigureArcade={connection => setArcadeToConfigure(connection)}
+      onConfigureExecutor={connection => setExecutorToConfigure(connection)}
+    />
+  );
+  const showAssistantConnection = advanced && (effectiveSource === "paperclip" || effectiveSource === "all" ||
+    (effectiveSource === "installed" && (!assistantConnections.isSuccess || assistantConnections.rows.some(row => !row.revokedAt)))) &&
     (!trimmed || "assistant connection (mcp) paperclip codex claude opencode".includes(trimmed));
-  const showCustomConnector =
-    (source === "paperclip" || source === "all") && (!trimmed || "connect your own tool custom mcp server".includes(trimmed));
+  const showCustomConnector = advanced &&
+    (effectiveSource === "paperclip" || effectiveSource === "all") && (!trimmed || "connect your own tool custom mcp server".includes(trimmed));
 
   if (!selectedCompanyId) {
     return (
@@ -879,11 +929,12 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
     applicationsQuery.isError ||
     connectionsQuery.isError ||
     chatEndpointsQuery.isError;
-  const nothingMatches = visibleRows.length === 0 && !showCustomConnector && !showAssistantConnection;
+  const nothingMatches = listRows.length === 0 && needs.length === 0 && popularGroups.length === 0 && !showCustomConnector && !showAssistantConnection;
 
   return (
     <div ref={catalogTop} className="max-w-5xl space-y-5 pb-12">
       <header className="flex flex-col items-start gap-3">
+        <div className="flex w-full flex-wrap items-center justify-between gap-3">
         <div className="relative w-full max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -895,7 +946,24 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
             className="pl-9"
           />
         </div>
-        <CatalogSourceFilters source={source} onChange={value => { setSource(value); setExpandedSearch(false); setPage(1); }} />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-pressed={advanced}
+          onClick={() => {
+            const next = !advanced;
+            setAdvanced(next);
+            try { localStorage.setItem("staples.connectors.advanced", next ? "1" : "0"); } catch { /* storage unavailable */ }
+            setSource("paperclip");
+            setExpandedSearch(false);
+            setPage(1);
+          }}
+        >
+          Advanced
+        </Button>
+        </div>
+        {advanced ? <CatalogSourceFilters source={source} onChange={value => { setSource(value); setExpandedSearch(false); setPage(1); }} /> : null}
       </header>
 
       {loadFailed ? (
@@ -938,33 +1006,26 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
           <Button variant="outline" size="sm" onClick={() => changeQuery("")}>Clear search</Button>
         </div>
       ) : (
+        <div className="space-y-6">
+          <NeededByTeam needs={needs} renderCard={renderCard} />
+          {popularGroups.map((group) => (
+            <section key={group.label} aria-labelledby={`connectors-popular-${group.label.replace(/\s+/g, "-")}`} className="space-y-3">
+              <h2 id={`connectors-popular-${group.label.replace(/\s+/g, "-")}`} className="text-base font-semibold">{group.label}</h2>
+              <div className="space-y-3" role="list" aria-label={`${group.label} connectors`}>
+                {group.rows.map(renderCard)}
+              </div>
+            </section>
+          ))}
+          <section aria-labelledby={sectioned ? "connectors-all-heading" : undefined} className="space-y-3">
+            {sectioned ? <h2 id="connectors-all-heading" className="text-base font-semibold">All connectors</h2> : null}
         <div className="space-y-3" role="list" aria-label="Connector list">
           {showAssistantConnection && <AssistantConnectionCard onNavigate={navigate} />}
-          {paginatedRows.map((row) => (
-            <ConnectorCard
-              renderAccountDetails={renderAccountDetails}
-              key={row.key}
-              row={row}
-              userProfileById={userProfileById}
-              chatAgentById={chatAgentById}
-              connectionById={connectionById}
-              onNavigate={navigate}
-              onRequestRemove={target => void requestConnectionRemoval(target)}
-              preselectedAgentId={preselectedChatAgentId}
-              chatConnectorsEnabled={chatConnectorsEnabled}
-              githubReviewBotsEnabled={githubEnabled}
-              onConnectAggregator={connectAggregator}
-              onManageAggregator={(app, connectionId) => setAggregatorToManage({ app, connectionId })}
-              onRefreshAggregator={connectionId => refreshAggregator.mutate(connectionId)}
-              aggregatorRefreshState={aggregatorRefreshState}
-              discoveryByConnection={discoveryByConnection}
-              onConfigureArcade={connection => setArcadeToConfigure(connection)}
-              onConfigureExecutor={connection => setExecutorToConfigure(connection)}
-            />
-          ))}
+          {paginatedRows.map(renderCard)}
           {showCustomConnector ? (
             <CustomConnectorCard onNavigate={navigate} />
           ) : null}
+        </div>
+          </section>
         </div>
       )}
 

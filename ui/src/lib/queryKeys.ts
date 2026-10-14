@@ -1,4 +1,7 @@
 export const queryKeys = {
+  connectionRequests: {
+    pending: (companyId: string) => ["connection-requests", companyId, "pending"] as const,
+  },
   skillSources: {
     preview: (companyId: string, repositoryUrl: string, connectionId: string | null, commitSha: string | null, skillPath: string, filePath: string) => ['skill-sources', companyId, 'preview', repositoryUrl, connectionId, commitSha, skillPath, filePath] as const,
     all: (companyId: string) => ["skill-sources", companyId] as const,

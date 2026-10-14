@@ -6,7 +6,7 @@
   "categories": [
     "developer"
   ],
-  "featured": false,
+  "featured": true,
   "branding": {
     "logoUrl": "/brands/apps/vercel.svg",
     "darkLogoUrl": "/brands/apps/vercel-dark.svg"

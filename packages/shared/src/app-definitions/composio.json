@@ -6,7 +6,7 @@
   "categories": [
     "productivity"
   ],
-  "featured": true,
+  "featured": false,
   "branding": {
     "logoUrl": "/brands/apps/composio.svg",
     "darkLogoUrl": "/brands/apps/composio-dark.svg"

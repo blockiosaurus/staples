@@ -13,6 +13,7 @@ import type { AggregatorAppCatalogEntry } from "@paperclipai/shared/aggregator-a
 const aggregatorCatalogMock = vi.hoisted(() => [] as AggregatorAppCatalogEntry[]);
 const openNewIssueMock = vi.hoisted(() => vi.fn());
 const listAgentsMock = vi.hoisted(() => vi.fn());
+const connectionRequestsMock = vi.hoisted(() => vi.fn());
 const setupComposioAppMock = vi.hoisted(() => vi.fn());
 const listComposioAppsMock = vi.hoisted(() => vi.fn());
 const syncComposioAppsMock = vi.hoisted(() => vi.fn());
@@ -24,6 +25,7 @@ function genericResponse(value: { apps?: any[]; sync?: Record<string, unknown> }
       appSlug: snapshot.appSlug ?? aggregatorCatalogMock.find(app => app.aliases.includes(snapshot.toolkit) || app.routes.some(route => route.toolkit === snapshot.toolkit))?.slug ?? snapshot.toolkit,
       appName: snapshot.appName ?? snapshot.toolkit })) };
 }
+vi.mock("@/api/connection-intents", () => ({ connectionIntentsApi: { listPending: connectionRequestsMock } }));
 vi.mock("@/api/agents", () => ({ agentsApi: { list: (companyId: string) => listAgentsMock(companyId) } }));
 vi.mock("@paperclipai/shared/aggregator-app-catalog", async (importOriginal) => ({
   ...await importOriginal<typeof import("@paperclipai/shared/aggregator-app-catalog")>(),
@@ -181,6 +183,8 @@ describe("Connectors landing page", () => {
   let root: ReturnType<typeof createRoot>;
 
   beforeEach(() => {
+    localStorage.clear();
+    connectionRequestsMock.mockReset().mockResolvedValue({ requests: [] });
     accountIdentity.userId = "board-user"; accountIdentity.settled = true;
     assistantConnectionsMock.mockReset().mockResolvedValue([]);
     syncComposioAppsMock.mockReset().mockImplementation((...args) => listComposioAppsMock(...args));
@@ -233,6 +237,15 @@ describe("Connectors landing page", () => {
   });
 
   async function renderBrowse(allCatalog = true) {
+    const client = await renderSimple();
+    await clickButton("Advanced", container);
+    if (allCatalog) {
+      await clickButton("All", container);
+    }
+    return client;
+  }
+
+  async function renderSimple() {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -245,9 +258,6 @@ describe("Connectors landing page", () => {
       );
     });
     await flushReact();
-    if (allCatalog) {
-      await clickButton("All", container);
-    }
     return client;
   }
 
@@ -408,22 +418,81 @@ describe("Connectors landing page", () => {
     return document.querySelector<HTMLElement>('[role="menu"]')!;
   }
 
+  it("simple mode hides model providers, aggregators and the assistant card until Advanced", async () => {
+    listGalleryMock.mockResolvedValue({ apps: [
+      galleryEntry({ key: "notion", slug: "notion", name: "Notion" }),
+      galleryEntry({ key: "anthropic", slug: "anthropic", name: "Anthropic", tags: ["model-provider"], categories: ["ai"] }),
+    ] });
+    aggregatorCatalogMock.push(indexedApp("Remote App", ["composio"]));
+    await renderSimple();
+    expect(container.querySelector('[data-app-slug="notion"]')).not.toBeNull();
+    expect(container.querySelector('[data-app-slug="anthropic"]')).toBeNull();
+    expect(container.querySelector('[aria-label$="Assistant Connection (MCP)"]')).toBeNull();
+    expect(container.querySelector('[aria-label="App filters"]')).toBeNull();
+    await clickButton("Advanced", container);
+    expect(container.querySelector('[data-app-slug="anthropic"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label$="Assistant Connection (MCP)"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="App filters"]')).not.toBeNull();
+    expect(localStorage.getItem("staples.connectors.advanced")).toBe("1");
+  });
+
+  it("popular section groups featured apps by category", async () => {
+    listGalleryMock.mockResolvedValue({ apps: [
+      galleryEntry({ key: "slack", slug: "slack", name: "Slack", featured: true, categories: ["communication"] }),
+      galleryEntry({ key: "notion", slug: "notion", name: "Notion", featured: true, categories: ["content"] }),
+      galleryEntry({ key: "jira", slug: "jira", name: "Jira" }),
+    ] });
+    await renderSimple();
+    const headings = Array.from(container.querySelectorAll("h2")).map((heading) => heading.textContent);
+    expect(headings).toContain("Email and messaging");
+    expect(headings).toContain("Website and content");
+    const list = container.querySelector('[aria-label="Connector list"]')!;
+    expect(list.querySelector('[data-app-slug="slack"]')).toBeNull();
+    expect(list.querySelector('[data-app-slug="jira"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Email and messaging connectors"] [data-app-slug="slack"]')).not.toBeNull();
+  });
+
+  it("needed by your team lists unmet template apps", async () => {
+    listGalleryMock.mockResolvedValue({ apps: [galleryEntry({ key: "resend", slug: "resend", name: "Resend" })] });
+    listAgentsMock.mockResolvedValue([{ id: "a1", name: "Newsletter editor", status: "active", metadata: { staplesTemplate: { ref: "staples/newsletter", requiredApps: [{ capability: "newsletter", anyOf: ["resend"], why: "Holds your subscriber list and sends each issue." }] } } }]);
+    await renderSimple();
+    expect(Array.from(container.querySelectorAll("h2")).map((heading) => heading.textContent)).toContain("Needed by your team");
+    expect(container.textContent).toContain("Newsletter editor needs it. Holds your subscriber list and sends each issue.");
+    expect(container.querySelector('[aria-label="Needed connectors"] [data-app-slug="resend"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Connector list"] [data-app-slug="resend"]')).toBeNull();
+  });
+
+  it("open requests appear with a task link", async () => {
+    listGalleryMock.mockResolvedValue({ apps: [galleryEntry({ key: "stripe", slug: "stripe", name: "Stripe" })] });
+    connectionRequestsMock.mockResolvedValue({ requests: [{ interactionId: "i1", issueId: "t1", issueIdentifier: "LAN-4", serviceSlug: "stripe", serviceName: "Stripe", requestingAgentId: "a9", requestingAgentName: "Bookkeeper", createdAt: "2026-10-14T00:00:00Z" }] });
+    await renderSimple();
+    expect(container.querySelector('a[href="/issues/LAN-4"]')).not.toBeNull();
+    expect(container.textContent).toContain("Bookkeeper asked to connect Stripe.");
+  });
+
+  it("provider-hosted descriptions read plainly", async () => {
+    listGalleryMock.mockResolvedValue({ apps: [galleryEntry({ key: "stripe", slug: "stripe", name: "Stripe", tagline: undefined, description: "Connect Stripe's provider-hosted MCP server." })] });
+    await renderSimple();
+    expect(container.textContent).toContain("Let agents use Stripe.");
+    expect(container.textContent).not.toContain("provider-hosted");
+  });
+
   it("defaults to Staples with five chips, expands search to All, and retains explicit source scope", async () => {
     aggregatorCatalogMock.push(indexedApp("Remote App", ["composio"]));
     await renderBrowse(false);
     expect(container.querySelector('[aria-label="App filters"]')?.textContent).toBe("StaplesComposioArcadeInstalledAll");
     expect(container.querySelector('[data-app-slug="remote-app"]')).toBeNull();
     await search("Remote App");
-    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe("All");
+    expect(container.querySelector('[aria-label="App filters"] [aria-pressed="true"]')?.textContent).toBe("All");
     expect(container.querySelector('[data-app-slug="remote-app"]')).toBeTruthy();
     await search("");
-    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe("Staples");
+    expect(container.querySelector('[aria-label="App filters"] [aria-pressed="true"]')?.textContent).toBe("Staples");
     await clickButton("Arcade", container);
     await search("Remote App");
-    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe("Arcade");
+    expect(container.querySelector('[aria-label="App filters"] [aria-pressed="true"]')?.textContent).toBe("Arcade");
     expect(container.textContent).toContain("No connectors match");
     await clickButton("Clear search", container);
-    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe("Arcade");
+    expect(container.querySelector('[aria-label="App filters"] [aria-pressed="true"]')?.textContent).toBe("Arcade");
   });
 
   it.each(["composio", "arcade"] as const)("scopes %s to its catalog and accounts without native catalog overlaps", async (provider) => {
@@ -445,7 +514,7 @@ describe("Connectors landing page", () => {
     expect(container.querySelector('[data-app-slug="other-app"]')).toBeNull();
 
     await search("Notion");
-    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe(providerName);
+    expect(container.querySelector('[aria-label="App filters"] [aria-pressed="true"]')?.textContent).toBe(providerName);
     expect(container.textContent).toContain("No connectors match");
     await clickButton("All", container);
     expect(container.querySelector('[data-app-slug="notion"]')?.textContent).toContain("Native Notion");
@@ -701,7 +770,7 @@ describe("Connectors landing page", () => {
     expect(dialog.textContent).not.toContain("Using");
     expect(dialog.textContent).not.toContain("Use another account");
     expect(dialog.querySelector('a[href="https://dashboard.composio.dev/~/org/connect/apps"]')).toBeNull();
-    expect(listAgentsMock).not.toHaveBeenCalled();
+    expect(listAgentsMock).toHaveBeenCalledTimes(1); // the page's own list; the dialog adds none
     expect(navigateMock).not.toHaveBeenCalled();
     await act(() => Array.from(dialog.querySelectorAll("button")).find((button) => button.textContent === "Cancel")!.click());
     expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -761,7 +830,7 @@ describe("Connectors landing page", () => {
     await clickButton("Continue", document.querySelector('[role="dialog"]')!);
     expect(setupComposioAppMock).toHaveBeenLastCalledWith("conn-notion", "circleback", { action: "start" });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(listAgentsMock).not.toHaveBeenCalled();
+    expect(listAgentsMock).toHaveBeenCalledTimes(1); // the page's own list; the dialog adds none
     expect(openNewIssueMock).not.toHaveBeenCalled();
     listAgentsMock.mockResolvedValue([]);
   });
@@ -781,7 +850,7 @@ describe("Connectors landing page", () => {
     expect(navigateMock).toHaveBeenCalledWith("/apps/connect?source=composio&targetToolkit=circleback&new=1");
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(setupComposioAppMock).not.toHaveBeenCalled();
-    expect(listAgentsMock).not.toHaveBeenCalled();
+    expect(listAgentsMock).toHaveBeenCalledTimes(1); // the page's own list; the dialog adds none
   });
 
   it("returns from Composio gateway setup directly to its app flow even with multiple providers", async () => {

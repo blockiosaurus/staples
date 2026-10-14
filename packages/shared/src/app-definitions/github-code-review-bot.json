@@ -6,7 +6,7 @@
   "categories": [
     "developer"
   ],
-  "featured": true,
+  "featured": false,
   "branding": {
     "logoUrl": "/brands/apps/github.svg",
     "darkLogoUrl": "/brands/apps/github-dark.svg"

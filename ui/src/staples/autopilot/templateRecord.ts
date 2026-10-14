@@ -17,7 +17,7 @@ export interface AgentTemplateRecordView {
   version: string | null;
   readOnly: boolean;
   outwardActions: AgentTemplateOutwardCategory[];
-  requiredApps: Array<{ capability: string; anyOf: string[] }>;
+  requiredApps: Array<{ capability: string; anyOf: string[]; why: string | null; optional: boolean }>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,7 +49,12 @@ export function agentTemplateRecord(metadata: unknown): AgentTemplateRecordView 
     }));
   const requiredApps = (Array.isArray(record.requiredApps) ? record.requiredApps.filter(isRecord) : [])
     .filter((app) => typeof app.capability === "string" && app.capability)
-    .map((app) => ({ capability: app.capability as string, anyOf: strings(app.anyOf) }));
+    .map((app) => ({
+      capability: app.capability as string,
+      anyOf: strings(app.anyOf),
+      why: typeof app.why === "string" ? app.why : null,
+      optional: app.optional === true,
+    }));
   return {
     ref: record.ref,
     slug: templateSlugFromRef(record.ref),

@@ -6,7 +6,7 @@
   "categories": [
     "communication"
   ],
-  "featured": false,
+  "featured": true,
   "branding": {
     "logoUrl": "/brands/apps/resend.svg",
     "darkLogoUrl": "/brands/apps/resend-dark.svg"

@@ -850,7 +850,6 @@ describe("AppDefinition catalog", () => {
   });
   it("withholds unverified and reserved providers from the app store without deleting their definitions", () => {
     expect([...APP_STORE_HIDDEN_SLUGS].sort()).toEqual([
-      "beehiiv",
       "brex",
       "candid",
       "clickup",
@@ -858,7 +857,6 @@ describe("AppDefinition catalog", () => {
       "egnyte",
       "embat",
       "kernel",
-      "klaviyo",
       "local-falcon",
       "manufact",
       "monday",
@@ -869,9 +867,8 @@ describe("AppDefinition catalog", () => {
       "similarweb",
       "ticket-tailor",
       "ticktick",
-      "xero",
     ]);
-    expect(APP_STORE_DEFINITIONS).toHaveLength(79);
+    expect(APP_STORE_DEFINITIONS).toHaveLength(82);
     const connectableSlugs = new Set(
       CONNECTABLE_APP_DEFINITIONS.map((entry) => entry.slug),
     );
