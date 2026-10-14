@@ -91,7 +91,7 @@ describe("weekly update helpers", () => {
 
   it("ships the weekly update routine in the Assistant bundle with a bumped stock version", () => {
     const assistant = listBuiltInAgentDefinitions().find((definition) => definition.key === "assistant")!;
-    expect(assistant.bundle?.stockVersion).toBe("2026-10-14a");
+    expect(assistant.bundle?.stockVersion).toBe("2026-10-14b");
     expect(assistant.bundle?.routine).toMatchObject({
       routineKey: "weekly-update", title: "Weekly update", status: "active",
       triggers: [{ kind: "schedule", cronExpression: "0 9 * * 1", timezone: "person", enabled: true }],
@@ -204,7 +204,7 @@ const support = await getEmbeddedPostgresTestSupport();
 
     const state = await service.get(f.companyId, "assistant");
     expect(state.resources.find((resource) => resource.resourceKind === "routine"))
-      .toMatchObject({ stockVersion: "2026-10-14a", stockStatus: "stock_current", scheduleEnabled: true });
+      .toMatchObject({ stockVersion: "2026-10-14b", stockStatus: "stock_current", scheduleEnabled: true });
 
     await service.ensure(f.companyId, "assistant");
     await service.ensure(f.companyId, "assistant");

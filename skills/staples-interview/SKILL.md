@@ -36,7 +36,7 @@ If a lookup answers a question, treat the decision as settled and say so briefly
 
 Ask the whole frontier in one round, as one `staples_ask_questions` card:
 
-- One card per round. At most 8 questions per card. If the frontier is larger, ask the 8 that unblock the most later decisions and keep the rest for the next round.
+- One card per round. At most 4 questions per card. If the frontier is larger, ask the 4 that unblock the most later decisions and keep the rest for the next round. A person starting a business is answering on a phone or between other things: short rounds get answered.
 - Number the question ids in order: `q1`, `q2`, ... Give the card a short `title` such as "Round 2: the team".
 - Every question carries your **recommendation**, worded so that answering "yes" accepts it.
   - `single_select`: mark exactly one option `recommended: true`.
