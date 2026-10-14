@@ -2833,8 +2833,8 @@ function deriveSkillSourceInfo(skill: SkillSourceInfoTarget): {
       editableReason: null,
       sourceLabel: isProjectScan
         ? [projectName, workspaceName].filter((value): value is string => Boolean(value)).join(" / ")
-          || skill.sourceLocator
-        : skill.sourceLocator,
+          || "Local folder"
+        : "Local folder",
       sourceBadge: "local",
       sourcePath: null,
     };
