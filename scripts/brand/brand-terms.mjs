@@ -18,6 +18,7 @@ export const SWEEP_ROOTS = [
   "server/src/services/built-in-agents.ts",
   "server/src/services/plan-templates.ts",
   "packages/teams-catalog/catalog",
+  "packages/shared/src/app-definitions",
 ];
 export const SWEEP_EXTENSIONS = new Set([".ts", ".tsx", ".md", ".json", ".js", ".html", ".webmanifest"]);
 export const SKIP_DIR_NAMES = new Set(["node_modules", "dist", "generated", "brands"]);

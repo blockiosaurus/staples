@@ -66,7 +66,7 @@ export function StartCompanyPage() {
       <StartShell title={existing ? "Only an admin can create a company here" : "Ask the person who invited you for access"} footer={backLink}>
         <p className="text-sm text-muted-foreground">
           {existing
-            ? "Ask an admin of this Staples to create the company, or to add you to one."
+            ? "Ask an admin to create the company, or to add you to one."
             : "You're signed in, but this account isn't part of a company here yet. The person who invited you can add you."}
         </p>
       </StartShell>

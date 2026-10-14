@@ -33,6 +33,8 @@ export function rowIsInstalled(row: SectionRow): boolean {
 }
 
 export function classifyRow(row: SectionRow): "advanced" | "popular" | "regular" {
+  // A connection the person already made always stays visible in the default view.
+  if (rowIsInstalled(row)) return row.entry?.featured === true ? "popular" : "regular";
   if (row.aggregatorApp || isAppAggregator(row.slug) || RAW_CONNECTOR_SLUGS.has(row.slug)) return "advanced";
   if (row.entry?.tags?.includes("model-provider") || row.entry?.aiConnectionRouter) return "advanced";
   return row.entry?.featured === true ? "popular" : "regular";

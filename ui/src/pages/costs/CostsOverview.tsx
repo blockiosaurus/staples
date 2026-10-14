@@ -46,6 +46,8 @@ export function CostsOverview({ companyId, now = new Date() }: { companyId: stri
   if (!spend) return null;
   const limitCents = spend.companyBudgetCents ?? spend.hosted?.capCents ?? null;
   const spentCents = hosted ? spend.hosted!.spentCents : spend.monthSpendCents;
+  const hostedMax = hosted ? spend.hosted!.maxCents : null;
+  const atCeiling = hostedMax !== null && limitCents !== null && limitCents >= hostedMax;
   const percent = limitCents ? Math.min(100, Math.round((spentCents / limitCents) * 100)) : null;
   const projected = projectedMonthEndCents(spend.monthSpendCents, now);
   const rows = [...(agents.data ?? [])]
@@ -101,12 +103,14 @@ export function CostsOverview({ companyId, now = new Date() }: { companyId: stri
             limitCents={limitCents ?? 0}
             observedCents={spentCents}
             suggestedCents={Math.max(spentCents + 1, (limitCents ?? 0) * 2 || 5000)}
-            maxCents={null}
+            maxCents={hosted ? spend.hosted!.maxCents : null}
             hosted={hosted}
             pending={raise.isPending}
             onCancel={() => setRaising(false)}
             onSubmit={(amount) => raise.mutate(amount)}
           />
+        ) : atCeiling ? (
+          <p className="text-sm text-muted-foreground">This limit is as high as it can go.</p>
         ) : (
           <div className="flex justify-end">
             <Button type="button" variant="outline" size="sm" onClick={() => setRaising(true)}>

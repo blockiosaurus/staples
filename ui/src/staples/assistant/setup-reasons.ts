@@ -13,7 +13,7 @@ export const HOSTED_FINISHING_MESSAGE = "Finishing Assistant setup…";
 
 export const HOSTED_TILE_COPY = {
   needsKey: "Runs in Anthropic's cloud. Needs an Anthropic key.",
-  provided: "Provided by this Staples server.",
+  provided: "Provided by Staples.",
 } as const;
 
 /** Adapters whose CLI engine still carries the Assistant's tools (server: ASSISTANT_CLI_ENGINE_ADAPTER_TYPES). */

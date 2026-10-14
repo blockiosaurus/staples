@@ -84,13 +84,19 @@ describe("CostsOverview", () => {
   });
 
   it("falls back to the hosted cap, then to no limit", async () => {
-    await renderOverview({ monthSpendCents: 500, companyBudgetCents: null, hosted: { capCents: 2000, spentCents: 500 } });
+    await renderOverview({ monthSpendCents: 500, companyBudgetCents: null, hosted: { capCents: 2000, spentCents: 500, maxCents: 20000 } });
     expect(container.textContent).toContain("$5 of $20 this month");
     act(() => root.unmount());
     root = createRoot(container);
     await renderOverview({ monthSpendCents: 500, companyBudgetCents: null, hosted: null });
     expect(container.textContent).toContain("$5 this month · no limit set");
     expect(button("Set a limit")).toBeDefined();
+  });
+
+  it("hides Raise limit when a hosted limit is already at the ceiling", async () => {
+    await renderOverview({ monthSpendCents: 500, companyBudgetCents: null, hosted: { capCents: 20000, spentCents: 500, maxCents: 20000 } });
+    expect(button("Raise limit")).toBeUndefined();
+    expect(container.textContent).toContain("This limit is as high as it can go.");
   });
 
   it("lists agents by spend with a paused badge", async () => {

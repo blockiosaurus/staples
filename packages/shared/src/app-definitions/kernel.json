@@ -62,7 +62,7 @@
           "required": true,
           "placeholder": "Paste your Kernel API key",
           "secret": true,
-          "helperMd": "Launch/manage browsers, profiles, apps and browser automation. Create a key with read and write permissions for these actions; Paperclip cannot increase an existing key’s permissions."
+          "helperMd": "Launch/manage browsers, profiles, apps and browser automation. Create a key with read and write permissions for these actions; Staples cannot increase an existing key’s permissions."
         }
       ],
       "keyPlacement": {

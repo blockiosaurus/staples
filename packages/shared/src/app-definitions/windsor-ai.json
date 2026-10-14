@@ -33,7 +33,7 @@
           "offline_access"
         ]
       },
-      "guidanceMd": "Browser sign-in requires a public HTTPS Paperclip callback; local HTTP callbacks are rejected by Windsor.ai. Connect Windsor.ai, then verify which advertising, analytics, CRM, or warehouse sources are linked. Keep source account and metric definitions with results. Review any action that changes campaigns, budgets, posts, or listings.",
+      "guidanceMd": "Browser sign-in requires a public HTTPS Staples callback; local HTTP callbacks are rejected by Windsor.ai. Connect Windsor.ai, then verify which advertising, analytics, CRM, or warehouse sources are linked. Keep source account and metric definitions with results. Review any action that changes campaigns, budgets, posts, or listings.",
       "riskTier": "S4",
       "warnings": [
         "Windsor.ai requires the provider-level delete scope to establish the MCP session, including for read-only use. This scope may expose destructive actions; do not approve it unless those provider permissions are acceptable.",
@@ -63,7 +63,7 @@
           "required": true,
           "placeholder": "Enter provider credential",
           "secret": true,
-          "helperMd": "Use an account key for the intended Windsor.ai organization and connect only source accounts needed for the task. Review write tools and source-specific effects; Paperclip cannot increase key permissions."
+          "helperMd": "Use an account key for the intended Windsor.ai organization and connect only source accounts needed for the task. Review write tools and source-specific effects; Staples cannot increase key permissions."
         }
       ],
       "keyPlacement": {

@@ -31,7 +31,14 @@ function AssistantIcon({ assistant }: { assistant: Assistant }) {
 export function useAssistantConnections(poll = false) {
   const { selectedCompanyId } = useCompany();
   const query = useQuery({
-    queryKey: connectionsKey, queryFn: publicMcpApi.connections, retry: false,
+    queryKey: connectionsKey, retry: false,
+    // When the public routes are not mounted the list is a 404: that means "nothing connected", not a failure.
+    queryFn: async () => {
+      try { return await publicMcpApi.connections(); } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return [] as McpConnection[];
+        throw error;
+      }
+    },
     enabled: Boolean(selectedCompanyId), refetchInterval: poll ? 5000 : false,
   });
   return { ...query, rows: (query.data ?? []).filter(row => row.companyId === selectedCompanyId && !row.revokedAt && !row.scopes.includes("paperclip:agent")) };

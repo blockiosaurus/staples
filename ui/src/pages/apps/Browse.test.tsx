@@ -462,6 +462,20 @@ describe("Connectors landing page", () => {
     expect(container.querySelector('[aria-label="Connector list"] [data-app-slug="resend"]')).toBeNull();
   });
 
+  it("shows a needed featured app once, inside the needed section only", async () => {
+    listGalleryMock.mockResolvedValue({ apps: [galleryEntry({ key: "resend", slug: "resend", name: "Resend", featured: true, categories: ["communication"] })] });
+    listAgentsMock.mockResolvedValue([{ id: "a1", name: "Newsletter editor", status: "active", metadata: { staplesTemplate: { ref: "staples/newsletter", requiredApps: [{ capability: "newsletter", anyOf: ["resend"], why: "Sends each issue." }] } } }]);
+    await renderSimple();
+    expect(container.querySelectorAll('[data-app-slug="resend"]')).toHaveLength(1);
+    expect(container.querySelector('[aria-label="Needed connectors"] [data-app-slug="resend"]')).not.toBeNull();
+  });
+
+  it("keeps an installed aggregator connection visible in simple mode", async () => {
+    composioFixture();
+    await renderSimple();
+    expect(container.querySelector('[data-app-slug="composio"]')).not.toBeNull();
+  });
+
   it("open requests appear with a task link", async () => {
     listGalleryMock.mockResolvedValue({ apps: [galleryEntry({ key: "stripe", slug: "stripe", name: "Stripe" })] });
     connectionRequestsMock.mockResolvedValue({ requests: [{ interactionId: "i1", issueId: "t1", issueIdentifier: "LAN-4", serviceSlug: "stripe", serviceName: "Stripe", requestingAgentId: "a9", requestingAgentName: "Bookkeeper", createdAt: "2026-10-14T00:00:00Z" }] });

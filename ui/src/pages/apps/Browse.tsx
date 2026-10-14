@@ -825,7 +825,10 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
     () => sectioned ? teamNeeds({ agents: chatAgentsQuery.data ?? [], rows: simpleRows, requests: requestsQuery.data?.requests ?? [] }) : [],
     [sectioned, chatAgentsQuery.data, simpleRows, requestsQuery.data],
   );
-  const popularGroups = sectioned ? groupPopular(simpleRows.filter((row) => classifyRow(row) === "popular" && !isInstalled(row))) : [];
+  const neededKeys = new Set(needs.flatMap((need) => need.row ? [need.row.key] : []));
+  const popularGroups = sectioned
+    ? groupPopular(simpleRows.filter((row) => classifyRow(row) === "popular" && !isInstalled(row) && !neededKeys.has(row.key)))
+    : [];
   const featuredKeys = new Set([
     ...needs.flatMap((need) => need.row ? [need.row.key] : []),
     ...popularGroups.flatMap((group) => group.rows.map((row) => row.key)),

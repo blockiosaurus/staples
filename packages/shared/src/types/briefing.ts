@@ -108,12 +108,13 @@ export interface BriefingItem {
  * This calendar month's (UTC) spend for Home. `companyBudgetCents` is the
  * person-set company budget (counts all spend), when one is active.
  * `hosted` is the company's hosted-inference cap (counts hosted spend only),
- * when one is active.
+ * when one is active; its `maxCents` is the most a person may raise it to (the
+ * operator's ceiling), or null when the operator set none.
  */
 export interface BriefingSpend {
   monthSpendCents: number;
   companyBudgetCents: number | null;
-  hosted: { capCents: number; spentCents: number } | null;
+  hosted: { capCents: number; spentCents: number; maxCents: number | null } | null;
 }
 
 /** The latest weekly update the Assistant wrote, for the Home card. */

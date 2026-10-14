@@ -12,6 +12,12 @@ describe("classifyRow", () => {
     expect(classifyRow(row("composio", { aggregatorApp: { slug: "composio" } as never }))).toBe("advanced");
     expect(classifyRow(row("linkedin", { aggregatorApp: { slug: "linkedin", routes: [] } as never }))).toBe("advanced");
   });
+  it("never hides a connection the person already made", () => {
+    const connected = [{ id: "c1", status: "active" }] as never;
+    expect(classifyRow(row("composio", { aggregatorApp: { slug: "composio" } as never, connections: connected }))).toBe("regular");
+    expect(classifyRow(row("api-key-generic", { connections: connected }))).toBe("regular");
+    expect(classifyRow(row("gmail", { aggregatorApp: {} as never, entry: { featured: true } as never, connections: connected }))).toBe("popular");
+  });
   it("marks featured entries popular and everything else regular", () => {
     expect(classifyRow(row("gmail", { entry: { featured: true, categories: ["communication"] } as never }))).toBe("popular");
     expect(classifyRow(row("todoist", { entry: { featured: false } as never }))).toBe("regular");

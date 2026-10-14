@@ -79,7 +79,7 @@ export function CompanySettingsSidebar() {
     queryFn: () => pluginsApi.list(),
     // The listing only feeds the per-plugin subtree below; skip it when the
     // operator hides the Plugins surface.
-    enabled: showPlugins,
+    enabled: showPlugins && isAdmin,
   });
   const sidebarPlugins = (plugins ?? []).filter((plugin) => !isSandboxProviderOnly(plugin));
 

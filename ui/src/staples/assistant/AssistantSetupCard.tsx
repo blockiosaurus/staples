@@ -324,7 +324,7 @@ function ConnectModel({
         onSubmit={(event) => { event.preventDefault(); if (!submitting && (!needsKey || hostedKey.trim())) void connectHosted(); }}
       >
         <p className="text-foreground">
-          {needsKey ? "The Assistant will use Claude (hosted) with your Anthropic key." : "The Assistant will use Claude (hosted), provided by this Staples server."}
+          {needsKey ? "The Assistant will use Claude (hosted) with your Anthropic key." : "The Assistant will use Claude (hosted), provided by Staples."}
         </p>
         {needsKey ? (
           <label className="flex w-full max-w-(--tc-shell-max-w) flex-col gap-1">

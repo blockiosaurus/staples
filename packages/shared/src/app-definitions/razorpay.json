@@ -61,7 +61,7 @@
           "required": true,
           "placeholder": "Paste the base64-encoded key ID and secret",
           "secret": true,
-          "helperMd": "Provider-authorized payment/account tools; financial policy gates remain. Live verification outstanding. Create a key with read and write permissions for these actions; Paperclip cannot increase an existing key’s permissions."
+          "helperMd": "Provider-authorized payment/account tools; financial policy gates remain. Live verification outstanding. Create a key with read and write permissions for these actions; Staples cannot increase an existing key’s permissions."
         }
       ],
       "keyPlacement": {

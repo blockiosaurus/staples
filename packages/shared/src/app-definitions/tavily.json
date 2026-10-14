@@ -33,7 +33,7 @@
         ],
         "mcpSessionRequired": true
       },
-      "guidanceMd": "Browser sign-in requires a public HTTPS Paperclip callback; local HTTP callbacks are rejected by Tavily. Use Tavily for bounded public research. Set focused queries and relevant domains, cite the source URLs, and distinguish retrieved facts from inference. Research does not authorize contacting a company or submitting forms.",
+      "guidanceMd": "Browser sign-in requires a public HTTPS Staples callback; local HTTP callbacks are rejected by Tavily. Use Tavily for bounded public research. Set focused queries and relevant domains, cite the source URLs, and distinguish retrieved facts from inference. Research does not authorize contacting a company or submitting forms.",
       "warnings": [
         "Tavily OAuth selects the account’s `mcp_auth_default` key when configured; otherwise it may use the personal default or first available key. Review the chosen account and usage allowance.",
         "Do not use the documented API-key-in-query alternative; OAuth keeps the key out of the server URL."

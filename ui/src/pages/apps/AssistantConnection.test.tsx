@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/api/client";
 import { AssistantConnection, AssistantConnectionCard } from "./AssistantConnection";
 const mocks = vi.hoisted(() => ({ setup: vi.fn(), connections: vi.fn(), revoke: vi.fn(), breadcrumbs: vi.fn(), copy: vi.fn() }));
 vi.mock("@/hooks/usePrefersReducedMotion", () => ({ usePrefersReducedMotion: () => true }));
@@ -50,6 +51,12 @@ describe("assistant setup from Connections", () => {
     await flush();
     expect(container.querySelector('[aria-label="Manage Assistant Connection (MCP)"]')).not.toBeNull();
     expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+  it("treats a missing connections route as nothing connected", async () => {
+    mocks.connections.mockRejectedValue(new ApiError("Not found", 404, null));
+    await render(<AssistantConnectionCard onNavigate={vi.fn()} />);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Set up Assistant Connection (MCP)"]')).not.toBeNull();
   });
   it("uses the canonical URL and explains how OpenCode opens consent without granting access", async () => {
     await render();

@@ -329,7 +329,7 @@ describe("AssistantSetupCard", () => {
     it("connects without a key when the server provides one", async () => {
       withHosted({ available: true, signedIn: true, needsKey: false });
       await render({ state: "needs_model" });
-      expect(button("Claude (hosted)")?.textContent).toContain("Provided by this Staples server.");
+      expect(button("Claude (hosted)")?.textContent).toContain("Provided by Staples.");
       await act(async () => button("Claude (hosted)")!.click());
       expect(input()).toBeNull();
       await act(async () => { button("Connect")!.click(); });

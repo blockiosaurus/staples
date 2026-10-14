@@ -61,7 +61,7 @@
           "required": true,
           "placeholder": "Enter provider credential",
           "secret": true,
-          "helperMd": "At key creation, choose read-only or read/write according to the approved task. Read/write keys can reach URL-submission and related provider actions; Paperclip cannot increase an existing key’s permissions."
+          "helperMd": "At key creation, choose read-only or read/write according to the approved task. Read/write keys can reach URL-submission and related provider actions; Staples cannot increase an existing key’s permissions."
         }
       ],
       "keyPlacement": {

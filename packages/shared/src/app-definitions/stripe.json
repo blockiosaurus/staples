@@ -63,7 +63,7 @@
           "required": true,
           "placeholder": "sk_...",
           "secret": true,
-          "helperMd": "Account- and sandbox-specific writes selected during Stripe consent; financial approvals and restricted-key permissions remain. Create a key with read and write permissions for these actions; Paperclip cannot increase an existing key’s permissions."
+          "helperMd": "Account- and sandbox-specific writes selected during Stripe consent; financial approvals and restricted-key permissions remain. Create a key with read and write permissions for these actions; Staples cannot increase an existing key’s permissions."
         }
       ],
       "keyPlacement": {

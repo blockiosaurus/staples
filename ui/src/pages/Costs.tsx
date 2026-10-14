@@ -619,21 +619,27 @@ export function Costs({
               )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              {PRESET_KEYS.map((key) => (
-                <Button
-                  key={key}
-                  variant={preset === key ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setPreset(key)}
-                  aria-pressed={preset === key}
-                >
-                  {PRESET_LABELS[key]}
-                </Button>
-              ))}
-            </div>
           </div>
+          <CostsOverview companyId={companyId} />
+        </div>
+      ) : null}
 
+      <DetailsDisclosure enabled={showSummaryChrome}>
+      {showSummaryChrome ? (
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center gap-2">
+            {PRESET_KEYS.map((key) => (
+              <Button
+                key={key}
+                variant={preset === key ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setPreset(key)}
+                aria-pressed={preset === key}
+              >
+                {PRESET_LABELS[key]}
+              </Button>
+            ))}
+          </div>
           {preset === "custom" ? (
             <div className="flex flex-wrap items-center gap-2 border border-border p-3">
               <input
@@ -651,14 +657,6 @@ export function Costs({
               />
             </div>
           ) : null}
-          <CostsOverview companyId={companyId} />
-        </div>
-      ) : null}
-
-      <DetailsDisclosure enabled={showSummaryChrome}>
-      {showSummaryChrome ? (
-        <div className="space-y-5">
-
 
           {financeData?.summary.currencies?.some((row) => row.currency !== "USD") && (
             <p role="status" className="text-sm text-muted-foreground">
