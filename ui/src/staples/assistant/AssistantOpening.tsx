@@ -1,11 +1,11 @@
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export const ASSISTANT_OPENING_MESSAGE = "Hi — I'm your Assistant. What do you want to build?";
+export const ASSISTANT_OPENING_MESSAGE = "Hi, I'm your Assistant. What business are you starting, or what do you want help with?";
 export const ASSISTANT_OPENING_SUGGESTIONS = [
-  "An assistant for my inbox",
-  "A weekly newsletter",
-  "A landing page for my idea",
+  "A dog-walking service in my neighborhood",
+  "An online shop for my handmade candles",
+  "A weekly newsletter for my customers",
 ] as const;
 
 /**

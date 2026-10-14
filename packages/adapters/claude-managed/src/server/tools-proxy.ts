@@ -34,6 +34,15 @@ export interface RuntimeMcpServerInput {
   url: string;
   token: string;
   connectionId?: string;
+  /** Discovery failure for this server fails the run instead of skipping it. */
+  required?: boolean;
+}
+
+export class RequiredToolServerError extends Error {
+  readonly name = "RequiredToolServerError";
+  constructor(readonly serverName: string, readonly detail: string) {
+    super(`${serverName} tools could not be reached (${detail})`);
+  }
 }
 
 export interface ProxiedTool {
@@ -337,7 +346,7 @@ export class ToolsProxy {
 
   /**
    * Connects to each server and lists its tools. A server that fails is skipped with
-   * a warning (the run continues without its tools); an aborted signal rethrows.
+   * a warning (the run continues without its tools) unless it is `required`, which throws; an aborted signal rethrows.
    */
   static async discover(servers: RuntimeMcpServerInput[], options: ToolsProxyOptions = {}): Promise<ToolsProxy> {
     const proxy = new ToolsProxy(options);
@@ -352,6 +361,7 @@ export class ToolsProxy {
       } catch (error) {
         if (options.signal?.aborted) throw error;
         const detail = connection.redact(error instanceof Error ? error.message : String(error));
+        if (server.required) throw new RequiredToolServerError(server.name, detail);
         await options.onWarning?.(`Skipping tools from "${server.name}": ${detail}`);
         continue;
       }

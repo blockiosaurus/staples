@@ -284,12 +284,6 @@ function shortRef(ref: string | null | undefined) {
   return ref.slice(0, 7);
 }
 
-function middleTruncate(value: string, maxLength = 72) {
-  if (value.length <= maxLength) return value;
-  const edgeLength = Math.floor((maxLength - 3) / 2);
-  return `${value.slice(0, edgeLength)}...${value.slice(value.length - edgeLength)}`;
-}
-
 function formatProjectScanSummary(result: CompanySkillProjectScanResult) {
   const parts = [
     `${result.discovered} found`,
@@ -2782,13 +2776,14 @@ export function SkillDetailPage({
     : null;
   // Fallback for non-catalog skills: the recorded locator/path wraps inside
   // the narrow sidebar instead of widening the page.
-  const sourceLocatorText = skill.sourcePath || skill.sourceLocator || null;
+  const locatorIsUrl = Boolean(skill.sourceLocator && /^(https?:\/\/|[\w.-]+\.[a-z]{2,}\/)/i.test(skill.sourceLocator));
+  const sourceLocatorText = locatorIsUrl ? skill.sourceLocator : null;
   const sourceHref =
     skill.homepageUrl
-    ?? (sourceLocatorText && /^(https?:\/\/|[\w.-]+\.[a-z]{2,}\/)/i.test(sourceLocatorText)
-      ? sourceLocatorText.startsWith("http")
-        ? sourceLocatorText
-        : `https://${sourceLocatorText}`
+    ?? (locatorIsUrl && skill.sourceLocator
+      ? skill.sourceLocator.startsWith("http")
+        ? skill.sourceLocator
+        : `https://${skill.sourceLocator}`
       : null);
 
   function renderFilesBody() {
@@ -3518,7 +3513,6 @@ function SkillPane({
   const body = file?.markdown ? stripFrontmatter(file.content) : file?.content ?? "";
   const currentPin = shortRef(detail.sourceRef);
   const latestPin = shortRef(updateStatus?.latestRef);
-  const displaySourcePath = detail.sourcePath ? middleTruncate(detail.sourcePath) : null;
   const removeBlocked = usedBy.length > 0;
   const removeDisabledReason = removeBlocked
     ? "Detach this skill from all agents before removing it."
@@ -3574,27 +3568,7 @@ function SkillPane({
               <span className="text-(length:--text-micro) uppercase tracking-(--tracking-caps) text-muted-foreground">Source</span>
               <span className="flex min-w-0 items-center gap-2">
                 <SourceIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                {detail.sourcePath && displaySourcePath ? (
-                  <>
-                    <span
-                      className="block min-w-0 max-w-(--sz-calc-35) truncate font-mono text-xs text-muted-foreground"
-                      title={detail.sourcePath}
-                    >
-                      {displaySourcePath}
-                    </span>
-                    <CopyText
-                      text={detail.sourcePath}
-                      copiedLabel="Copied path"
-                      ariaLabel="Copy source path"
-                      title="Copy source path"
-                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                    </CopyText>
-                  </>
-                ) : (
-                  <span className="truncate">{source.label}</span>
-                )}
+                <span className="truncate">{source.label}</span>
               </span>
             </div>
             {detail.sourceType === "github" && (

@@ -165,4 +165,4 @@ export const BRIEFING_DONE_RECENTLY_WINDOW_DAYS = 7;
 /** Window of the per-agent outward action roll-up. */
 export const BRIEFING_AGENT_ACTIONS_WINDOW_HOURS = 24;
 /** Longest weekly update excerpt on Home. */
-export const BRIEFING_WEEKLY_UPDATE_EXCERPT_MAX = 280;
+export const BRIEFING_WEEKLY_UPDATE_EXCERPT_MAX = 400;

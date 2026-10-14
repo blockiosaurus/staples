@@ -4378,6 +4378,18 @@ describe("TaskChatThread live transcript", () => {
     expect(container.textContent).not.toContain("Review the task’s connection");
   });
 
+  it("speaks plainly when the Assistant's required tools were unreachable", () => {
+    const run = { id: "tools-failed", status: "running" as const, invocationSource: "issue", triggerDetail: null,
+      startedAt: "2026-09-15T10:00:00Z", finishedAt: null, createdAt: "2026-09-15T10:00:00Z",
+      agentId: "agent-1", agentName: "Worker", adapterType: "process" };
+    render(<TaskChatThread comments={[]} onAdd={async () => {}} issueStatus="in_progress" activeRun={run} />);
+    render(<TaskChatThread comments={[]} onAdd={async () => {}} issueStatus="in_progress" linkedRuns={[
+      { ...run, runId: run.id, status: "failed", errorCode: "claude_managed_tools_failed", finishedAt: "2026-09-15T10:00:10Z" },
+    ]} />);
+    expect(container.textContent).toContain("Your Assistant couldn't connect to Staples.");
+    expect(container.textContent).not.toContain("claude_managed_tools_failed");
+  });
+
   it("renders in-flight output through TaskChatLiveTail, dropping the debug plumbing (PAP-463 C1)", () => {
     // Interleave the exact noise the old RunTranscriptView tail surfaced (init
     // row, stdout/stderr/system dumps) with real content. Only the streamed

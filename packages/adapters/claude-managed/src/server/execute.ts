@@ -36,7 +36,7 @@ import {
 } from "../types.js";
 import { readSessionParams, type ClaudeManagedSessionParams } from "./session.js";
 import { invalidateSkillsListing, resolveAgentSkills, workspaceKey, type SkillsResolution } from "./skills.js";
-import { ToolsProxy, type ToolCallOutcome } from "./tools-proxy.js";
+import { RequiredToolServerError, ToolsProxy, type ToolCallOutcome } from "./tools-proxy.js";
 
 type AdapterExecutionErrorFamily = NonNullable<AdapterExecutionResult["errorFamily"]>;
 
@@ -440,6 +440,8 @@ export function summaryPreview(text: string): string {
   return first.length > 200 ? `${first.slice(0, 199)}…` : first;
 }
 
+export const REQUIRED_TOOLS_UNAVAILABLE_MESSAGE = "Your Assistant couldn't connect to Staples. Try again in a minute.";
+
 export const OUT_OF_CREDIT_ERROR_CODE = "claude_managed_out_of_credit";
 export const OUT_OF_CREDIT_MESSAGE =
   "Needs attention: the Anthropic account is out of credit. Add credit to the account in the Anthropic Console (Billing), then run the agent again.";
@@ -619,6 +621,15 @@ export async function execute(ctx: AdapterExecutionContext, deps: ExecuteDeps = 
         providerWorkStarted: false,
         message: "Run cancelled while loading tools.",
       });
+    }
+    if (error instanceof RequiredToolServerError) {
+      await onLog("stderr", `[staples] ${error.message}\n`);
+      return {
+        ...base, ...priorResult, exitCode: 1, signal: null, timedOut: false,
+        errorCode: "claude_managed_tools_failed",
+        errorMessage: REQUIRED_TOOLS_UNAVAILABLE_MESSAGE,
+        costUsd: 0, costStatus: "reported", clearSession: false,
+      };
     }
     return {
       ...base,

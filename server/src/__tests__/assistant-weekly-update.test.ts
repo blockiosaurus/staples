@@ -50,21 +50,48 @@ describe("weekly update helpers", () => {
     expect(weeklyUpdateDate(now, "America/Los_Angeles")).toEqual({ iso: "2026-10-12", label: "Oct 12, 2026" });
   });
 
-  it("previews the first lines as plain text, without a heading that repeats the title", () => {
-    const body = "# Weekly update — Oct 12, 2026\n\n## What shipped\n- **Pricing page** ([PAP-3](/PAP/issues/PAP-3))\n- Signup fix\n\n## Spend\n$12 of $50";
-    expect(weeklyUpdateExcerpt(body, "Weekly update — Oct 12, 2026")).toBe("What shipped: Pricing page (PAP-3), Signup fix\nSpend: $12 of $50");
-    expect(weeklyUpdateExcerpt("word ".repeat(200), null, 20)).toHaveLength(20);
+  it("previews sections as a heading line and bullet lines, from markdown headings or bold-only lines", () => {
+    const body = [
+      "# Weekly update — Oct 13, 2026",
+      "",
+      "**What shipped**",
+      "- The team is set up: Researcher and Newsletter editor were hired.",
+      "- No tasks have finished yet.",
+      "- A third item that is cut by the per-section cap.",
+      "",
+      "## Blocked and what I need from you",
+      "- Connect beehiiv or Resend: the Newsletter editor is waiting.",
+      "",
+      "## Spend",
+      "$0.95 of $60.",
+      "",
+      "## Next week",
+      "Not shown: only three sections.",
+    ].join("\n");
+    expect(weeklyUpdateExcerpt(body, "Weekly update — Oct 13, 2026", 10_000)).toBe([
+      "What shipped",
+      "• The team is set up: Researcher and Newsletter editor were hired.",
+      "• No tasks have finished yet.",
+      "Blocked and what I need from you",
+      "• Connect beehiiv or Resend: the Newsletter editor is waiting.",
+      "Spend",
+      "• $0.95 of $60.",
+    ].join("\n"));
   });
 
   it("keeps underscores inside words and strips emphasis around them", () => {
     expect(weeklyUpdateExcerpt("## Next week\n- Rename `user_id` in the snake_case export\n- _Ship_ the __new__ *pricing* page", null))
-      .toBe("Next week: Rename user_id in the snake_case export, Ship the new pricing page");
-    expect(weeklyUpdateExcerpt("Plain first line\n\nSecond line", null)).toBe("Plain first line, Second line");
+      .toBe("Next week\n• Rename user_id in the snake_case export\n• Ship the new pricing page");
+    expect(weeklyUpdateExcerpt("Plain first line\n\nSecond line", null)).toBe("• Plain first line\n• Second line");
+  });
+
+  it("truncates the excerpt when it exceeds max length", () => {
+    expect(weeklyUpdateExcerpt("word ".repeat(200), null, 20)).toHaveLength(20);
   });
 
   it("ships the weekly update routine in the Assistant bundle with a bumped stock version", () => {
     const assistant = listBuiltInAgentDefinitions().find((definition) => definition.key === "assistant")!;
-    expect(assistant.bundle?.stockVersion).toBe("2026-10-14a");
+    expect(assistant.bundle?.stockVersion).toBe("2026-10-14b");
     expect(assistant.bundle?.routine).toMatchObject({
       routineKey: "weekly-update", title: "Weekly update", status: "active",
       triggers: [{ kind: "schedule", cronExpression: "0 9 * * 1", timezone: "person", enabled: true }],
@@ -177,7 +204,7 @@ const support = await getEmbeddedPostgresTestSupport();
 
     const state = await service.get(f.companyId, "assistant");
     expect(state.resources.find((resource) => resource.resourceKind === "routine"))
-      .toMatchObject({ stockVersion: "2026-10-14a", stockStatus: "stock_current", scheduleEnabled: true });
+      .toMatchObject({ stockVersion: "2026-10-14b", stockStatus: "stock_current", scheduleEnabled: true });
 
     await service.ensure(f.companyId, "assistant");
     await service.ensure(f.companyId, "assistant");
@@ -329,7 +356,7 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(again.documentId).toBe(saved.documentId);
     const latest = await latestWeeklyUpdate(server.db, { companyId: f.companyId, userId: f.responsibleUserId!, now: Date.now() });
     expect(latest).toMatchObject({
-      documentId: saved.documentId, title: saved.title, excerpt: "What shipped: The pricing page and signup",
+      documentId: saved.documentId, title: saved.title, excerpt: "What shipped\n• The pricing page and signup",
       href: `/issues/${a.identifier}#document-${saved.key}`,
     });
 

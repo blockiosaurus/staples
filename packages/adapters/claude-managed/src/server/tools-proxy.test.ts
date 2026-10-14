@@ -131,3 +131,23 @@ describe("ToolsProxy", () => {
     expect(JSON.stringify(proxy)).not.toContain(TOKEN);
   });
 });
+
+describe("ToolsProxy.discover with a rejected run token", () => {
+  it("skips an optional server that rejects the run token, with a warning", async () => {
+    const mcp = await start({ token: "right", tools: [] });
+    const warnings: string[] = [];
+    const proxy = await ToolsProxy.discover(
+      [{ name: "Other tools", url: mcp.url, token: "wrong", connectionId: "c1" }],
+      { onWarning: (m) => { warnings.push(m); } },
+    );
+    expect(proxy.definitions()).toEqual([]);
+    expect(warnings[0]).toMatch(/Skipping tools from "Other tools".*HTTP 401/);
+  });
+
+  it("fails discovery when a required server rejects the run token", async () => {
+    const mcp = await start({ token: "right", tools: [] });
+    await expect(ToolsProxy.discover(
+      [{ name: "Staples assistant", url: mcp.url, token: "wrong", connectionId: "staples-assistant-tools", required: true }],
+    )).rejects.toMatchObject({ name: "RequiredToolServerError", serverName: "Staples assistant" });
+  });
+});

@@ -287,10 +287,10 @@ describe("staples_ask_questions", () => {
     expect(result.content[0].text).toContain("not assigned to the Assistant");
   });
 
-  it("refuses viewers and rejects more than 8 questions", async () => {
+  it("refuses viewers and rejects more than 4 questions", async () => {
     const t = tools(vi.fn() as unknown as ApiDispatch, askDb());
     expect((await t.call(context("viewer"), "staples_ask_questions", { questions })).isError).toBe(true);
-    const many = Array.from({ length: 9 }, (_, i) => ({ ...questions[0], id: `q${i}` }));
+    const many = Array.from({ length: 5 }, (_, i) => ({ ...questions[0], id: `q${i}` }));
     expect((await t.call(context(), "staples_ask_questions", { questions: many })).isError).toBe(true);
   });
 });

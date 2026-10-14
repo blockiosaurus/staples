@@ -99,7 +99,31 @@ describe("resolveSurface", () => {
 
   it("reveals projects when growth fires", () => {
     const state = resolveSurface(byId("nav.projects"), ctx({ signals: signals({ projects: 2 }) }), prefs());
-    expect(state).toMatchObject({ visible: true, isNew: true, shouldPersistReveal: true, source: "grows" });
+    expect(state).toMatchObject({ visible: true, isNew: false, shouldPersistReveal: true, source: "grows" });
+  });
+
+  it("reveals a quiet surface without the new badge", () => {
+    const routines = byId("nav.routines");
+    const state = resolveSurface(routines, ctx({ signals: signals({ routines: 1 }) }), prefs());
+    expect(state.visible).toBe(true);
+    expect(state.source).toBe("grows");
+    expect(state.shouldPersistReveal).toBe(true);
+    expect(state.isNew).toBe(false);
+  });
+
+  it("keeps the new badge on surfaces that need the person", () => {
+    const artifacts = byId("nav.artifacts");
+    expect(resolveSurface(artifacts, ctx({ signals: signals({ artifacts: 1 }) }), prefs()).isNew).toBe(true);
+    const connectors = byId("nav.connectors");
+    expect(resolveSurface(connectors, ctx({ signals: signals({ connectionRequests: 1 }) }), prefs()).isNew).toBe(true);
+  });
+
+  it("never reveals Skills by signal; it is an advanced surface", () => {
+    const skills = byId("nav.skills");
+    const state = resolveSurface(skills, ctx({ signals: signals({ extraSkills: 3 }) }), prefs());
+    expect(state.visible).toBe(false);
+    expect(state.source).toBe("advanced");
+    expect(resolveSurface(skills, ctx(), prefs({ showEverything: true })).visible).toBe(true);
   });
 
   it("keeps a revealed surface visible after growth recedes", () => {

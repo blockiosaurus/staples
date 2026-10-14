@@ -18,7 +18,7 @@ export {
 export type { SkillsResolution, LocalSkill } from "./skills.js";
 export { sessionCodec, readSessionParams } from "./session.js";
 export type { ClaudeManagedSessionParams } from "./session.js";
-export { ToolsProxy, buildToolName, mcpResultToToolContent } from "./tools-proxy.js";
+export { RequiredToolServerError, ToolsProxy, buildToolName, mcpResultToToolContent } from "./tools-proxy.js";
 
 export function getConfigSchema(): AdapterConfigSchema {
   return {

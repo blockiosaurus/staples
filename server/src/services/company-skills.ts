@@ -2833,17 +2833,19 @@ function deriveSkillSourceInfo(skill: SkillSourceInfoTarget): {
       editableReason: null,
       sourceLabel: isProjectScan
         ? [projectName, workspaceName].filter((value): value is string => Boolean(value)).join(" / ")
-          || skill.sourceLocator
-        : skill.sourceLocator,
+          || "Local folder"
+        : "Local folder",
       sourceBadge: "local",
       sourcePath: null,
     };
   }
 
+  const locator = skill.sourceLocator ?? null;
+  const locatorIsUrl = locator !== null && /^(https?:\/\/|[\w.-]+\.[a-z]{2,}\/)/i.test(locator);
   return {
     editable: false,
     editableReason: "This skill source is read-only.",
-    sourceLabel: skill.sourceLocator,
+    sourceLabel: asString(metadata.packageName) ?? (locatorIsUrl ? locator : "Skills catalog"),
     sourceBadge: "catalog",
     sourcePath: null,
   };

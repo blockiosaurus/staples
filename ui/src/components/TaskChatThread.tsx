@@ -1786,6 +1786,8 @@ export function TaskChatThread(props: TaskChatThreadProps) {
               : "Execution was stopped."
             : code === "provider_frame_too_large"
             ? `Provider output exceeded the safe limit. ${retryDetail}`
+            : code === "claude_managed_tools_failed"
+            ? `Your Assistant couldn't connect to Staples. ${retryDetail}`
             : code.startsWith("workspace_git_scan_")
             ? `Workspace setup failed before the agent started. ${retryDetail}`
             : `The run failed (${code}). ${retryDetail}`;

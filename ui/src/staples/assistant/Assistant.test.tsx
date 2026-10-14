@@ -192,15 +192,15 @@ describe("Assistant page and dock", () => {
     mocks.assistantGet.mockResolvedValue({ agent: ASSISTANT, conversationIssueId: null, setup: { state: "ready", adapterType: "claude_local" } });
     await render(<AssistantPage />);
     expect(container.querySelector('[data-testid="assistant-opening"]')?.textContent)
-      .toContain("Hi — I'm your Assistant. What do you want to build?");
+      .toContain("Hi, I'm your Assistant. What business are you starting, or what do you want help with?");
     const chips = [...container.querySelectorAll<HTMLButtonElement>('[data-testid="assistant-opening"] button')];
     expect(chips.map((chip) => chip.textContent)).toEqual([
-      "An assistant for my inbox",
-      "A weekly newsletter",
-      "A landing page for my idea",
+      "A dog-walking service in my neighborhood",
+      "An online shop for my handmade candles",
+      "A weekly newsletter for my customers",
     ]);
     await act(async () => chips[1]!.click());
-    expect(mocks.fill).toHaveBeenCalledWith("A weekly newsletter");
+    expect(mocks.fill).toHaveBeenCalledWith("An online shop for my handmade candles");
     // Nothing is sent: the bubble is not a message.
     expect(mocks.chatEnsure).not.toHaveBeenCalled();
   });

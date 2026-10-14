@@ -890,6 +890,27 @@ export function paperclipApiBaseUrl(): string {
   return configured;
 }
 
+/**
+ * This process's own listen address. Adapters whose tools proxy runs inside
+ * this server (claude_managed) must call the instance they run in, never the
+ * public URL, which may name a reverse proxy or another instance.
+ */
+export function hostLocalApiBaseUrl(): string | null {
+  const port = readNonEmptyString(process.env.PAPERCLIP_LISTEN_PORT);
+  if (!port) return null;
+  const rawHost = readNonEmptyString(process.env.PAPERCLIP_LISTEN_HOST) ?? "";
+  const host = rawHost === "" || rawHost === "0.0.0.0" || rawHost === "::" ? "127.0.0.1" : rawHost;
+  const formatted = host.includes(":") ? `[${host}]` : host;
+  return `http://${formatted}:${port}`;
+}
+
+/** Base URL an adapter's runtime tool servers are delivered on. */
+export function toolsApiBaseUrlFor(adapterType: string): string | null {
+  const configured = configuredPaperclipApiBaseUrl();
+  if (adapterType === "claude_managed") return hostLocalApiBaseUrl() ?? configured;
+  return configured;
+}
+
 export async function revokeHeartbeatRunGatewayTokens(input: {
   db: Db;
   companyId: string;

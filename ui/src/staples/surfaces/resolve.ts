@@ -21,7 +21,7 @@ export function resolveSurface(surface: SurfaceDefinition, ctx: SurfaceContext, 
   if (!available) return { ...base, visible: false, source: "unavailable" };
   if (prefs.hidden.includes(surface.id)) return { ...base, visible: false, source: "hidden" };
   const shouldPersistReveal = growthFires && !revealed;
-  const isNew = (revealed || growthFires) && surface.tier !== "core" && !(surface.id in prefs.seen);
+  const isNew = (revealed || growthFires) && surface.tier !== "core" && !surface.quietReveal && !(surface.id in prefs.seen);
   if (prefs.pinned.includes(surface.id)) return { ...base, visible: true, shouldPersistReveal, source: "pinned" };
   if (prefs.showEverything) return { ...base, visible: true, shouldPersistReveal, source: "everything" };
   if (surface.tier === "core") return { ...base, visible: true, source: "core" };

@@ -52,6 +52,8 @@ export interface SurfaceDefinition {
   available?: (ctx: SurfaceContext) => boolean;
   revealWhen?: (ctx: SurfaceContext) => boolean;
   reason?: string;
+  /** Reveal by rule but never show the "new" badge (seeded by templates, not by the person). */
+  quietReveal?: boolean;
 }
 
 export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
@@ -72,6 +74,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     icon: LayoutDashboard,
     group: "top",
     tier: "grows",
+    quietReveal: true,
     revealWhen: (ctx) => ctx.signals !== null && ctx.signals.agents >= 3,
     reason: "Dashboard appeared because your company has several agents.",
   },
@@ -126,6 +129,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     icon: MessageCircle,
     group: "work",
     tier: "grows",
+    quietReveal: true,
     revealWhen: (ctx) => ctx.signals !== null && ctx.signals.agents >= 2,
     reason: "Chat appeared because you have more than one agent.",
   },
@@ -146,6 +150,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     icon: FolderOpen,
     group: "work",
     tier: "grows",
+    quietReveal: true,
     revealWhen: (ctx) => ctx.signals !== null && (ctx.signals.projects >= 2 || ctx.signals.tasks >= 25),
     reason: "Projects appeared because you have enough work to group.",
   },
@@ -157,6 +162,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     icon: Repeat,
     group: "work",
     tier: "grows",
+    quietReveal: true,
     revealWhen: (ctx) => ctx.signals !== null && ctx.signals.routines >= 1,
     reason: "Routines appeared because you created a recurring job.",
   },
@@ -179,6 +185,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     icon: Target,
     group: "work",
     tier: "grows",
+    quietReveal: true,
     revealWhen: (ctx) => ctx.signals !== null && ctx.signals.goals >= 2,
     reason: "Goals appeared because you have more than one goal.",
   },
@@ -228,9 +235,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     matchRoots: ["skills"],
     icon: Boxes,
     group: "org",
-    tier: "grows",
-    revealWhen: (ctx) => ctx.signals !== null && ctx.signals.extraSkills >= 1,
-    reason: "Skills appeared because your company added its own skills.",
+    tier: "advanced",
   },
   {
     id: "nav.connectors",
@@ -252,6 +257,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     icon: BookOpen,
     group: "org",
     tier: "grows",
+    quietReveal: true,
     revealWhen: (ctx) => ctx.signals !== null && ctx.signals.hasBrief,
     reason: "Company brief appeared because your company wrote one.",
   },
@@ -266,6 +272,7 @@ export const SURFACE_REGISTRY: readonly SurfaceDefinition[] = [
     icon: DollarSign,
     group: "org",
     tier: "grows",
+    quietReveal: true,
     revealWhen: (ctx) => ctx.signals !== null && (ctx.signals.budgetSet || ctx.signals.monthSpendCents > 0),
     reason: "Costs appeared because spending started.",
   },

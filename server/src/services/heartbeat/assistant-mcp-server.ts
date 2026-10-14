@@ -1,5 +1,8 @@
-import type { Db } from "@paperclipai/db";
+import { eq } from "drizzle-orm";
+import { agents, type Db } from "@paperclipai/db";
+import { ASSISTANT_BUILT_IN_AGENT_KEY } from "@paperclipai/shared";
 import { logger } from "../../middleware/logger.js";
+import { readBuiltInAgentMarker } from "../../lib/built-in-agent-metadata.js";
 import { isProvisionedAssistant } from "../assistant-identity.js";
 
 export const ASSISTANT_TOOLS_CONNECTION_ID = "staples-assistant-tools";
@@ -15,7 +18,14 @@ export async function assistantRuntimeMcpServer(db: Pick<Db, "select">, input: {
   apiBaseUrl: string | null;
   runId?: string | null;
 }) {
-  if (!(await isProvisionedAssistant(db, input.agent))) return null;
+  if (!(await isProvisionedAssistant(db, input.agent))) {
+    const [row] = await db.select({ metadata: agents.metadata }).from(agents).where(eq(agents.id, input.agent.id));
+    if (readBuiltInAgentMarker(row?.metadata)?.key === ASSISTANT_BUILT_IN_AGENT_KEY) {
+      logger.warn({ companyId: input.agent.companyId, agentId: input.agent.id, runId: input.runId ?? null },
+        "Agent carries the Assistant marker but is not the company's provisioned Assistant: no Assistant tools");
+    }
+    return null;
+  }
   if (!input.authToken || !input.apiBaseUrl) {
     // The Assistant without its tools can only talk; make that diagnosable.
     logger.warn({
@@ -29,5 +39,7 @@ export async function assistantRuntimeMcpServer(db: Pick<Db, "select">, input: {
     url: `${input.apiBaseUrl.replace(/\/+$/, "")}/api/mcp/assistant-tools`,
     token: input.authToken,
     connectionId: ASSISTANT_TOOLS_CONNECTION_ID,
+    // The Assistant without its tools improvises; a run must fail instead.
+    required: true,
   };
 }
