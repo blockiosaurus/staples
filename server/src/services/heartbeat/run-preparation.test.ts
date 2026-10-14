@@ -1,7 +1,7 @@
 import type { Db } from "@paperclipai/db";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildPaperclipRuntimeMcpServers as legacyBuildRuntimeMcpServers,
   buildPaperclipWakePayload as legacyBuildWakePayload,
@@ -13,7 +13,9 @@ import {
   buildPaperclipWakePayload,
   ConfigurationIncompleteFailure,
   createHeartbeatRunPreparation,
+  hostLocalApiBaseUrl,
   resolveExecutionRunAdapterConfig,
+  toolsApiBaseUrlFor,
 } from "./run-preparation.js";
 
 // Existing integration suites exercise the real database and dispatch path.
@@ -137,5 +139,40 @@ describe("heartbeat run preparation module", () => {
     })).rejects.toBeInstanceOf(LegacyConfigurationIncompleteFailure);
     expect(secretsSvc.resolveAdapterConfigForRuntime).not.toHaveBeenCalled();
     expect(secretsSvc.resolveEnvBindings).not.toHaveBeenCalled();
+  });
+});
+
+describe("hostLocalApiBaseUrl", () => {
+  const saved = { ...process.env };
+  afterEach(() => { process.env = { ...saved }; });
+
+  it("uses loopback for an unspecified bind host", () => {
+    process.env.PAPERCLIP_LISTEN_HOST = "0.0.0.0";
+    process.env.PAPERCLIP_LISTEN_PORT = "3100";
+    expect(hostLocalApiBaseUrl()).toBe("http://127.0.0.1:3100");
+  });
+  it("brackets an IPv6 bind host and keeps a named one", () => {
+    process.env.PAPERCLIP_LISTEN_PORT = "3100";
+    process.env.PAPERCLIP_LISTEN_HOST = "::1";
+    expect(hostLocalApiBaseUrl()).toBe("http://[::1]:3100");
+    process.env.PAPERCLIP_LISTEN_HOST = "localhost";
+    expect(hostLocalApiBaseUrl()).toBe("http://localhost:3100");
+  });
+  it("is null without a listen port", () => {
+    delete process.env.PAPERCLIP_LISTEN_PORT;
+    expect(hostLocalApiBaseUrl()).toBeNull();
+  });
+});
+
+describe("toolsApiBaseUrlFor", () => {
+  const saved = { ...process.env };
+  afterEach(() => { process.env = { ...saved }; });
+
+  it("prefers loopback for claude_managed and the configured URL otherwise", () => {
+    process.env.PAPERCLIP_LISTEN_HOST = "0.0.0.0";
+    process.env.PAPERCLIP_LISTEN_PORT = "3100";
+    process.env.PAPERCLIP_API_URL = "https://example.test";
+    expect(toolsApiBaseUrlFor("claude_managed")).toBe("http://127.0.0.1:3100");
+    expect(toolsApiBaseUrlFor("claude_local")).toBe("https://example.test");
   });
 });

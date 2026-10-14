@@ -4,13 +4,12 @@ import { remainingHardStopCentsForRun } from "../budgets.js";
 import { isHeartbeatRunTerminalStatus } from "./run-lifecycle.js";
 import {
   PAPERCLIP_WAKE_PAYLOAD_KEY,
-  configuredPaperclipApiBaseUrl,
   buildPaperclipRuntimeMcpServers,
   createAdapterRuntimeToolAccess,
-  paperclipApiBaseUrl,
   createAdapterRuntimeMcpAccess,
   createManagedMcpRunConfig,
   revokeHeartbeatRunGatewayTokens,
+  toolsApiBaseUrlFor,
 } from "./run-preparation.js";
 import {
   WorkspaceValidationFailure,
@@ -771,18 +770,19 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
           connectionId: "paperclip-runtime-tools",
         });
       }
+      const toolsApiBaseUrl = toolsApiBaseUrlFor(agent.adapterType);
       const assistantServer = await assistantRuntimeMcpServer(db, {
-        agent, authToken, apiBaseUrl: configuredPaperclipApiBaseUrl() ? paperclipApiBaseUrl() : null, runId: run.id,
+        agent, authToken, apiBaseUrl: toolsApiBaseUrl, runId: run.id,
       });
       // Project tools write as the agent itself; the Assistant's run token is
       // refused for REST writes (auth middleware), so it does not get them.
-      if (authToken && configuredPaperclipApiBaseUrl() && issueRef && !assistantServer) {
-        runtimeMcpServers.unshift({ name: "Paperclip projects", url: `${paperclipApiBaseUrl()}/api/mcp/project-tools`,
+      if (authToken && toolsApiBaseUrl && issueRef && !assistantServer) {
+        runtimeMcpServers.unshift({ name: "Paperclip projects", url: `${toolsApiBaseUrl}/api/mcp/project-tools`,
           token: authToken, connectionId: "paperclip-project-tools" });
       }
       if (assistantServer) runtimeMcpServers.unshift(assistantServer);
       const paperclipServer = paperclipRuntimeMcpServer({
-        adapterType: agent.adapterType, authToken, apiBaseUrl: configuredPaperclipApiBaseUrl() ? paperclipApiBaseUrl() : null,
+        adapterType: agent.adapterType, authToken, apiBaseUrl: toolsApiBaseUrl,
       });
       if (paperclipServer) runtimeMcpServers.push(paperclipServer);
       else if (agent.adapterType === "claude_managed") {
