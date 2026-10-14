@@ -352,7 +352,7 @@ function assistantCapabilities(db: Db): Capability[] {
     {
       name: ASK_QUESTIONS_TOOL, write: true,
       description: [
-        "Ask the person up to 8 questions as a card in this conversation. Use it instead of asking in plain text. Ask only the questions that can be answered right now, in rounds, and number the ids in order (q1, q2, ...).",
+        "Ask the person up to 4 questions as a card in this conversation. Use it instead of asking in plain text. Ask only the questions that can be answered right now, in rounds, and number the ids in order (q1, q2, ...).",
         "Every single_select or multi_select question must mark the option you recommend with recommended: true (exactly one for single_select), worded so that accepting it is a yes. Use answerMode text for open answers, and customAnswer { enabled: true } to allow an other answer.",
         "After asking, end your turn: you are woken with the answers when the person submits. Do not guess the answers.",
       ].join(" "),
