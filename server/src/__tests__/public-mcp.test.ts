@@ -463,6 +463,12 @@ describe.skipIf(!support.supported)("public MCP OAuth and tool boundary", () => 
       actor = candidate;
       expect((await request(app).get("/api/mcp/setup")).status).toBe(401);
     }
+    // A local trusted board has no assistant grants: empty list, not an error.
+    actor = { type: "board", source: "local_implicit", userId: "board" };
+    const local = await request(app).get("/api/mcp/connections");
+    expect(local.status).toBe(200);
+    expect(local.body).toEqual([]);
+    expect((await request(app).get("/api/mcp/setup")).status).toBe(401);
     for (const source of ["session", "cloud_tenant"] as const) {
       actor = { type: "board", source, userId: randomUUID() };
       expect((await request(app).get("/api/mcp/setup")).body).toMatchObject({ enabled: true, serverUrl: config.resource });

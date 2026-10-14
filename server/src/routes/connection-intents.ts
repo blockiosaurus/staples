@@ -179,6 +179,13 @@ export function connectionIntentBoardRoutes(db: Db, heartbeat: Heartbeat) {
     await connectionIntentDeliveryService(db, heartbeat).tryDeliver(input.loaded.interaction.id);
   }
 
+  router.get("/companies/:companyId/connection-requests/pending", async (req, res) => {
+    assertBoard(req);
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json({ requests: await service.listPendingForCompany(companyId) });
+  });
+
   router.get("/connection-intents/:interactionId/setup-options", async (req, res) => {
     const { loaded } = await addressedIntent(req);
     res.json(await service.setupOptions(req.params.interactionId as string, {

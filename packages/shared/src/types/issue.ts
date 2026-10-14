@@ -1775,6 +1775,17 @@ export interface ConnectionIntentInteraction extends IssueThreadInteractionBase 
   result?: ConnectionIntentResult | null;
 }
 
+export interface PendingConnectionRequest {
+  interactionId: string;
+  issueId: string;
+  issueIdentifier: string | null;
+  serviceSlug: string;
+  serviceName: string;
+  requestingAgentId: string;
+  requestingAgentName: string;
+  createdAt: string;
+}
+
 export type IssueThreadInteraction =
   | SuggestTasksInteraction
   | AskUserQuestionsInteraction

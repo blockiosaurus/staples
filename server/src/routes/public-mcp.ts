@@ -252,7 +252,12 @@ export function publicMcpManagementRoutes(oauth: PublicMcpOAuth, agentOAuth?: Pu
     enabled: await oauth.isEnabled(), serverUrl: oauth.config.resource,
     invitationUrl: mcpSetupUrl(oauth.config.resource), invitation: mcpInvitation(oauth.config.resource),
   }));
-  router.get("/mcp/connections", realUser, async (req, res) => res.json(await oauth.listConnections(req.actor.userId!)));
+  // A local trusted board has no sign-in and therefore no assistant grants:
+  // report "none" instead of an error so the Connectors page stays calm.
+  router.get("/mcp/connections", (req, res, next) => {
+    if (req.actor.type === "board" && req.actor.source === "local_implicit") { res.json([]); return; }
+    next();
+  }, realUser, async (req, res) => res.json(await oauth.listConnections(req.actor.userId!)));
   router.delete("/mcp/connections/:id", realUser, sameOrigin, async (req, res) => {
     if (!z.uuid().safeParse(req.params.id).success) throw new McpOAuthError("invalid_request", "Invalid connection ID.");
     await oauth.revokeConnection(String(req.params.id), req.actor.userId!); res.status(204).end();

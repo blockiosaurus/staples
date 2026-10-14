@@ -1,6 +1,8 @@
 import { subscribeDeliveryWork } from "../services/delivery-work-notifications.js";
 import { DELIVERY_QUEUES } from "../services/delivery-work-notifications.js";
 import { randomUUID } from "node:crypto";
+import express from "express";
+import request from "supertest";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -40,6 +42,8 @@ import { materializeNativeInteractionResponses } from "../services/native-runtim
 import { toolAccessService } from "../services/tool-access.js";
 import { toolAccessPolicyService } from "../services/tool-access-policy.js";
 import { connectionIntentService } from "../services/connection-intents.js";
+import { connectionIntentBoardRoutes } from "../routes/connection-intents.js";
+import { errorHandler } from "../middleware/index.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 import {
   getEmbeddedPostgresTestSupport,
@@ -1004,6 +1008,39 @@ describeEmbeddedPostgres("connectionIntentService", () => {
     await db.update(issues).set({ assigneeAgentId: other.otherAgent.id }).where(eq(issues.id, other.issue.id));
     await expect(other.service.complete(pending.interactionId!, other.connection.id, "grant-user", { canManageOrganizationGrant: true })).rejects.toThrow();
     expect((await toolAccessService(db).getEffectiveProfilesForAgent(other.company.id, other.agent.id)).allowedTools).toEqual([]);
+  });
+
+  it("lists open connection requests for a company, newest first, without resolved ones", async () => {
+    const f = await accessFixture();
+    const service = f.service;
+    const claims = f.claims;
+    const open = await service.request(claims, "linear");
+    const done = await service.request(claims, "airtable");
+    await db.update(issueThreadInteractions).set({ status: "accepted" }).where(eq(issueThreadInteractions.id, done.interactionId!));
+    const pending = await service.listPendingForCompany(claims.company_id);
+    const row = pending.find((item) => item.interactionId === open.interactionId);
+    expect(row).toMatchObject({ requestingAgentName: "Default agent", requestingAgentId: claims.sub, issueId: f.issue.id });
+    expect(row?.serviceSlug).toBeTruthy();
+    expect(row?.serviceName).toBeTruthy();
+    expect(row?.issueId).toBeTruthy();
+    expect(pending.some((item) => item.interactionId === done.interactionId)).toBe(false);
+    expect(await service.listPendingForCompany(randomUUID())).toEqual([]);
+  });
+
+  it("serves pending connection requests to a local board over HTTP", async () => {
+    const f = await accessFixture();
+    const claims = f.claims;
+    const open = await f.service.request(claims, "linear");
+    const app = express();
+    app.use((req, _res, next) => {
+      req.actor = { type: "board", source: "local_implicit", userId: "local-board", isInstanceAdmin: true } as typeof req.actor;
+      next();
+    });
+    app.use("/api", connectionIntentBoardRoutes(db, {} as Parameters<typeof connectionIntentBoardRoutes>[1]));
+    app.use(errorHandler);
+    const res = await request(app).get(`/api/companies/${claims.company_id}/connection-requests/pending`);
+    expect(res.status).toBe(200);
+    expect(res.body.requests.some((item: { interactionId: string }) => item.interactionId === open.interactionId)).toBe(true);
   });
 
 });
