@@ -11,7 +11,7 @@ import {
   type TurnScript,
 } from "../testing/fake-managed-agents-server.js";
 import { startFakeMcpServer, type FakeMcpServer } from "../testing/fake-mcp-server.js";
-import { execute, HOSTED_KEY_WITHHELD_MESSAGE, isOutOfCreditError, OUT_OF_CREDIT_ERROR_CODE, OUT_OF_CREDIT_MESSAGE, HOSTED_STAPLES_API_NOTE, HOSTED_STAPLES_API_READ_ONLY_NOTE, resolveApiKey, resolveNetworking } from "./execute.js";
+import { execute, REQUIRED_TOOLS_UNAVAILABLE_MESSAGE, HOSTED_KEY_WITHHELD_MESSAGE, isOutOfCreditError, OUT_OF_CREDIT_ERROR_CODE, OUT_OF_CREDIT_MESSAGE, HOSTED_STAPLES_API_NOTE, HOSTED_STAPLES_API_READ_ONLY_NOTE, resolveApiKey, resolveNetworking } from "./execute.js";
 import { sessionCodec } from "./session.js";
 import { DEFAULT_MANAGED_AGENTS_BASE_URL } from "../types.js";
 import { testEnvironment } from "./test-environment.js";
@@ -242,11 +242,13 @@ describe("claude_managed execute", () => {
   it("fails the run before any model call when a required tool server rejects the run token", async () => {
     mcp = await startFakeMcpServer({ token: "a-different-token", tools: [] });
     fake.queueTurns(turn("one", 1));
-    const result = await execute(harness({
+    const h = harness({
       servers: [{ name: "Staples assistant", url: mcp.url, token: RUN_TOKEN, connectionId: "staples-assistant-tools", required: true }],
-    }).ctx);
+    });
+    const result = await execute(h.ctx);
     expect(result.errorCode).toBe("claude_managed_tools_failed");
-    expect(result.errorMessage).toMatch(/Staples assistant tools could not be reached/);
+    expect(result.errorMessage).toBe(REQUIRED_TOOLS_UNAVAILABLE_MESSAGE);
+    expect(h.logs.join("")).toContain("rejected the run token (HTTP 401)");
     expect(requestsMatching("POST", /^\/v1\/agents$/)).toHaveLength(0);
   });
 

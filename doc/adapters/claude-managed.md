@@ -199,6 +199,12 @@ without its own key may use hosted inference, always under the caps above.
   the project-tools and runtime-tools MCP servers.
 - **Because tools are called from the host,** `PAPERCLIP_API_URL` does not need
   to be reachable from the internet for this adapter.
+- **Tools are reached over loopback.** Runtime tool servers for `claude_managed`
+  runs use this process's own listen address (`PAPERCLIP_LISTEN_HOST` and
+  `PAPERCLIP_LISTEN_PORT`), not `PAPERCLIP_API_URL`, so a public URL that names a
+  proxy or another instance cannot break them. The Assistant's tools server is
+  required: if it rejects the run, the run fails with a plain message instead of
+  running without tools.
 - **The Anthropic API key** is resolved through the normal secrets path, sent
   only to the configured API base URL, and never logged or returned. The
   hosted key (`STAPLES_HOSTED_ANTHROPIC_API_KEY`) is granted by the server per

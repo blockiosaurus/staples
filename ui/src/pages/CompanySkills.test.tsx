@@ -758,24 +758,19 @@ describe("SkillDetailPage settings", () => {
     expect(onFork).toHaveBeenCalledOnce();
   });
 
-  it("renders long source paths in full so they can wrap inside the sidebar", async () => {
+  it("never renders a managed-workspace source path in the default views", async () => {
     const v1 = makeVersion(1, "# Demo Skill");
-    const longSourcePath = "/srv/paperclip/home/paperclipai/paperclip/.agents/skills/prepare-pr/SKILL.md";
     const node = await renderSkillDetail([v1], {
       activeTab: "agents",
       detail: makeDetail(v1, {
-        sourcePath: longSourcePath,
+        sourcePath: "/Users/someone/.paperclip/instances/default/skills/c1",
         sourceLocator: null,
       }),
     });
 
-    const sourceValue = Array.from(node.querySelectorAll("div")).find((element) =>
-      element.textContent === longSourcePath,
-    );
-
-    expect(sourceValue).toBeTruthy();
-    expect(sourceValue?.className).toContain("[overflow-wrap:anywhere]");
-    expect(node.textContent).not.toContain("...");
+    expect(node.textContent).not.toContain("/Users/");
+    expect(node.textContent).not.toContain(".paperclip/instances");
+    expect(node.textContent).toContain("SourceLocal");
   });
 
   it("never renders a filesystem path as the source locator", async () => {

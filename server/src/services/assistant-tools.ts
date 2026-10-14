@@ -359,7 +359,7 @@ function assistantCapabilities(db: Db): Capability[] {
       schema: z.object({
         ...companyField,
         title: z.string().trim().max(240).optional().describe("Short heading for the card."),
-        questions: z.array(paperclipQuestionSchema).min(1).max(8),
+        questions: z.array(paperclipQuestionSchema).min(1).max(4),
       }).strict(),
       // Dispatched in createAssistantTools: it needs the run's conversation, not just the principal.
       run: async () => { throw new McpCapabilityError("Tool is unavailable to the Assistant."); },

@@ -42,7 +42,7 @@ export function WeeklyUpdateCard({
           <X aria-hidden="true" />
         </Button>
       </div>
-      {update.excerpt ? <p className="line-clamp-3 whitespace-pre-line text-sm text-muted-foreground">{update.excerpt}</p> : null}
+      {update.excerpt ? <p className="line-clamp-7 whitespace-pre-line text-sm text-muted-foreground">{update.excerpt}</p> : null}
       {error ? (
         <p role="alert" className="text-xs text-destructive">
           {error}
