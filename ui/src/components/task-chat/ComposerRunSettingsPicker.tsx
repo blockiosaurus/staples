@@ -54,9 +54,9 @@ function harnessLabel(agent: Agent | undefined): string {
 
 function unavailableModelReason(agent: Agent | undefined): string {
   if (!agent) return "Choose an agent to select its model and effort.";
-  if (agent?.adapterType === "process") return "This agent runs a command. This agent has no model setting.";
+  if (agent?.adapterType === "process") return "This agent runs a command and has no model setting.";
   if (agent?.adapterType === "http") return "This agent calls an HTTP endpoint. The destination service chooses its model.";
-  return "This gateway chooses its model remotely; There is no per-task model setting for it.";
+  return "This gateway chooses its model remotely, so there is no per-task model setting for it.";
 }
 
 function AnimatedBody({ children }: { children: ReactNode }) {

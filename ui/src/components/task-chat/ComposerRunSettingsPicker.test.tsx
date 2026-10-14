@@ -254,8 +254,10 @@ describe("composer assignee picker", () => {
     await click("Select model and effort");
     await click("Choose exact model");
     const choices = [...document.querySelectorAll<HTMLButtonElement>('button[role="option"]')]
-      .map((item) => item.textContent ?? "")
-      .filter((text) => !text.startsWith("Use agent default"));
+      .map((item) => item.textContent ?? "");
+    expect(choices[0]).toContain("Use agent default");
+    expect(choices[0]).toContain("GPT-6 Sol");
+    choices.shift();
     expect(choices.some((item) => item.includes("Private Codex"))).toBe(true);
     expect(choices.some((item) => item.includes("GPT-6 Sol"))).toBe(false);
   });

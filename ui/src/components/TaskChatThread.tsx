@@ -5,6 +5,7 @@ import {
 } from "@/lib/issue-detail-performance";
 import { hasWorkspaceRestoreFailure } from "@paperclipai/shared";
 import { workspaceRestoreMarkerDetail } from "@/lib/workspace-restore-marker";
+import { formatModelName } from "@/lib/model-utils";
 import { credentialAccessNotice } from "@/lib/credential-access-notice";
 import type { ActivityEvent, IssueQueuedCommentQueue, TaskBrowser } from "@paperclipai/shared";
 import { useProjectCreatedItems } from "@/hooks/useProjectCreatedItems";
@@ -1700,6 +1701,11 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                 : source.status === "timed_out"
                   ? "Run timed out"
                   : "Run failed";
+        // The provider message names the rejected model in quotes; keep it readable.
+        const rejectedModelId =
+          code === "native_provider_model_rejected"
+            ? meta?.error?.match(/['"`]([\w./:-]+)['"`]/)?.[1]
+            : undefined;
         const responseBoundary = sourceHasNativeResponse
           ? " after returning a final response"
           : "";
@@ -1711,7 +1717,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
               : code === "native_provider_approval_required"
                 ? "This operation requires approval, but this runner has no interactive approval handler. Review the operation and update the agent's permission setting before retrying."
                 : code === "native_provider_model_rejected"
-                ? "That model isn't available. Pick another or use the default."
+                ? `That model isn't available. Pick another or use the default.${rejectedModelId ? ` (${formatModelName(rejectedModelId)})` : ""}`
                 : code === "native_provider_usage_limit" &&
                     source.status === "failed"
                   ? "The AI service's usage limit was reached. Try again later."
@@ -1735,7 +1741,9 @@ export function TaskChatThread(props: TaskChatThreadProps) {
             tone: source.status === "cancelled" ? "neutral" : "error",
             label,
             detail,
-            errorCode: code,
+            errorCode: code === "native_provider_model_rejected" && !rejectedModelId && meta?.error
+              ? `${code}: ${meta.error}`
+              : code,
             retryable: code !== "native_session_cleanup_quarantined",
             ...(credentialAccess ? { credentialAccess, retryable: false } : {}),
             collapsible: true,

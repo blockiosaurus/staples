@@ -2008,6 +2008,8 @@ describe("TaskChatThread runtime transcript selection", () => {
     flushSync(() => marker!.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click());
     expect(container.textContent).toContain("That model isn't available. Pick another or use the default.");
     expect(container.textContent).not.toContain("native_provider_model_rejected");
+    if (error.includes("'gpt-6.1-sol'")) expect(container.textContent).toContain("(GPT-6.1 Sol)");
+    else expect(container.querySelector(`[title*="${error}"]`)).not.toBeNull();
     expect(container.textContent).not.toContain("after returning a final response");
   });
 

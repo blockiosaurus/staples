@@ -32,6 +32,15 @@ describe("TaskChatMarker", () => {
     vi.useRealTimers();
   });
 
+  it("keeps the error code reachable as a title in both marker layouts", () => {
+    const base = { id: "run-2:failure", kind: "marker", variant: "interrupted", label: "Run failed", detail: "The run failed.", errorCode: "native_runner_process_exited" } as const;
+    flushSync(() => root!.render(<ThemeProvider><TaskChatMarker item={{ ...base, collapsible: true }} /></ThemeProvider>));
+    flushSync(() => container.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click());
+    expect(container.querySelector('[data-testid="task-chat-collapsible-marker-details"] > div')?.getAttribute("title")).toBe("native_runner_process_exited");
+    flushSync(() => root!.render(<ThemeProvider><TaskChatMarker item={{ ...base }} /></ThemeProvider>));
+    expect(container.querySelector('[role="separator"]')?.getAttribute("title")).toBe("native_runner_process_exited");
+  });
+
   it("renders a failed run as a timestamped disclosure without divider rules", () => {
     flushSync(() =>
       root!.render(
