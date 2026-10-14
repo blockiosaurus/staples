@@ -29,6 +29,18 @@ describe("successful run handoff UI helpers", () => {
     expect(isSuccessfulRunHandoffComment("Ordinary issue comment")).toBe(false);
   });
 
+  it("recognises the legacy Staples wording and the Staples wording", () => {
+    const required = ["Staples", "Staples"].map((n) => `${n} needs a disposition before this issue can continue.`);
+    const exhausted = ["Staples", "Staples"].map(
+      (n) => `${n} could not resolve this issue's missing disposition automatically. The source assignment is unchanged and a board decision is required.`,
+    );
+    for (const text of required) expect(isSuccessfulRunHandoffComment(text)).toBe(true);
+    for (const text of exhausted) {
+      expect(isSuccessfulRunHandoffComment(text)).toBe(true);
+      expect(isSuccessfulRunHandoffEscalationComment(text)).toBe(true);
+    }
+  });
+
   it("returns shared tones for required, escalated, and neutral activity", () => {
     expect(successfulRunHandoffActivityTone(SUCCESSFUL_RUN_HANDOFF_REQUIRED_ACTION).className).toContain("amber");
     expect(successfulRunHandoffActivityTone(SUCCESSFUL_RUN_HANDOFF_ESCALATED_ACTION).className).toContain("red");

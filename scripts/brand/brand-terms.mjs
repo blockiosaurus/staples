@@ -34,7 +34,8 @@ function keepAt(text, index) {
 /** Rewrites one piece of person-facing text. "Paperclip's" becomes "Staples'". */
 export function rewriteText(text) {
   const swapped = text.replace(WORD, (match, offset, whole) => (keepAt(whole, offset) ? match : NEW_NAME));
-  return swapped.replace(/Staples's\b/g, "Staples'");
+  // "Staples's" reads wrong: drop the extra s for straight, curly and escaped apostrophes.
+  return swapped.replace(/Staples(\\?['\u2019])s\b/g, "Staples$1");
 }
 
 function mentionsInText(text, baseOffset) {

@@ -50,7 +50,7 @@ export function RailwayAccessPanel({ connection, grants }: { connection: ToolCon
         <div className="space-y-2">
           <Label htmlFor={`${id}-public`}>Public key</Label>
           <Textarea id={`${id}-public`} readOnly value={setup.publicKey} className="font-mono text-xs" />
-          <p className="text-sm text-muted-foreground">Register this public key in the Railway account used by this authorization. The private key stays in Staples’s vault. <a className="underline" href="https://docs.railway.com/cli/ssh#manage-ssh-keys" target="_blank" rel="noreferrer">Railway key setup</a></p>
+          <p className="text-sm text-muted-foreground">Register this public key in the Railway account used by this authorization. The private key stays in Staples’ vault. <a className="underline" href="https://docs.railway.com/cli/ssh#manage-ssh-keys" target="_blank" rel="noreferrer">Railway key setup</a></p>
         </div>
         <div className="space-y-2">
           <Label htmlFor={`${id}-host`}>Verified Railway host key</Label>

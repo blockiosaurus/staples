@@ -39,3 +39,14 @@ test("rewrites text inside exported declarations but not re-export sources", () 
   assert.match(out, /L = "Staples"/);
   assert.match(out, /@paperclipai\/shared/);
 });
+
+test("possessives: straight, curly and escaped apostrophes", () => {
+  assert.equal(rewriteText("Paperclip’s board"), "Staples’ board");
+  assert.equal(rewriteText("Paperclip's board"), "Staples' board");
+  assert.equal(rewriteText("Paperclip\\'s board"), "Staples\\' board");
+});
+
+test("template head, middle and tail are all rewritten", () => {
+  const out = rewriteBrand("const a = `Paperclip ${x} for Paperclip ${y} by Paperclip`;", ".ts");
+  assert.equal(out, "const a = `Staples ${x} for Staples ${y} by Staples`;");
+});

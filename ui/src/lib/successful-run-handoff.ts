@@ -67,9 +67,15 @@ export function successfulRunHandoffFromActivity(event: ActivityEvent): Successf
   };
 }
 
+// Comments stored before the rebrand keep the old product name forever.
+const LEGACY_REQUIRED_NOTICE_BODY = "Staples needs a disposition before this issue can continue.";
+const LEGACY_EXHAUSTED_NOTICE_BODY =
+  "Staples could not resolve this issue's missing disposition automatically. The source assignment is unchanged and a board decision is required.";
+
 export function isSuccessfulRunHandoffComment(text: string) {
   const trimmed = text.trim();
   return trimmed === SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY
+    || trimmed === LEGACY_REQUIRED_NOTICE_BODY
     || /^##\s+(This issue still needs a next step|Run finished without a next step|Successful run missing issue disposition)/i.test(trimmed)
     || isSuccessfulRunHandoffEscalationComment(trimmed);
 }
@@ -77,6 +83,7 @@ export function isSuccessfulRunHandoffComment(text: string) {
 export function isSuccessfulRunHandoffEscalationComment(text: string) {
   const trimmed = text.trim();
   return trimmed === SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY
+    || trimmed === LEGACY_EXHAUSTED_NOTICE_BODY
     || /^(?:Paperclip|Staples) exhausted the bounded successful-run handoff correction\b/i.test(trimmed);
 }
 
