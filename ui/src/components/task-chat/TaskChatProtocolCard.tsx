@@ -626,7 +626,7 @@ function RuntimeQuestionHistory({
           ))}
           <p className="text-xs text-muted-foreground">
             {item.status === "resolved"
-              ? "Answer details were not recorded by this older runtime."
+              ? "Details weren't saved for this older request."
               : `No answers were submitted; this request was ${item.status}.`}
           </p>
         </div>
@@ -671,7 +671,7 @@ function RuntimeQuestionReceipt({
       <div className="pb-3 pl-7 pr-1">
         <div className="mb-3">
           <p className="text-sm font-medium text-foreground">
-            {item.questionSet?.title ?? "Runtime input"}
+            {item.questionSet?.title ?? "Input needed"}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">{item.prompt}</p>
         </div>
@@ -699,8 +699,8 @@ function RuntimeRequestCard({
   const title =
     item.questionSet?.title ??
     (item.requestType === "permission"
-      ? "Runtime permission"
-      : "Runtime input");
+      ? "Permission needed"
+      : "Input needed");
   const fields =
     item.fields.length > 0
       ? item.fields
@@ -740,7 +740,7 @@ function RuntimeRequestCard({
       setError(
         cause instanceof Error
           ? cause.message
-          : "The runtime request could not be resolved.",
+          : "That request couldn't be completed.",
       );
     }
   };
@@ -899,7 +899,7 @@ function RuntimeRequestCard({
       ) : null}
       {item.status === "pending" && !onDecision ? (
         <p className="mt-2 text-xs text-muted-foreground">
-          Resolve this request in the active runtime session.
+          Answer this request in the conversation where it started.
         </p>
       ) : null}
       {error ? (

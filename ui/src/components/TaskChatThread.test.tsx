@@ -1818,7 +1818,7 @@ describe("TaskChatThread runtime transcript selection", () => {
       '[data-testid="task-chat-collapsible-marker-details"]',
     );
     expect(details?.textContent).toContain(
-      "The model provider has reached its current usage limit. Try again after the limit resets.",
+      "The AI service's usage limit was reached. Try again later.",
     );
     expect(details?.textContent).not.toContain("native_provider_usage_limit");
     const retry = container.querySelector<HTMLButtonElement>(
@@ -2006,8 +2006,8 @@ describe("TaskChatThread runtime transcript selection", () => {
     const marker = container.querySelector('[data-testid="task-chat-collapsible-marker"]');
     expect(marker?.textContent).toContain("Model unavailable");
     flushSync(() => marker!.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click());
-    expect(container.textContent).toContain(error);
-    expect(container.textContent).toContain("clear the task's model override, then retry");
+    expect(container.textContent).toContain("That model isn't available. Pick another or use the default.");
+    expect(container.textContent).not.toContain("native_provider_model_rejected");
     expect(container.textContent).not.toContain("after returning a final response");
   });
 
@@ -2164,7 +2164,7 @@ describe("TaskChatThread runtime transcript selection", () => {
       container.querySelector(
         '[data-testid="task-chat-collapsible-marker-details"]',
       )?.textContent,
-    ).toContain("The runner stopped (provider_transport_failed).");
+    ).toContain("The agent stopped unexpectedly. Try again.");
     expect(
       container.querySelector('[data-testid="task-chat-final-response"]'),
     ).toBeNull();

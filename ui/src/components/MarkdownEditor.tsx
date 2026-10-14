@@ -1520,8 +1520,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         <MDXEditor
           ref={setEditorRef}
           translation={(key, fallback, interpolations = {}) =>
-            key === "contentArea.editableMarkdown" && ariaLabel
-              ? ariaLabel
+            key === "contentArea.editableMarkdown"
+              ? (ariaLabel ?? placeholder ?? "Message")
               : Object.entries(interpolations).reduce(
                   (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
                   fallback,

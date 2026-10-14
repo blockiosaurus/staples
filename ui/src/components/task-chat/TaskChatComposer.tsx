@@ -309,11 +309,11 @@ function modePlaceholder(mode: IssueWorkMode, agentName: string, mobile: boolean
   }
   switch (mode) {
     case "planning":
-      return `Plan with ${agentName} — shapes the plan doc, no code changes…`;
+      return `Plan with ${agentName} — nothing changes yet…`;
     case "ask":
-      return `Ask ${agentName} a question — read-only, nothing runs…`;
+      return `Ask ${agentName} a question — it won't change anything…`;
     default:
-      return `Message ${agentName} — describe what you want done…`;
+      return `Message ${agentName}…`;
   }
 }
 
@@ -684,13 +684,13 @@ export function TaskChatComposer({
     name: "Goal",
     description:
       !runnerGoalCapability || runnerGoalCapability.verified === false
-        ? "Support will be verified when the session starts."
+        ? "Availability is checked when the agent starts."
         : "Pursue work across turns.",
     aliases: ["goal", "pursue", "continue"],
     disabled: goalUnavailable && runnerGoalCapability !== null,
     disabledReason:
       runnerGoalCapability?.reason ??
-      "Session goals are unsupported by this agent.",
+      "This agent can't work toward a goal.",
   };
 
   function updatePendingAssignee(value: string | null) {
@@ -960,7 +960,7 @@ export function TaskChatComposer({
       if (!onRunnerGoalCommand) {
         setActionError(
           runnerGoalCapability?.reason ??
-            "Session goals are unsupported by this agent.",
+            "This agent can't work toward a goal.",
         );
         return;
       }
@@ -970,7 +970,7 @@ export function TaskChatComposer({
       ) {
         setActionError(
           runnerGoalCapability.reason ??
-            "Session goals are unsupported by this agent.",
+            "This agent can't work toward a goal.",
         );
         return;
       }
@@ -980,7 +980,7 @@ export function TaskChatComposer({
         if (hasReassignment && goalCommand.command.action !== "focus") {
           const reassignment = parseAssigneeValue(assigneeValue);
           if (!reassignment?.assigneeAgentId || !onRunnerGoalReassign) {
-            setActionError("Select an agent before starting a session goal.");
+            setActionError("Pick an agent before setting a goal.");
             return;
           }
           await onRunnerGoalReassign(reassignment);
@@ -1372,12 +1372,13 @@ export function TaskChatComposer({
           {pause && conversationMode ? (
             <div className="space-y-2">
               <TaskChatPausedTakeover {...pause} hasDraft={Boolean(body.trim() || attachments.length)} />
-              <p className="text-xs text-muted-foreground">Send /new to start a fresh session and resume this conversation.</p>
+              <p className="text-xs text-muted-foreground">Send /new to start a fresh conversation.</p>
             </div>
           ) : null}
           <div data-testid="task-chat-composer-input">
             <MarkdownEditor
               ref={editorRef}
+              ariaLabel={`Message ${assigneeName}`}
               value={body}
               onChange={changeBody}
               placeholder={
@@ -1388,8 +1389,8 @@ export function TaskChatComposer({
               readOnly={disabled || !!uncertainSubmission || Boolean(creation && submitting)}
               mentions={mentions}
               actionCommands={creation ? [] : conversationMode ? [{
-                id: "action:new", kind: "action", command: "new", name: "New session",
-                description: "Start fresh context here, preserving conversation history.", aliases: ["new"],
+                id: "action:new", kind: "action", command: "new", name: "New conversation",
+                description: "Start fresh here, keeping the history above.", aliases: ["new"],
                 disabled,
               }] : [goalCommandOption]}
               onSubmit={() => void submit()}
