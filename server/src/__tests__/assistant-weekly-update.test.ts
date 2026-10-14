@@ -85,6 +85,10 @@ describe("weekly update helpers", () => {
     expect(weeklyUpdateExcerpt("Plain first line\n\nSecond line", null)).toBe("• Plain first line\n• Second line");
   });
 
+  it("truncates the excerpt when it exceeds max length", () => {
+    expect(weeklyUpdateExcerpt("word ".repeat(200), null, 20)).toHaveLength(20);
+  });
+
   it("ships the weekly update routine in the Assistant bundle with a bumped stock version", () => {
     const assistant = listBuiltInAgentDefinitions().find((definition) => definition.key === "assistant")!;
     expect(assistant.bundle?.stockVersion).toBe("2026-10-14a");
