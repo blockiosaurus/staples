@@ -75,12 +75,8 @@ vi.mock("@/lib/browserNavigation", () => ({
 // Both panels below the danger zone own their own queries and are not part
 // of what this test covers.
 vi.mock("../components/InteractionGovernancePanel", () => ({
-  InteractionGovernancePanel: () => null,
+  InteractionGovernancePanel: () => <div data-testid="governance-panel-mock" />,
   applyGovernanceChange: (governance: unknown) => governance,
-}));
-
-vi.mock("./InstanceGeneralSettings", () => ({
-  InstanceGeneralSettings: () => null,
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -168,13 +164,24 @@ describe("CompanySettings archive departure", () => {
 
   function clickArchive() {
     const button = Array.from(container.querySelectorAll("button")).find(
-      (element) => element.textContent?.trim() === "Archive organization",
+      (element) => element.textContent?.trim() === "Archive company",
     );
     expect(button).toBeDefined();
     flushSync(() => {
       button!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
   }
+
+  it("keeps governance settings inside the Advanced disclosure", async () => {
+    companyState.companies = [ARCHIVING_COMPANY, SIBLING_COMPANY];
+    const root = render(SELF_HOSTED_HEALTH);
+    const summary = container.querySelector('[data-testid="company-settings-advanced"] summary');
+    expect(summary?.textContent).toBe("Advanced");
+    expect(
+      container.querySelector('[data-testid="company-settings-advanced"] [data-testid="governance-panel-mock"]'),
+    ).not.toBeNull();
+    flushSync(() => root.unmount());
+  });
 
   it("switches to another active company with a toast", async () => {
     companyState.companies = [ARCHIVING_COMPANY, SIBLING_COMPANY];

@@ -8,6 +8,7 @@ import { CompanySettingsSidebar } from "./CompanySettingsSidebar";
 import { primarySidebarStyles } from "./primary-sidebar-styles";
 
 const sidebarNavItemMock = vi.hoisted(() => vi.fn());
+const mockUseIsInstanceAdmin = vi.hoisted(() => vi.fn());
 const mockSidebarBadgesApi = vi.hoisted(() => ({
   get: vi.fn(),
 }));
@@ -52,6 +53,10 @@ vi.mock("@/context/SidebarContext", () => ({
     isMobile: false,
     setSidebarOpen: vi.fn(),
   }),
+}));
+
+vi.mock("@/hooks/useIsInstanceAdmin", () => ({
+  useIsInstanceAdmin: mockUseIsInstanceAdmin,
 }));
 
 vi.mock("./SidebarNavItem", () => ({
@@ -112,6 +117,7 @@ describe("CompanySettingsSidebar", () => {
       joinRequests: 2,
     });
     mockPluginsApi.list.mockResolvedValue([]);
+    mockUseIsInstanceAdmin.mockReturnValue({ isAdmin: true, loaded: true });
     mockUsePluginSlots.mockReturnValue({
       slots: [],
       isLoading: false,
@@ -259,6 +265,43 @@ describe("CompanySettingsSidebar", () => {
       }),
     );
 
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  async function renderSidebar() {
+    const root = createRoot(container);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <CompanySettingsSidebar />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    return root;
+  }
+
+  it("hides the Admin group from non-admins", async () => {
+    mockUseIsInstanceAdmin.mockReturnValue({ isAdmin: false, loaded: true });
+    const root = await renderSidebar();
+    const labels = sidebarNavItemMock.mock.calls.map(([props]) => props.label);
+    for (const label of ["Deployment", "Environments", "Access", "Experimental", "Plugins", "Adapters"]) {
+      expect(labels).not.toContain(label);
+    }
+    expect(labels).toContain("General");
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("links Deployment to the Admin page for admins", async () => {
+    const root = await renderSidebar();
+    expect(sidebarNavItemMock).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "/company/settings/instance/general", label: "Deployment" }),
+    );
     await act(async () => {
       root.unmount();
     });

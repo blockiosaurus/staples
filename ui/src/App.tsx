@@ -17,6 +17,8 @@ import { useHiddenSettings } from "./hooks/useHiddenSettings";
 import { Cases } from "./pages/Cases";
 import { CaseDetail } from "./pages/CaseDetail";
 import { CloudAccessGate } from "./components/CloudAccessGate";
+import { InstanceAdminGate } from "./components/InstanceAdminGate";
+import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
 import { PaperclipLoading } from "./components/AnimatedPaperclipIcon";
 import { UnprefixedBoardRedirect } from "./components/UnprefixedBoardRedirect";
 import { Dashboard } from "./pages/Dashboard";
@@ -209,7 +211,9 @@ function boardRoutes(combinedInboxTasksEnabled: boolean) {
       <Route element={<HiddenSettingsPageGate pageKey="instance.profile" />}>
         <Route path="company/settings/instance/profile" element={<ProfileSettings />} />
       </Route>
-      <Route path="company/settings/instance/general" element={<Navigate to="/company/settings" replace />} />
+      <Route element={<InstanceAdminGate />}>
+        <Route path="company/settings/instance/general" element={<InstanceGeneralSettings />} />
+      </Route>
       <Route path="company/settings/instance/heartbeats" element={<Navigate to="/company/settings" replace />} />
       <Route element={<HiddenSettingsPageGate pageKey="instance.environments" />}>
         <Route path="company/settings/instance/environments" element={<CompanyEnvironments />} />
