@@ -2840,10 +2840,12 @@ function deriveSkillSourceInfo(skill: SkillSourceInfoTarget): {
     };
   }
 
+  const locator = skill.sourceLocator ?? null;
+  const locatorIsUrl = locator !== null && /^(https?:\/\/|[\w.-]+\.[a-z]{2,}\/)/i.test(locator);
   return {
     editable: false,
     editableReason: "This skill source is read-only.",
-    sourceLabel: skill.sourceLocator,
+    sourceLabel: asString(metadata.packageName) ?? (locatorIsUrl ? locator : "Skills catalog"),
     sourceBadge: "catalog",
     sourcePath: null,
   };

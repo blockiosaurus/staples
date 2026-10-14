@@ -2782,13 +2782,14 @@ export function SkillDetailPage({
     : null;
   // Fallback for non-catalog skills: the recorded locator/path wraps inside
   // the narrow sidebar instead of widening the page.
-  const sourceLocatorText = skill.sourcePath || skill.sourceLocator || null;
+  const locatorIsUrl = Boolean(skill.sourceLocator && /^(https?:\/\/|[\w.-]+\.[a-z]{2,}\/)/i.test(skill.sourceLocator));
+  const sourceLocatorText = skill.sourcePath || (locatorIsUrl ? skill.sourceLocator : null);
   const sourceHref =
     skill.homepageUrl
-    ?? (sourceLocatorText && /^(https?:\/\/|[\w.-]+\.[a-z]{2,}\/)/i.test(sourceLocatorText)
-      ? sourceLocatorText.startsWith("http")
-        ? sourceLocatorText
-        : `https://${sourceLocatorText}`
+    ?? (locatorIsUrl && skill.sourceLocator
+      ? skill.sourceLocator.startsWith("http")
+        ? skill.sourceLocator
+        : `https://${skill.sourceLocator}`
       : null);
 
   function renderFilesBody() {

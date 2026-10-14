@@ -778,6 +778,32 @@ describe("SkillDetailPage settings", () => {
     expect(node.textContent).not.toContain("...");
   });
 
+  it("never renders a filesystem path as the source locator", async () => {
+    const v1 = makeVersion(1, "# Demo Skill");
+    const node = await renderSkillDetail([v1], {
+      activeTab: "agents",
+      detail: makeDetail(v1, {
+        sourceLocator: "/Users/someone/private/skills/foo",
+        sourcePath: null,
+      }),
+    });
+
+    expect(node.textContent).not.toContain("/Users/");
+  });
+
+  it("shows a link locator as the source", async () => {
+    const v1 = makeVersion(1, "# Demo Skill");
+    const node = await renderSkillDetail([v1], {
+      activeTab: "agents",
+      detail: makeDetail(v1, {
+        sourceLocator: "https://github.com/acme/skills",
+        sourcePath: null,
+      }),
+    });
+
+    expect(node.textContent).toContain("https://github.com/acme/skills");
+  });
+
   it("saves normalized category edits from the settings dialog", async () => {
     const v1 = makeVersion(1, "# Demo Skill");
     const onUpdateSettings = vi.fn();

@@ -563,6 +563,41 @@ describeEmbeddedPostgres("companySkillService.list", () => {
     expect(JSON.stringify(skill)).not.toContain("/Users/");
   });
 
+  it("labels catalog skills without exposing the install path", async () => {
+    const companyId = randomUUID();
+    const skillId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(companySkills).values({
+      id: skillId,
+      companyId,
+      key: `company/${companyId}/market-brief`,
+      slug: "market-brief",
+      name: "Market Brief",
+      description: "Catalog skill.",
+      markdown: "# Market Brief\n",
+      sourceType: "catalog",
+      sourceLocator: "/Users/someone/private/skills/__catalog__/market-brief--abc",
+      trustLevel: "markdown_only",
+      compatibility: "compatible",
+      fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+      metadata: { sourceKind: "catalog" },
+    });
+
+    const listed = await svc.list(companyId);
+    const skill = listed.find((entry) => entry.id === skillId);
+
+    expect(skill).toBeDefined();
+    expect(skill?.sourceLabel).toBe("Skills catalog");
+    expect(JSON.stringify(skill?.sourceLabel)).not.toContain("/Users/");
+  });
+
   it("optionally enriches list items with latest version editor identities", async () => {
     const companyId = randomUUID();
     const userSkillId = randomUUID();
