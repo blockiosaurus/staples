@@ -83,7 +83,7 @@ If the person wants to stop early, list the open decisions you would otherwise h
 The interview is done only when both are true:
 
 1. **The frontier is empty.** Every branch was visited and nothing is silently assumed.
-2. **The person confirms a shared understanding.** Write a short summary in chat: the outcome, the scope, the work, the roles, the constraints and the key decisions. Then ask one last card with a single question, for example "Is this summary right, and should I draft the plan from it?", recommending yes.
+2. **The person confirms a shared understanding.** Ask one last card with a single question, for example "Is this summary right, and should I draft the plan from it?", recommending yes. Put the summary itself in that question's `helpText`: the outcome, the scope, the work, the roles, the constraints and the key decisions, as short lines. The card is what the person sees; text you write while working is folded away, so never leave the summary only in chat.
 
 If they correct the summary, update the tree and continue with new rounds as needed.
 

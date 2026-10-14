@@ -13,14 +13,19 @@ root configures the build and health check.
 - `GET /api/health` as the health check, 300 s timeout, restart on failure.
 - Authenticated mode with private exposure (the image default). Open sign-up
   is on until you turn it off.
-- Port: Railway injects `PORT`; the server reads `PORT` (`server/src/config.ts`)
-  and the service variable overrides the image's `PORT=3100`. No change needed.
-  Do not set `PORT` yourself.
+- Port: set the service variable `PORT=3100`, and use target port **3100** when you
+  generate the public domain. The server listens on `PORT`
+  (`server/src/config.ts`); without the variable Railway injects its own value,
+  which may not match the domain's target port and gives a 502.
 
 ## 1. Create the project
 
 1. In Railway: **New Project** > **Deploy from GitHub repo**, and pick your
    Staples fork. Railway reads `railway.toml` and uses the Dockerfile.
+   Staples is **one** service. If Railway detects a JavaScript monorepo and offers
+   to create a service per package (adapters, `db`, `mcp-server`, ...), decline,
+   or delete those services afterwards. Keep a single service with an empty root
+   directory, built from the root `Dockerfile`.
 2. Do not deploy yet if you can avoid it. Add the database, volume and variables
    first (a deploy without them fails and you will just redeploy).
 
@@ -64,7 +69,8 @@ Generate each secret yourself (never commit them):
 | `PAPERCLIP_AGENT_JWT_SECRET` | `openssl rand -hex 32` | Signs agent run tokens. Required in authenticated mode (if unset, `BETTER_AUTH_SECRET` is used as a fallback, but set both). |
 | `PAPERCLIP_TOOL_ACTION_SIGNING_SECRET` | `openssl rand -hex 32` | Signs tool-action approvals. Without it those approvals cannot be issued. |
 | `PAPERCLIP_ALLOWED_HOSTNAMES` | `healthcheck.railway.app` | Required. The image runs in authenticated/private mode, which rejects any request whose `Host` is not allowed. Railway's health checker sends `Host: healthcheck.railway.app`, so without this the deploy fails its health check. Comma-separate to add more hosts. |
-| `PAPERCLIP_PUBLIC_URL` | `https://<your-service>.up.railway.app` | The public origin, no trailing slash. Also the base for connector OAuth callbacks and sign-in origin checks. Generate the domain first (**Settings** > **Networking** > **Generate Domain**), then set this. |
+| `PORT` | `3100` | Must match the public domain's target port. |
+| `PAPERCLIP_PUBLIC_URL` | `https://<your-service>.up.railway.app` | The public origin, **including `https://`**, no trailing slash. With Railway's reference write `https://${{RAILWAY_PUBLIC_DOMAIN}}` (the reference has no scheme; without it the server exits with "Invalid base URL"). Also the base for connector OAuth callbacks and sign-in origin checks. Generate the domain first (**Settings** > **Networking** > **Generate Domain**), then set this. |
 | `STAPLES_HOSTED_ANTHROPIC_API_KEY` | your Anthropic API key | Turns on hosted inference. Use a dedicated key with its own provider-side spend limit. |
 | `PAPERCLIP_SELF_SERVE_COMPANIES` | `true` | Lets each signed-in trial user create their own company. Default `false`. Only for trusted, invited users (see below). |
 | `PAPERCLIP_SELF_SERVE_COMPANY_LIMIT` | `1` | Self-serve companies each user may create. Archived companies count, and only an admin can delete one. Default `3`; use `1` for a trial. |
