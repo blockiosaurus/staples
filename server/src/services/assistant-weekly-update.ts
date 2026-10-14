@@ -438,6 +438,15 @@ export function weeklyUpdateExcerpt(body: string, title: string | null, max = BR
       segments.push(current);
       continue;
     }
+    const boldOnly = /^\s{0,3}(\*\*|__)(.+?)\1\s*:?\s*$/.exec(raw);
+    if (boldOnly) {
+      const text = plainInline(boldOnly[2]!);
+      if (text) {
+        current = { heading: text, parts: [] };
+        segments.push(current);
+      }
+      continue;
+    }
     const text = plainInline(raw.replace(/^\s{0,3}(>\s?|[-*+]\s+|\d+[.)]\s+)/, ""));
     if (!text || /^[-*_=]{3,}$/.test(text)) continue;
     if (!current) {
@@ -447,10 +456,11 @@ export function weeklyUpdateExcerpt(body: string, title: string | null, max = BR
     }
     current.parts.push(text);
   }
-  const lines = segments.slice(0, 4).map((segment) => {
-    const parts = segment.parts.join(", ");
-    return segment.heading ? (parts ? `${segment.heading}: ${parts}` : segment.heading) : parts;
-  }).filter(Boolean);
+  const lines: string[] = [];
+  for (const segment of segments.slice(0, 3)) {
+    if (segment.heading) lines.push(segment.heading);
+    for (const part of segment.parts.slice(0, 2)) lines.push(`• ${part}`);
+  }
   const text = lines.join("\n");
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1).trimEnd()}…`;
