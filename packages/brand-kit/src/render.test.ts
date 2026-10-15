@@ -59,9 +59,21 @@ describe("accent wordmark", () => {
 const one = (concept: Parameters<typeof renderBrandKit>[0]["concepts"][number], businessName = "Lantern") =>
   renderBrandKit({ ...spec, businessName, concepts: [concept] }).concepts[0]!;
 
+describe("concept names", () => {
+  it("draws each concept's own name in its lockup, not the working business name", () => {
+    const r = renderBrandKit({ ...spec, businessName: "Working Name", concepts: [
+      { kind: "wordmark", name: "Lantern" },
+      { kind: "wordmark", name: "Ember House" },
+    ] });
+    expect(r.concepts[0]!.lockupSvg).toContain("<title>Lantern</title>");
+    expect(r.concepts[1]!.lockupSvg).toContain("<title>Ember House</title>");
+    expect(r.concepts[0]!.lockupSvg).not.toBe(r.concepts[1]!.lockupSvg);
+  });
+});
+
 describe("wordmark fitting", () => {
   it("shrinks a long name so the glyphs stay inside the lockup", () => {
-    const c = one({ kind: "wordmark", name: "Long" }, "Wandering Harbour Lantern Company");
+    const c = one({ kind: "wordmark", name: "Wandering Harbour Lantern Company" });
     expect(c.lint.ok, c.lint.errors.join("; ")).toBe(true);
     expect(maxX(c.lockupSvg)).toBeLessThanOrEqual(308);
   });
@@ -99,7 +111,7 @@ describe("geometric shapes", () => {
 
 describe("unsupported input", () => {
   it("reports an unsupported character as a concept lint error instead of throwing", () => {
-    const c = one({ kind: "wordmark", name: "Snow" }, "Lantern \u2603");
+    const c = one({ kind: "wordmark", name: "Lantern \u2603" });
     expect(c.lint.ok).toBe(false);
     expect(c.lint.errors.join(" ")).toContain("unsupported character");
     expect(c.markSvg).not.toContain("<path d=\"\"");

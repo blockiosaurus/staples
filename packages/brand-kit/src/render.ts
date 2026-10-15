@@ -26,7 +26,7 @@ export function renderBrandKit(input: BrandKitSpec): BrandKitRender {
     const base = { index: i + 1, name: concept.name, kind: concept.kind };
     try {
       const mark = markSvg(concept, palette, pairing.id);
-      const lockup = lockupSvg(concept, spec.businessName, palette, pairing.id);
+      const lockup = lockupSvg(concept, concept.name, palette, pairing.id);
       const a = lintSvg(mark);
       const b = lintSvg(lockup);
       return {
