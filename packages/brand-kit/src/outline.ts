@@ -15,8 +15,14 @@ const cache = new Map<string, opentype.Font>();
 function loadFont(pairingId: string): opentype.Font {
   const hit = cache.get(pairingId);
   if (hit) return hit;
-  const buf = readFileSync(resolveFontPath(getFontPairing(pairingId)));
-  const font = opentype.parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
+  let font: opentype.Font;
+  try {
+    const buf = readFileSync(resolveFontPath(getFontPairing(pairingId)));
+    font = opentype.parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
+  } catch (err) {
+    if (err instanceof BrandKitError) throw err;
+    throw new BrandKitError(`could not load the font for pairing ${pairingId}`);
+  }
   cache.set(pairingId, font);
   return font;
 }

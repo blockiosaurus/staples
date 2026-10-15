@@ -112,6 +112,15 @@ describe("brand kit routes", () => {
     expect(other.status).toBe(403);
   });
 
+  it("returns 422, not 500, for an unknown font pairing", async () => {
+    const app = await createApp(boardActor);
+    const res = await request(app)
+      .post(`/api/companies/${COMPANY_1}/brand-kit/render`)
+      .send({ ...(await validSpec()), fontPairingId: "no-such-pairing" });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("unknown font pairing");
+  });
+
   it("publishes as a company agent", async () => {
     const app = await createApp(agentActor);
     const s = await validSpec();

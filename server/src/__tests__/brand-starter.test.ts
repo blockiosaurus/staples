@@ -158,6 +158,7 @@ describeEmbeddedPostgres("brand starter service", () => {
     const bad = spec();
     bad.concepts[1] = { kind: "monogram", name: "Bad", letters: "\u{1F600}", frame: "circle" };
     await expect(svc.publish(s.companyId, { issueId: started.issueId, spec: bad, document: "x", actor })).rejects.toMatchObject({ status: 422 });
+    await expect(svc.publish(s.companyId, { issueId: started.issueId, spec: { ...spec(), fontPairingId: "no-such-pairing" }, document: "x", actor })).rejects.toMatchObject({ status: 422 });
     expect(await db.select().from(issueAttachments).where(eq(issueAttachments.issueId, started.issueId))).toHaveLength(0);
   });
 

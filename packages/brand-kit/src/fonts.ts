@@ -29,5 +29,9 @@ export function getFontPairing(id: string): FontPairing {
 }
 
 export function resolveFontPath(pairing: FontPairing): string {
-  return require.resolve(`${pairing.heading.package}/${pairing.heading.file}`);
+  try {
+    return require.resolve(`${pairing.heading.package}/${pairing.heading.file}`);
+  } catch {
+    throw new BrandKitError(`font file for pairing ${pairing.id} is not installed`);
+  }
 }

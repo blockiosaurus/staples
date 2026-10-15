@@ -79,6 +79,13 @@ describe("concept names", () => {
   });
 });
 
+describe("unknown font pairing", () => {
+  it("throws a BrandKitError", () => {
+    expect(() => renderBrandKit({ ...spec, fontPairingId: "no-such-pairing" })).toThrow(/unknown font pairing/);
+    expect(() => renderBrandKit({ ...spec, fontPairingId: "no-such-pairing" })).toThrow(expect.objectContaining({ name: "BrandKitError" }));
+  });
+});
+
 describe("wordmark fitting", () => {
   it("shrinks a long name so the glyphs stay inside the lockup", () => {
     const c = one({ kind: "wordmark", name: "Wandering Harbour Lantern Company" });

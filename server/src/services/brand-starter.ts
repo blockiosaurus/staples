@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { agents, issueComments, issueWorkProducts, issues, type Db } from "@paperclipai/db";
-import { renderBrandKit } from "@paperclipai/brand-kit";
+import { BrandKitError, renderBrandKit } from "@paperclipai/brand-kit";
 import {
   BRAND_STARTER_ORIGIN_KIND,
   type BrandKitSpec,
@@ -214,7 +214,13 @@ export function brandStarterService(db: Db, storage: StorageService, options: { 
     if (issue.originKind !== BRAND_STARTER_ORIGIN_KIND || issue.originId !== companyId) {
       throw unprocessable("Issue is not the brand starter task");
     }
-    const out = renderBrandKit(input.spec);
+    let out: ReturnType<typeof renderBrandKit>;
+    try {
+      out = renderBrandKit(input.spec);
+    } catch (err) {
+      if (err instanceof BrandKitError) throw unprocessable(err.message);
+      throw err;
+    }
     const failed = out.concepts.filter((c) => !c.lint.ok);
     if (failed.length > 0) {
       throw unprocessable("Brand kit failed lint", {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { BrandKitError } from "./errors.js";
 import { listFontPairings } from "./fonts.js";
 import { outlineText } from "./outline.js";
 describe("outlineText", () => {
@@ -14,6 +15,9 @@ describe("outlineText", () => {
     for (const pairing of listFontPairings()) {
       for (const t of ["antern", "Lantern", "ntern", "Quick brown fox"]) expect(outlineText(t, pairing.id, 36).d).not.toContain("NaN");
     }
+  });
+  it("reports an unknown pairing as a BrandKitError", () => {
+    expect(() => outlineText("Lantern", "no-such-pairing", 40)).toThrow(BrandKitError);
   });
   it("scales width with size", () => {
     const a = outlineText("Lantern", "modern-tech", 20).width;
