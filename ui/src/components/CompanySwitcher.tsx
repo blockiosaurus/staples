@@ -49,6 +49,9 @@ export function CompanySwitcher({ open: controlledOpen, onOpenChange }: CompanyS
             {selectedCompany && (
               <span className={`h-2 w-2 rounded-full shrink-0 ${statusDotColor(selectedCompany.status)}`} />
             )}
+            {selectedCompany?.logoUrl ? (
+              <img src={selectedCompany.logoUrl} alt="" className="size-4 shrink-0 rounded-sm object-contain" />
+            ) : null}
             <span className="text-sm font-medium truncate">
               {selectedCompany?.name ?? "Select organization"}
             </span>
@@ -66,6 +69,9 @@ export function CompanySwitcher({ open: controlledOpen, onOpenChange }: CompanyS
             className={company.id === selectedCompany?.id ? "bg-accent" : ""}
           >
             <span className={`h-2 w-2 rounded-full shrink-0 mr-2 ${statusDotColor(company.status)}`} />
+            {company.logoUrl ? (
+              <img src={company.logoUrl} alt="" className="size-4 shrink-0 rounded-sm object-contain" />
+            ) : null}
             <span className="truncate">{company.name}</span>
           </DropdownMenuItem>
         ))}
