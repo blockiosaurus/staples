@@ -12,7 +12,12 @@ import { queryKeys } from "@/lib/queryKeys";
 
 const cardClass = "mx-auto w-full max-w-3xl rounded-lg border border-border bg-card p-3";
 
-const STOPPED = ["cancelled", "blocked"];
+// The designer stopped: cancelled, blocked, or in_review (its documented failure path).
+const STOPPED = ["cancelled", "blocked", "in_review"];
+
+// Stopped means no more concepts are coming: a stopped status, or done with none published.
+const isStopped = (d: { issue: { status: string } | null; concepts: unknown[] }) =>
+  !!d.issue && !d.concepts.length && (STOPPED.includes(d.issue.status) || d.issue.status === "done");
 
 function dismissKey(companyId: string) {
   return `staples.brandStarter.dismissed.${companyId}`;
@@ -47,7 +52,7 @@ export function BrandStarterCard() {
     enabled: !!companyId && !dismissed,
     refetchInterval: (q) => {
       const d = q.state.data;
-      if (!d?.issue || STOPPED.includes(d.issue.status)) return false;
+      if (!d?.issue || STOPPED.includes(d.issue.status) || d.issue.status === "done") return false;
       return d.concepts.length ? false : 5_000;
     },
   });
@@ -111,7 +116,7 @@ export function BrandStarterCard() {
     );
   }
 
-  if (!data.concepts.length && STOPPED.includes(data.issue.status)) {
+  if (isStopped(data)) {
     return (
       <section aria-label="Brand starter" data-testid="brand-starter-card" className={cardClass}>
         <p className="text-sm text-muted-foreground">

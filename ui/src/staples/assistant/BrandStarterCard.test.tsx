@@ -193,6 +193,23 @@ describe("BrandStarterCard", () => {
     expect(container.textContent).not.toContain("is working");
   });
 
+  it.each(["in_review", "done"])("says so and stops polling when the designer ends in %s with no concepts", async (state) => {
+    mocks.get.mockResolvedValue(status({ concepts: [], issue: { id: "i1", identifier: "NEW-1", status: state } }));
+    await mount();
+    expect(container.textContent).toContain("could not finish");
+    expect(container.textContent).not.toContain("is working");
+    const refetch = client.getQueryCache().getAll()[0]!.observers[0]!.options.refetchInterval as (q: unknown) => unknown;
+    expect(refetch({ state: { data: status({ concepts: [], issue: { id: "i1", identifier: "NEW-1", status: state } }) } })).toBe(false);
+  });
+
+  it("keeps the working state while in_progress and polls", async () => {
+    const working = status({ concepts: [], issue: { id: "i1", identifier: "NEW-1", status: "in_progress" } });
+    mocks.get.mockResolvedValue(working);
+    await mount();
+    const refetch = client.getQueryCache().getAll()[0]!.observers[0]!.options.refetchInterval as (q: unknown) => unknown;
+    expect(refetch({ state: { data: working } })).toBe(5_000);
+  });
+
   it("shows a compact applied state with a dismiss when a logo is already set", async () => {
     mocks.company.logoAssetId = "asset-9";
     mocks.get.mockResolvedValue(status());
