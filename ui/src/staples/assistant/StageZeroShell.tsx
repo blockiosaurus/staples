@@ -2,6 +2,7 @@ import { useEffect, useRef, type ComponentProps } from "react";
 import { useLocation, useNavigate } from "@/lib/router";
 import { CompanySwitcher } from "@/components/CompanySwitcher";
 import { SidebarAccountMenu } from "@/components/SidebarAccountMenu";
+import { BrandStarterCard } from "./BrandStarterCard";
 import { AssistantConversation } from "./AssistantConversation";
 import { useAssistantShell } from "./AssistantProvider";
 import { useAssistant } from "./useAssistant";
@@ -51,6 +52,9 @@ export function StageZeroShell({ deploymentMode }: { deploymentMode?: ComponentP
         tabIndex={-1}
         className="streamlined-task-detail-surface flex min-h-0 flex-1 flex-col outline-none"
       >
+        <div className="px-3 pt-3">
+          <BrandStarterCard />
+        </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <AssistantConversation opening />
         </div>

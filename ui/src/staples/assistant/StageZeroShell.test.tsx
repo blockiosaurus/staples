@@ -22,6 +22,7 @@ vi.mock("./useAssistant", () => ({
   useAssistant: () => ({ setup: mocks.available ? { state: mocks.setupState } : null }),
 }));
 vi.mock("@/context/CompanyContext", () => ({ useCompany: () => ({ selectedCompany: { id: "c1", issuePrefix: "NEW" } }) }));
+vi.mock("./BrandStarterCard", () => ({ BrandStarterCard: () => null }));
 vi.mock("./AssistantConversation", () => ({ AssistantConversation: () => null }));
 vi.mock("@/components/CompanySwitcher", () => ({ CompanySwitcher: () => null }));
 vi.mock("@/components/SidebarAccountMenu", () => ({ SidebarAccountMenu: () => null }));
