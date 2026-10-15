@@ -14,4 +14,12 @@ describe("lintSvg", () => {
     expect(lintSvg(ok.replace('r="20"', 'r="40"')).ok).toBe(false);
   });
   it("rejects malformed XML", () => { expect(lintSvg("<svg viewBox='0 0 1 1'><circle").ok).toBe(false); });
+  it("rejects on* handlers and href / xlink:href", () => {
+    for (const attr of ["onload='x()'", "onclick='x()'", "href='#a'", "xlink:href='#a'"]) {
+      expect(lintSvg(ok.replace("<circle", `<circle ${attr}`)).ok, attr).toBe(false);
+    }
+  });
+  it("accepts a rect with rx", () => {
+    expect(lintSvg(ok.replace("</svg>", '<rect x="4" y="4" width="56" height="56" rx="12"/></svg>')).ok).toBe(true);
+  });
 });

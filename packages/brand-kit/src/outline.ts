@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import opentype from "opentype.js";
+import { BrandKitError } from "./errors.js";
 import { getFontPairing, resolveFontPath } from "./fonts.js";
 
 export interface OutlinedText {
@@ -46,32 +47,46 @@ function serialize(commands: opentype.PathCommand[]): string {
     .join("");
 }
 
+export interface OutlinedGlyphs extends OutlinedText {
+  /** One entry per character, already positioned (kerning included) in the same layout as `d`. */
+  glyphs: Array<{ char: string; d: string }>;
+}
+
 /**
- * Text converted to SVG path data at the origin (baseline y = 0).
+ * Text converted to positioned per-glyph SVG path data (baseline y = 0).
  *
  * Layout is done per glyph (cmap + kerning) rather than through font.getPath(), because
  * opentype.js 1.x throws on GSUB lookups some catalogued fonts ship (e.g. chained
  * contextual format 2). Ligatures and contextual shaping are not wanted for logo text.
+ * Characters the font lacks throw BrandKitError instead of rendering as .notdef.
  */
-export function outlineText(text: string, pairingId: string, sizePx: number, opts: { letterSpacing?: number } = {}): OutlinedText {
+export function outlineGlyphs(text: string, pairingId: string, sizePx: number, opts: { letterSpacing?: number } = {}): OutlinedGlyphs {
+  if (text.trim() === "") throw new BrandKitError("empty text");
   const font = loadFont(pairingId);
   const scale = sizePx / font.unitsPerEm;
   const spacing = (opts.letterSpacing ?? 0) * sizePx;
-  const path = new opentype.Path();
+  const glyphs: OutlinedGlyphs["glyphs"] = [];
   let x = 0;
   let prev: opentype.Glyph | null = null;
   for (const ch of Array.from(text)) {
     const glyph = font.charToGlyph(ch);
+    if (glyph.index === 0 && ch.trim() !== "") throw new BrandKitError(`unsupported character: ${ch}`);
     if (prev) x += font.getKerningValue(prev, glyph) * scale + spacing;
-    const gp = glyph.getPath(x, 0, sizePx);
-    path.extend(gp);
+    glyphs.push({ char: ch, d: serialize(glyph.getPath(x, 0, sizePx).commands) });
     x += (glyph.advanceWidth ?? 0) * scale;
     prev = glyph;
   }
   return {
-    d: serialize(path.commands),
+    d: glyphs.map((g) => g.d).join(""),
+    glyphs,
     width: x,
     height: sizePx,
     ascent: (font.ascender / font.unitsPerEm) * sizePx,
   };
+}
+
+/** Text converted to SVG path data at the origin (baseline y = 0). */
+export function outlineText(text: string, pairingId: string, sizePx: number, opts: { letterSpacing?: number } = {}): OutlinedText {
+  const { d, width, height, ascent } = outlineGlyphs(text, pairingId, sizePx, opts);
+  return { d, width, height, ascent };
 }

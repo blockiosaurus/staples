@@ -22,23 +22,24 @@ describe("renderBrandKit", () => {
   it("matches snapshots", () => { expect(renderBrandKit(spec).concepts.map((c) => c.markSvg)).toMatchSnapshot(); });
 });
 
+const paths = (svg: string) => [...svg.matchAll(/<path d="([^"]*)" fill="([^"]*)"/g)].map((m) => ({ d: m[1]!, fill: m[2]! }));
+// rightmost x over all word glyph paths: outer word offset + optional inner offset + path coordinates
+const maxX = (svg: string) => {
+  const word = svg.slice(svg.indexOf("translate(84 "));
+  let max = -Infinity;
+  for (const g of word.matchAll(/(?:<g transform="translate\(([\d.]+) 0\)">)?<path d="([^"]*)"/g)) {
+    const offset = 84 + Number(g[1] ?? 0);
+    for (const seg of g[2]!.split(/[MLQCZ]/)) {
+      const nums = seg.trim().split(/\s+/).filter(Boolean).map(Number);
+      for (let k = 0; k < nums.length; k += 2) max = Math.max(max, offset + nums[k]!);
+    }
+  }
+  return max;
+};
+
 describe("accent wordmark", () => {
   const accentSpec = { ...spec, concepts: [{ kind: "wordmark" as const, name: "Lantern", accentLetterIndex: 0 }] };
   const plainSpec = { ...spec, concepts: [{ kind: "wordmark" as const, name: "Lantern" }] };
-  const paths = (svg: string) => [...svg.matchAll(/<path d="([^"]*)" fill="([^"]*)"/g)].map((m) => ({ d: m[1]!, fill: m[2]! }));
-  // rightmost x over all word glyph paths: outer word offset + optional inner offset + path coordinates
-  const maxX = (svg: string) => {
-    const word = svg.slice(svg.indexOf("translate(84 "));
-    let max = -Infinity;
-    for (const g of word.matchAll(/(?:<g transform="translate\(([\d.]+) 0\)">)?<path d="([^"]*)"/g)) {
-      const offset = 84 + Number(g[1] ?? 0);
-      for (const seg of g[2]!.split(/[MLQCZ]/)) {
-        const nums = seg.trim().split(/\s+/).filter(Boolean).map(Number);
-        for (let k = 0; k < nums.length; k += 2) max = Math.max(max, offset + nums[k]!);
-      }
-    }
-    return max;
-  };
   it("keeps the whole word, colours only the accent letter, and matches the plain advance", () => {
     const accent = renderBrandKit(accentSpec).concepts[0]!;
     const plain = renderBrandKit(plainSpec).concepts[0]!;
@@ -52,5 +53,59 @@ describe("accent wordmark", () => {
     const moves = (xs: typeof a) => xs.reduce((n, x) => n + (x.d.match(/M/g)?.length ?? 0), 0);
     expect(moves(a)).toBeGreaterThanOrEqual(moves(p));
     expect(Math.abs(maxX(accent.lockupSvg) - maxX(plain.lockupSvg))).toBeLessThan(1);
+  });
+});
+
+const one = (concept: Parameters<typeof renderBrandKit>[0]["concepts"][number], businessName = "Lantern") =>
+  renderBrandKit({ ...spec, businessName, concepts: [concept] }).concepts[0]!;
+
+describe("wordmark fitting", () => {
+  it("shrinks a long name so the glyphs stay inside the lockup", () => {
+    const c = one({ kind: "wordmark", name: "Long" }, "Wandering Harbour Lantern Company");
+    expect(c.lint.ok, c.lint.errors.join("; ")).toBe(true);
+    expect(maxX(c.lockupSvg)).toBeLessThanOrEqual(308);
+  });
+});
+
+describe("monogram frames", () => {
+  it("renders square, rounded and none frames", () => {
+    const sq = one({ kind: "monogram", name: "M", letters: "LA", frame: "square" }).markSvg;
+    const ro = one({ kind: "monogram", name: "M", letters: "LA", frame: "rounded" }).markSvg;
+    const no = one({ kind: "monogram", name: "M", letters: "LA", frame: "none" });
+    const pal = renderBrandKit(spec).palette;
+    expect(sq).toMatch(/<rect x="4" y="4" width="56" height="56" fill=/);
+    expect(ro).toContain('rx="12"');
+    expect(no.markSvg).not.toMatch(/<rect|<circle/);
+    expect(no.markSvg).toContain(`fill="${pal.ink}"`);
+    for (const svg of [sq, ro, no.markSvg]) expect(svg).toContain("<path");
+    expect(no.lint.ok).toBe(true);
+  });
+});
+
+describe("geometric shapes", () => {
+  it("renders every shape type and passes lint", () => {
+    const c = one({ kind: "geometric", name: "All", shapes: [
+      { type: "circle", cx: 20, cy: 20, r: 10, fill: "primary" },
+      { type: "rect", x: 30, y: 30, w: 20, h: 20, rx: 4, fill: "accent" },
+      { type: "triangle", points: [[5, 60], [30, 40], [55, 60]], fill: "ink" },
+      { type: "arc", cx: 32, cy: 32, r: 20, startDeg: 0, endDeg: 270, width: 4, stroke: "primary" },
+      { type: "arc", cx: 32, cy: 32, r: 10, startDeg: 0, endDeg: 360, width: 2, stroke: "accent" },
+      { type: "line", x1: 4, y1: 4, x2: 60, y2: 10, width: 3, stroke: "ink" },
+    ] });
+    expect(c.lint.ok, c.lint.errors.join("; ")).toBe(true);
+    for (const tag of ["<circle", "<rect", "rx=\"4\"", "<polygon", "<path d=\"M", " A20 20 0 1 1 ", "<line", "stroke-linecap=\"round\""]) expect(c.markSvg).toContain(tag);
+  });
+});
+
+describe("unsupported input", () => {
+  it("reports an unsupported character as a concept lint error instead of throwing", () => {
+    const c = one({ kind: "wordmark", name: "Snow" }, "Lantern \u2603");
+    expect(c.lint.ok).toBe(false);
+    expect(c.lint.errors.join(" ")).toContain("unsupported character");
+    expect(c.markSvg).not.toContain("<path d=\"\"");
+  });
+  it("outlineText rejects empty text", async () => {
+    const { outlineText } = await import("./outline.js");
+    expect(() => outlineText("   ", "clean", 20)).toThrow(/empty text/);
   });
 });

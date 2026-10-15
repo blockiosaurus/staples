@@ -16,6 +16,7 @@ describe("buildPalette", () => {
         expect(p.contrast.inkOnPaper).toBeGreaterThanOrEqual(4.5);
         expect(p.contrast.primaryOnPaper).toBeGreaterThanOrEqual(3);
         expect(p.contrast.paperOnPrimary).toBeGreaterThanOrEqual(3);
+        expect(p.contrast.accentOnPaper).toBeGreaterThanOrEqual(3);
       }
     }
   });

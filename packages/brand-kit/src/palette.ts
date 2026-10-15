@@ -1,5 +1,7 @@
 import { clampChroma, formatHex, wcagContrast } from "culori";
-import type { Mood } from "./fonts.js";
+import { BRAND_KIT_MOODS } from "@paperclipai/shared";
+
+export type Mood = (typeof BRAND_KIT_MOODS)[number];
 
 export interface BrandPalette {
   primary: string;
@@ -8,7 +10,7 @@ export interface BrandPalette {
   paper: string;
   neutral: Record<"50" | "100" | "200" | "300" | "500" | "700" | "900", string>;
   dark: { primary: string; accent: string; ink: string; paper: string };
-  contrast: { inkOnPaper: number; primaryOnPaper: number; paperOnPrimary: number };
+  contrast: { inkOnPaper: number; primaryOnPaper: number; paperOnPrimary: number; accentOnPaper: number };
 }
 
 const MOODS: Record<Mood, { L: number; C: number; accentShift: number }> = {
@@ -57,7 +59,12 @@ export function buildPalette(input: { hue?: number; mood: Mood; seed: string }):
     primary = hex(primaryL, m.C, hue);
   }
   const accentHue = hue + m.accentShift;
-  const accent = hex(m.L, m.C * 0.85, accentHue);
+  let accentL = m.L;
+  let accent = hex(accentL, m.C * 0.85, accentHue);
+  while (wcagContrast(accent, paper) < 3 && accentL > 0.3) {
+    accentL -= 0.02;
+    accent = hex(accentL, m.C * 0.85, accentHue);
+  }
 
   const neutral = Object.fromEntries(
     Object.entries(NEUTRAL_L).map(([k, l]) => [k, hex(l, 0.015, hue)]),
@@ -74,12 +81,13 @@ export function buildPalette(input: { hue?: number; mood: Mood; seed: string }):
       paper: hex(0.17, 0.02, hue),
       ink: hex(0.95, 0.01, hue),
       primary: hex(primaryL + 0.12, m.C, hue),
-      accent: hex(m.L + 0.12, m.C * 0.85, accentHue),
+      accent: hex(accentL + 0.12, m.C * 0.85, accentHue),
     },
     contrast: {
       inkOnPaper: wcagContrast(ink, paper),
       primaryOnPaper: ratio,
       paperOnPrimary: wcagContrast(paper, primary),
+      accentOnPaper: wcagContrast(accent, paper),
     },
   };
 }

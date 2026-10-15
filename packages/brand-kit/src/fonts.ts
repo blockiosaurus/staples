@@ -1,9 +1,8 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import type { BrandKitSpec } from "@paperclipai/shared";
 import { BrandKitError } from "./errors.js";
 
-export type Mood = BrandKitSpec["mood"];
+import type { Mood } from "./palette.js";
 
 export interface FontPairing {
   id: string;

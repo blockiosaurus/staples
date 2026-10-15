@@ -1,6 +1,6 @@
 import type { BrandKitConcept, BrandKitShape } from "@paperclipai/shared";
 import type { BrandPalette } from "./palette.js";
-import { outlineText } from "./outline.js";
+import { outlineGlyphs, outlineText } from "./outline.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const CAP_HEIGHT = 0.7; // approximate cap height as a fraction of font size
@@ -79,23 +79,18 @@ export function lockupSvg(concept: BrandKitConcept, businessName: string, p: Bra
   const baseline = 40 + (CAP_HEIGHT * size) / 2;
 
   const accentIdx = concept.kind === "wordmark" ? concept.accentLetterIndex : undefined;
-  const chars = Array.from(businessName);
+  const { glyphs } = outlineGlyphs(businessName, pairingId, size);
   let word: string;
-  if (accentIdx !== undefined && accentIdx < chars.length) {
-    const prefix = chars.slice(0, accentIdx).join("");
-    const letter = chars[accentIdx]!;
-    const suffix = chars.slice(accentIdx + 1).join("");
-    const parts: string[] = [];
-    let x = 0;
-    for (const [text, fill] of [[prefix, p.ink], [letter, p.accent], [suffix, p.ink]] as const) {
-      if (!text) continue;
-      const o = outlineText(text, pairingId, size);
-      parts.push(`<g transform="translate(${n(x)} 0)"><path d="${o.d}" fill="${fill}"/></g>`);
-      x += o.width;
-    }
-    word = parts.join("");
+  if (accentIdx !== undefined && accentIdx < glyphs.length) {
+    // one layout of the whole name, so kerning and advances match the plain wordmark
+    const prefix = glyphs.slice(0, accentIdx).map((g) => g.d).join("");
+    const suffix = glyphs.slice(accentIdx + 1).map((g) => g.d).join("");
+    word = [[prefix, p.ink], [glyphs[accentIdx]!.d, p.accent], [suffix, p.ink]]
+      .filter(([d]) => d)
+      .map(([d, fill]) => `<path d="${d}" fill="${fill}"/>`)
+      .join("");
   } else {
-    word = `<path d="${outlineText(businessName, pairingId, size).d}" fill="${p.ink}"/>`;
+    word = `<path d="${glyphs.map((g) => g.d).join("")}" fill="${p.ink}"/>`;
   }
   return (
     `<svg xmlns="${NS}" viewBox="0 0 320 80"><title>${esc(businessName)}</title>` +
