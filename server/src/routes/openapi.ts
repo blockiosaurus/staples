@@ -6924,6 +6924,31 @@ const brandKitRenderResponseSchema = z.object({
   ),
 });
 
+const pendingConnectionRequestSchema = z.object({
+  interactionId: z.string().uuid(),
+  issueId: z.string().uuid(),
+  issueIdentifier: z.string().nullable(),
+  serviceSlug: z.string(),
+  serviceName: z.string(),
+  requestingAgentId: z.string().uuid(),
+  requestingAgentName: z.string(),
+  createdAt: z.string(),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/connection-requests/pending",
+  tags: ["connection-intents"],
+  summary: "List pending connection requests",
+  description: "Open connection requests from agents in this company, newest first. Board only.",
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: {
+    200: r.ok(z.object({ requests: z.array(pendingConnectionRequestSchema) })),
+    401: r.unauthorized,
+    403: r.forbidden,
+  },
+});
+
 registry.registerPath({
   method: "get",
   path: "/api/companies/{companyId}/brand-starter",
