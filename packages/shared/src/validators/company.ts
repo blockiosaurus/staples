@@ -26,6 +26,7 @@ export const createCompanySchema = z.object({
   description: z.string().optional().nullable(),
   budgetMonthlyCents: z.number().int().nonnegative().optional().default(0),
   defaultResponsibleUserId: z.string().min(1).nullable().optional(),
+  kickoff: z.boolean().optional(),
 });
 
 export type CreateCompany = z.infer<typeof createCompanySchema>;

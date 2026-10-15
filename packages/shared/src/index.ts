@@ -2900,6 +2900,24 @@ export {
   rewriteUrlHostToLoopback,
 } from "./runtime-exposure/loopback-bind.js";
 export { ACCOUNT_HANDLE_MAX_LENGTH, toAccountHandle } from "./account-handle.js";
+export { deriveWorkingName, WORKING_NAME_MAX_LENGTH } from "./working-name.js";
+export {
+  BRAND_KIT_FILLS,
+  BRAND_KIT_MOODS,
+  BRAND_KIT_MAX_SHAPES,
+  BRAND_KIT_GRID,
+  brandKitShapeSchema,
+  brandKitConceptSchema,
+  brandKitSpecSchema,
+  type BrandKitShape,
+  type BrandKitConcept,
+  type BrandKitSpec,
+} from "./brand-kit.js";
+export {
+  BRAND_STARTER_ORIGIN_KIND,
+  type BrandStarterConcept,
+  type BrandStarterStatus,
+} from "./types/brand-starter.js";
 export type { ExecutionContinuationEnvelope } from "./types/execution-continuation.js";
 export type { ExecutionProjection, ExecutionReconciliation, ExecutionBlocker } from "./types/execution-projection.js";
 
