@@ -22,10 +22,17 @@ const DOCUMENT_FILENAME = "brand-starter.md";
 const PALETTE_FILENAME = "palette.json";
 const CONCEPT_FILE = /^concept-(\d+)-(mark|lockup|preview)\.(svg|png)$/;
 
-export const BRAND_STARTER_BODY = (description: string) =>
+export const BRAND_STARTER_BODY = (description: string, companyName: string, nameGiven: boolean) =>
   `The person described their business as:\n\n> ${description.trim().replace(/\n+/g, "\n> ")}\n\n` +
+  `Current company name: ${companyName.trim()}\n` +
+  `Name given: ${nameGiven ? "yes" : "no"}\n\n` +
+  (nameGiven
+    ? "The person chose this name. Keep it: every concept's `name` must be exactly this.\n\n"
+    : "This is a working name derived from the description. Propose a different name per concept, or keep it where it fits.\n\n") +
   "Follow the `staples-brand-kit` skill: three concepts (a geometric mark, a monogram, a wordmark), a palette and a one-page brand starter. " +
   "Publish with the brand-kit publish call, then comment with one line per concept and mark this task done.";
+
+const NAME_GIVEN_MARKER = /^Name given: yes$/m;
 
 export function attachmentContentPath(attachmentId: string) {
   return `/api/attachments/${attachmentId}/content`;
@@ -79,14 +86,14 @@ export function brandStarterService(db: Db, storage: StorageService, options: { 
       .then((rows) => rows[0] ?? null);
   }
 
-  async function start(companyId: string, input: { description: string; userId: string }): Promise<{ issueId: string } | null> {
+  async function start(companyId: string, input: { description: string; userId: string; companyName: string; nameGiven: boolean }): Promise<{ issueId: string } | null> {
     const existing = await findIssue(companyId);
     if (existing) return { issueId: existing.id };
     const designer = await findDesigner(companyId);
     if (!designer) return null;
     const issue = await issueSvc.create(companyId, {
       title: "Brand starter",
-      description: BRAND_STARTER_BODY(input.description),
+      description: BRAND_STARTER_BODY(input.description, input.companyName, input.nameGiven),
       status: "todo",
       priority: "high",
       assigneeAgentId: designer.id,
@@ -133,7 +140,7 @@ export function brandStarterService(db: Db, storage: StorageService, options: { 
   async function status(companyId: string): Promise<BrandStarterStatus> {
     const issue = await findIssue(companyId);
     if (!issue) {
-      return { issue: null, designerName: null, latestNote: null, concepts: [], documentPath: null, palettePath: null, tagline: null };
+      return { issue: null, designerName: null, latestNote: null, concepts: [], documentPath: null, palettePath: null, tagline: null, nameGiven: false };
     }
     const [attachments, designer, comment] = await Promise.all([
       issueSvc.listAttachments(issue.id),
@@ -194,6 +201,7 @@ export function brandStarterService(db: Db, storage: StorageService, options: { 
       documentPath: doc ? attachmentContentPath(doc.id) : null,
       palettePath: palette ? attachmentContentPath(palette.id) : null,
       tagline: manifest?.tagline ?? null,
+      nameGiven: NAME_GIVEN_MARKER.test(issue.description ?? ""),
     };
   }
 

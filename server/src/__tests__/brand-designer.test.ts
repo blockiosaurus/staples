@@ -24,6 +24,10 @@ describe("brand designer built-in", () => {
     const skill = readFileSync(new URL("../../../skills/staples-brand-kit/SKILL.md", import.meta.url), "utf8");
     const block = [...skill.matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1]).find((b) => b.includes("businessName"));
     expect(block).toBeTruthy();
-    expect(() => brandKitSpecSchema.parse(JSON.parse(block!))).not.toThrow();
+    const spec = brandKitSpecSchema.parse(JSON.parse(block!));
+    // concept names are business-name options, not labels like "HB Seal"
+    expect(new Set(spec.concepts.map((c) => c.name)).size).toBe(spec.concepts.length);
+    expect(skill).toContain("the business name that concept proposes");
+    expect(skill).toContain("the person chose the name");
   });
 });

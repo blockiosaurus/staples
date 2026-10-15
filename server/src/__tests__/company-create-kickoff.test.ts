@@ -59,8 +59,18 @@ describe("POST /api/companies kickoff", () => {
     const app = await createApp();
     const res = await request(app).post("/api/companies").send({ name: "Acme", description: "Bread bakery", kickoff: true });
     expect(res.status).toBe(201);
-    expect(mockStart).toHaveBeenCalledWith("company-new", { description: "Bread bakery", userId: "local-board" });
+    expect(mockStart).toHaveBeenCalledWith("company-new", { description: "Bread bakery", userId: "local-board", companyName: "Acme", nameGiven: true });
     expect(mockCompanyService.create.mock.calls[0][0]).not.toHaveProperty("kickoff");
+  });
+
+  it("reports the name as not given when it is the derived working name", async () => {
+    const { deriveWorkingName } = await import("@paperclipai/shared");
+    const description = "A bakery in Leeds that sells sourdough";
+    const working = deriveWorkingName(description);
+    mockCompanyService.create.mockResolvedValue({ id: "company-new", name: working, description, budgetMonthlyCents: 0 });
+    const app = await createApp();
+    await request(app).post("/api/companies").send({ name: working, description, kickoff: true });
+    expect(mockStart).toHaveBeenCalledWith("company-new", expect.objectContaining({ companyName: working, nameGiven: false }));
   });
 
   it("does not start it otherwise, and a failed start does not fail creation", async () => {

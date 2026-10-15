@@ -35,7 +35,7 @@ export function BrandStarterCard() {
   const { selectedCompanyId, selectedCompany } = useCompany();
   const queryClient = useQueryClient();
   const companyId = selectedCompanyId ?? "";
-  const [keepName, setKeepName] = useState(false);
+  const [keepNameChoice, setKeepNameChoice] = useState<boolean | null>(null);
   const [applyingIndex, setApplyingIndex] = useState<number | null>(null);
   const [applied, setApplied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +53,8 @@ export function BrandStarterCard() {
   });
 
   if (!companyId || !data?.issue || dismissed) return null;
+  // Checked by default when the person typed the name themselves; their own toggle wins.
+  const keepName = keepNameChoice ?? data.nameGiven;
 
   async function apply(concept: BrandStarterConcept) {
     setError(null);
@@ -132,8 +134,8 @@ export function BrandStarterCard() {
     <section aria-label="Brand starter" data-testid="brand-starter-card" className={`${cardClass} flex flex-col gap-3`}>
       <p className="text-sm font-medium text-foreground">Pick a name and logo to start with</p>
       <label className="flex items-center gap-2 text-sm text-muted-foreground">
-        <input type="checkbox" checked={keepName} onChange={(e) => setKeepName(e.target.checked)} />
-        Keep my name
+        <input type="checkbox" checked={keepName} onChange={(e) => setKeepNameChoice(e.target.checked)} />
+        Keep the name I already have
       </label>
       <div className="grid gap-3 sm:grid-cols-3" aria-busy={applyingIndex !== null}>
         {data.concepts.map((concept) => (

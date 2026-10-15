@@ -22,6 +22,7 @@ import {
   companyPortabilityImportSchema,
   companyPortabilityPreviewSchema,
   createCompanySchema,
+  deriveWorkingName,
   feedbackTargetTypeSchema,
   feedbackTraceStatusSchema,
   feedbackVoteValueSchema,
@@ -1341,6 +1342,8 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
         await brandStarterService(db, storage).start(company.id, {
           description: company.description ?? "",
           userId: ownerPrincipalId,
+          companyName: company.name,
+          nameGiven: companyInput.name.trim() !== deriveWorkingName(company.description ?? ""),
         });
       } catch (err) {
         logger.warn({ err, companyId: company.id }, "brand starter did not start");

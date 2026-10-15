@@ -11,7 +11,7 @@ Environment: `PAPERCLIP_API_URL`, `PAPERCLIP_API_KEY`, `PAPERCLIP_COMPANY_ID`, `
 
 ## 1. Read
 
-Read your task (`$PAPERCLIP_TASK_ID`) with the `paperclip` skill. The task body holds the person's description of the business. If it says the person already chose a name, use that name for all three concepts. Otherwise propose up to three names, one per concept.
+Read your task (`$PAPERCLIP_TASK_ID`) with the `paperclip` skill. The task body holds the person's description of the business and the current company name. If it says the person chose the name, use exactly that name as the `name` of all three concepts. Otherwise the current name is only a working name derived from the description: propose a different business name per concept, or keep it where it fits.
 
 ## 2. Decide
 
@@ -31,7 +31,7 @@ Anti-generic rules: no swooshes, no globe, no generic leaf unless the business i
 
 Write `spec.json`. Fields:
 
-- `businessName`: up to 40 characters
+- `businessName`: the current company name, up to 40 characters (the default and palette seed)
 - `tagline`: optional, up to 80 characters
 - `mood`, `hue`, `fontPairingId` as above
 - `concepts`: 1 to 4 items, each with `kind`, `name` (1 to 40 characters) and:
@@ -41,7 +41,7 @@ Write `spec.json`. Fields:
 
 No other fields are allowed.
 
-A wordmark always draws `businessName`. A concept's `name` is the label shown to the person for that concept (the name option).
+A concept's `name` is the business name that concept proposes. Every lockup and wordmark draws that concept's `name`, and choosing the concept renames the company to it. Never use a label such as "HB Seal" or "Rising Sun Loaf". When the task says the person chose the name, use it for all three concepts. Keep names short enough to fit: 1 to 40 characters.
 
 Example `spec.json`:
 
@@ -55,15 +55,15 @@ Example `spec.json`:
   "concepts": [
     {
       "kind": "geometric",
-      "name": "Rising Sun Loaf",
+      "name": "Harbor Bakes",
       "shapes": [
         { "type": "circle", "cx": 32, "cy": 38, "r": 20, "fill": "primary" },
         { "type": "rect", "x": 0, "y": 38, "w": 64, "h": 26, "fill": "paper" },
         { "type": "arc", "cx": 32, "cy": 38, "r": 26, "startDeg": 180, "endDeg": 360, "width": 4, "stroke": "accent" }
       ]
     },
-    { "kind": "monogram", "name": "HB Seal", "letters": "HB", "frame": "circle" },
-    { "kind": "wordmark", "name": "Harbor Bakes", "accentLetterIndex": 0 }
+    { "kind": "monogram", "name": "Dawn Crumb", "letters": "DC", "frame": "circle" },
+    { "kind": "wordmark", "name": "Salt and Rye", "accentLetterIndex": 0 }
   ]
 }
 ```

@@ -15,4 +15,5 @@ export interface BrandStarterStatus {
   documentPath: string | null; // brand-starter.md
   palettePath: string | null;  // palette.json
   tagline: string | null;
+  nameGiven: boolean;          // the person chose the company name (not a derived working name)
 }

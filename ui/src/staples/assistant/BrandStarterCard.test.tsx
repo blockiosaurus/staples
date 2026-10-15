@@ -49,6 +49,7 @@ function status(over: Record<string, unknown> = {}) {
     documentPath: null,
     palettePath: null,
     tagline: null,
+    nameGiven: false,
     ...over,
   };
 }
@@ -133,6 +134,24 @@ describe("BrandStarterCard", () => {
     await act(async () => uses[0].click());
     await act(async () => {});
     expect(mocks.updateBranding).toHaveBeenCalledWith("c1", { logoAssetId: "asset-1" });
+  });
+
+  it("checks keep-the-name by default when the person chose the name, and keeps it on apply", async () => {
+    mocks.get.mockResolvedValue(status({ nameGiven: true }));
+    await mount();
+    const box = container.querySelector("input[type=checkbox]") as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(container.textContent).toContain("Keep the name I already have");
+    const uses = [...container.querySelectorAll("button")].filter((b) => b.getAttribute("aria-label")?.startsWith("Use "));
+    await act(async () => uses[0].click());
+    await act(async () => {});
+    expect(mocks.updateBranding).toHaveBeenCalledWith("c1", { logoAssetId: "asset-1" });
+  });
+
+  it("leaves keep-the-name unchecked when the name was a working name", async () => {
+    mocks.get.mockResolvedValue(status({ nameGiven: false }));
+    await mount();
+    expect((container.querySelector("input[type=checkbox]") as HTMLInputElement).checked).toBe(false);
   });
 
   it("shows an error and keeps the tiles usable when applying fails", async () => {

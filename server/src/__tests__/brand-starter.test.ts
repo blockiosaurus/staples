@@ -69,7 +69,7 @@ describeEmbeddedPostgres("brand starter service", () => {
 
   it("returns null without a brand designer and an empty status without an issue", async () => {
     const s = await seed(false);
-    expect(await service().start(s.companyId, { description: "A bakery", userId: s.userId })).toBeNull();
+    expect(await service().start(s.companyId, { description: "A bakery", userId: s.userId, companyName: "Maple", nameGiven: false })).toBeNull();
     expect((await service().status(s.companyId)).issue).toBeNull();
   });
 
@@ -77,7 +77,7 @@ describeEmbeddedPostgres("brand starter service", () => {
     const a = await seed();
     const b = await seed();
     const svc = service();
-    await svc.start(b.companyId, { description: "B cafe", userId: b.userId });
+    await svc.start(b.companyId, { description: "B cafe", userId: b.userId, companyName: "Maple", nameGiven: false });
     expect((await svc.status(a.companyId)).issue).toBeNull();
     expect(await svc.findIssue(a.companyId)).toBeNull();
     expect((await svc.status(b.companyId)).issue).not.toBeNull();
@@ -86,8 +86,8 @@ describeEmbeddedPostgres("brand starter service", () => {
   it("starts once and assigns the designer", async () => {
     const s = await seed();
     const svc = service();
-    const first = await svc.start(s.companyId, { description: "A bakery in Leeds", userId: s.userId });
-    const second = await svc.start(s.companyId, { description: "A bakery in Leeds", userId: s.userId });
+    const first = await svc.start(s.companyId, { description: "A bakery in Leeds", userId: s.userId, companyName: "Maple", nameGiven: false });
+    const second = await svc.start(s.companyId, { description: "A bakery in Leeds", userId: s.userId, companyName: "Maple", nameGiven: false });
     expect(first).not.toBeNull();
     expect(second).toEqual(first);
     const rows = await db.select().from(issues).where(and(eq(issues.companyId, s.companyId), eq(issues.originKind, BRAND_STARTER_ORIGIN_KIND)));
@@ -98,10 +98,26 @@ describeEmbeddedPostgres("brand starter service", () => {
     expect(wakeup).toHaveBeenCalledWith(s.designerId, expect.objectContaining({ payload: expect.objectContaining({ issueId: first!.issueId }) }));
   });
 
+  it("tells the designer the current name and whether the person chose it, and reports it in status", async () => {
+    const given = await seed();
+    const g = (await service().start(given.companyId, { description: "A bakery", userId: given.userId, companyName: "Harbor Bakes", nameGiven: true }))!;
+    const [gRow] = await db.select().from(issues).where(eq(issues.id, g.issueId));
+    expect(gRow!.description).toContain("Current company name: Harbor Bakes");
+    expect(gRow!.description).toContain("The person chose this name. Keep it: every concept's `name` must be exactly this.");
+    expect((await service().status(given.companyId)).nameGiven).toBe(true);
+
+    const derived = await seed();
+    const d = (await service().start(derived.companyId, { description: "A bakery", userId: derived.userId, companyName: "A bakery", nameGiven: false }))!;
+    const [dRow] = await db.select().from(issues).where(eq(issues.id, d.issueId));
+    expect(dRow!.description).toContain("This is a working name derived from the description. Propose a different name per concept");
+    expect(dRow!.description).not.toContain("The person chose this name");
+    expect((await service().status(derived.companyId)).nameGiven).toBe(false);
+  });
+
   it("publishes 12 files, lists concepts, and is idempotent on re-publish", async () => {
     const s = await seed();
     const svc = service();
-    const started = (await svc.start(s.companyId, { description: "A bakery", userId: s.userId }))!;
+    const started = (await svc.start(s.companyId, { description: "A bakery", userId: s.userId, companyName: "Maple", nameGiven: false }))!;
     await db.insert(issueComments).values({
       companyId: s.companyId, issueId: started.issueId, authorAgentId: s.designerId, authorType: "agent", body: "\nThree concepts ready.\nSecond line",
     });
@@ -133,8 +149,8 @@ describeEmbeddedPostgres("brand starter service", () => {
     const s = await seed();
     const other = await seed();
     const svc = service();
-    const started = (await svc.start(s.companyId, { description: "A bakery", userId: s.userId }))!;
-    const otherStarted = (await svc.start(other.companyId, { description: "A cafe", userId: other.userId }))!;
+    const started = (await svc.start(s.companyId, { description: "A bakery", userId: s.userId, companyName: "Maple", nameGiven: false }))!;
+    const otherStarted = (await svc.start(other.companyId, { description: "A cafe", userId: other.userId, companyName: "Maple", nameGiven: false }))!;
     const actor = agentActor(s.designerId!);
     await expect(svc.publish(s.companyId, { issueId: otherStarted.issueId, spec: spec(), document: "x", actor })).rejects.toMatchObject({ status: 404 });
     const [plain] = await db.insert(issues).values({ companyId: s.companyId, title: "Other", status: "todo", priority: "medium" }).returning();
@@ -148,7 +164,7 @@ describeEmbeddedPostgres("brand starter service", () => {
   it("replaces artifact work products when re-publishing with a registered run", async () => {
     const s = await seed();
     const svc = service();
-    const started = (await svc.start(s.companyId, { description: "A bakery", userId: s.userId }))!;
+    const started = (await svc.start(s.companyId, { description: "A bakery", userId: s.userId, companyName: "Maple", nameGiven: false }))!;
     const [run] = await db.insert(heartbeatRuns).values({ companyId: s.companyId, agentId: s.designerId!, status: "running" }).returning();
     const actor = { ...agentActor(s.designerId!), runId: run!.id };
     const publish = () => svc.publish(s.companyId, { issueId: started.issueId, spec: spec(), document: "# Brand", actor });
