@@ -66,8 +66,20 @@ describe("StartCompanyPage", () => {
       );
     });
   }
+  async function typeDescription(value: string) {
+    const area = container.querySelector("#start-company-description") as HTMLTextAreaElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(area, value);
+      area.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  async function openNameField() {
+    const toggle = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Have a name already?")!;
+    await act(async () => toggle.click());
+  }
   async function type(value: string) {
-    const input = container.querySelector("input") as HTMLInputElement;
+    const input = container.querySelector("#start-company-name") as HTMLInputElement;
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
       setter.call(input, value);
@@ -81,32 +93,49 @@ describe("StartCompanyPage", () => {
     });
   }
 
-  it("asks only for a company name and keeps Create disabled until one is typed", async () => {
+  it("disables Create until the description has text", async () => {
     await render();
-    expect(container.querySelectorAll("input")).toHaveLength(1);
-    expect(container.textContent).toContain("What's your business called?");
+    expect(container.textContent).toContain("What business do you want to start?");
+    expect(container.querySelector("input[type=text]")).toBeNull();
     const button = container.querySelector("button[type=submit]") as HTMLButtonElement;
     expect(button.disabled).toBe(true);
-    await type("  ");
+    await typeDescription("   ");
     expect(button.disabled).toBe(true);
-    await type("Acme");
+    await typeDescription("A candle shop");
     expect(button.disabled).toBe(false);
   });
 
-  it("creates the company, selects it and lands in the Assistant", async () => {
+  it("creates from a description with a derived name", async () => {
+    mocks.create.mockResolvedValue({ id: "c9", issuePrefix: "NEW", name: "Lantern" });
+    await render();
+    await typeDescription("  A candle shop in Austin called Lantern ");
+    await submit();
+    expect(mocks.create).toHaveBeenCalledWith({
+      name: "Lantern",
+      description: "A candle shop in Austin called Lantern",
+      kickoff: true,
+    });
+    expect(mocks.setSelectedCompanyId).toHaveBeenCalledWith("c9");
+    expect(mocks.navigate).toHaveBeenCalledWith("/NEW/assistant", {
+      replace: true,
+      state: { firstMessage: "A candle shop in Austin called Lantern" },
+    });
+  });
+
+  it("lets the person give a name", async () => {
     mocks.create.mockResolvedValue({ id: "c9", issuePrefix: "NEW", name: "Newco" });
     await render();
+    await openNameField();
     await type("  Newco ");
+    await typeDescription("A candle shop in Austin");
     await submit();
-    expect(mocks.create).toHaveBeenCalledWith({ name: "Newco" });
-    expect(mocks.setSelectedCompanyId).toHaveBeenCalledWith("c9");
-    expect(mocks.navigate).toHaveBeenCalledWith("/NEW/assistant", { replace: true });
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ name: "Newco" }));
   });
 
   it("shows the server error and stays put when create fails", async () => {
     mocks.create.mockRejectedValue(new Error("Only admins can create companies"));
     await render();
-    await type("Newco");
+    await typeDescription("A candle shop");
     await submit();
     expect(container.textContent).toContain("Only admins can create companies");
     expect(mocks.navigate).not.toHaveBeenCalled();
@@ -116,7 +145,7 @@ describe("StartCompanyPage", () => {
     mocks.company = { companies: [ACME], selectedCompany: ACME, loading: false };
     await render();
     expect(container.querySelector("[data-testid=redirect]")).toBeNull();
-    expect(container.querySelector("input")).not.toBeNull();
+    expect(container.querySelector("textarea")).not.toBeNull();
     const back = container.querySelector("[data-testid=back-link]");
     expect(back?.getAttribute("href")).toBe("/ACM/assistant");
     expect(back?.textContent).toBe("Back to Acme");

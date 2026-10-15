@@ -95,6 +95,7 @@ export const companiesApi = {
     name: string;
     description?: string | null;
     budgetMonthlyCents?: number;
+    kickoff?: boolean;
   }) =>
     api.post<Company>("/companies", data),
   update: (
