@@ -77,6 +77,11 @@ export interface BuiltInAgentDefinition {
    */
   inheritCompanyAdapterType?: boolean;
   /**
+   * Run on Claude (hosted) when the server holds an Anthropic key, like the
+   * Assistant: the operator's key pays, so the same hard-stop budget applies.
+   */
+  preferHostedInference?: boolean;
+  /**
    * Company-library skill keys (bundled root `skills/`) this agent always has
    * in its desired set. Ensure/reconcile adds any that are missing and never
    * removes the agent's other skills.
@@ -452,6 +457,7 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
     defaultBudgetMonthlyCents: 0,
     bypassHireApproval: true,
     inheritCompanyAdapterType: true,
+    preferHostedInference: true,
     defaultSkillKeys: ["paperclipai/paperclip/staples-brand-kit"],
     bundle: {
       stockVersion: "2026-10-15",
@@ -994,6 +1000,11 @@ function isBuiltInAgentMarkerConflict(error: unknown): boolean {
   return false;
 }
 
+/** Built-ins that take the Assistant's hosted path: Claude (hosted) on the server key, capped by the hosted budget. */
+function runsHostedLikeAssistant(definition: BuiltInAgentDefinition): boolean {
+  return definition.key === ASSISTANT_BUILT_IN_AGENT_KEY || definition.preferHostedInference === true;
+}
+
 export function builtInAgentService(db: Db) {
   const agentSvc = agentService(db);
   const agentSvcLifecycle = createAgentLifecycle(db);
@@ -1063,7 +1074,7 @@ export function builtInAgentService(db: Db) {
    * verification paths enforce it again before the key is used.
    */
   async function ensureHostedAssistantBudgetIfNeeded(definition: BuiltInAgentDefinition, agent: Pick<Agent, "id" | "companyId" | "adapterType" | "adapterConfig">) {
-    if (definition.key !== ASSISTANT_BUILT_IN_AGENT_KEY || agent.adapterType !== HOSTED_INFERENCE_ADAPTER_TYPE) return;
+    if (!runsHostedLikeAssistant(definition) || agent.adapterType !== HOSTED_INFERENCE_ADAPTER_TYPE) return;
     if (!hostedInference().available || hasAnthropicKeyBinding(agent.adapterConfig)) return;
     try {
       await ensureHostedAssistantBudget(db, agent);
@@ -1107,7 +1118,7 @@ export function builtInAgentService(db: Db) {
     const hosted = hostedInference();
     if (
       options.preferHosted !== false
-      && definition.key === ASSISTANT_BUILT_IN_AGENT_KEY
+      && runsHostedLikeAssistant(definition)
       && hosted.available
       && definition.allowedAdapterTypes?.includes(hosted.adapterType)
     ) {

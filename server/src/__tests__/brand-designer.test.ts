@@ -10,6 +10,7 @@ describe("brand designer built-in", () => {
     expect(def.bundle?.stockVersion).toBe("2026-10-15");
     expect(def.bypassHireApproval).toBe(true);
     expect(def.inheritCompanyAdapterType).toBe(true);
+    expect(def.preferHostedInference).toBe(true);
     expect(def.defaultSkillKeys).toContain("paperclipai/paperclip/staples-brand-kit");
     expect(def.defaultRole).toBe("designer");
   });

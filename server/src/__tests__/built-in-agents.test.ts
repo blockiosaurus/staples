@@ -682,6 +682,19 @@ describeEmbeddedPostgres("built-in agents", () => {
     }
   });
 
+  it("provisions the brand designer on Claude (hosted) with the hosted budget when the server holds a key", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const designer = (await createBuiltInAgentService(db).ensure(companyId, "brand-designer")).agent!;
+    expect(designer.adapterType).toBe("claude_managed");
+    expect(designer.adapterConfig).toMatchObject({ model: "claude-opus-5-5" });
+    expect(designer.adapterConfig).not.toHaveProperty("env");
+    expect(JSON.stringify(designer)).not.toContain(DUMMY_SERVER_KEY);
+    expect(designer.budgetMonthlyCents).toBe(2000);
+    const [policy] = await db.select().from(budgetPolicies).where(and(eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, designer.id)));
+    expect(policy).toMatchObject({ amount: 2000, hardStopEnabled: true, isActive: true });
+  });
+
   it("caps a hosted Assistant with an active hard-stop monthly budget", async () => {
     vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
     const companyId = await seedCompany({ requireApproval: false });
