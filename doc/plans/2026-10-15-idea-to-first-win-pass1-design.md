@@ -62,7 +62,7 @@ A person types one sentence about the business they want to start. Within a few 
 - `skills/staples-interview/SKILL.md`: round one holds at most three questions; country and time zone are read from the browser (sent with the first message as hidden context) and never asked.
 - Round two is exactly one card: **"What would success look like in 30 days? In 6 months? In a year?"** (three short-answer fields). The Assistant asks it right after round one, while the brand work runs.
 - `skills/staples-plan/SKILL.md`: the plan's goal is the 30-day answer; the 6-month and 1-year answers go to the brief under "Where this is going".
-- The Assistant's "What happens next" step mentions the brand starter and waits for it before proposing the plan (it reads the task status through its existing read tools).
+- The Assistant mentions the brand starter once after round one and proposes the plan after the vision card is answered or skipped. It does not wait for the brand work and does not propose a rename; the person picks on the card.
 - Bump the Assistant stock version to `"2026-10-15"`.
 
 ## Out of scope
