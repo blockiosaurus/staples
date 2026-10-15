@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "slug": "browser-use-cloud",
   "name": "Browser Use Cloud",
-  "description": "Delegate browser tasks and watch them live in Paperclip.",
+  "description": "Delegate browser tasks and watch them live in Staples.",
   "categories": [
     "productivity"
   ],
@@ -36,7 +36,7 @@
           "required": true,
           "placeholder": "bu_…",
           "secret": true,
-          "helperMd": "Create/stop browser sessions and run browser tasks under the API key. Create a key with read and write permissions for these actions; Paperclip cannot increase an existing key’s permissions."
+          "helperMd": "Create/stop browser sessions and run browser tasks under the API key. Create a key with read and write permissions for these actions; Staples cannot increase an existing key’s permissions."
         }
       ],
       "keyPlacement": {

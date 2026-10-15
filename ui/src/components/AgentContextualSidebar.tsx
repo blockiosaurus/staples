@@ -183,7 +183,7 @@ export function AgentContextualSidebar({
                 {advancedSections.map((section) => renderSection(section))}
                 <div data-slot="contextual-sidebar-section" className="mt-3">
                   <p data-slot="contextual-sidebar-section-label" className={contextualSidebarStyles.sectionLabel}>
-                    Audit
+                    Activity
                   </p>
                   <div data-slot="contextual-sidebar-group" className={contextualSidebarStyles.group}>
                     {resolvedId ? auditItems.map((item) => (

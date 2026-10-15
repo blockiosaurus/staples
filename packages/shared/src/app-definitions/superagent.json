@@ -26,7 +26,7 @@
       "defaults": {
         "serverUrl": "https://www.superagent.sh/mcp"
       },
-      "guidanceMd": "Open Superagent Settings → API keys, create a separate key for Paperclip, and paste it below.",
+      "guidanceMd": "Open Superagent Settings → API keys, create a separate key for Staples, and paste it below.",
       "riskTier": "S4",
       "label": "Use an API key",
       "credentialFields": [
@@ -37,7 +37,7 @@
           "required": true,
           "placeholder": "sk_live_...",
           "secret": true,
-          "helperMd": "Superagent organization keys are not scoped: a key reaches everything in its organization, including permanently deleting findings and starting billable report and triage work. Create a separate key for Paperclip so it can be revoked independently, and set billable and destructive actions to Ask first before agents run unattended."
+          "helperMd": "Superagent organization keys are not scoped: a key reaches everything in its organization, including permanently deleting findings and starting billable report and triage work. Create a separate key for Staples so it can be revoked independently, and set billable and destructive actions to Ask first before agents run unattended."
         }
       ],
       "keyPlacement": {

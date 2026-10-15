@@ -15,8 +15,8 @@ function offlineNavigationResponse() {
   return new Response(`<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark"><title>Paperclip is offline</title></head>
-<body><main><h1>Paperclip is offline</h1>
+<meta name="color-scheme" content="light dark"><title>Staples is offline</title></head>
+<body><main><h1>Staples is offline</h1>
 <p>Check your connection, then reload this page to try again.</p>
 <button type="button" onclick="window.location.reload()">Reload page</button>
 </main></body></html>`, {

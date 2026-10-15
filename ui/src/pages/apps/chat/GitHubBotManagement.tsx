@@ -422,7 +422,7 @@ function ReviewResult({ review }: { review: GitHubTaskReview }) {
           className="underline underline-offset-4"
           to={`/issues/${review.issueId}`}
         >
-          Paperclip task
+          Staples task
         </Link>
         {review.summaryUrl && (
           <a

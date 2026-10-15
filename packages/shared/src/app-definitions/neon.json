@@ -31,7 +31,7 @@
           "write"
         ]
       },
-      "guidanceMd": "Connect Neon in the browser. Open Advanced to pin one project or enable read-only mode. Write tools start enabled and remain governed by Paperclip's action policies.",
+      "guidanceMd": "Connect Neon in the browser. Open Advanced to pin one project or enable read-only mode. Write tools start enabled and remain governed by Staples' action policies.",
       "riskTier": "S4",
       "label": "Sign in with Neon",
       "consoleLinks": {
@@ -88,7 +88,7 @@
       "defaults": {
         "serverUrl": "https://mcp.neon.tech/mcp"
       },
-      "guidanceMd": "Use a customer-created Neon API key. Prefer a project-scoped key for one development project; personal and organization keys reach every project they can access. Write tools start enabled and remain governed by Paperclip's action policies.",
+      "guidanceMd": "Use a customer-created Neon API key. Prefer a project-scoped key for one development project; personal and organization keys reach every project they can access. Write tools start enabled and remain governed by Staples' action policies.",
       "riskTier": "S4",
       "label": "Use an API key",
       "credentialFields": [
@@ -99,7 +99,7 @@
           "required": true,
           "placeholder": "napi_... or neon_project_key_...",
           "secret": true,
-          "helperMd": "Project, branch, compute, snapshot, SQL and schema changes within the key’s reach. A project-scoped key limits access to one project with Editor rights; personal and organization keys reach every project they can access. Paperclip cannot increase an existing key’s permissions."
+          "helperMd": "Project, branch, compute, snapshot, SQL and schema changes within the key’s reach. A project-scoped key limits access to one project with Editor rights; personal and organization keys reach every project they can access. Staples cannot increase an existing key’s permissions."
         }
       ],
       "keyPlacement": {

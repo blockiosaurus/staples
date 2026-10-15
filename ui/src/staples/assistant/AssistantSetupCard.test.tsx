@@ -296,9 +296,9 @@ describe("AssistantSetupCard", () => {
 
     it("offers the hosted tile with key copy, and a password field that submits once and clears", async () => {
       withHosted();
-      mocks.setup.mockRejectedValueOnce(new Error("That Anthropic API key was rejected."));
+      mocks.setup.mockRejectedValueOnce(new Error("That Anthropic key was rejected."));
       await render({ state: "needs_model" });
-      expect(button("Claude (hosted)")?.textContent).toContain("Runs in Anthropic's cloud. Needs an Anthropic API key.");
+      expect(button("Claude (hosted)")?.textContent).toContain("Runs in Anthropic's cloud. Needs an Anthropic key.");
       expect(button("Claude")?.textContent).not.toContain("hosted");
       await act(async () => button("Claude (hosted)")!.click());
       expect(input()?.autocomplete).toBe("off");
@@ -308,7 +308,7 @@ describe("AssistantSetupCard", () => {
       await settle();
       expect(mocks.setup).toHaveBeenCalledTimes(1);
       expect(mocks.setup).toHaveBeenCalledWith("company-1", { adapterType: "claude_managed", apiKey: KEY });
-      expect(container.querySelector('[role="alert"]')?.textContent).toBe("That Anthropic API key was rejected.");
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe("That Anthropic key was rejected.");
       expect(input()?.value).toBe("");
       expect(container.innerHTML).not.toContain(KEY);
     });
@@ -329,7 +329,7 @@ describe("AssistantSetupCard", () => {
     it("connects without a key when the server provides one", async () => {
       withHosted({ available: true, signedIn: true, needsKey: false });
       await render({ state: "needs_model" });
-      expect(button("Claude (hosted)")?.textContent).toContain("Provided by this Staples server.");
+      expect(button("Claude (hosted)")?.textContent).toContain("Provided by Staples.");
       await act(async () => button("Claude (hosted)")!.click());
       expect(input()).toBeNull();
       await act(async () => { button("Connect")!.click(); });

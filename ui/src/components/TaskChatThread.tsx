@@ -5,6 +5,7 @@ import {
 } from "@/lib/issue-detail-performance";
 import { hasWorkspaceRestoreFailure } from "@paperclipai/shared";
 import { workspaceRestoreMarkerDetail } from "@/lib/workspace-restore-marker";
+import { formatModelName } from "@/lib/model-utils";
 import { credentialAccessNotice } from "@/lib/credential-access-notice";
 import type { ActivityEvent, IssueQueuedCommentQueue, TaskBrowser } from "@paperclipai/shared";
 import { useProjectCreatedItems } from "@/hooks/useProjectCreatedItems";
@@ -1700,6 +1701,11 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                 : source.status === "timed_out"
                   ? "Run timed out"
                   : "Run failed";
+        // The provider message names the rejected model in quotes; keep it readable.
+        const rejectedModelId =
+          code === "native_provider_model_rejected"
+            ? meta?.error?.match(/['"`]([\w./:-]+)['"`]/)?.[1]
+            : undefined;
         const responseBoundary = sourceHasNativeResponse
           ? " after returning a final response"
           : "";
@@ -1711,15 +1717,13 @@ export function TaskChatThread(props: TaskChatThreadProps) {
               : code === "native_provider_approval_required"
                 ? "This operation requires approval, but this runner has no interactive approval handler. Review the operation and update the agent's permission setting before retrying."
                 : code === "native_provider_model_rejected"
-                ? `${meta?.error || "The provider rejected the selected model."} Choose a supported model or clear the task's model override, then retry.`
+                ? `That model isn't available. Pick another or use the default.${rejectedModelId ? ` (${formatModelName(rejectedModelId)})` : ""}`
                 : code === "native_provider_usage_limit" &&
                     source.status === "failed"
-                  ? "The model provider has reached its current usage limit. Try again after the limit resets."
+                  ? "The AI service's usage limit was reached. Try again later."
                   : code === "provider_frame_too_large"
-                    ? "Provider output exceeded the safe limit."
-                    : source.status === "timed_out"
-                      ? `The runner timed out${responseBoundary} (${code}).`
-                      : `The runner stopped${responseBoundary} (${code}).`;
+                    ? "The answer was too long to receive."
+                    : `The agent stopped unexpectedly${responseBoundary}. Try again.`;
         const id = `${source.id}:failure`;
         const runAgent = meta?.agentId
           ? agentMap?.get(meta.agentId)
@@ -1737,6 +1741,9 @@ export function TaskChatThread(props: TaskChatThreadProps) {
             tone: source.status === "cancelled" ? "neutral" : "error",
             label,
             detail,
+            errorCode: code === "native_provider_model_rejected" && !rejectedModelId && meta?.error
+              ? `${code}: ${meta.error}`
+              : code,
             retryable: code !== "native_session_cleanup_quarantined",
             ...(credentialAccess ? { credentialAccess, retryable: false } : {}),
             collapsible: true,
@@ -1785,12 +1792,12 @@ export function TaskChatThread(props: TaskChatThreadProps) {
               ? "The previous execution must be checked before this task can continue. Your message is preserved. View the stopped run for details."
               : "Execution was stopped."
             : code === "provider_frame_too_large"
-            ? `Provider output exceeded the safe limit. ${retryDetail}`
+            ? `The answer was too long to receive. ${retryDetail}`
             : code === "claude_managed_tools_failed"
             ? `Your Assistant couldn't connect to Staples. ${retryDetail}`
             : code.startsWith("workspace_git_scan_")
             ? `Workspace setup failed before the agent started. ${retryDetail}`
-            : `The run failed (${code}). ${retryDetail}`;
+            : `The run failed. ${retryDetail}`;
         const id = `${source.id}:failure`;
         if (!historical) entriesWithFailures.push({
           ms: toMs(meta?.finishedAt ?? meta?.startedAt ?? meta?.createdAt),
@@ -1816,6 +1823,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
             } : {}),
             tone: source.status === "cancelled" || aiRequest?.status === "pending" ? "neutral" : "error",
             detail,
+            errorCode: code,
           },
         });
       }
@@ -2471,7 +2479,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
       }
       if (!item.turnId || !item.requestKind) {
         throw new Error(
-          "This runtime request is missing the provider turn identity needed to resolve it.",
+          "This request can't be answered here.",
         );
       }
       let resolution: RuntimeRequestResolution;
@@ -2493,7 +2501,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
         resolution = { action: "submit", content: decision.values };
       } else {
         throw new Error(
-          "This runtime permission does not accept submitted form data.",
+          "This request can't be answered here.",
         );
       }
       await heartbeatsApi.resolveRuntimeRequest({
@@ -2524,8 +2532,8 @@ export function TaskChatThread(props: TaskChatThreadProps) {
         label:
           pendingRuntimeRequest.questionSet?.title ??
           (pendingRuntimeRequest.requestType === "permission"
-            ? "Runtime permission"
-            : "Runtime input"),
+            ? "Permission needed"
+            : "Input needed"),
       });
     }
     const durable = (interactions ?? [])

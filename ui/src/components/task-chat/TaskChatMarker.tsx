@@ -114,7 +114,7 @@ export function TaskChatMarker({
             className="mt-1 w-full max-w-(--pct-85) overflow-hidden rounded-lg border border-border bg-muted/25 text-left text-sm dark:bg-muted/15"
           >
             {item.detail ? (
-              <div className="px-3 py-2.5 text-foreground/90">
+              <div className="px-3 py-2.5 text-foreground/90" title={item.errorCode}>
                 {item.detail}
               </div>
             ) : null}
@@ -154,6 +154,7 @@ export function TaskChatMarker({
       className="tc-enter-marker flex items-center gap-2 py-1 text-xs text-muted-foreground"
       role="separator"
       aria-label={item.label}
+      title={item.errorCode}
     >
       <span
         className={cn(

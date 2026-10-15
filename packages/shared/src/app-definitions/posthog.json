@@ -6,7 +6,7 @@
   "categories": [
     "analytics"
   ],
-  "featured": true,
+  "featured": false,
   "branding": {
     "logoUrl": "/brands/apps/posthog.svg",
     "darkLogoUrl": "/brands/apps/posthog-dark.svg"
@@ -106,7 +106,7 @@
               "label": "Individual tools"
             }
           ],
-          "helperMd": "Paperclip uses individual tools so every action can be governed. CLI mode remains unavailable until nested execution is governed.",
+          "helperMd": "Staples uses individual tools so every action can be governed. CLI mode remains unavailable until nested execution is governed.",
           "transport": {
             "location": "query",
             "name": "mode"
@@ -226,7 +226,7 @@
               "label": "Individual tools"
             }
           ],
-          "helperMd": "Paperclip uses individual tools so every action can be governed. CLI mode remains unavailable until nested execution is governed.",
+          "helperMd": "Staples uses individual tools so every action can be governed. CLI mode remains unavailable until nested execution is governed.",
           "transport": {
             "location": "query",
             "name": "mode"
@@ -242,7 +242,7 @@
           "required": true,
           "placeholder": "phx_...",
           "secret": true,
-          "helperMd": "Analytics objects, feature flags, experiments, error triage and other enabled product actions. readonly/feature/tool filters remain enforced. Create a key with read and write permissions for these actions; Paperclip cannot increase an existing key’s permissions."
+          "helperMd": "Analytics objects, feature flags, experiments, error triage and other enabled product actions. readonly/feature/tool filters remain enforced. Create a key with read and write permissions for these actions; Staples cannot increase an existing key’s permissions."
         }
       ],
       "keyPlacement": {

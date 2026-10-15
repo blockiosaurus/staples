@@ -29,7 +29,8 @@ import {
   Field,
   ToggleField,
 } from "../components/agent-config-primitives";
-import { InstanceGeneralSettings } from "./InstanceGeneralSettings";
+import { Link } from "@/lib/router";
+import { TERMS_PATH, PRIVACY_PATH } from "@/lib/branding";
 
 export function CompanySettings() {
   const {
@@ -151,14 +152,14 @@ export function CompanySettings() {
       // still makes sense (another active company, the Cloud portfolio, or
       // the companies list), with a toast naming what happened.
       const archived = companies.find((company) => company.id === companyId);
-      const archivedName = archived?.name ?? "Organization";
+      const archivedName = archived?.name ?? "Company";
       const departure = resolveCompanyArchiveDeparture({
         archivedCompanyId: companyId,
         companies,
         cloudPortfolioUrl: cloudPortfolioManageUrl(cloud?.cloudBaseUrl),
       });
       if (departure.kind === "cloud_portfolio") {
-        // The whole organization is on its way to being archived by the
+        // The whole company is on its way to being archived by the
         // control plane; a full navigation to the Cloud portfolio replaces
         // this document, so cache invalidation below would never run.
         navigateTopLevel(departure.url);
@@ -201,7 +202,7 @@ export function CompanySettings() {
   if (!selectedCompany) {
     return (
       <div className="text-sm text-muted-foreground">
-        No organization selected. Select an organization from the switcher above.
+        No company selected. Select a company from the switcher above.
       </div>
     );
   }
@@ -217,7 +218,7 @@ export function CompanySettings() {
     <div className="max-w-6xl space-y-8">
       <div className="flex items-center gap-2">
         <SlidersHorizontal className="h-5 w-5 text-muted-foreground" />
-        <h1 className="text-lg font-semibold">General</h1>
+        <h1 className="text-lg font-semibold">Company</h1>
       </div>
 
       {/* General */}
@@ -226,7 +227,7 @@ export function CompanySettings() {
           General
         </div>
         <div className="space-y-3">
-          <Field label="Organization name" hint="The display name for your organization.">
+          <Field label="Company name" hint="The display name for your company.">
             <input
               className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
               type="text"
@@ -242,13 +243,13 @@ export function CompanySettings() {
           </Field>
           <Field
             label="Description"
-            hint="Optional description shown in the organization profile."
+            hint="Optional description shown in the company profile."
           >
             <input
               className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
               type="text"
               value={description}
-              placeholder="Optional organization description"
+              placeholder="Optional company description"
               onChange={(e) => setDescription(e.target.value)}
             />
           </Field>
@@ -346,8 +347,8 @@ export function CompanySettings() {
         </div>
         <div>
           <ToggleField
-            label="Require board approval for new hires"
-            hint="New agent hires stay pending until approved by board."
+            label="Require approval for new hires"
+            hint="New hires wait for your approval before they start."
             checked={!!selectedCompany.requireBoardApprovalForNewAgents}
             onChange={(v) => settingsMutation.mutate(v)}
             toggleTestId="company-settings-team-approval-toggle"
@@ -355,23 +356,24 @@ export function CompanySettings() {
         </div>
       </div>
 
-      {/* Interaction governance */}
-      {selectedCompanyId && <DecisionModelSettingsSection key={selectedCompanyId} companyId={selectedCompanyId} />}
-
-      <InteractionGovernancePanel
-        governance={governance}
-        onChange={handleGovernanceChange}
-        isPending={governanceMutation.isPending}
-        errorMessage={
-          governanceMutation.isError
-            ? governanceMutation.error instanceof Error
-              ? governanceMutation.error.message
-              : "Failed to save interaction governance"
-            : null
-        }
-      />
-
-      <InstanceGeneralSettings embedded />
+      <details className="rounded-lg border border-border p-4" data-testid="company-settings-advanced">
+        <summary className="cursor-pointer text-sm font-medium">Advanced</summary>
+        <div className="mt-4 space-y-8">
+          {selectedCompanyId && <DecisionModelSettingsSection key={selectedCompanyId} companyId={selectedCompanyId} />}
+          <InteractionGovernancePanel
+            governance={governance}
+            onChange={handleGovernanceChange}
+            isPending={governanceMutation.isPending}
+            errorMessage={
+              governanceMutation.isError
+                ? governanceMutation.error instanceof Error
+                  ? governanceMutation.error.message
+                  : "Couldn't save these settings"
+                : null
+            }
+          />
+        </div>
+      </details>
 
       {/* Danger Zone */}
       <div className="space-y-4">
@@ -380,8 +382,7 @@ export function CompanySettings() {
         </div>
         <div className="space-y-3 bg-destructive/5 px-4 py-4">
           <p className="text-sm text-muted-foreground">
-            Archive this organization to hide it from the sidebar. This persists in
-            the database.
+            Archive this company to hide it from the sidebar.
           </p>
           <div className="flex items-center gap-2">
             <Button
@@ -394,7 +395,7 @@ export function CompanySettings() {
               onClick={() => {
                 if (!selectedCompanyId) return;
                 const confirmed = window.confirm(
-                  `Archive organization "${selectedCompany.name}"? It will be hidden from the sidebar.`
+                  `Archive company "${selectedCompany.name}"? It will be hidden from the sidebar.`
                 );
                 if (!confirmed) return;
                 archiveMutation.mutate({ companyId: selectedCompanyId });
@@ -404,18 +405,23 @@ export function CompanySettings() {
                 ? "Archiving..."
                 : selectedCompany.status === "archived"
                 ? "Already archived"
-                : "Archive organization"}
+                : "Archive company"}
             </Button>
             {archiveMutation.isError && (
               <span className="text-xs text-destructive">
                 {archiveMutation.error instanceof Error
                   ? archiveMutation.error.message
-                  : "Failed to archive organization"}
+                  : "Failed to archive company"}
               </span>
             )}
           </div>
         </div>
       </div>
+
+      <footer className="flex flex-wrap gap-4 border-t border-border pt-4 text-xs text-muted-foreground">
+        <Link to={TERMS_PATH} className="hover:text-foreground">Terms of service</Link>
+        <Link to={PRIVACY_PATH} className="hover:text-foreground">Privacy policy</Link>
+      </footer>
     </div>
   );
 }

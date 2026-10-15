@@ -50,7 +50,7 @@ describe("tool activity vocabulary", () => {
       icon: McpIcon,
       runningLabel: "Searching tasks",
       completedLabel: "Searched tasks",
-      sourceLabel: "Paperclip",
+      sourceLabel: "Staples",
       confidence: "exact",
     });
   });
@@ -91,7 +91,7 @@ describe("tool activity vocabulary", () => {
     }
   });
 
-  it("gives anticipated provider tools and Paperclip operations purpose-specific labels", () => {
+  it("gives anticipated provider tools and Staples operations purpose-specific labels", () => {
     const anticipated = [
       "ToolSearch", "NotebookRead", "NotebookEdit", "TaskOutput", "TaskStop", "SendMessage",
       "EnterPlanMode", "ExitPlanMode", "LSP", "TodoWrite", "ReportFindings", "Skill",

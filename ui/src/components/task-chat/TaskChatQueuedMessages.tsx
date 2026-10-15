@@ -295,7 +295,7 @@ export function TaskChatQueuedMessages({
       setAnnouncement("");
       setVisibleError(
         queueActionErrorCode(error) === "queued_comment_revision_conflict"
-          ? "The queue changed in another session. Its latest order has been restored."
+          ? "The queue changed in another tab or window. Its latest order has been restored."
           : "Couldn’t reorder. Previous order restored.",
       );
     } finally {
@@ -367,7 +367,7 @@ export function TaskChatQueuedMessages({
             : action === "interrupt"
               ? "Couldn’t interrupt. Message is still queued."
               : code === "queued_comment_revision_conflict"
-                ? "The queue changed in another session. Review it and try again."
+                ? "The queue changed in another tab or window. Review it and try again."
                 : "Couldn’t discard. Message is still queued.",
       );
     } finally {

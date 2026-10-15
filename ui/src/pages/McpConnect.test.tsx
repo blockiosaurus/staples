@@ -130,7 +130,7 @@ it("identifies the receiving app and registered callback origin before approval"
   route.clientOrigin = "https://claude.ai";
   const page = setup();
   try {
-    await vi.waitFor(() => expect(page.container.querySelector("h1")?.textContent).toBe("Connect Claude to Paperclip"));
+    await vi.waitFor(() => expect(page.container.querySelector("h1")?.textContent).toBe("Connect Claude to Staples"));
     expect(page.container.textContent).toContain("https://claude.ai");
     expect(page.container.textContent).toContain("https://assistant.example.test");
     expect(page.container.querySelector('img[src^="https://assistant.example.test"]')).toBeNull();
@@ -151,7 +151,7 @@ it("defaults eligible writes on and preserves opt-out across organization change
     expect((page.container.querySelector('input[value="company-one"]') as HTMLInputElement).checked).toBe(true);
     expect(page.checkbox().getAttribute("aria-checked")).toBe("true");
     expect(api.post).not.toHaveBeenCalled();
-    expect(page.container.querySelector("h1")?.textContent).toBe("Connect your assistant to Paperclip");
+    expect(page.container.querySelector("h1")?.textContent).toBe("Connect your assistant to Staples");
     flushSync(() => page.checkbox().click());
     flushSync(() => (page.container.querySelector('input[value="company-two"]') as HTMLInputElement).click());
     expect(page.checkbox().getAttribute("aria-checked")).toBe("false");
@@ -250,8 +250,8 @@ it.each([false, true])("explains Dot agent consent and requires an operator in b
   const page = setup(device);
   const connect = () => Array.from(page.container.querySelectorAll("button")).find(button => button.textContent === "Connect Dot agent")!;
   try {
-    await vi.waitFor(() => expect(page.container.textContent).toContain("Connect Dot as a Paperclip agent"));
-    expect(page.container.textContent).not.toContain("Read all of your Paperclip data");
+    await vi.waitFor(() => expect(page.container.textContent).toContain("Connect Dot as a Staples agent"));
+    expect(page.container.textContent).not.toContain("Read all of your Staples data");
     expect(page.checkbox()).toBeNull();
     expect(connect().disabled).toBe(true);
     route.canWrite = true;
@@ -290,7 +290,7 @@ it.each([
   try {
     await vi.waitFor(() => expect(page.checkbox()?.getAttribute("aria-checked")).toBe("true"));
     expect(page.container.querySelectorAll('[role="checkbox"]')).toHaveLength(1);
-    expect(page.container.textContent).toContain("Write all of your Paperclip data");
+    expect(page.container.textContent).toContain("Write all of your Staples data");
     expect(page.container.textContent).not.toContain("Allow configuring");
     if (optOut) flushSync(() => page.checkbox().click());
     flushSync(() => page.connect().click());

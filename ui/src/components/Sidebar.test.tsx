@@ -50,7 +50,7 @@ vi.mock("../context/DialogContext", () => ({
 vi.mock("../context/CompanyContext", () => ({
   useCompany: () => ({
     selectedCompanyId: "company-1",
-    selectedCompany: { id: "company-1", issuePrefix: "PAP", name: "Paperclip" },
+    selectedCompany: { id: "company-1", issuePrefix: "PAP", name: "Staples" },
   }),
 }));
 
@@ -251,9 +251,9 @@ describe("Sidebar", () => {
           .map((anchor) => anchor.textContent?.trim());
 
         expect(labels(workSection)).toEqual(["Chat", "Tasks", "Projects", "Routines", "What we've made", "Goals"]);
-        expect(labels(orgSection)).toEqual(["Agents", "Skills", "Connectors", "Company brief", "Costs", "Audit"]);
+        expect(labels(orgSection)).toEqual(["Agents", "Skills", "Connectors", "Company brief", "Costs", "Activity"]);
         expect(orgSection?.querySelector('a[href="/activity/costs"]')?.textContent).toContain("Costs");
-        expect(orgSection?.querySelector('a[href="/activity"]')?.textContent).toContain("Audit");
+        expect(orgSection?.querySelector('a[href="/activity"]')?.textContent).toContain("Activity");
         expect(sections.indexOf(workSection!)).toBeLessThan(sections.indexOf(orgSection!));
         expect(
           workSection?.querySelector('a[href="/issues"] svg')?.classList.contains("lucide-circle-check"),

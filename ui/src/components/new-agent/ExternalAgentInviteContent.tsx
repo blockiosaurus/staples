@@ -15,7 +15,7 @@ export type DotConnectionState = {
 const presets = [
   { id: "dot", name: "Dot", adapter: "openai_dot", description: "Your Dot in ChatGPT" },
   { id: "hermes", name: "Hermes", adapter: "hermes_gateway", description: "An existing Hermes agent" },
-  { id: "other", name: "Other", adapter: "http", description: "Any agent that can connect to Paperclip" },
+  { id: "other", name: "Other", adapter: "http", description: "Any agent that can connect to Staples" },
 ] as const;
 
 export function ExternalAgentPresetPicker({ onSelect, dotDisabledReason }: { onSelect: (preset: ExternalAgentPreset) => void; dotDisabledReason?: string }) {
@@ -36,19 +36,19 @@ export function ExternalAgentPresetPicker({ onSelect, dotDisabledReason }: { onS
 }
 
 const checks = [
-  { title: "Connected to Paperclip", description: "Your Dot has connected to this agent." },
+  { title: "Connected to Staples", description: "Your Dot has connected to this agent." },
   { title: "Task updates enabled", description: "Your Dot is subscribed to new assignments and messages." },
-  { title: "Test event confirmed", description: "Your Dot received our test and replied to Paperclip." },
+  { title: "Test event confirmed", description: "Your Dot received our test and replied to Staples." },
 ];
 
 /** Controlled by server evidence in the invite controller, never by copying a prompt. */
 export function DotConnectionChecks({ state }: { state: DotConnectionState }) {
   const completed = { waiting: 0, connected: 1, subscribed: 2, testing: 2, finishing: 3, ready: 3 }[state.phase];
-  const message = state.problem === "agent_unavailable" ? "Connection checks passed, but this agent cannot receive tasks. Resolve the agent’s setup blocker in Paperclip."
+  const message = state.problem === "agent_unavailable" ? "Connection checks passed, but this agent cannot receive tasks. Resolve the agent’s setup blocker in Staples."
     : state.problem === "offline" ? "Connection updates paused. Reconnect to check the latest status."
     : state.problem === "prompt_unavailable" ? "This setup prompt was replaced in another window. Create a fresh prompt to continue."
-    : state.problem === "event_timeout" ? "Your Dot connected, but hasn’t confirmed the test event. Ask it to check Paperclip, then retry."
-    : state.phase === "finishing" ? "Your Dot confirmed the test event. Paperclip is finishing agent setup."
+    : state.problem === "event_timeout" ? "Your Dot connected, but hasn’t confirmed the test event. Ask it to check Staples, then retry."
+    : state.phase === "finishing" ? "Your Dot confirmed the test event. Staples is finishing agent setup."
     : state.phase === "ready" ? "Your Dot is ready for tasks. Messages can travel both ways."
     : state.phase === "waiting" ? "Watching for your Dot. Updates will appear here automatically."
     : state.phase === "connected" ? "Your Dot connected. Waiting for it to enable task updates."
@@ -117,11 +117,11 @@ export function ExternalAgentInviteContent({
           <DialogDescription className="text-sm leading-relaxed">
             {!provider ? `Bring an agent you already use into ${companyName}.`
               : ready ? `Your Dot can now receive assignments and work with ${companyName}.`
-              : connection.problem === "agent_unavailable" ? "Your Dot is connected. This agent must be available in Paperclip before it can receive assignments."
-              : connection.phase === "finishing" ? "Your Dot has connected and confirmed task updates. Paperclip is preparing it for assignments."
+              : connection.problem === "agent_unavailable" ? "Your Dot is connected. This agent must be available in Staples before it can receive assignments."
+              : connection.phase === "finishing" ? "Your Dot has connected and confirmed task updates. Staples is preparing it for assignments."
               : connecting ? "Your Dot has connected. We’re checking that task updates can travel both ways."
               : dot ? "Copy the setup prompt and send it to your Dot in ChatGPT. Your Dot will connect itself; we’ll watch for it here."
-              : `Copy the invitation prompt and send it to your ${preset === "hermes" ? "Hermes " : ""}agent. Approve its join request in Paperclip when it’s ready.`}
+              : `Copy the invitation prompt and send it to your ${preset === "hermes" ? "Hermes " : ""}agent. Approve its join request in Staples when it’s ready.`}
           </DialogDescription>
         </div>
       </div>
@@ -131,7 +131,7 @@ export function ExternalAgentInviteContent({
         : approvalHref ? <p className="text-sm text-muted-foreground">An organization admin needs to approve this agent before Dot can connect. This page will update after approval.</p>
         : busy && !prompt && connection.phase === "waiting" ? <p role="status" className="text-sm text-muted-foreground">Preparing your invitation…</p> : dot ? <>
         <div className="border-t pt-6"><DotConnectionChecks state={connection} />
-          {connection.phase === "waiting" && <p className="mt-4 text-xs text-muted-foreground">Dot uses your OpenAI account. Provider usage and cost aren’t reported to Paperclip.</p>}</div>
+          {connection.phase === "waiting" && <p className="mt-4 text-xs text-muted-foreground">Dot uses your OpenAI account. Provider usage and cost aren’t reported to Staples.</p>}</div>
         {connection.problem === "event_timeout" && <Button variant="outline" disabled={busy} onClick={onRetry}>Retry test event</Button>}
         {connection.problem === "offline" && <Button variant="outline" disabled={busy} onClick={onRetry}>Reconnect updates</Button>}
       </> : <p className="text-sm leading-relaxed text-muted-foreground">The invitation includes everything your agent needs to join {companyName}. You can review its request before granting access.</p>}

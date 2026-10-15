@@ -23,9 +23,18 @@ const mockGetCurrentBoardAccess = vi.hoisted(() => vi.fn());
 const mockToggleTheme = vi.hoisted(() => vi.fn());
 const mockSetSidebarOpen = vi.hoisted(() => vi.fn());
 const mockNavigateTopLevel = vi.hoisted(() => vi.fn());
+const mockBranding = vi.hoisted(() => ({ feedbackUrl: "mailto:help@example.com" as string | null }));
 
 vi.mock("@/api/auth", () => ({
   authApi: mockAuthApi,
+}));
+
+vi.mock("@/lib/branding", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/branding")>()),
+  DOCS_URL: "https://docs.example.com/",
+  get FEEDBACK_URL() {
+    return mockBranding.feedbackUrl;
+  },
 }));
 
 vi.mock("@/api/health", () => ({ healthApi: mockHealthApi }));
@@ -152,6 +161,7 @@ describe("SidebarAccountMenu", () => {
     document.body.innerHTML = "";
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    mockBranding.feedbackUrl = "mailto:help@example.com";
   });
 
   describe("staging commit", () => {
@@ -301,7 +311,7 @@ describe("SidebarAccountMenu", () => {
     const feedbackButton = container.querySelector<HTMLAnchorElement>(
       'a[aria-label="Share feedback"]',
     );
-    expect(feedbackButton?.getAttribute("href")).toBe("https://paperclip.ing/feedback");
+    expect(feedbackButton?.getAttribute("href")).toBe("mailto:help@example.com");
     expect(feedbackButton?.getAttribute("target")).toBe("_blank");
     expect(feedbackButton?.classList).toContain("text-muted-foreground/50");
     expect(feedbackButton?.classList).not.toContain("text-border");
@@ -312,6 +322,27 @@ describe("SidebarAccountMenu", () => {
     expect(feedbackButton?.querySelector("svg")?.classList).toContain("lucide-flag");
     expect(feedbackButton?.getAttribute("data-slot")).toBe("tooltip-trigger");
     expect(feedbackButton?.hasAttribute("title")).toBe(false);
+
+    await act(async () => root.unmount());
+  });
+
+  it("renders no feedback link when the operator sets no feedback URL", async () => {
+    mockBranding.feedbackUrl = null;
+    const root = createRoot(container);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <SidebarAccountMenu deploymentMode="local_trusted" />
+          </TooltipProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+
+    expect(container.querySelector('a[aria-label="Share feedback"]')).toBeNull();
 
     await act(async () => root.unmount());
   });
@@ -395,7 +426,7 @@ describe("SidebarAccountMenu", () => {
 
     // The popover header stays down to name + email: no "Account" badge, no version line.
     expect(popover?.textContent).not.toContain("Account");
-    expect(popover?.textContent).not.toContain("Paperclip v");
+    expect(popover?.textContent).not.toContain("Staples v");
     expect(document.body.textContent).toContain("jane@example.com");
     expect(document.body.querySelector('[data-slot="popover-content"]')?.className)
       .toContain("w-(--profile-popover-width)");

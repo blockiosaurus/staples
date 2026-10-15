@@ -323,13 +323,13 @@ describe("AgentTemplateChip", () => {
     mocks.listTemplates.mockResolvedValue([{ ref: "staples/email-secretary", name: "Email secretary" } as AgentTemplateSummary]);
     await render({ staplesTemplate: EMAIL_TEMPLATE });
     expect(mocks.listTemplates).toHaveBeenCalledWith("company-1");
-    expect(container.querySelector('[data-testid="agent-template-chip"]')?.textContent).toBe("From template: Email secretary v1.0.1");
+    expect(container.querySelector('[data-testid="agent-template-chip"]')?.textContent).toBe("Ready-made: Email secretary");
   });
 
   it("falls back to the ref's slug when the template is not listed", async () => {
     mocks.listTemplates.mockResolvedValue([]);
     await render({ staplesTemplate: { ref: "staples/preview-thing", version: "0.1.0" } });
-    expect(container.querySelector('[data-testid="agent-template-chip"]')?.textContent).toBe("From template: preview-thing v0.1.0");
+    expect(container.querySelector('[data-testid="agent-template-chip"]')?.textContent).toBe("Ready-made: preview-thing");
   });
 
   it("renders nothing for an agent not hired from a template", async () => {

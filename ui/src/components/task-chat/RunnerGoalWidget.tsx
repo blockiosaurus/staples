@@ -97,7 +97,7 @@ export function useRunnerGoalControl(issueId: string | null, agentId: string | n
       const current = query.data ?? (await query.refetch()).data;
       if (!current?.agentId) throw new Error(current?.capability.reason ?? "Select an agent to use /goal.");
       if (current.capability.availability !== "available") {
-        throw new Error(current.capability.reason ?? "Session goals are unsupported by this agent.");
+        throw new Error(current.capability.reason ?? "This agent can't work toward a goal.");
       }
       await mutation.mutateAsync({
         requestId: requestId(),
@@ -115,7 +115,7 @@ export function useRunnerGoalControl(issueId: string | null, agentId: string | n
 
   const edit = useCallback(async () => {
     const current = query.data ?? (await query.refetch()).data;
-    if (!current?.goal) throw new Error("There is no current session goal to edit.");
+    if (!current?.goal) throw new Error("There is no goal to edit yet.");
     mutation.reset();
     setActionError(null);
     setExpanded(true);
@@ -200,14 +200,14 @@ export function RunnerGoalWidget({ control }: { control: RunnerGoalControl }) {
   return (
     <section
       className="rounded-xl border border-border/80 bg-card/95 px-3 py-2 shadow-sm"
-      aria-label="Agent session goal"
+      aria-label="Agent goal"
       data-testid="runner-goal-widget"
     >
       <div className="flex items-start gap-2">
         <Flag className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-xs font-semibold">Session goal</span>
+            <span className="text-xs font-semibold">Goal</span>
             {goal ? (
               <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs font-medium capitalize" role="status">
                 {goal.status.replaceAll("_", " ")}
@@ -280,7 +280,7 @@ export function RunnerGoalWidget({ control }: { control: RunnerGoalControl }) {
             void control.submitDialog();
           }}>
             <DialogHeader>
-              <DialogTitle>{control.dialog?.action === "replace" ? "Replace session goal?" : "Edit session goal"}</DialogTitle>
+              <DialogTitle>{control.dialog?.action === "replace" ? "Replace the goal?" : "Edit goal"}</DialogTitle>
               <DialogDescription>
                 {control.dialog?.action === "replace"
                   ? "This clears the unfinished goal and starts a new goal with the objective below."

@@ -835,7 +835,7 @@ describeEmbeddedPostgres("briefing service", () => {
       await policy(companyId, "billed_cents", 9000);
       await policy(companyId, "hosted_billed_cents", 5000);
       const briefing = await briefingService(db).get({ companyId, userId: "board-user", actor: boardActor(companyId) });
-      expect(briefing.spend).toEqual({ monthSpendCents: 2000, companyBudgetCents: 9000, hosted: { capCents: 5000, spentCents: 800 } });
+      expect(briefing.spend).toEqual({ monthSpendCents: 2000, companyBudgetCents: 9000, hosted: { capCents: 5000, spentCents: 800, maxCents: 20000 } });
     });
 
     it("ignores disabled budgets and keeps other companies' spend out", async () => {

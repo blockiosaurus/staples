@@ -46,6 +46,7 @@ import {
 import { attentionService } from "./attention.js";
 import { HOSTED_BILLED_CENTS_METRIC, computeObservedSpend } from "./budgets.js";
 import { getUtcMonthStart } from "./dashboard.js";
+import { hostedPersonLimitMaxCents } from "./hosted-inference.js";
 import { authorizationService, issueReadSqlCondition, type AuthorizationActor } from "./authorization.js";
 import { issueService, nonPluginOperationIssueCondition } from "./issues.js";
 import { executionIssueCondition } from "./issue-visibility.js";
@@ -863,7 +864,9 @@ export function briefingService(db: Db, serviceOptions: BriefingServiceOptions =
     return {
       monthSpendCents: Math.round(Number(row?.total ?? 0)),
       companyBudgetCents: budget ? budget.amount : null,
-      hosted: hosted && hostedObserved ? { capCents: hosted.amount, spentCents: Math.round(hostedObserved.total) } : null,
+      hosted: hosted && hostedObserved
+        ? { capCents: hosted.amount, spentCents: Math.round(hostedObserved.total), maxCents: hostedPersonLimitMaxCents(hosted.amount) }
+        : null,
     };
   }
 

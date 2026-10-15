@@ -23,6 +23,7 @@ import { SIDEBAR_SCROLL_RESET_STATE } from "@/lib/navigation-scroll";
 import { queryKeys } from "@/lib/queryKeys";
 import { useCompany } from "@/context/CompanyContext";
 import { useCloudInstance } from "@/hooks/useCloudInstance";
+import { useIsInstanceAdmin } from "@/hooks/useIsInstanceAdmin";
 import { useHiddenSettings } from "@/hooks/useHiddenSettings";
 import { usePluginSlots } from "@/plugins/slots";
 import { SidebarNavItem } from "./SidebarNavItem";
@@ -43,6 +44,7 @@ function isSandboxProviderOnly(plugin: PluginRecord): boolean {
 
 export function CompanySettingsSidebar() {
   const { selectedCompanyId } = useCompany();
+  const { isAdmin } = useIsInstanceAdmin();
   const { hidden: hiddenSettings } = useHiddenSettings();
   const showPage = (pageKey: string) => !hiddenSettings.has(pageKey);
   const showPlugins = showPage("instance.plugins");
@@ -77,7 +79,7 @@ export function CompanySettingsSidebar() {
     queryFn: () => pluginsApi.list(),
     // The listing only feeds the per-plugin subtree below; skip it when the
     // operator hides the Plugins surface.
-    enabled: showPlugins,
+    enabled: showPlugins && isAdmin,
   });
   const sidebarPlugins = (plugins ?? []).filter((plugin) => !isSandboxProviderOnly(plugin));
 
@@ -134,6 +136,17 @@ export function CompanySettingsSidebar() {
           {showPage("company.secrets") && (
             <SidebarNavItem to="/company/settings/secrets" label="Secrets" icon={KeyRound} end />
           )}
+          {showPage("company.export") && (
+            <SidebarNavItem to="/company/export" label="Export" icon={Download} />
+          )}
+          {!isCloud && showPage("company.import") && (
+            <SidebarNavItem to="/company/import" label="Import" icon={Upload} end />
+          )}
+        </div>
+        {isAdmin ? (
+          <div data-slot="contextual-sidebar-group" className={primarySidebarStyles.group} aria-label="Admin">
+            <p className="px-3 pb-1 pt-3 text-(length:--text-micro) font-medium uppercase tracking-(--tracking-label) text-muted-foreground">Admin</p>
+            <SidebarNavItem to={`${INSTANCE_SETTINGS_PATH_PREFIX}/general`} label="Deployment" icon={MonitorCog} end />
           {showPage("instance.environments") && (
             <SidebarNavItem
               to={`${INSTANCE_SETTINGS_PATH_PREFIX}/environments`}
@@ -149,12 +162,6 @@ export function CompanySettingsSidebar() {
               icon={Shield}
               end
             />
-          )}
-          {showPage("company.export") && (
-            <SidebarNavItem to="/company/export" label="Export" icon={Download} />
-          )}
-          {!isCloud && showPage("company.import") && (
-            <SidebarNavItem to="/company/import" label="Import" icon={Upload} end />
           )}
           {showPage("instance.experimental") && (
             <SidebarNavItem
@@ -198,7 +205,8 @@ export function CompanySettingsSidebar() {
               icon={Cpu}
             />
           )}
-        </div>
+          </div>
+        ) : null}
       </nav>
     </ContextualSidebarFrame>
   );

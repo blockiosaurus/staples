@@ -313,7 +313,7 @@ describe("TaskChatQueuedMessages", () => {
         ?.click();
     });
     expect(container.textContent).toContain(
-      "The queue changed in another session. Review it and try again.",
+      "The queue changed in another tab or window. Review it and try again.",
     );
     expect(container.textContent).not.toContain("Queued message discarded.");
   });

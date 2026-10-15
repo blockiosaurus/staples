@@ -261,6 +261,8 @@ export interface TaskChatMarkerItem {
   createdAtIso?: string;
   runHref?: string;
   planHref?: string;
+  /** Machine error code, kept reachable as a tooltip for support. */
+  errorCode?: string;
   /** An actionable credential denial is always expanded in the task conversation. */
   credentialAccess?: {
     agentName: string;

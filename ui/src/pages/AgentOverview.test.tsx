@@ -62,6 +62,7 @@ describe("AgentOverview", () => {
           directReportCount={2}
           skillNames={["Design Guide", "Check PR"]}
           agentRouteId="codexcoder"
+          showSkills
         />
       </QueryClientProvider>,
     );
@@ -80,8 +81,41 @@ describe("AgentOverview", () => {
     expect(markup).toContain("Simplify agent information architecture");
     expect(markup).toContain("PAP-42");
     expect(markup).toContain('href="/activity/costs?agentId=agent-1"');
+    expect(markup).toContain("GPT-5.6 Sol");
+    expect(markup).toContain(">Skills<");
     expect(markup).not.toContain("Run Activity");
     expect(markup).not.toContain("Tasks by Status");
+  });
+
+  it("hides the Skills section when the Skills surface is off", () => {
+    const agent = {
+      id: "agent-1",
+      companyId: "company-1",
+      name: "Codex Coder",
+      urlKey: "codexcoder",
+      role: "engineer",
+      status: "active",
+      reportsTo: null,
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      chainOfCommand: [],
+    } as unknown as AgentDetail;
+    const markup = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <AgentOverview
+          agent={agent}
+          runs={[] as HeartbeatRun[]}
+          assignedIssues={[]}
+          directReportCount={0}
+          skillNames={["Design Guide"]}
+          agentRouteId="codexcoder"
+          showSkills={false}
+        />
+      </QueryClientProvider>,
+    );
+    expect(markup).not.toContain(">Skills<");
+    expect(markup).not.toContain("Design Guide");
   });
 
   it("maps raw run statuses to plain words", () => {

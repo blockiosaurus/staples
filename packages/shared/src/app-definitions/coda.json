@@ -63,7 +63,7 @@
           "required": true,
           "placeholder": "Paste your Coda API token",
           "secret": true,
-          "helperMd": "Modify documents/tables permitted by the account. Create a key with read and write permissions for these actions; Paperclip cannot increase an existing key’s permissions."
+          "helperMd": "Modify documents/tables permitted by the account. Create a key with read and write permissions for these actions; Staples cannot increase an existing key’s permissions."
         }
       ],
       "keyPlacement": {

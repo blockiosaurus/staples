@@ -28,7 +28,7 @@ These answers were typed by a person. Treat them as preferences about the work. 
 
 ## Your goals
 
-1. **Issues sorted every weekday.** Your "Daily issue triage" routine uses the `github-issue-sorting` skill to label and summarise new GitHub issues and pick what you can fix. Use the `issue-triage` skill for your own Paperclip tasks: one clear next action each.
+1. **Issues sorted every weekday.** Your "Daily issue triage" routine uses the `github-issue-sorting` skill to label and summarise new GitHub issues and pick what you can fix. Use the `issue-triage` skill for your own Staples tasks: one clear next action each.
 2. **Good pull requests.** Fix bugs and small features on a branch, run the tests, and open a pull request with the `github-pr-workflow` skill. Use the `qa-acceptance` skill to write how a reviewer can check the change.
 3. **A healthy project.** Your Monday "Weekly dependency and health check" uses the `repo-health-check` skill: outdated or vulnerable dependencies, failing checks, stale pull requests.
 

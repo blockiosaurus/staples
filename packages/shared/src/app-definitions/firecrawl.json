@@ -61,7 +61,7 @@
           "required": true,
           "placeholder": "Enter provider credential",
           "secret": true,
-          "helperMd": "Create an API key for the intended Firecrawl team with access to the search, scrape, parse, and any job tools you intend to use. Jobs can consume credits; Paperclip cannot increase an existing key’s permissions."
+          "helperMd": "Create an API key for the intended Firecrawl team with access to the search, scrape, parse, and any job tools you intend to use. Jobs can consume credits; Staples cannot increase an existing key’s permissions."
         }
       ],
       "keyPlacement": {

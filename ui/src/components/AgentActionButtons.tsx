@@ -114,7 +114,7 @@ export function ClearErrorButton({
       onClick={onClick}
       disabled={disabled}
       className="border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive dark:border-destructive/50"
-      aria-label="Clear error and return agent to idle"
+      aria-label="Clear the problem and let the agent work again"
     >
       <CheckCircle2 className="h-3.5 w-3.5 sm:mr-1" />
       <span className="hidden sm:inline">Clear error</span>
@@ -311,7 +311,7 @@ export function AgentActionButtons({
       }
     },
     onError: (err) => {
-      reportError(err instanceof Error ? err.message : "Failed to start traced run");
+      reportError(err instanceof Error ? err.message : "Couldn't start the run");
     },
   });
 
@@ -365,7 +365,7 @@ export function AgentActionButtons({
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.taskSessions(agent.id) });
     },
     onError: (err) => {
-      reportError(err instanceof Error ? err.message : "Failed to reset session");
+      reportError(err instanceof Error ? err.message : "Couldn't reset the conversation");
     },
   });
 
@@ -387,10 +387,10 @@ export function AgentActionButtons({
       {persistentProviderTrace ? (
         <span
           className="hidden items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs font-medium text-primary lg:inline-flex"
-          title="Exact provider traffic will be captured for future runs and retained for up to 24 hours."
+          title="Extra detail is kept for the next runs for up to 24 hours."
         >
           <Bug className="h-3.5 w-3.5" />
-          Raw tracing on
+          Detailed logging on
         </span>
       ) : null}
       <Button
@@ -412,21 +412,6 @@ export function AgentActionButtons({
         label={runLabel}
         size={size}
       />}
-      {canRunWithProviderTrace && (
-        <Button
-          variant="outline"
-          size={size}
-          onClick={() => {
-            if (navigateToRunOnInvoke && !confirmNavigationStart(agentActionStartedDirtyRef)) return;
-            providerTraceAction.mutate();
-          }}
-          disabled={assignAndRunDisabled}
-          title="Capture exact provider traffic for this run (expires after 24 hours)"
-        >
-          <Bug className="h-3.5 w-3.5 sm:mr-1" />
-          <span className="hidden sm:inline">Run with provider trace</span>
-        </Button>
-      )}
       {isError ? (
         <ClearErrorButton
           onClick={() => agentAction.mutate("clear_error")}
@@ -472,7 +457,7 @@ export function AgentActionButtons({
             <MoreHorizontal className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-44 p-1" align="end">
+        <PopoverContent className="w-56 p-1" align="end">
           <button
             className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50"
             disabled={duplicateAgent.isPending}
@@ -483,8 +468,24 @@ export function AgentActionButtons({
             ) : (
               <Copy className="h-3 w-3" />
             )}
-            Duplicate Agent
+            Duplicate agent
           </button>
+          {canRunWithProviderTrace ? (
+            <button
+              type="button"
+              className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 disabled:opacity-50"
+              disabled={assignAndRunDisabled}
+              onClick={() => {
+                setMoreOpen(false);
+                if (navigateToRunOnInvoke && !confirmNavigationStart(agentActionStartedDirtyRef)) return;
+                providerTraceAction.mutate();
+              }}
+              title="Keeps a detailed log of this run for 24 hours"
+            >
+              <Bug className="h-3 w-3" />
+              Run with detailed log
+            </button>
+          ) : null}
           <button
             className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50"
             onClick={() => {
@@ -495,7 +496,7 @@ export function AgentActionButtons({
             }}
           >
             <Copy className="h-3 w-3" />
-            Copy Agent ID
+            Copy agent ID
           </button>
           <button
             className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50"
@@ -505,7 +506,7 @@ export function AgentActionButtons({
             }}
           >
             <RotateCcw className="h-3 w-3" />
-            Reset Sessions
+            Reset conversations
           </button>
           {!hideTerminate && (
             <button

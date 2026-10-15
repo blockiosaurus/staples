@@ -1,10 +1,13 @@
 import type {
   ConnectionIntentInteraction,
   ConnectionIntentSetupOptions,
+  PendingConnectionRequest,
 } from "@paperclipai/shared";
 import { api } from "./client";
 
 export const connectionIntentsApi = {
+  listPending: (companyId: string) =>
+    api.get<{ requests: PendingConnectionRequest[] }>(`/companies/${companyId}/connection-requests/pending`),
   setupOptions: (interactionId: string) =>
     api.get<ConnectionIntentSetupOptions>(
       `/connection-intents/${interactionId}/setup-options`,

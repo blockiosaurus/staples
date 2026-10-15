@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "@/lib/router";
+import { Link, useNavigate, useSearchParams } from "@/lib/router";
 import { authApi } from "../api/auth";
 import { healthApi } from "../api/health";
 import { CloudSignIn } from "@/components/CloudSignIn";
@@ -12,7 +12,8 @@ import { Button } from "@/components/ui/button";
 import { AsciiArtAnimation } from "@/components/AsciiArtAnimation";
 import { PaperclipLoading } from "@/components/AnimatedPaperclipIcon";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { PaperclipLockup } from "../components/PaperclipLockup";
+import { ProductWordmark } from "@/components/ProductWordmark";
+import { PRIVACY_PATH, PRODUCT_NAME, PRODUCT_TAGLINE, TERMS_PATH } from "@/lib/branding";
 
 type AuthMode = "sign_in" | "sign_up";
 
@@ -108,16 +109,23 @@ export function AuthPage() {
       <div className="w-full md:w-1/2 flex flex-col overflow-y-auto">
         <div className="w-full max-w-md mx-auto my-auto px-8 py-12">
           <div className="mb-8">
-            <PaperclipLockup className="h-5 w-auto" />
+            <ProductWordmark className="text-xl" />
           </div>
 
-          <h1 className="text-xl font-semibold">
-            {mode === "sign_in" ? "Sign in to Paperclip" : "Create your Paperclip account"}
-          </h1>
+          <h1 className="text-2xl font-semibold leading-tight">{PRODUCT_TAGLINE}</h1>
+          <ul className="mt-3 space-y-1 text-sm text-muted-foreground" aria-label="Examples">
+            <li>A candle shop that needs an online store and a newsletter.</li>
+            <li>A dog-walking service that needs bookings and reminders.</li>
+            <li>A newsletter that needs writing, sending and subscriber care.</li>
+          </ul>
+
+          <h2 className="mt-8 text-lg font-semibold">
+            {mode === "sign_in" ? `Sign in to ${PRODUCT_NAME}` : `Create your ${PRODUCT_NAME} account`}
+          </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {mode === "sign_in"
-              ? "Use your email and password to access this instance."
-              : "Create an account for this instance. Email confirmation is not required in v1."}
+              ? "Use your email and password."
+              : "Use your email and a password of at least 8 characters."}
           </p>
 
           <form
@@ -217,6 +225,12 @@ export function AuthPage() {
               {mode === "sign_in" ? "Create one" : "Sign in"}
             </button>
           </div>
+          <p className="mt-6 text-xs text-muted-foreground">
+            By continuing you agree to the{" "}
+            <Link to={TERMS_PATH} className="underline underline-offset-2 hover:text-foreground">Terms</Link>
+            {" "}and{" "}
+            <Link to={PRIVACY_PATH} className="underline underline-offset-2 hover:text-foreground">Privacy policy</Link>.
+          </p>
         </div>
       </div>
 

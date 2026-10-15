@@ -51,7 +51,6 @@ export const CONNECTABLE_APP_DEFINITIONS = APP_DEFINITIONS.filter((app) =>
  * is pulled from Browse or reserved for a future first-party experience.
  */
 export const APP_STORE_HIDDEN_SLUGS = new Set([
-  "beehiiv",
   "brex",
   "candid",
   "clickup",
@@ -59,7 +58,6 @@ export const APP_STORE_HIDDEN_SLUGS = new Set([
   "egnyte",
   "embat",
   "kernel",
-  "klaviyo",
   "local-falcon",
   "manufact",
   "monday",
@@ -70,7 +68,6 @@ export const APP_STORE_HIDDEN_SLUGS = new Set([
   "similarweb",
   "ticket-tailor",
   "ticktick",
-  "xero",
 ]);
 
 export const APP_STORE_DEFINITIONS = CONNECTABLE_APP_DEFINITIONS.filter((app) =>

@@ -156,7 +156,7 @@ describe("AuthPage", () => {
     healthMock.mockResolvedValue({ cloud: { managed: true, managedBy: "paperclip-cloud", cloudBaseUrl: "https://my.paperclip.app", stackSlug: "team" } });
     beginCloudSignInMock.mockReturnValue(false);
     const { root } = await mount();
-    await vi.waitFor(() => expect(container.textContent).toContain("Continue to Paperclip Cloud"));
+    await vi.waitFor(() => expect(container.textContent).toContain("Continue to Staples Cloud"));
     expect(container.querySelector("form")).toBeNull();
     await act(() => root.unmount());
   });
@@ -167,6 +167,29 @@ describe("AuthPage", () => {
     await vi.waitFor(() => expect(container.textContent).toContain("Cloud sign-in is unavailable"));
     expect(container.querySelector("form")).toBeNull();
     expect(beginCloudSignInMock).not.toHaveBeenCalled();
+    await act(() => root.unmount());
+  });
+
+  it("explains the product and links the legal pages", async () => {
+    const { root } = await mount();
+    expect(container.querySelector("h1")?.textContent).toBe("Run your business with a team of AI agents you direct");
+    expect(container.querySelector('ul[aria-label="Examples"]')?.children.length).toBe(3);
+    expect(container.querySelector("h2")?.textContent).toBe("Sign in to Staples");
+    expect(container.querySelector('a[href="/terms"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/privacy"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("instance");
+    expect(container.textContent).not.toContain("v1");
+    await act(() => root.unmount());
+  });
+
+  it("shows the account-creation heading and password hint in sign-up mode", async () => {
+    const { root } = await mount();
+    const toggle = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Create one") as HTMLButtonElement;
+    await act(async () => {
+      toggle.click();
+    });
+    expect(container.querySelector("h2")?.textContent).toBe("Create your Staples account");
+    expect(container.textContent).toContain("at least 8 characters");
     await act(() => root.unmount());
   });
 

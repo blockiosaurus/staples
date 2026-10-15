@@ -47,7 +47,7 @@ export const BOARD_ROUTE_ROOTS = [
 ] as const;
 
 /** Top-level routes that live outside any company prefix. */
-export const GLOBAL_ROUTE_ROOTS = ["auth", "invite", "board-claim", "cli-auth", "mcp-connect", "dot-connect", "assistant-connections", "docs", "instance", "start"] as const;
+export const GLOBAL_ROUTE_ROOTS = ["auth", "invite", "board-claim", "cli-auth", "mcp-connect", "dot-connect", "assistant-connections", "docs", "instance", "start", "terms", "privacy"] as const;
 
 /** Every lowercase route root a company issue prefix must not equal. */
 export const RESERVED_COMPANY_ROUTE_SEGMENTS: readonly string[] = [

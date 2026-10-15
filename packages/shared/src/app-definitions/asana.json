@@ -23,14 +23,14 @@
       "ownershipModes": [
         "platform_shared"
       ],
-      "whenToUse": "Connect your Asana account with Paperclip's app.",
+      "whenToUse": "Connect your Asana account with Staples' app.",
       "defaults": {
         "serverUrl": "https://mcp.asana.com/v2/mcp",
         "scopesHint": [
           "default"
         ]
       },
-      "guidanceMd": "Sign in to Asana with Paperclip. Asana gives this connection access to the workspaces available to your account.",
+      "guidanceMd": "Sign in to Asana with Staples. Asana gives this connection access to the workspaces available to your account.",
       "riskTier": "S3",
       "label": "Sign in with Asana",
       "consoleLinks": {

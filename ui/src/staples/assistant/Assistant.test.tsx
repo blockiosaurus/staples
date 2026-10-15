@@ -323,7 +323,7 @@ describe("Assistant page and dock", () => {
     expect(lastConversation().commentMetadata?.()).toEqual({
       pageContext: {
         route: "/issues/PAP-12",
-        title: "Fix login • Tasks • Acme • Paperclip",
+        title: "Fix login • Tasks • Acme • Staples",
         entity: { type: "issue", id: "PAP-12", label: "Fix login" },
       },
     });

@@ -29,6 +29,7 @@ import { FinanceBillerCard } from "../components/FinanceBillerCard";
 import { FinanceKindCard } from "../components/FinanceKindCard";
 import { FinanceTimelineCard } from "../components/FinanceTimelineCard";
 import { Identity } from "../components/Identity";
+import { CostsOverview } from "./costs/CostsOverview";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
 import { ProviderQuotaCard } from "../components/ProviderQuotaCard";
@@ -164,6 +165,17 @@ function FinanceSummaryCard({
         />
       </CardContent>
     </Card>
+  );
+}
+
+/** Wraps the detailed spend views in a closed "Details" disclosure on the full page; a no-op when embedded. */
+function DetailsDisclosure({ enabled, children }: { enabled: boolean; children: ReactNode }) {
+  if (!enabled) return <>{children}</>;
+  return (
+    <details data-testid="costs-details" className="rounded-lg border border-border p-4">
+      <summary className="cursor-pointer text-sm font-medium">Details</summary>
+      <div className="mt-4 space-y-5">{children}</div>
+    </details>
   );
 }
 
@@ -607,21 +619,27 @@ export function Costs({
               )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              {PRESET_KEYS.map((key) => (
-                <Button
-                  key={key}
-                  variant={preset === key ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setPreset(key)}
-                  aria-pressed={preset === key}
-                >
-                  {PRESET_LABELS[key]}
-                </Button>
-              ))}
-            </div>
           </div>
+          <CostsOverview companyId={companyId} />
+        </div>
+      ) : null}
 
+      <DetailsDisclosure enabled={showSummaryChrome}>
+      {showSummaryChrome ? (
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center gap-2">
+            {PRESET_KEYS.map((key) => (
+              <Button
+                key={key}
+                variant={preset === key ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setPreset(key)}
+                aria-pressed={preset === key}
+              >
+                {PRESET_LABELS[key]}
+              </Button>
+            ))}
+          </div>
           {preset === "custom" ? (
             <div className="flex flex-wrap items-center gap-2 border border-border p-3">
               <input
@@ -767,7 +785,7 @@ export function Costs({
                           const isExpanded = expandedAgents.has(row.agentId);
                           const hasBreakdown = modelRows.length > 0;
                           return (
-                            <div key={row.agentId ?? "services"} role="group" aria-label={`${row.agentName ?? row.agentId ?? "Paperclip services"} costs`} className="border border-border px-4 py-3">
+                            <div key={row.agentId ?? "services"} role="group" aria-label={`${row.agentName ?? row.agentId ?? "Staples services"} costs`} className="border border-border px-4 py-3">
                               <div
                                 className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", hasBreakdown ? "cursor-pointer select-none" : "")}
                                 onClick={() => hasBreakdown && toggleAgent(row.agentId)}
@@ -780,7 +798,7 @@ export function Costs({
                                   ) : (
                                     <span className="h-3 w-3 shrink-0" />
                                   )}
-                                  {row.agentId ? <AgentIdentity agent={{ id: row.agentId, name: row.agentName ?? row.agentId, appearance: row.agentAppearance }} size="sm" /> : <span className="font-medium">Paperclip services</span>}
+                                  {row.agentId ? <AgentIdentity agent={{ id: row.agentId, name: row.agentName ?? row.agentId, appearance: row.agentAppearance }} size="sm" /> : <span className="font-medium">Staples services</span>}
                                   {row.agentStatus === "terminated" ? <StatusBadge status="terminated" /> : null}
                                 </div>
                                 <div className="text-right text-sm tabular-nums">
@@ -1183,6 +1201,7 @@ export function Costs({
           )}
         </TabsContent>
       </Tabs>
+      </DetailsDisclosure>
     </div>
   );
 }

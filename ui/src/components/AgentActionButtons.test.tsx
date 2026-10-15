@@ -170,7 +170,7 @@ describe("AgentActionButtons", () => {
     });
     await flushReact();
 
-    expect(document.body.textContent).toContain("Reset Sessions");
+    expect(document.body.textContent).toContain("Reset conversations");
   });
 
   it("calls clearError and refreshes agent-related queries", async () => {
@@ -178,7 +178,7 @@ describe("AgentActionButtons", () => {
     await flushReact();
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="Clear error and return agent to idle"]')?.click();
+      container.querySelector<HTMLButtonElement>('[aria-label="Clear the problem and let the agent work again"]')?.click();
     });
     await flushReact();
 
@@ -200,12 +200,17 @@ describe("AgentActionButtons", () => {
     expect(container.textContent).not.toContain("Clear error");
   });
 
-  it("starts an administrator-selected run with raw provider tracing", async () => {
+  it("starts an administrator-selected run with a detailed log", async () => {
     render(makeAgent(), { canRunWithProviderTrace: true });
     await flushReact();
 
-    const traceButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("Run with provider trace"),
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label^="Open actions for"]')?.click();
+    });
+    await flushReact();
+
+    const traceButton = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Run with detailed log"),
     );
     expect(traceButton).toBeTruthy();
 

@@ -72,7 +72,7 @@ vi.mock("./api/agentTemplates", () => ({
 
 vi.mock("./staples/assistant/AssistantProvider", () => ({ useAskAssistant: () => () => false }));
 
-const PAP_COMPANY = { id: "company-1", name: "Paperclip", issuePrefix: "PAP", status: "active" };
+const PAP_COMPANY = { id: "company-1", name: "Staples", issuePrefix: "PAP", status: "active" };
 vi.mock("./context/CompanyContext", () => ({
   useCompany: () => ({
     companies: [PAP_COMPANY],
@@ -89,7 +89,7 @@ function renderAppAt(container: HTMLElement, path: string) {
   flushSync(() => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <BreadcrumbProvider companyName="Paperclip">
+        <BreadcrumbProvider companyName="Staples">
           <MemoryRouter initialEntries={[path]}>
             <App />
           </MemoryRouter>

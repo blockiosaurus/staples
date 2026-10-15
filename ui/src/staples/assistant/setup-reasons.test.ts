@@ -4,7 +4,7 @@ import { connectionFailureReason } from "./setup-reasons";
 describe("connectionFailureReason", () => {
   it("only names Node 24.11 when the check says the Node version is the cause", () => {
     expect(connectionFailureReason("claude_local", ["adapter_engine_unavailable", "adapter_engine_node_unsupported"])).toBe(
-      "Claude is installed, but its default engine needs Node 24.11 or newer. Pick Claude below to connect it on its CLI engine instead.",
+      "Claude is installed, but it needs Node 24.11 or newer here. Pick another option to continue.",
     );
     expect(connectionFailureReason("gemini_local", ["adapter_engine_unavailable", "adapter_engine_node_unsupported"])).toBe(
       "Gemini is installed, but it needs Node 24.11 or newer on this computer to run the Assistant.",
@@ -19,10 +19,10 @@ describe("connectionFailureReason", () => {
 
   it("otherwise says the default engine isn't available here", () => {
     expect(connectionFailureReason("claude_local", ["adapter_engine_unavailable"])).toBe(
-      "Claude is installed, but its default engine isn't available here. Pick Claude below to connect it on its CLI engine instead.",
+      "Claude is installed, but it can't run here. Pick another option to continue.",
     );
     expect(connectionFailureReason("gemini_local", ["adapter_engine_unavailable"])).toBe(
-      "Gemini is installed, but its default engine isn't available here.",
+      "Gemini is installed, but it can't run here.",
     );
   });
 

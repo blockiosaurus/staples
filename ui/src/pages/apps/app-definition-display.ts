@@ -16,8 +16,12 @@ export function appDefinitionName(entry: AppGalleryDisplayEntry | null | undefin
   return entry?.name ?? appDefinitionSlug(entry) ?? "App";
 }
 
+const PROVIDER_HOSTED = /^Connect (.+?)['’]s provider-hosted MCP server\.$/;
+
 export function appDefinitionDescription(entry: AppGalleryDisplayEntry | null | undefined): string {
-  return entry?.description ?? entry?.tagline ?? "";
+  const raw = entry?.description ?? entry?.tagline ?? "";
+  const boilerplate = raw.match(PROVIDER_HOSTED);
+  return boilerplate ? `Let agents use ${boilerplate[1]}.` : raw;
 }
 
 export function appDefinitionLogoUrl(entry: AppGalleryDisplayEntry | null | undefined): string | undefined {

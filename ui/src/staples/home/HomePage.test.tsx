@@ -232,7 +232,7 @@ describe("HomePage", () => {
   });
 
   it("shows the hosted limit's use when there is one", async () => {
-    mocks.getBriefing.mockResolvedValue(fixture({ spend: { monthSpendCents: 1200, companyBudgetCents: null, hosted: { capCents: 5000, spentCents: 800 } } }));
+    mocks.getBriefing.mockResolvedValue(fixture({ spend: { monthSpendCents: 1200, companyBudgetCents: null, hosted: { capCents: 5000, spentCents: 800, maxCents: 20000 } } }));
     await render();
     expect(container.querySelector('[data-testid="briefing-spend"]')?.textContent).toBe("$12 this month · $8 of $50 hosted limit");
   });

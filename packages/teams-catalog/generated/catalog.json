@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@paperclipai/teams-catalog",
   "packageVersion": "0.1.0",
-  "generatedAt": "2026-10-13T15:52:35.048Z",
+  "generatedAt": "2026-10-14T19:36:58.167Z",
   "teams": [
     {
       "id": "paperclipai:bundled:company-defaults:core-exec-team",
@@ -11,7 +11,7 @@
       "category": "company-defaults",
       "slug": "core-exec-team",
       "name": "Core Exec Team",
-      "description": "Default leadership and engineering team for bootstrapping a Paperclip company with a CEO, CTO, QA Engineer, starter project, and a recurring CEO heartbeat review task.",
+      "description": "Default leadership and engineering team for bootstrapping a Staples company with a CEO, CTO, QA Engineer, starter project, and a recurring CEO heartbeat review task.",
       "path": "catalog/bundled/company-defaults/core-exec-team",
       "entrypoint": "TEAM.md",
       "schema": "agentcompanies/v1",
@@ -96,14 +96,14 @@
         {
           "path": "TEAM.md",
           "kind": "team",
-          "sizeBytes": 2014,
-          "sha256": "e0c38e9af1a5dd1888fb81a72feba75a9ab1be4c78d8ceb658e2e5cd621c5096"
+          "sizeBytes": 2010,
+          "sha256": "c67786cbb29abdbd87e5690afa4dadf2f16c17e4f96a731344679359bdc4407f"
         },
         {
           "path": "agents/ceo/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 263,
-          "sha256": "75848c6f794646a93e23bc73b80d31ef0eb8b83c105423eb98ea29e7685d2fd0"
+          "sizeBytes": 261,
+          "sha256": "8a0d22595a27761168d439ee9823e24211637a7d7cd8bbbd8f7b6790b924d192"
         },
         {
           "path": "agents/cto/AGENTS.md",
@@ -132,7 +132,7 @@
       ],
       "trustLevel": "markdown_only",
       "compatibility": "compatible",
-      "contentHash": "sha256:9d0416ebc0a81585dc51b73efb25decba9e1e3f3741940fc9fca74f3238f344d"
+      "contentHash": "sha256:53a15127b287b27c2276174267f6db808170dda884b5dcb1d9001b43a2028b7c"
     },
     {
       "id": "paperclipai:bundled:product:product-design",
@@ -758,8 +758,8 @@
         {
           "path": "agents/coding-agent/AGENTS.md",
           "kind": "agent",
-          "sizeBytes": 8415,
-          "sha256": "3a25618be4e4e5a4063ecff0e20c95f19cef427e5354f02461c7d51a78647998"
+          "sizeBytes": 8413,
+          "sha256": "9b00820c8391d554cbf70efd936e5c03f198b161b88945f4884e46b397fbd913"
         },
         {
           "path": "projects/code/PROJECT.md",
@@ -806,7 +806,7 @@
       ],
       "trustLevel": "assets",
       "compatibility": "compatible",
-      "contentHash": "sha256:c403806b7c3103e141f9e229a598c8022507ddc7c5b114d1ac2e5fda043347af",
+      "contentHash": "sha256:ff4612b5d8e8ebbb80b4ac60e6370f0fadd754f7f283f58a50bbf59dadd6590c",
       "staplesTemplate": {
         "version": "1.2.0",
         "tagline": "Triages GitHub issues, fixes bugs and opens pull requests for review",

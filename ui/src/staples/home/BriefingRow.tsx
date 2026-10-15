@@ -100,7 +100,7 @@ export function parseDollars(value: string): number | null {
 }
 
 /** The small "Raise limit" form: a new amount, then Cancel (left) and Raise limit (right) in one row. */
-function RaiseLimitForm({
+export function RaiseLimitForm({
   limitCents,
   observedCents,
   suggestedCents,

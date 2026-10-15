@@ -41,7 +41,7 @@
     {
       "slug": "beehiiv",
       "provider": "beehiiv",
-      "catalogVisible": false,
+      "catalogVisible": true,
       "localAsset": "/brands/apps/beehiiv.png"
     },
     {
@@ -476,7 +476,7 @@
     {
       "slug": "xero",
       "provider": "Xero",
-      "catalogVisible": false,
+      "catalogVisible": true,
       "localAsset": "/brands/apps/xero.svg"
     },
     {
@@ -650,7 +650,7 @@
     {
       "slug": "klaviyo",
       "provider": "Klaviyo",
-      "catalogVisible": false,
+      "catalogVisible": true,
       "localAsset": "/brands/apps/klaviyo.png"
     },
     {

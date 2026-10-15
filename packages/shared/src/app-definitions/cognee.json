@@ -15,7 +15,7 @@
   "docsUrl": "https://docs.cognee.ai/cognee-cloud/connections/cloud-mcp",
   "setupPrerequisite": {
     "title": "Cognee Cloud and a local runtime",
-    "description": "Use your Cognee Cloud tenant API URL and key. Paperclip's runtime host needs uv installed to run the official Cognee MCP client. Public deployments require a trusted MCP runtime host.",
+    "description": "Use your Cognee Cloud tenant API URL and key. Staples' runtime host needs uv installed to run the official Cognee MCP client. Public deployments require a trusted MCP runtime host.",
     "actionLabel": "Open Cognee API keys",
     "actionUrl": "https://platform.cognee.ai/api-keys"
   },
@@ -31,7 +31,7 @@
       "defaults": {
         "templateKey": "paperclip.cognee-cloud"
       },
-      "guidanceMd": "Copy the API Base URL and create an API key on Cognee's API Keys page. Use a Cloud workspace with an active subscription. Paperclip uses its bundled Cloud client; no extra runtime installation is required.",
+      "guidanceMd": "Copy the API Base URL and create an API key on Cognee's API Keys page. Use a Cloud workspace with an active subscription. Staples uses its bundled Cloud client; no extra runtime installation is required.",
       "riskTier": "S3",
       "label": "Connect Cognee Cloud",
       "credentialFields": [
@@ -55,7 +55,7 @@
           "required": true,
           "placeholder": "Paste your Cognee API key",
           "secret": true,
-          "helperMd": "Add/process knowledge and manage authorized datasets. Create a key with read and write permissions for these actions; Paperclip cannot increase an existing key’s permissions."
+          "helperMd": "Add/process knowledge and manage authorized datasets. Create a key with read and write permissions for these actions; Staples cannot increase an existing key’s permissions."
         }
       ],
       "keyPlacement": {

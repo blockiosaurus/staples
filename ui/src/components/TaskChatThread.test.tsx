@@ -1036,7 +1036,7 @@ describe("TaskChatThread runtime transcript selection", () => {
     expect(nativeRuns.map((run) => run.id)).toEqual(["native-run"]);
   });
 
-  it("uses runner-only controls only for an actual native Paperclip Runner run", () => {
+  it("uses runner-only controls only for an actual native Staples Runner run", () => {
     nativeTranscriptState.transcriptByRun.set("native-run", [
       {
         kind: "assistant",
@@ -1818,7 +1818,7 @@ describe("TaskChatThread runtime transcript selection", () => {
       '[data-testid="task-chat-collapsible-marker-details"]',
     );
     expect(details?.textContent).toContain(
-      "The model provider has reached its current usage limit. Try again after the limit resets.",
+      "The AI service's usage limit was reached. Try again later.",
     );
     expect(details?.textContent).not.toContain("native_provider_usage_limit");
     const retry = container.querySelector<HTMLButtonElement>(
@@ -2006,8 +2006,10 @@ describe("TaskChatThread runtime transcript selection", () => {
     const marker = container.querySelector('[data-testid="task-chat-collapsible-marker"]');
     expect(marker?.textContent).toContain("Model unavailable");
     flushSync(() => marker!.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click());
-    expect(container.textContent).toContain(error);
-    expect(container.textContent).toContain("clear the task's model override, then retry");
+    expect(container.textContent).toContain("That model isn't available. Pick another or use the default.");
+    expect(container.textContent).not.toContain("native_provider_model_rejected");
+    if (error.includes("'gpt-6.1-sol'")) expect(container.textContent).toContain("(GPT-6.1 Sol)");
+    else expect(container.querySelector(`[title*="${error}"]`)).not.toBeNull();
     expect(container.textContent).not.toContain("after returning a final response");
   });
 
@@ -2164,7 +2166,7 @@ describe("TaskChatThread runtime transcript selection", () => {
       container.querySelector(
         '[data-testid="task-chat-collapsible-marker-details"]',
       )?.textContent,
-    ).toContain("The runner stopped (provider_transport_failed).");
+    ).toContain("The agent stopped unexpectedly. Try again.");
     expect(
       container.querySelector('[data-testid="task-chat-final-response"]'),
     ).toBeNull();
@@ -3388,7 +3390,7 @@ describe("TaskChatThread no-live-execution-path recovery", () => {
     authorType: "system" as const,
     authorAgentId: null,
     authorUserId: null,
-    body: "Paperclip retried continuation, but it still has no live execution path.",
+    body: "Staples retried continuation, but it still has no live execution path.",
     presentation: {
       kind: "system_notice" as const,
       tone: "danger" as const,
@@ -3909,7 +3911,7 @@ describe("TaskChatThread queued message actions", () => {
   });
 });
 
-describe("TaskChatThread Paperclip Runner queue", () => {
+describe("TaskChatThread Staples Runner queue", () => {
   const queuedComment = {
     id: "queued-prp-1",
     companyId: "company-1",

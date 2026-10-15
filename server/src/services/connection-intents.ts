@@ -39,6 +39,8 @@ import {
   type AggregatorServiceDefinition,
   getAppStoreDefinition,
   type ConnectionIntentInteraction,
+  type ConnectionIntentPayload,
+  type PendingConnectionRequest,
   type ConnectionIntentSetupOptions,
   type ConnectionRequestResult,
   type ConnectionsSearchResult,
@@ -47,6 +49,7 @@ import {
   type AiConnectionAttribution,
   type AiConnectionBinding,
 } from "@paperclipai/shared";
+import { visibleIssueCondition } from "./issue-visibility.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import type { RuntimeToolsTokenClaims } from "../runtime-tools-token.js";
@@ -1176,6 +1179,39 @@ export function connectionIntentService(db: Db) {
   }
 
   return {
+    /** Open connection requests across a company's visible tasks, newest first. */
+    async listPendingForCompany(companyId: string): Promise<PendingConnectionRequest[]> {
+      const rows = await db
+        .select({
+          interactionId: issueThreadInteractions.id,
+          issueId: issues.id,
+          issueIdentifier: issues.identifier,
+          payload: issueThreadInteractions.payload,
+          createdAt: issueThreadInteractions.createdAt,
+        })
+        .from(issueThreadInteractions)
+        .innerJoin(issues, eq(issueThreadInteractions.issueId, issues.id))
+        .where(and(
+          eq(issueThreadInteractions.companyId, companyId),
+          eq(issueThreadInteractions.kind, "connection_intent"),
+          eq(issueThreadInteractions.status, "pending"),
+          visibleIssueCondition(),
+        ))
+        .orderBy(desc(issueThreadInteractions.createdAt));
+      return rows.map((row) => {
+        const payload = row.payload as ConnectionIntentPayload;
+        return {
+          interactionId: row.interactionId,
+          issueId: row.issueId,
+          issueIdentifier: row.issueIdentifier ?? null,
+          serviceSlug: payload.upstreamService?.slug ?? payload.serviceSlug,
+          serviceName: payload.upstreamService?.name ?? payload.serviceName,
+          requestingAgentId: payload.requestingAgentId,
+          requestingAgentName: payload.requestingAgentName,
+          createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+        };
+      });
+    },
     validate: loadRunContext,
     usableConnectionForAgent,
     search,

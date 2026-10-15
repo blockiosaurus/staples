@@ -822,6 +822,7 @@ export type {
   RequestCheckboxConfirmationInteraction,
   RequestItemVerdictsInteraction,
   ConnectionIntentInteraction,
+  PendingConnectionRequest,
   IssueThreadInteraction,
   IssueThreadInteractionPayload,
   IssueThreadInteractionResult,

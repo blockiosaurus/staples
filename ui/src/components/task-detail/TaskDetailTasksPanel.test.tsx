@@ -104,7 +104,7 @@ describe("TaskDetailTasksPanel", () => {
       createdFrom: {
         issue: { id: "source", identifier: "PAP-168", title: "Verify Tailscale fix", status: "in_progress" },
         run: { id: "run-1", agentId: "qa" },
-        agent: { id: "qa", name: "Paperclip QA" },
+        agent: { id: "qa", name: "Staples QA" },
       },
       subtasks: [], createdTasks: [], projects: [],
     });
@@ -113,7 +113,7 @@ describe("TaskDetailTasksPanel", () => {
     const note = group.querySelector('[data-testid="issue-created-from"]')!;
     expect(note.textContent).toContain("Created from");
     expect(note.textContent).toContain("PAP-168 Verify Tailscale fix");
-    expect(note.textContent).toContain("by Paperclip QA");
+    expect(note.textContent).toContain("by Staples QA");
     expect(note.querySelector('a')?.getAttribute("href")).toBe("/issues/PAP-168");
     expect(container.querySelector('section[aria-label="Ancestors"]')).toBeNull();
     expect(container.textContent).not.toContain("No tasks yet.");

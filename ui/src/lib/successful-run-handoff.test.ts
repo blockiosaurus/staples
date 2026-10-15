@@ -18,15 +18,31 @@ describe("successful run handoff UI helpers", () => {
     expect(isSuccessfulRunHandoffComment(SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY)).toBe(true);
     expect(
       isSuccessfulRunHandoffComment(
-        "Paperclip exhausted the bounded successful-run handoff correction for this issue, but it still has no clear next-step disposition.",
+        "Staples exhausted the bounded successful-run handoff correction for this issue, but it still has no clear next-step disposition.",
       ),
     ).toBe(true);
     expect(
       isSuccessfulRunHandoffEscalationComment(
-        "Paperclip exhausted the bounded successful-run handoff correction for this issue, but it still has no clear next-step disposition.",
+        "Staples exhausted the bounded successful-run handoff correction for this issue, but it still has no clear next-step disposition.",
       ),
     ).toBe(true);
     expect(isSuccessfulRunHandoffComment("Ordinary issue comment")).toBe(false);
+  });
+
+  it("recognises stored legacy Staples comments as well as the Staples wording", () => {
+    const required = [
+      "Paperclip needs a disposition before this issue can continue.", // brand:keep
+      "Staples needs a disposition before this issue can continue.",
+    ];
+    const exhausted = [
+      "Paperclip could not resolve this issue's missing disposition automatically. The source assignment is unchanged and a board decision is required.", // brand:keep
+      "Staples could not resolve this issue's missing disposition automatically. The source assignment is unchanged and a board decision is required.",
+    ];
+    for (const text of required) expect(isSuccessfulRunHandoffComment(text)).toBe(true);
+    for (const text of exhausted) {
+      expect(isSuccessfulRunHandoffComment(text)).toBe(true);
+      expect(isSuccessfulRunHandoffEscalationComment(text)).toBe(true);
+    }
   });
 
   it("returns shared tones for required, escalated, and neutral activity", () => {

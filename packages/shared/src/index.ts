@@ -166,6 +166,7 @@ export {
   workProductIdFromArtifactReviewDocumentKey,
   type AttachmentArtifactWorkProductLike,
 } from "./markdown-work-products.js";
+export { PRODUCT_NAME, PRODUCT_TAGLINE, TERMS_PATH, PRIVACY_PATH } from "./branding.js";
 export {
   ISSUE_WRITE_DENIAL_CODES,
   describeIssueWriteDenial,
@@ -1280,6 +1281,7 @@ export type {
   RequestCheckboxConfirmationInteraction,
   RequestItemVerdictsInteraction,
   ConnectionIntentInteraction,
+  PendingConnectionRequest,
   IssueThreadInteraction,
   IssueThreadInteractionPayload,
   IssueThreadInteractionResult,

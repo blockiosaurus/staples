@@ -30,7 +30,7 @@
           "mcp"
         ]
       },
-      "guidanceMd": "Connect Gauge in the browser and choose the organization this connection may use. Write tools start enabled and remain governed by Paperclip's action policies.",
+      "guidanceMd": "Connect Gauge in the browser and choose the organization this connection may use. Write tools start enabled and remain governed by Staples' action policies.",
       "riskTier": "S3",
       "label": "Sign in with Gauge",
       "consoleLinks": {
@@ -57,7 +57,7 @@
       "defaults": {
         "serverUrl": "https://app.withgauge.com/mcp"
       },
-      "guidanceMd": "In Gauge, open Settings → Integrations → API Keys, generate a key for Paperclip, and paste it below.",
+      "guidanceMd": "In Gauge, open Settings → Integrations → API Keys, generate a key for Staples, and paste it below.",
       "riskTier": "S3",
       "label": "Use an API key",
       "credentialFields": [
@@ -68,7 +68,7 @@
           "required": true,
           "placeholder": "Paste your Gauge API key",
           "secret": true,
-          "helperMd": "Gauge API keys are not scoped: a key reaches every MCP tool in the organization that created it, including publishing to a connected CMS, and requests are attributed to the organization rather than a user. Generate a separate key for Paperclip so it can be deleted independently, and set publish actions to Ask first before agents run unattended. Paperclip cannot narrow an existing key."
+          "helperMd": "Gauge API keys are not scoped: a key reaches every MCP tool in the organization that created it, including publishing to a connected CMS, and requests are attributed to the organization rather than a user. Generate a separate key for Staples so it can be deleted independently, and set publish actions to Ask first before agents run unattended. Staples cannot narrow an existing key."
         }
       ],
       "keyPlacement": {

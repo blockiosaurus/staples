@@ -396,7 +396,7 @@ const issueChatComments: IssueChatComment[] = [
     authorUserId: null,
     runId: "run-issue-chat-01",
     runAgentId: codexAgent.id,
-    body: "Paperclip needs a disposition before this issue can continue.",
+    body: "Staples needs a disposition before this issue can continue.",
     presentation: {
       kind: "system_notice",
       tone: "warning",
@@ -474,7 +474,7 @@ const issueThreadNoticeReviewComments: IssueChatComment[] = [
     authorUserId: null,
     runId: "run-notice-source",
     runAgentId: codexAgent.id,
-    body: "Paperclip needs a disposition before this issue can continue.",
+    body: "Staples needs a disposition before this issue can continue.",
     presentation: {
       kind: "system_notice",
       tone: "warning",

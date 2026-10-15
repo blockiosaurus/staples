@@ -46,7 +46,7 @@ export function DecisionModelSettingsView({ settings, choices, saving, testing, 
       <h2 id="decision-model-heading" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Decision model</h2>
       <Link to="/activity/costs?tab=decisions" className="text-sm underline underline-offset-4">View usage</Link>
     </div>
-    <p className="text-sm text-muted-foreground">Choose the shared connection Paperclip uses for optional decision features. API usage is charged to this connection.</p>
+    <p className="text-sm text-muted-foreground">Choose the shared connection Staples uses for optional decision features. API usage is charged to this connection.</p>
     <ConnectionChoiceList selectedId={draft.grantId ?? undefined} disabled={saving || testing}
       choices={choices.map(row => ({ id: row.grantId, name: row.name,
         description: `${row.decisionModel} · ${row.status === "connected" ? "Connected" : "Needs attention"}`,
@@ -63,7 +63,7 @@ export function DecisionModelSettingsView({ settings, choices, saving, testing, 
       <ToggleField label="Enable decisions" checked={draft.enabled} onChange={enabled => setDraft(value => ({ ...value, enabled }))} />
       <div className="space-y-2">
         <ToggleField label="Allow company-sponsored background decisions" checked={draft.allowBackground} onChange={allowBackground => setDraft(value => ({ ...value, allowBackground }))} />
-        <p className="text-xs text-muted-foreground">Background features can charge this connection without a responsible person. These requests appear as Paperclip services.</p>
+        <p className="text-xs text-muted-foreground">Background features can charge this connection without a responsible person. These requests appear as Staples services.</p>
       </div>
     </fieldset>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

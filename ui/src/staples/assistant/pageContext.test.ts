@@ -7,12 +7,12 @@ describe("currentPageContext", () => {
     const context = currentPageContext({
       pathname: "/PAP/issues/PAP-12",
       companyPrefix: "pap",
-      title: "Fix login • Acme • Paperclip",
+      title: "Fix login • Acme • Staples",
       label: "Fix login",
     });
     expect(context).toEqual({
       route: "/issues/PAP-12",
-      title: "Fix login • Acme • Paperclip",
+      title: "Fix login • Acme • Staples",
       entity: { type: "issue", id: "PAP-12", label: "Fix login" },
     });
     expect(assistantPageContextSchema.safeParse(context).success).toBe(true);
@@ -62,7 +62,7 @@ describe("currentPageContext", () => {
 
   it("labels the chip with the entity label, then the page title, then the route", () => {
     expect(pageContextLabel({ route: "/issues/PAP-1", entity: { type: "issue", id: "PAP-1", label: "Fix login" } })).toBe("Fix login");
-    expect(pageContextLabel({ route: "/dashboard", title: "Dashboard • Acme • Paperclip" })).toBe("Dashboard");
+    expect(pageContextLabel({ route: "/dashboard", title: "Dashboard • Acme • Staples" })).toBe("Dashboard");
     expect(pageContextLabel({ route: "/dashboard" })).toBe("/dashboard");
   });
 });

@@ -38,7 +38,7 @@ describe("Slack setup prompt", () => {
     const dialog = await openPrompt();
     expect(copyTextToClipboard).toHaveBeenCalledTimes(1);
     expect(copyTextToClipboard).toHaveBeenCalledWith(buildSlackSetupPrompt(window.location.origin));
-    expect(vi.mocked(copyTextToClipboard).mock.calls[0][0]).toContain(`Paperclip instance URL: ${window.location.origin}`);
+    expect(vi.mocked(copyTextToClipboard).mock.calls[0][0]).toContain(`Staples instance URL: ${window.location.origin}`);
     expect(dialog.querySelector(".agent-setup-copy")?.textContent).toBe("Copied to clipboard");
     expect(container.querySelector('[role="status"]')?.textContent).toContain("Ready to paste into your agent.");
     expect(container.querySelector("button")?.dataset.copied).toBe("true");
@@ -113,12 +113,12 @@ describe("Slack setup prompt", () => {
 
   it("includes only the instance origin, without URL credentials or callback state", () => {
     const prompt = buildSlackSetupPrompt("https://user:private-password@my-company.paperclip.app/GIT/apps/chat/connect?code=private-code#private-state");
-    expect(prompt).toContain("Paperclip instance URL: https://my-company.paperclip.app\n");
+    expect(prompt).toContain("Staples instance URL: https://my-company.paperclip.app\n");
     expect(prompt).not.toMatch(/private-password|private-code|private-state/);
     expect(prompt).toContain(slackSetupPrompt);
   });
 
   it.each(["", "not a URL", "javascript:alert(1)"])("asks for the URL when preview configuration is unavailable: %s", (url) => {
-    expect(buildSlackSetupPrompt(url)).toMatch(/^Paperclip instance URL is unavailable\./);
+    expect(buildSlackSetupPrompt(url)).toMatch(/^Staples instance URL is unavailable\./);
   });
 });

@@ -42,7 +42,7 @@
           "storage:write"
         ]
       },
-      "guidanceMd": "Connect Supabase in the browser and scope the connection to one development project. Write tools start enabled and remain governed by Paperclip's action policies.",
+      "guidanceMd": "Connect Supabase in the browser and scope the connection to one development project. Write tools start enabled and remain governed by Staples' action policies.",
       "riskTier": "S4",
       "label": "Sign in with Supabase",
       "consoleLinks": {
@@ -107,7 +107,7 @@
       "defaults": {
         "serverUrl": "https://mcp.supabase.com/mcp"
       },
-      "guidanceMd": "Use a customer-created Supabase key scoped to one development project. Write tools start enabled and remain governed by Paperclip's action policies.",
+      "guidanceMd": "Use a customer-created Supabase key scoped to one development project. Write tools start enabled and remain governed by Staples' action policies.",
       "riskTier": "S4",
       "label": "Use an API key",
       "credentialFields": [
@@ -118,7 +118,7 @@
           "required": true,
           "placeholder": "sbp_...",
           "secret": true,
-          "helperMd": "Project/database/environment/storage changes and Edge Function deployment. Project selection and optional read-only configuration remain authoritative. Create a key with read and write permissions for these actions; Paperclip cannot increase an existing key’s permissions."
+          "helperMd": "Project/database/environment/storage changes and Edge Function deployment. Project selection and optional read-only configuration remain authoritative. Create a key with read and write permissions for these actions; Staples cannot increase an existing key’s permissions."
         }
       ],
       "keyPlacement": {
