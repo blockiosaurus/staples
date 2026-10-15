@@ -31,17 +31,17 @@ Anti-generic rules: no swooshes, no globe, no generic leaf unless the business i
 
 Write `spec.json`. Fields:
 
-- `businessName`: the current company name, up to 40 characters (the default and palette seed)
+- `businessName`: the current company name, up to 60 characters (the default and palette seed)
 - `tagline`: optional, up to 80 characters
 - `mood`, `hue`, `fontPairingId` as above
-- `concepts`: 1 to 4 items, each with `kind`, `name` (1 to 40 characters) and:
+- `concepts`: 1 to 4 items, each with `kind`, `name` (1 to 60 characters) and:
   - geometric: `shapes`, a list of at most 12. Shape types: `circle` (`cx`, `cy`, `r`, `fill`), `rect` (`x`, `y`, `w`, `h`, optional `rx`, `fill`), `triangle` (`points`: three `[x, y]` pairs, `fill`), `arc` (`cx`, `cy`, `r`, `startDeg`, `endDeg`, `width`, `stroke`), `line` (`x1`, `y1`, `x2`, `y2`, `width`, `stroke`). `fill` and `stroke` are one of `primary`, `accent`, `ink`, `paper`. Coordinates are 0 to 64.
   - monogram: `letters`, `frame`
   - wordmark: optional `accentLetterIndex`
 
 No other fields are allowed.
 
-A concept's `name` is the business name that concept proposes. Every lockup and wordmark draws that concept's `name`, and choosing the concept renames the company to it. Never use a label such as "HB Seal" or "Rising Sun Loaf". When the task says the person chose the name, use it for all three concepts. Keep names short enough to fit: 1 to 40 characters.
+A concept's `name` is the business name that concept proposes. Every lockup and wordmark draws that concept's `name`, and choosing the concept renames the company to it. Never use a label such as "HB Seal" or "Rising Sun Loaf". When the task says the person chose the name, use it for all three concepts. Keep names short enough to fit: 1 to 60 characters, and shorter reads better in a lockup.
 
 Example `spec.json`:
 

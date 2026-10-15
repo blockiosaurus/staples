@@ -18,8 +18,8 @@ describe("brandKitSpecSchema", () => {
     expect(() => brandKitSpecSchema.parse({ ...base, concepts: Array(5).fill({ kind: "wordmark", name: "x" }) })).toThrow();
     expect(() => brandKitSpecSchema.parse({ ...base, concepts: [{ kind: "geometric", name: "x", shapes: [{ ...shape, fill: "#fff" }] }] })).toThrow();
   });
-  it("rejects a business name over 40 characters and a monogram over 2 letters", () => {
-    expect(() => brandKitSpecSchema.parse({ ...base, businessName: "x".repeat(41), concepts: [{ kind: "wordmark", name: "x" }] })).toThrow();
+  it("rejects a business name over 60 characters and a monogram over 2 letters", () => {
+    expect(() => brandKitSpecSchema.parse({ ...base, businessName: "x".repeat(61), concepts: [{ kind: "wordmark", name: "x" }] })).toThrow();
     expect(() => brandKitSpecSchema.parse({ ...base, concepts: [{ kind: "monogram", name: "x", letters: "ABC", frame: "none" }] })).toThrow();
   });
 });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WORKING_NAME_MAX_LENGTH } from "./working-name.js";
 
 export const BRAND_KIT_FILLS = ["primary", "accent", "ink", "paper"] as const;
 export const BRAND_KIT_MOODS = ["modern", "warm", "classic", "playful", "bold", "calm"] as const;
@@ -14,14 +15,15 @@ export const brandKitShapeSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("arc"), cx: unit, cy: unit, r: z.number().min(2).max(31), startDeg: z.number().min(0).max(360), endDeg: z.number().min(0).max(360), width: z.number().min(1).max(16), stroke: fill }),
   z.object({ type: z.literal("line"), x1: unit, y1: unit, x2: unit, y2: unit, width: z.number().min(1).max(16), stroke: fill }),
 ]);
-const conceptName = z.string().trim().min(1).max(40);
+// Matches the working-name cap so a name the person chose always fits a concept.
+const conceptName = z.string().trim().min(1).max(WORKING_NAME_MAX_LENGTH);
 export const brandKitConceptSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("geometric"), name: conceptName, shapes: z.array(brandKitShapeSchema).min(1).max(BRAND_KIT_MAX_SHAPES) }),
   z.object({ kind: z.literal("monogram"), name: conceptName, letters: z.string().trim().min(1).max(2), frame: z.enum(["circle", "square", "rounded", "none"]) }),
   z.object({ kind: z.literal("wordmark"), name: conceptName, accentLetterIndex: z.number().int().min(0).max(39).optional() }),
 ]);
 export const brandKitSpecSchema = z.object({
-  businessName: z.string().trim().min(1).max(40),
+  businessName: z.string().trim().min(1).max(WORKING_NAME_MAX_LENGTH),
   tagline: z.string().trim().max(80).optional(),
   mood: z.enum(BRAND_KIT_MOODS),
   hue: z.number().min(0).max(360).optional(),
