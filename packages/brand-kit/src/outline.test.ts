@@ -10,6 +10,11 @@ describe("outlineText", () => {
       expect(out.d).toMatch(/^M/);
     }
   });
+  it("never emits NaN for any pairing or suffix", () => {
+    for (const pairing of listFontPairings()) {
+      for (const t of ["antern", "Lantern", "ntern", "Quick brown fox"]) expect(outlineText(t, pairing.id, 36).d).not.toContain("NaN");
+    }
+  });
   it("scales width with size", () => {
     const a = outlineText("Lantern", "modern-tech", 20).width;
     const b = outlineText("Lantern", "modern-tech", 40).width;

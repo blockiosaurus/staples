@@ -20,6 +20,32 @@ function loadFont(pairingId: string): opentype.Font {
   return font;
 }
 
+const r2 = (v: number): string => String(Math.round(v * 100) / 100);
+
+/**
+ * Own serializer: opentype.js 1.3.5 Path.toPathData() emits "NaN" for some glyphs
+ * (seen with Fraunces "a" at certain offsets), so absolute commands are written directly.
+ */
+function serialize(commands: opentype.PathCommand[]): string {
+  let last = "";
+  return commands
+    .map((c) => {
+      switch (c.type) {
+        case "M": last = `${r2(c.x)} ${r2(c.y)}`; return `M${last}`;
+        case "L": {
+          const pt = `${r2(c.x)} ${r2(c.y)}`;
+          if (pt === last) return ""; // opentype.js emits a redundant L after each Q
+          last = pt;
+          return `L${pt}`;
+        }
+        case "Q": last = `${r2(c.x)} ${r2(c.y)}`; return `Q${r2(c.x1)} ${r2(c.y1)} ${last}`;
+        case "C": last = `${r2(c.x)} ${r2(c.y)}`; return `C${r2(c.x1)} ${r2(c.y1)} ${r2(c.x2)} ${r2(c.y2)} ${last}`;
+        case "Z": return "Z";
+      }
+    })
+    .join("");
+}
+
 /**
  * Text converted to SVG path data at the origin (baseline y = 0).
  *
@@ -43,7 +69,7 @@ export function outlineText(text: string, pairingId: string, sizePx: number, opt
     prev = glyph;
   }
   return {
-    d: path.toPathData(2),
+    d: serialize(path.commands),
     width: x,
     height: sizePx,
     ascent: (font.ascender / font.unitsPerEm) * sizePx,
