@@ -1,0 +1,60 @@
+{
+  "name": "@paperclipai/brand-kit",
+  "version": "0.1.0",
+  "license": "MIT",
+  "homepage": "https://github.com/paperclipai/paperclip",
+  "bugs": {
+    "url": "https://github.com/paperclipai/paperclip/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/paperclipai/paperclip",
+    "directory": "packages/brand-kit"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && cp src/fonts.json dist/fonts.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm -w exec vitest run --root packages/brand-kit --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@paperclipai/shared": "workspace:*",
+    "@fontsource/inter": "^5",
+    "@fontsource/space-grotesk": "^5",
+    "@fontsource/fraunces": "^5",
+    "@fontsource/playfair-display": "^5",
+    "@fontsource/nunito": "^5",
+    "@fontsource/oswald": "^5",
+    "culori": "^4",
+    "opentype.js": "^1.3",
+    "svgo": "^4"
+  },
+  "devDependencies": {
+    "@types/culori": "^4",
+    "@types/node": "^24",
+    "@types/opentype.js": "^1.3",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  },
+  "engines": {
+    "node": ">=24.11.0"
+  }
+}

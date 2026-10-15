@@ -28,6 +28,10 @@ _Avoid_: purchase, transaction
 A person or business that places orders.
 _Avoid_: client, buyer, account
 
+## Where this is going
+- In 6 months: a working shop with its first repeat customers.
+- In a year: a small team running it with little day-to-day input.
+
 ## Key decisions
 - Every outgoing message is approved by a person first, because mistakes reach customers directly.
 
@@ -40,6 +44,7 @@ Rules:
 
 - **Mission**: one or two sentences. No slogans.
 - **Glossary**: only terms specific to this company. Define what a thing *is* in one or two sentences, not what it does. When several words mean the same thing, pick one and list the rest under `_Avoid_`. Group terms under small headings if natural groups appear.
+- **Where this is going**: the person's 6-month and 1-year answers from the interview, two lines each at most. Leave it out if they skipped those questions.
 - **Key decisions**: one line each, with the reason. Only record a decision when all three are true:
   1. It is hard to reverse.
   2. Someone new would be surprised by it without context.

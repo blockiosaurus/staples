@@ -21,7 +21,7 @@ Use the company's glossary words everywhere in the plan.
 
 **Brief** (first plan only, or when the interview changed it): the working draft from the `staples-company-brief` skill, as the whole document.
 
-**Goal**: one outcome, written from the person's point of view. Title under 200 characters; a short description of what success looks like and how you will know.
+**Goal**: the person's 30-day answer from the interview, written as one outcome from their point of view (title under 200 characters; description: how you will both know). If they skipped it, write the outcome you would recommend.
 
 **Project** (optional): one project that holds the starter tasks, when the work is more than a handful of tasks.
 

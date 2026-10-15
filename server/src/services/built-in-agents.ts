@@ -77,6 +77,11 @@ export interface BuiltInAgentDefinition {
    */
   inheritCompanyAdapterType?: boolean;
   /**
+   * Run on Claude (hosted) when the server holds an Anthropic key, like the
+   * Assistant: the operator's key pays, so the same hard-stop budget applies.
+   */
+  preferHostedInference?: boolean;
+  /**
    * Company-library skill keys (bundled root `skills/`) this agent always has
    * in its desired set. Ensure/reconcile adds any that are missing and never
    * removes the agent's other skills.
@@ -327,6 +332,17 @@ const FALLBACK_ASSISTANT_INSTRUCTIONS = [
 
 const ASSISTANT_INSTRUCTIONS = readBuiltInText("assistant/AGENTS.md", FALLBACK_ASSISTANT_INSTRUCTIONS);
 
+const FALLBACK_BRAND_DESIGNER_INSTRUCTIONS = [
+  "You are the brand designer, a built-in agent at Staples. You make the first name, logo and palette ideas for a new company so the person sees something real within minutes.",
+  "",
+  "When you wake up on a \"Brand starter\" task, follow the `staples-brand-kit` skill end to end. Do not ask the person questions; make reasonable choices and say what you assumed in your comment.",
+  "",
+  "You decide; code draws. Never write SVG by hand. Do not rename the company, hire anyone, or touch anything outside your task.",
+  "",
+].join("\n");
+
+const BRAND_DESIGNER_INSTRUCTIONS = readBuiltInText("brand-designer/AGENTS.md", FALLBACK_BRAND_DESIGNER_INSTRUCTIONS);
+
 const FALLBACK_ASSISTANT_WEEKLY_UPDATE_ROUTINE = [
   "Write this week's update for the company and save it.",
   "",
@@ -390,7 +406,7 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
     inheritCompanyAdapterType: true,
     defaultSkillKeys: ASSISTANT_DEFAULT_SKILL_KEYS,
     bundle: {
-      stockVersion: "2026-10-14c",
+      stockVersion: "2026-10-15",
       instructions: {
         entryFile: "AGENTS.md",
         files: {
@@ -418,6 +434,38 @@ const DEFINITIONS = validateBuiltInAgentDefinitions([
             timezone: PERSON_TIMEZONE,
           },
         ],
+      },
+    },
+  },
+  {
+    key: "brand-designer",
+    displayName: "Brand designer",
+    featureKeys: ["brand-designer"],
+    shortPurpose: "Makes the first name, logo and palette ideas for a new company.",
+    defaultInstructions: BRAND_DESIGNER_INSTRUCTIONS,
+    defaultRole: "designer",
+    defaultTitle: "Brand designer",
+    defaultIcon: "sparkles",
+    defaultPermissions: {
+      canCreateAgents: false,
+      canCreateSkills: false,
+    },
+    defaultStatus: "idle",
+    defaultManager: null,
+    allowedAdapterTypes: [...ASSISTANT_RUNTIME_ADAPTER_TYPES],
+    defaultAdapterType: "claude_local",
+    defaultBudgetMonthlyCents: 0,
+    bypassHireApproval: true,
+    inheritCompanyAdapterType: true,
+    preferHostedInference: true,
+    defaultSkillKeys: ["paperclipai/paperclip/staples-brand-kit"],
+    bundle: {
+      stockVersion: "2026-10-15",
+      instructions: {
+        entryFile: "AGENTS.md",
+        files: {
+          "AGENTS.md": BRAND_DESIGNER_INSTRUCTIONS,
+        },
       },
     },
   },
@@ -596,7 +644,7 @@ const DEFINITIONS_BY_KEY = new Map(DEFINITIONS.map((definition) => [definition.k
 // a new user starts clean — the Reflection Coach and Summarizer are opt-in, not
 // seeded. Add a definition key here to restore automatic provisioning.
 // The Assistant is the exception: every company gets one.
-const AUTO_PROVISION_ON_COMPANY_CREATE_KEYS = new Set<string>([ASSISTANT_BUILT_IN_AGENT_KEY]);
+const AUTO_PROVISION_ON_COMPANY_CREATE_KEYS = new Set<string>([ASSISTANT_BUILT_IN_AGENT_KEY, "brand-designer"]);
 
 const ROOT_AGENT_DEFAULT_CHANGE_GRANTS: PermissionKey[] = ["agents:configure", "skills:create"];
 const BUILT_IN_AGENT_DEFAULT_GRANTS: Record<string, PermissionKey[]> = {
@@ -952,6 +1000,11 @@ function isBuiltInAgentMarkerConflict(error: unknown): boolean {
   return false;
 }
 
+/** Built-ins that take the Assistant's hosted path: Claude (hosted) on the server key, capped by the hosted budget. */
+function runsHostedLikeAssistant(definition: BuiltInAgentDefinition): boolean {
+  return definition.key === ASSISTANT_BUILT_IN_AGENT_KEY || definition.preferHostedInference === true;
+}
+
 export function builtInAgentService(db: Db) {
   const agentSvc = agentService(db);
   const agentSvcLifecycle = createAgentLifecycle(db);
@@ -1021,7 +1074,7 @@ export function builtInAgentService(db: Db) {
    * verification paths enforce it again before the key is used.
    */
   async function ensureHostedAssistantBudgetIfNeeded(definition: BuiltInAgentDefinition, agent: Pick<Agent, "id" | "companyId" | "adapterType" | "adapterConfig">) {
-    if (definition.key !== ASSISTANT_BUILT_IN_AGENT_KEY || agent.adapterType !== HOSTED_INFERENCE_ADAPTER_TYPE) return;
+    if (!runsHostedLikeAssistant(definition) || agent.adapterType !== HOSTED_INFERENCE_ADAPTER_TYPE) return;
     if (!hostedInference().available || hasAnthropicKeyBinding(agent.adapterConfig)) return;
     try {
       await ensureHostedAssistantBudget(db, agent);
@@ -1065,7 +1118,7 @@ export function builtInAgentService(db: Db) {
     const hosted = hostedInference();
     if (
       options.preferHosted !== false
-      && definition.key === ASSISTANT_BUILT_IN_AGENT_KEY
+      && runsHostedLikeAssistant(definition)
       && hosted.available
       && definition.allowedAdapterTypes?.includes(hosted.adapterType)
     ) {

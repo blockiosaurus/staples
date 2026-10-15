@@ -24,7 +24,7 @@ Typical branches for a new company or initiative (skip any that are already sett
 
 ## Facts are your job, decisions are theirs
 
-Never ask the person for a fact you can look up. Before each round, check what the company already has:
+Never ask the person for a fact you can look up. The first message may carry an `About:` line with the person's time zone and language. Treat country and time zone as settled from it; never ask for them. Before each round, check what the company already has:
 
 - `staples_company_signals` for counts of agents, tasks, projects, approvals and spend.
 - `staples_get_company_brief` for the mission, glossary and past decisions.
@@ -36,7 +36,7 @@ If a lookup answers a question, treat the decision as settled and say so briefly
 
 Ask the whole frontier in one round, as one `staples_ask_questions` card:
 
-- One card per round. At most 4 questions per card. If the frontier is larger, ask the 4 that unblock the most later decisions and keep the rest for the next round. A person starting a business is answering on a phone or between other things: short rounds get answered.
+- One card per round. **Round one is at most 3 questions**, the ones that unblock the most; later rounds at most 4. If the frontier is larger, ask the ones that unblock the most later decisions and keep the rest for the next round. A person starting a business is answering on a phone or between other things: short rounds get answered.
 - Number the question ids in order: `q1`, `q2`, ... Give the card a short `title` such as "Round 2: the team".
 - Every question carries your **recommendation**, worded so that answering "yes" accepts it.
   - `single_select`: mark exactly one option `recommended: true`.
@@ -66,6 +66,10 @@ Example question (single choice):
   "customAnswer": { "enabled": true }
 }
 ```
+
+## Round two: what success looks like
+
+Right after round one, before anything else, ask one card titled "What success looks like" with three `text` questions (`required: false`): `q1` "In 30 days, what would make you say this is working?", `q2` "In 6 months?", `q3` "In a year?". Put a concrete suggestion in each `initialText` based on what you know. End your turn. These answers feed the goal and the brief; they are not open decisions.
 
 ## After each round
 

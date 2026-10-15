@@ -241,7 +241,7 @@ describeEmbeddedPostgres("built-in agents", () => {
   it("validates the static registry and rejects invalid definitions", () => {
     const definitions = listBuiltInAgentDefinitions();
     expect(definitions.map((definition) => definition.key).sort()).toEqual([
-      "assistant", "briefs", "learning", "reflection-coach", "summarizer",
+      "assistant", "brand-designer", "briefs", "learning", "reflection-coach", "summarizer",
     ]);
     expect(definitions.find((definition) => definition.key === "assistant")).toMatchObject({
       displayName: "Assistant",
@@ -329,11 +329,11 @@ describeEmbeddedPostgres("built-in agents", () => {
     });
     const approvalRows = await db.select().from(approvals).where(eq(approvals.companyId, companyId));
     expect(approvalRows).toHaveLength(0);
-    // Only the Assistant is auto-provisioned; other bundles stay opt-in.
+    // Only the Assistant and brand designer are auto-provisioned; other bundles stay opt-in.
     const builtInKeys = (await db.select().from(agents).where(eq(agents.companyId, companyId)))
       .map((row) => readBuiltInAgentMarker(row.metadata)?.key)
       .filter(Boolean);
-    expect(builtInKeys).toEqual(["assistant"]);
+    expect([...builtInKeys].sort()).toEqual(["assistant", "brand-designer"]);
 
     const state = await builtInAgentService(db).get(companyId, "assistant");
     expect(state.resources.map((resource) => [resource.resourceKind, resource.stockStatus])).toEqual([
@@ -346,7 +346,9 @@ describeEmbeddedPostgres("built-in agents", () => {
       ["Weekly update", "assistant:weekly-update", state.agentId],
     ]);
     // The Assistant never appears in the org chart.
-    expect(await agentService(db).orgForCompany(companyId)).toEqual([]);
+    const orgNames = JSON.stringify(await agentService(db).orgForCompany(companyId));
+    expect(orgNames).not.toContain('"name":"Assistant"');
+    expect(orgNames).toContain("Brand designer");
   });
 
   it("provisions the Assistant directly through provision() even when board approval is required", async () => {
@@ -678,6 +680,19 @@ describeEmbeddedPostgres("built-in agents", () => {
     } finally {
       testEnvironment.mockRestore();
     }
+  });
+
+  it("provisions the brand designer on Claude (hosted) with the hosted budget when the server holds a key", async () => {
+    vi.stubEnv("STAPLES_HOSTED_ANTHROPIC_API_KEY", DUMMY_SERVER_KEY);
+    const companyId = await seedCompany({ requireApproval: false });
+    const designer = (await createBuiltInAgentService(db).ensure(companyId, "brand-designer")).agent!;
+    expect(designer.adapterType).toBe("claude_managed");
+    expect(designer.adapterConfig).toMatchObject({ model: "claude-opus-5-5" });
+    expect(designer.adapterConfig).not.toHaveProperty("env");
+    expect(JSON.stringify(designer)).not.toContain(DUMMY_SERVER_KEY);
+    expect(designer.budgetMonthlyCents).toBe(2000);
+    const [policy] = await db.select().from(budgetPolicies).where(and(eq(budgetPolicies.scopeType, "agent"), eq(budgetPolicies.scopeId, designer.id)));
+    expect(policy).toMatchObject({ amount: 2000, hardStopEnabled: true, isActive: true });
   });
 
   it("caps a hosted Assistant with an active hard-stop monthly budget", async () => {

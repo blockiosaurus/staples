@@ -30,6 +30,7 @@ export { costRoutes } from "./costs.js";
 export { activityRoutes } from "./activity.js";
 export { dashboardRoutes } from "./dashboard.js";
 export { companySignalsRoutes } from "./company-signals.js";
+export { brandKitRoutes } from "./brand-kit.js";
 export { companyBriefRoutes } from "./company-brief.js";
 export { attentionRoutes } from "./attention.js";
 export { briefingRoutes } from "./briefing.js";

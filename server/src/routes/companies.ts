@@ -22,6 +22,7 @@ import {
   companyPortabilityImportSchema,
   companyPortabilityPreviewSchema,
   createCompanySchema,
+  deriveWorkingName,
   feedbackTargetTypeSchema,
   feedbackTraceStatusSchema,
   feedbackVoteValueSchema,
@@ -40,6 +41,7 @@ import {
 import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { PORTABLE_ZIP_UPLOAD_LIMIT_BYTES } from "../http/body-limits.js";
 import { logger } from "../middleware/logger.js";
+import { brandStarterService } from "../services/brand-starter.js";
 import { issueReadSqlCondition } from "../services/authorization.js";
 import { validate } from "../middleware/validate.js";
 import {
@@ -1231,9 +1233,11 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
     assertBoard(req);
     const isAdminCreator = req.actor.source === "local_implicit" || req.actor.isInstanceAdmin === true;
     const ownerPrincipalId = req.actor.userId ?? "local-board";
+    // kickoff is a route-level flag; it never reaches the company service.
+    const { kickoff, ...companyInput } = req.body as typeof req.body & { kickoff?: boolean };
     const createOwnedCompany = async (selfServe: boolean) => {
       const company = await svc.create({
-        ...req.body,
+        ...companyInput,
         defaultResponsibleUserId: req.body.defaultResponsibleUserId ?? ownerPrincipalId,
       });
       await access.ensureMembership(company.id, "user", ownerPrincipalId, "owner", "active");
@@ -1295,7 +1299,7 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
           );
         }
         const row = await svc.createRecord({
-          ...req.body,
+          ...companyInput,
           defaultResponsibleUserId: req.body.defaultResponsibleUserId ?? userId,
           selfServe: true,
           selfServeCreatedByUserId: userId,
@@ -1332,6 +1336,18 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
         },
         req.actor.userId ?? "board",
       );
+    }
+    if (kickoff && storage) {
+      try {
+        await brandStarterService(db, storage).start(company.id, {
+          description: company.description ?? "",
+          userId: ownerPrincipalId,
+          companyName: company.name,
+          nameGiven: companyInput.name.trim() !== deriveWorkingName(company.description ?? ""),
+        });
+      } catch (err) {
+        logger.warn({ err, companyId: company.id }, "brand starter did not start");
+      }
     }
     res.status(201).json(company);
   });

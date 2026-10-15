@@ -114,6 +114,7 @@ import { agentCommentaryRoutes } from "./routes/agent-commentary.js";
 import { activityRoutes } from "./routes/activity.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 import { companySignalsRoutes } from "./routes/company-signals.js";
+import { brandKitRoutes } from "./routes/brand-kit.js";
 import { companyBriefRoutes } from "./routes/company-brief.js";
 import { planRoutes } from "./routes/plans.js";
 import { agentAutopilotRoutes } from "./routes/agent-autopilot.js";
@@ -895,6 +896,7 @@ export async function createApp(
   api.use(activityRoutes(db));
   api.use(dashboardRoutes(db));
   api.use(companySignalsRoutes(db));
+  api.use(brandKitRoutes(db, opts.storageService));
   api.use(companyBriefRoutes(db));
   api.use(attentionRoutes(db));
   api.use(briefingRoutes(db));
