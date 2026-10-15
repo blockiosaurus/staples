@@ -1027,6 +1027,9 @@ importers:
       '@paperclipai/adapter-utils':
         specifier: workspace:*
         version: link:../packages/adapter-utils
+      '@paperclipai/brand-kit':
+        specifier: workspace:*
+        version: link:../packages/brand-kit
       '@paperclipai/db':
         specifier: workspace:*
         version: link:../packages/db
