@@ -2909,6 +2909,7 @@ export {
   brandKitShapeSchema,
   brandKitConceptSchema,
   brandKitSpecSchema,
+  brandKitPublishSchema,
   type BrandKitShape,
   type BrandKitConcept,
   type BrandKitSpec,

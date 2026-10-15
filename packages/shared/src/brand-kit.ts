@@ -28,6 +28,12 @@ export const brandKitSpecSchema = z.object({
   fontPairingId: z.string().trim().min(1).max(40),
   concepts: z.array(brandKitConceptSchema).min(1).max(4),
 }).strict();
+export const brandKitPublishSchema = z.object({
+  issueId: z.string().uuid(),
+  spec: brandKitSpecSchema,
+  document: z.string().max(20000),
+  tagline: z.string().max(80).optional(),
+});
 export type BrandKitShape = z.infer<typeof brandKitShapeSchema>;
 export type BrandKitConcept = z.infer<typeof brandKitConceptSchema>;
 export type BrandKitSpec = z.infer<typeof brandKitSpecSchema>;

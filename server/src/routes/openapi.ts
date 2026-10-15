@@ -1,3 +1,4 @@
+import { brandKitPublishSchema, brandKitSpecSchema } from "@paperclipai/shared";
 import { slackRegistrationSchema, slackSetupActionSchema, slackInstallAuthorizationSchema, slackRegistrationStateSchema, slackAppConfigurationSchema, slackAvatarStateSchema, slackAccountStateSchema } from "@paperclipai/shared";
 import { experimentalApiMetadata } from "./experimental-api-metadata.js";
 import { assistantSetupRequestSchema } from "../services/assistant-setup.js";
@@ -6877,6 +6878,98 @@ registry.registerPath({
   },
   responses: {
     200: r.ok(z.object({ agent: assistantAgentSummary, setup: assistantSetupStatusSchema })),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+    422: r.unprocessable,
+  },
+});
+
+// ─── Brand kit and brand starter ─────────────────────────────────────────────
+
+const brandStarterConceptResponseSchema = z.object({
+  index: z.number().int(),
+  name: z.string(),
+  kind: z.enum(["geometric", "monogram", "wordmark"]),
+  markPath: z.string(),
+  lockupPath: z.string(),
+  previewPath: z.string().nullable(),
+});
+
+const brandStarterStatusResponseSchema = z.object({
+  issue: z.object({ id: z.string().uuid(), identifier: z.string(), status: z.string() }).nullable(),
+  designerName: z.string().nullable(),
+  latestNote: z.string().nullable(),
+  concepts: z.array(brandStarterConceptResponseSchema),
+  documentPath: z.string().nullable(),
+  palettePath: z.string().nullable(),
+  tagline: z.string().nullable(),
+  nameGiven: z.boolean(),
+});
+
+const brandKitRenderResponseSchema = z.object({
+  palette: z.record(z.string(), z.unknown()),
+  pairing: z.object({ id: z.string(), label: z.string() }),
+  concepts: z.array(
+    z.object({
+      index: z.number().int(),
+      name: z.string(),
+      kind: z.enum(["geometric", "monogram", "wordmark"]),
+      markSvg: z.string(),
+      lockupSvg: z.string(),
+      lint: z.object({ ok: z.boolean(), errors: z.array(z.string()) }),
+      previewPng: z.string().describe("Base64 PNG of the lockup; empty when the concept failed lint."),
+    }),
+  ),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/brand-starter",
+  tags: ["companies"],
+  summary: "Get the brand starter status",
+  description: "Progress of the brand designer's task and the published concepts. Company members and agents of the company. With no brand starter, issue is null and concepts is empty.",
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: {
+    200: r.ok(brandStarterStatusResponseSchema),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/brand-kit/render",
+  tags: ["companies"],
+  summary: "Render a brand kit spec",
+  description: "Draws each concept (mark and lockup SVG with text outlined), lints it and returns a PNG preview per passing concept. Read-only: nothing is stored and no activity is logged. An unknown font pairing or an unrenderable concept returns 422.",
+  request: {
+    params: z.object({ companyId: z.string().uuid() }),
+    body: jsonBody(brandKitSpecSchema),
+  },
+  responses: {
+    200: r.ok(brandKitRenderResponseSchema),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+    422: r.unprocessable,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/brand-kit/publish",
+  tags: ["companies"],
+  summary: "Publish a brand kit onto the brand starter task",
+  description: "Renders the spec and attaches concept files, palette and the brand starter document to the company's brand starter issue, replacing any earlier publish. Refused with 422 when any concept fails lint or cannot be rendered. Logged as issue.brand_kit_published.",
+  request: {
+    params: z.object({ companyId: z.string().uuid() }),
+    body: jsonBody(brandKitPublishSchema),
+  },
+  responses: {
+    201: { description: "Published", content: { "application/json": { schema: brandStarterStatusResponseSchema } } },
     400: r.badRequest,
     401: r.unauthorized,
     403: r.forbidden,
