@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { activityLog, agents, authUsers, companies, createDb, issueAttachments, issueComments, issues } from "@paperclipai/db";
+import { activityLog, agents, authUsers, companies, createDb, heartbeatRuns, issueAttachments, issueComments, issueWorkProducts, issues } from "@paperclipai/db";
 import { listFontPairings } from "@paperclipai/brand-kit";
 import { BRAND_STARTER_ORIGIN_KIND } from "@paperclipai/shared";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
@@ -63,13 +63,24 @@ describeEmbeddedPostgres("brand starter service", () => {
     };
   }
 
-  const service = () => brandStarterService(db, storage, { heartbeat: { wakeup: vi.fn(async () => undefined) } });
+  const wakeup = vi.fn(async () => undefined);
+  const service = () => brandStarterService(db, storage, { heartbeat: { wakeup } });
   const agentActor = (agentId: string) => ({ actorType: "agent" as const, actorId: agentId, agentId, runId: null, agentApiKeyId: null });
 
   it("returns null without a brand designer and an empty status without an issue", async () => {
     const s = await seed(false);
     expect(await service().start(s.companyId, { description: "A bakery", userId: s.userId })).toBeNull();
     expect((await service().status(s.companyId)).issue).toBeNull();
+  });
+
+  it("never returns another company's brand starter", async () => {
+    const a = await seed();
+    const b = await seed();
+    const svc = service();
+    await svc.start(b.companyId, { description: "B cafe", userId: b.userId });
+    expect((await svc.status(a.companyId)).issue).toBeNull();
+    expect(await svc.findIssue(a.companyId)).toBeNull();
+    expect((await svc.status(b.companyId)).issue).not.toBeNull();
   });
 
   it("starts once and assigns the designer", async () => {
@@ -83,6 +94,8 @@ describeEmbeddedPostgres("brand starter service", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.assigneeAgentId).toBe(s.designerId);
     expect(rows[0]!.description).toContain("A bakery in Leeds");
+    expect(wakeup).toHaveBeenCalledTimes(1);
+    expect(wakeup).toHaveBeenCalledWith(s.designerId, expect.objectContaining({ payload: expect.objectContaining({ issueId: first!.issueId }) }));
   });
 
   it("publishes 12 files, lists concepts, and is idempotent on re-publish", async () => {
@@ -130,5 +143,23 @@ describeEmbeddedPostgres("brand starter service", () => {
     bad.concepts[1] = { kind: "monogram", name: "Bad", letters: "\u{1F600}", frame: "circle" };
     await expect(svc.publish(s.companyId, { issueId: started.issueId, spec: bad, document: "x", actor })).rejects.toMatchObject({ status: 422 });
     expect(await db.select().from(issueAttachments).where(eq(issueAttachments.issueId, started.issueId))).toHaveLength(0);
+  });
+
+  it("replaces artifact work products when re-publishing with a registered run", async () => {
+    const s = await seed();
+    const svc = service();
+    const started = (await svc.start(s.companyId, { description: "A bakery", userId: s.userId }))!;
+    const [run] = await db.insert(heartbeatRuns).values({ companyId: s.companyId, agentId: s.designerId!, status: "running" }).returning();
+    const actor = { ...agentActor(s.designerId!), runId: run!.id };
+    const publish = () => svc.publish(s.companyId, { issueId: started.issueId, spec: spec(), document: "# Brand", actor });
+    await publish();
+    const products = () => db.select().from(issueWorkProducts).where(eq(issueWorkProducts.issueId, started.issueId));
+    expect((await products()).length).toBe(12);
+    await publish();
+    const after = await products();
+    expect(after.length).toBe(12);
+    expect(after.filter((p) => String(p.title).endsWith("-lockup.svg"))).toHaveLength(3);
+    const live = new Set((await db.select().from(issueAttachments).where(eq(issueAttachments.issueId, started.issueId))).map((a) => a.id));
+    expect(after.every((p) => p.externalId && live.has(p.externalId))).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
-import { and, desc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import sharp from "sharp";
-import { agents, issueComments, issues, type Db } from "@paperclipai/db";
+import { agents, issueComments, issueWorkProducts, issues, type Db } from "@paperclipai/db";
 import { renderBrandKit } from "@paperclipai/brand-kit";
 import {
   BRAND_STARTER_ORIGIN_KIND,
@@ -95,7 +95,7 @@ export function brandStarterService(db: Db, storage: StorageService, options: { 
       createdByUserId: input.userId,
       actorResponsibleUserId: input.userId,
       trustExplicitResponsibleUserId: true,
-    } as never);
+    });
     await logActivity(db, {
       companyId,
       actorType: "user",
@@ -219,7 +219,14 @@ export function brandStarterService(db: Db, storage: StorageService, options: { 
     for (const c of out.concepts) {
       files.push({ name: `concept-${c.index}-mark.svg`, contentType: "image/svg+xml", body: Buffer.from(c.markSvg) });
       files.push({ name: `concept-${c.index}-lockup.svg`, contentType: "image/svg+xml", body: Buffer.from(c.lockupSvg) });
-      files.push({ name: `concept-${c.index}-preview.png`, contentType: "image/png", body: await rasterize(c.lockupSvg, 512) });
+      let preview: Buffer;
+      try {
+        preview = await rasterize(c.lockupSvg, 512);
+      } catch (err) {
+        logger.warn({ err, concept: c.name }, "brand starter preview rasterisation failed");
+        throw unprocessable(`Could not render a preview for concept ${c.index} (${c.name})`);
+      }
+      files.push({ name: `concept-${c.index}-preview.png`, contentType: "image/png", body: preview });
     }
     files.push({ name: PALETTE_FILENAME, contentType: "application/json", body: Buffer.from(JSON.stringify(out.palette, null, 2)) });
     files.push({ name: DOCUMENT_FILENAME, contentType: "text/markdown", body: Buffer.from(input.document) });
@@ -230,19 +237,12 @@ export function brandStarterService(db: Db, storage: StorageService, options: { 
     };
     files.push({ name: MANIFEST_FILENAME, contentType: "application/json", body: Buffer.from(JSON.stringify(manifest, null, 2)) });
 
-    // Re-publishing replaces: drop earlier attachments that carry any of these names, rows and objects.
+    // Re-publishing replaces. Remember the old files, write the new set, then drop the old
+    // ones, so a failure part-way never leaves the issue without a kit.
     const names = new Set(files.map((f) => f.name));
-    const previous = await issueSvc.listAttachments(issue.id);
-    for (const old of previous) {
-      if (old.companyId !== companyId || !old.originalFilename) continue;
-      if (!names.has(old.originalFilename) && !CONCEPT_FILE.test(old.originalFilename)) continue;
-      try {
-        await storage.deleteObject(old.companyId, old.objectKey);
-      } catch (err) {
-        logger.warn({ err, attachmentId: old.id }, "storage delete failed while replacing brand starter file");
-      }
-      await issueSvc.removeAttachment(old.id);
-    }
+    const stale = (await issueSvc.listAttachments(issue.id)).filter(
+      (old) => old.companyId === companyId && old.originalFilename && (names.has(old.originalFilename) || CONCEPT_FILE.test(old.originalFilename)),
+    );
 
     for (const file of files) {
       const stored = await storage.putFile({
@@ -264,6 +264,28 @@ export function brandStarterService(db: Db, storage: StorageService, options: { 
         createdByUserId: input.actor.actorType === "user" ? input.actor.actorId : null,
         createdByRunId: input.actor.runId,
       });
+    }
+
+    if (stale.length > 0) {
+      const staleIds = stale.map((old) => old.id);
+      await db
+        .delete(issueWorkProducts)
+        .where(
+          and(
+            eq(issueWorkProducts.companyId, companyId),
+            eq(issueWorkProducts.issueId, issue.id),
+            eq(issueWorkProducts.type, "artifact"),
+            inArray(issueWorkProducts.externalId, staleIds),
+          ),
+        );
+      for (const old of stale) {
+        try {
+          await storage.deleteObject(old.companyId, old.objectKey);
+        } catch (err) {
+          logger.warn({ err, attachmentId: old.id }, "storage delete failed while replacing brand starter file");
+        }
+        await issueSvc.removeAttachment(old.id);
+      }
     }
 
     await logActivity(db, {
