@@ -114,6 +114,7 @@ export function StartCompanyPage() {
             aria-describedby="start-description-help"
             autoFocus
             rows={3}
+            maxLength={2000}
             value={description}
             onChange={(event) => setDescription(event.target.value)}
             placeholder="A candle shop in Austin that sells online and at markets"

@@ -6,6 +6,13 @@ import {
 } from "./company.js";
 import { portabilityCompanyManifestEntrySchema } from "./company-portability.js";
 
+describe("company description cap", () => {
+  it("accepts 2000 characters and rejects more", () => {
+    expect(createCompanySchema.safeParse({ name: "Acme", description: "x".repeat(2000) }).success).toBe(true);
+    expect(createCompanySchema.safeParse({ name: "Acme", description: "x".repeat(2001) }).success).toBe(false);
+  });
+});
+
 describe("company schemas without the retired settings", () => {
   it("strips brandColor and attachmentMaxBytes from a create payload", () => {
     const parsed = createCompanySchema.parse({

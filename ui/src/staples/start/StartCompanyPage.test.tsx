@@ -127,6 +127,11 @@ describe("StartCompanyPage", () => {
     });
   });
 
+  it("caps the description at 2000 characters", async () => {
+    await render();
+    expect(container.querySelector("textarea")?.getAttribute("maxlength")).toBe("2000");
+  });
+
   it("lets the person give a name", async () => {
     mocks.create.mockResolvedValue({ id: "c9", issuePrefix: "NEW", name: "Newco" });
     await render();
