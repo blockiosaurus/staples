@@ -12,6 +12,8 @@ import { queryKeys } from "@/lib/queryKeys";
 
 const cardClass = "mx-auto w-full max-w-3xl rounded-lg border border-border bg-card p-3";
 
+const STOPPED = ["cancelled", "blocked"];
+
 function dismissKey(companyId: string) {
   return `staples.brandStarter.dismissed.${companyId}`;
 }
@@ -42,10 +44,10 @@ export function BrandStarterCard() {
   const { data } = useQuery({
     queryKey: queryKeys.brandStarter.status(companyId),
     queryFn: () => brandStarterApi.get(companyId),
-    enabled: !!companyId,
+    enabled: !!companyId && !dismissed,
     refetchInterval: (q) => {
       const d = q.state.data;
-      if (!d?.issue) return false;
+      if (!d?.issue || STOPPED.includes(d.issue.status)) return false;
       return d.concepts.length ? false : 5_000;
     },
   });
@@ -57,6 +59,7 @@ export function BrandStarterCard() {
     setApplyingIndex(concept.index);
     try {
       const res = await fetch(concept.markPath);
+      if (!res.ok) throw new Error("load failed");
       const blob = await res.blob();
       const file = new File([blob], `concept-${concept.index}-mark.svg`, { type: "image/svg+xml" });
       const asset = await assetsApi.uploadCompanyLogo(companyId, file);
@@ -67,7 +70,8 @@ export function BrandStarterCard() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
       setApplied(true);
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : "Couldn't apply that idea. Try again.");
+      console.warn("Brand starter apply failed", err);
+      setError("Couldn't apply that idea. Try again.");
     } finally {
       setApplyingIndex(null);
     }
@@ -105,6 +109,16 @@ export function BrandStarterCard() {
     );
   }
 
+  if (!data.concepts.length && STOPPED.includes(data.issue.status)) {
+    return (
+      <section aria-label="Brand starter" data-testid="brand-starter-card" className={cardClass}>
+        <p className="text-sm text-muted-foreground">
+          Your brand designer could not finish. You can add a logo later in Company settings.
+        </p>
+      </section>
+    );
+  }
+
   if (!data.concepts.length) {
     return (
       <section aria-label="Brand starter" data-testid="brand-starter-card" className={cardClass}>
@@ -121,7 +135,7 @@ export function BrandStarterCard() {
         <input type="checkbox" checked={keepName} onChange={(e) => setKeepName(e.target.checked)} />
         Keep my name
       </label>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-3" aria-busy={applyingIndex !== null}>
         {data.concepts.map((concept) => (
           <figure key={concept.index} className="flex flex-col gap-2 rounded-md border border-border p-2">
             <img
@@ -130,7 +144,7 @@ export function BrandStarterCard() {
               className="aspect-video w-full bg-accent/20 object-contain"
             />
             <figcaption className="text-sm font-medium text-foreground">{concept.name}</figcaption>
-            <Button type="button" size="sm" disabled={applyingIndex !== null} onClick={() => void apply(concept)}>
+            <Button type="button" size="sm" aria-label={`Use ${concept.name}`} disabled={applyingIndex !== null} onClick={() => void apply(concept)}>
               Use this
             </Button>
           </figure>

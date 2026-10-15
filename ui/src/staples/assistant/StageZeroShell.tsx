@@ -2,6 +2,7 @@ import { useEffect, useRef, type ComponentProps } from "react";
 import { useLocation, useNavigate } from "@/lib/router";
 import { CompanySwitcher } from "@/components/CompanySwitcher";
 import { SidebarAccountMenu } from "@/components/SidebarAccountMenu";
+import { useCompany } from "@/context/CompanyContext";
 import { BrandStarterCard } from "./BrandStarterCard";
 import { AssistantConversation } from "./AssistantConversation";
 import { useAssistantShell } from "./AssistantProvider";
@@ -16,6 +17,7 @@ export function StageZeroShell({ deploymentMode }: { deploymentMode?: ComponentP
   const location = useLocation();
   const navigate = useNavigate();
   const shell = useAssistantShell();
+  const { selectedCompany } = useCompany();
   const { setup } = useAssistant({ withConversation: false });
   const firedRef = useRef(false);
   const firstMessage = (location.state as { firstMessage?: string } | null)?.firstMessage;
@@ -53,7 +55,7 @@ export function StageZeroShell({ deploymentMode }: { deploymentMode?: ComponentP
         className="streamlined-task-detail-surface flex min-h-0 flex-1 flex-col outline-none"
       >
         <div className="px-3 pt-3">
-          <BrandStarterCard />
+          <BrandStarterCard key={selectedCompany?.id} />
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <AssistantConversation opening />

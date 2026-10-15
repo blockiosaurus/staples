@@ -4,6 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { queryKeys } from "@/lib/queryKeys";
 import { BrandStarterCard } from "./BrandStarterCard";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,8 +57,9 @@ describe("BrandStarterCard", () => {
   let container: HTMLDivElement;
   let root: Root;
 
+  let client: QueryClient;
   async function mount() {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     await act(async () =>
       root.render(
         <QueryClientProvider client={client}>
@@ -77,7 +79,7 @@ describe("BrandStarterCard", () => {
     mocks.updateBranding.mockReset().mockResolvedValue({});
     mocks.company.logoAssetId = null;
     localStorage.clear();
-    globalThis.fetch = vi.fn(async () => ({ blob: async () => new Blob(["<svg/>"], { type: "image/svg+xml" }) })) as never;
+    globalThis.fetch = vi.fn(async () => ({ ok: true, blob: async () => new Blob(["<svg/>"], { type: "image/svg+xml" }) })) as never;
   });
   afterEach(() => {
     act(() => root.unmount());
@@ -85,7 +87,7 @@ describe("BrandStarterCard", () => {
   });
 
   function button(label: string) {
-    return [...container.querySelectorAll("button")].find((b) => b.textContent === label) as HTMLButtonElement;
+    return [...container.querySelectorAll("button")].find((b) => b.textContent === label || b.getAttribute("aria-label")?.startsWith(label)) as HTMLButtonElement;
   }
 
   it("renders nothing without a brand starter", async () => {
@@ -108,7 +110,7 @@ describe("BrandStarterCard", () => {
     expect(imgs).toHaveLength(3);
     expect(imgs[1].getAttribute("src")).toBe("/api/c/concept-2-lockup.svg");
     expect(container.textContent).toContain("Lantern");
-    const uses = [...container.querySelectorAll("button")].filter((b) => b.textContent === "Use this");
+    const uses = [...container.querySelectorAll("button")].filter((b) => b.getAttribute("aria-label")?.startsWith("Use "));
     expect(uses).toHaveLength(3);
     await act(async () => uses[1].click());
     await act(async () => {});
@@ -127,7 +129,7 @@ describe("BrandStarterCard", () => {
     await mount();
     const box = container.querySelector("input[type=checkbox]") as HTMLInputElement;
     await act(async () => box.click());
-    const uses = [...container.querySelectorAll("button")].filter((b) => b.textContent === "Use this");
+    const uses = [...container.querySelectorAll("button")].filter((b) => b.getAttribute("aria-label")?.startsWith("Use "));
     await act(async () => uses[0].click());
     await act(async () => {});
     expect(mocks.updateBranding).toHaveBeenCalledWith("c1", { logoAssetId: "asset-1" });
@@ -137,11 +139,39 @@ describe("BrandStarterCard", () => {
     mocks.get.mockResolvedValue(status());
     mocks.upload.mockRejectedValue(new Error("Upload failed"));
     await mount();
-    const uses = [...container.querySelectorAll("button")].filter((b) => b.textContent === "Use this");
+    const uses = [...container.querySelectorAll("button")].filter((b) => b.getAttribute("aria-label")?.startsWith("Use "));
     await act(async () => uses[0].click());
     await act(async () => {});
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Upload failed");
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Couldn't apply that idea. Try again.");
     expect(button("Use this").disabled).toBe(false);
+  });
+
+  it("does not upload when the logo cannot be loaded", async () => {
+    mocks.get.mockResolvedValue(status());
+    globalThis.fetch = vi.fn(async () => ({ ok: false, blob: async () => new Blob(["nope"]) })) as never;
+    await mount();
+    const uses = [...container.querySelectorAll("button")].filter((b) => b.getAttribute("aria-label")?.startsWith("Use "));
+    await act(async () => uses[0].click());
+    await act(async () => {});
+    expect(mocks.upload).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Couldn't apply");
+  });
+
+  it("refreshes the company after applying", async () => {
+    mocks.get.mockResolvedValue(status());
+    await mount();
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const uses = [...container.querySelectorAll("button")].filter((b) => b.getAttribute("aria-label")?.startsWith("Use "));
+    await act(async () => uses[0].click());
+    await act(async () => {});
+    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.companies.all });
+  });
+
+  it("says so when the designer could not finish", async () => {
+    mocks.get.mockResolvedValue(status({ concepts: [], issue: { id: "i1", identifier: "NEW-1", status: "cancelled" } }));
+    await mount();
+    expect(container.textContent).toContain("could not finish");
+    expect(container.textContent).not.toContain("is working");
   });
 
   it("shows a compact applied state with a dismiss when a logo is already set", async () => {
