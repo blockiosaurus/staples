@@ -41,6 +41,8 @@ Write `spec.json`. Fields:
 
 No other fields are allowed.
 
+A wordmark always draws `businessName`. A concept's `name` is the label shown to the person for that concept (the name option).
+
 Example `spec.json`:
 
 ```json
@@ -72,10 +74,12 @@ Render and look at the previews:
 curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/brand-kit/render" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "Content-Type: application/json" --data @spec.json > render.json
 jq -r '.concepts[] | "\(.index) \(.lint.ok) \(.lint.errors|join(";"))"' render.json
-for i in 1 2 3; do jq -r ".concepts[$((i-1))].previewPng" render.json | base64 -d > "preview-$i.png"; done
+for i in $(jq -r '.concepts[] | select(.lint.ok) | .index' render.json); do
+  jq -r ".concepts[] | select(.index==$i) | .previewPng" render.json | base64 -d > "preview-$i.png"
+done
 ```
 
-Look at each `preview-N.png`. Fix any lint errors. Revise at most once for balance or legibility, then stop.
+Concepts that fail lint have an empty `previewPng`, so they get no preview file. Look at each `preview-N.png`. Fix any lint errors. Revise at most once for balance or legibility, then stop.
 
 ## 4. Write the brand starter
 
@@ -90,12 +94,22 @@ curl -sS -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/brand-k
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "Content-Type: application/json" --data @publish.json
 ```
 
-Check the response lists three concepts. Publishing is refused if any concept fails lint. If it fails, say so in your comment and leave the task in review.
+Check the response lists three concepts. Publishing is refused if any concept fails lint. If it fails, post a comment saying which call failed and the error text, and set the task to `in_review` (see step 6).
 
 ## 6. Finish
 
-Post one comment with one line per concept (name, idea, why). Then mark the task done with the `paperclip` skill's status script:
+Set `paperclip_skill_dir` to the absolute directory containing the installed `paperclip` skill's `SKILL.md` (the path your harness supplies; it is not the task working directory). The heredoc is your one comment: one line per concept (name, idea, why).
 
 ```bash
-skills/paperclip/scripts/paperclip-issue-update.sh --issue-id "$PAPERCLIP_TASK_ID" --status done
+bash "$paperclip_skill_dir/scripts/paperclip-issue-update.sh" --issue-id "$PAPERCLIP_TASK_ID" --status done <<'MD'
+Three concepts are ready.
+
+- Concept 1, <name>: <idea>, <why it fits>
+- Concept 2, <name>: <idea>, <why it fits>
+- Concept 3, <name>: <idea>, <why it fits>
+MD
 ```
+
+If publishing failed, use the same helper with `--status in_review` and a heredoc comment that states which call failed and the error text.
+
+If the helper is unavailable, use the verified request from the `paperclip` skill instead: `PATCH /api/issues/{id}` with `{ "status": "done", "comment": "..." }` (or `"in_review"` on failure) and the `X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID` header.

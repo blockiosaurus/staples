@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { brandKitSpecSchema } from "@paperclipai/shared";
 import { listBuiltInAgentDefinitions } from "../services/built-in-agents.js";
 
 describe("brand designer built-in", () => {
@@ -17,5 +18,11 @@ describe("brand designer built-in", () => {
     expect(skill).toContain("brand-kit/render");
     expect(skill).toContain("brand-kit/publish");
     expect(def.defaultInstructions).toContain("brand designer");
+  });
+  it("keeps the skill's example spec valid against the schema", () => {
+    const skill = readFileSync(new URL("../../../skills/staples-brand-kit/SKILL.md", import.meta.url), "utf8");
+    const block = [...skill.matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1]).find((b) => b.includes("businessName"));
+    expect(block).toBeTruthy();
+    expect(() => brandKitSpecSchema.parse(JSON.parse(block!))).not.toThrow();
   });
 });

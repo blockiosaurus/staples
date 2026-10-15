@@ -8,6 +8,11 @@ const mockAccessService = vi.hoisted(() => ({
   ensureRoleDefaultGrants: vi.fn(),
 }));
 const mockStart = vi.hoisted(() => vi.fn());
+const mockWarn = vi.hoisted(() => vi.fn());
+vi.mock("../middleware/logger.js", async (orig) => {
+  const mod = await orig<typeof import("../middleware/logger.js")>();
+  return { ...mod, logger: new Proxy(mod.logger, { get: (t, k) => (k === "warn" ? mockWarn : (t as any)[k]) }) };
+});
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
@@ -65,5 +70,6 @@ describe("POST /api/companies kickoff", () => {
     mockStart.mockRejectedValueOnce(new Error("boom"));
     const res = await request(app).post("/api/companies").send({ name: "Acme", kickoff: true });
     expect(res.status).toBe(201);
+    expect(mockWarn).toHaveBeenCalledWith(expect.objectContaining({ companyId: "company-new" }), "brand starter did not start");
   });
 });
