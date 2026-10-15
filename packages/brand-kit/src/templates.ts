@@ -94,6 +94,7 @@ export function lockupSvg(concept: BrandKitConcept, businessName: string, p: Bra
   }
   return (
     `<svg xmlns="${NS}" viewBox="0 0 320 80"><title>${esc(businessName)}</title>` +
+    `<rect x="0" y="0" width="320" height="80" rx="12" fill="${p.paper}"/>` +
     `<g transform="translate(12 12) scale(0.875)">${markInner(concept, p, pairingId)}</g>` +
     `<g transform="translate(84 ${n(baseline)})">${word}</g></svg>`
   );

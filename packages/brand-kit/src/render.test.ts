@@ -18,6 +18,14 @@ describe("renderBrandKit", () => {
       expect(c.lockupSvg).toContain("<path");
     }
   });
+  it("puts a paper background first in every lockup and leaves marks transparent", () => {
+    const out = renderBrandKit(spec);
+    for (const c of out.concepts) {
+      const rect = `<rect x="0" y="0" width="320" height="80" rx="12" fill="${out.palette.paper}"/>`;
+      expect(c.lockupSvg).toContain(`</title>${rect}`);
+      expect(c.markSvg).not.toContain(rect);
+    }
+  });
   it("is deterministic", () => { expect(renderBrandKit(spec)).toEqual(renderBrandKit(spec)); });
   it("matches snapshots", () => { expect(renderBrandKit(spec).concepts.map((c) => c.markSvg)).toMatchSnapshot(); });
 });

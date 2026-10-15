@@ -143,7 +143,7 @@ export function BrandStarterCard() {
             <img
               src={concept.lockupPath}
               alt={`${concept.name} logo idea`}
-              className="aspect-video w-full bg-accent/20 object-contain"
+              className="aspect-video w-full object-contain"
             />
             <figcaption className="text-sm font-medium text-foreground">{concept.name}</figcaption>
             <Button type="button" size="sm" aria-label={`Use ${concept.name}`} disabled={applyingIndex !== null} onClick={() => void apply(concept)}>
