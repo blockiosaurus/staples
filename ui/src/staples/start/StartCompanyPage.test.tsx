@@ -97,6 +97,11 @@ describe("StartCompanyPage", () => {
     await render();
     expect(container.textContent).toContain("What business do you want to start?");
     expect(container.querySelector("input[type=text]")).toBeNull();
+    const area = container.querySelector("#start-company-description")!;
+    expect(area.getAttribute("aria-labelledby")).toBe("start-title");
+    expect(area.getAttribute("aria-describedby")).toBe("start-description-help");
+    expect(container.querySelector("#start-title")?.textContent).toBe("What business do you want to start?");
+    expect(container.querySelector("#start-description-help")).not.toBeNull();
     const button = container.querySelector("button[type=submit]") as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     await typeDescription("   ");
@@ -129,7 +134,31 @@ describe("StartCompanyPage", () => {
     await type("  Newco ");
     await typeDescription("A candle shop in Austin");
     await submit();
-    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ name: "Newco" }));
+    expect(mocks.create).toHaveBeenCalledWith({
+      name: "Newco",
+      description: "A candle shop in Austin",
+      kickoff: true,
+    });
+    expect(mocks.navigate).toHaveBeenCalledWith("/NEW/assistant", {
+      replace: true,
+      state: { firstMessage: "A candle shop in Austin" },
+    });
+  });
+
+  it("still sends the typed name after the disclosure is closed", async () => {
+    mocks.create.mockResolvedValue({ id: "c9", issuePrefix: "NEW", name: "Newco" });
+    await render();
+    await openNameField();
+    await type("Newco");
+    await openNameField();
+    expect(container.querySelector("#start-company-name")).toBeNull();
+    await typeDescription("A candle shop in Austin");
+    await submit();
+    expect(mocks.create).toHaveBeenCalledWith({
+      name: "Newco",
+      description: "A candle shop in Austin",
+      kickoff: true,
+    });
   });
 
   it("shows the server error and stays put when create fails", async () => {

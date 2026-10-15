@@ -110,7 +110,8 @@ export function StartCompanyPage() {
         <div className="space-y-2">
           <Textarea
             id="start-company-description"
-            aria-label="Describe your business"
+            aria-labelledby="start-title"
+            aria-describedby="start-description-help"
             autoFocus
             rows={3}
             value={description}
@@ -118,7 +119,7 @@ export function StartCompanyPage() {
             placeholder="A candle shop in Austin that sells online and at markets"
             disabled={creating}
           />
-          <p className="text-xs text-muted-foreground">One or two sentences is plenty. You can change everything later.</p>
+          <p id="start-description-help" className="text-xs text-muted-foreground">One or two sentences is plenty. You can change everything later.</p>
         </div>
         <button
           type="button"
@@ -152,7 +153,7 @@ function StartShell({ title, children, footer }: { title: string; children: Reac
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background px-4 text-foreground">
       <div className="w-full max-w-md">
-        <h1 className="mb-6 text-2xl font-semibold">{title}</h1>
+        <h1 id="start-title" className="mb-6 text-2xl font-semibold">{title}</h1>
         {children}
         {footer ? <div className="mt-6">{footer}</div> : null}
       </div>
