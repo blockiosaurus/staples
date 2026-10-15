@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     projects: [
       "packages/shared",
+      "packages/brand-kit",
       "packages/skills-catalog",
       "packages/db",
       "packages/adapter-utils",
